@@ -22,6 +22,7 @@ import { SessionGuard } from "../session/session.guard";
 import { SessionService } from "../session/session.service";
 import { CreateCredentialDto, UpdateCredentialDto } from "./credential.dto";
 import { CredentialService } from "./credential.service";
+import { SensitiveActionGuard } from "../auth/sensitive-action.guard";
 
 @ApiTags("credentials")
 @ApiCookieAuth(SessionService.cookieName)
@@ -36,6 +37,7 @@ export class CredentialController {
   }
 
   @Post()
+  @UseGuards(SensitiveActionGuard)
   create(
     @Body() dto: CreateCredentialDto,
     @Req() request: AuthenticatedRequest,
@@ -48,6 +50,7 @@ export class CredentialController {
   }
 
   @Put(":id")
+  @UseGuards(SensitiveActionGuard)
   update(
     @Param("id", new ParseUUIDPipe({ version: "4" })) id: string,
     @Body() dto: UpdateCredentialDto,
@@ -62,6 +65,7 @@ export class CredentialController {
   }
 
   @Delete(":id")
+  @UseGuards(SensitiveActionGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   delete(
     @Param("id", new ParseUUIDPipe({ version: "4" })) id: string,

@@ -22,6 +22,9 @@ model User {
   passwordHash String
   failedLogins Int                   @default(0)
   lockedUntil  DateTime?
+  emailVerifiedAt DateTime?
+  totpSecret      String?
+  totpEnabledAt   DateTime?
   createdAt    DateTime              @default(now())
   updatedAt    DateTime              @updatedAt
   sessions     Session[]
@@ -36,6 +39,13 @@ model Session {
   id           String   @id @default(uuid()) @db.Uuid
   userId       String   @db.Uuid
   sessionId    String   @unique
+  tokenFamily  String
+  generation   Int      @default(0)
+  csrfHash     String
+  fingerprint  String
+  rememberMe   Boolean  @default(false)
+  revokedAt    DateTime?
+  rotatedAt    DateTime?
   ip           String?
   userAgent    String?
   expiresAt    DateTime
@@ -44,6 +54,7 @@ model Session {
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([tokenFamily])
   @@index([expiresAt])
   @@map("sessions")
 }

@@ -17,15 +17,22 @@ export default function RegisterPage(): React.JSX.Element {
     setError(undefined);
     const form = new FormData(event.currentTarget);
     try {
-      await apiRequest("/auth/register", {
-        method: "POST",
-        body: JSON.stringify({
-          email: form.get("email"),
-          username: form.get("username"),
-          password: form.get("password"),
-        }),
-      });
-      router.push("/profile");
+      const result = await apiRequest<{ requiresEmailVerification: boolean }>(
+        "/auth/register",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            email: form.get("email"),
+            username: form.get("username"),
+            password: form.get("password"),
+          }),
+        },
+      );
+      router.push(
+        result.requiresEmailVerification
+          ? "/login?reason=verify-email"
+          : "/profile",
+      );
     } catch (caught) {
       setError(
         caught instanceof Error ? caught.message : "Registration failed",
@@ -44,7 +51,7 @@ export default function RegisterPage(): React.JSX.Element {
         <Field label="Email" name="email" type="email" required />
         <Field label="Username" name="username" minLength={3} required />
         <Field
-          label="Password (12+ characters)"
+          label="Password (12+ chars, use uppercase, number and symbol)"
           name="password"
           type="password"
           minLength={12}

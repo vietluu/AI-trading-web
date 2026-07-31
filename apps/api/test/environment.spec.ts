@@ -44,4 +44,16 @@ describe("validateEnvironment", () => {
       }),
     ).toThrow("COOKIE_SECURE must be true in production");
   });
+
+  it("requires a delivery webhook when email verification is enabled", () => {
+    expect(() =>
+      validateEnvironment({
+        DATABASE_URL: "postgresql://user:password@localhost:5432/platform",
+        REDIS_URL: "redis://localhost:6379",
+        SESSION_SECRET: "a-secure-test-session-secret-with-32-characters",
+        ENCRYPTION_MASTER_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        EMAIL_VERIFICATION_ENABLED: "true",
+      }),
+    ).toThrow("Email verification requires");
+  });
 });

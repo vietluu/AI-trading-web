@@ -5,6 +5,16 @@ export interface ApiErrorBody {
   message?: string | string[];
 }
 
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiRequestError";
+  }
+}
+
 export async function apiRequestValidated<T>(
   path: string,
   schema: ZodType<T>,
@@ -21,6 +31,14 @@ export async function apiRequest<T>(
   if (init?.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
+  const method = (init?.method ?? "GET").toUpperCase();
+  if (
+    !["GET", "HEAD", "OPTIONS"].includes(method) &&
+    !headers.has("X-CSRF-Token")
+  ) {
+    const csrfToken = readCookie("csrf_token");
+    if (csrfToken) headers.set("X-CSRF-Token", csrfToken);
+  }
   const response = await fetch(
     `${publicEnvironment.NEXT_PUBLIC_API_BASE_URL}/api${path}`,
     {
@@ -34,8 +52,29 @@ export async function apiRequest<T>(
     const message = Array.isArray(body.message)
       ? body.message.join(", ")
       : body.message;
-    throw new Error(message ?? `Request failed (${response.status})`);
+    const error = new ApiRequestError(
+      message ?? `Request failed (${response.status})`,
+      response.status,
+    );
+    if (
+      response.status === 401 &&
+      typeof window !== "undefined" &&
+      window.location.pathname !== "/login"
+    ) {
+      window.dispatchEvent(new CustomEvent("auth:expired"));
+    }
+    throw error;
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
+}
+
+function readCookie(name: string): string | undefined {
+  if (typeof document === "undefined") return undefined;
+  return document.cookie
+    .split(";")
+    .map((part) => part.trim().split("="))
+    .find(([key]) => key === name)
+    ?.slice(1)
+    .join("=");
 }

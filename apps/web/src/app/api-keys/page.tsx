@@ -19,6 +19,7 @@ export default function ApiKeysPage(): React.JSX.Element {
   const client = useQueryClient();
   const [error, setError] = useState<string>();
   const [message, setMessage] = useState<string>();
+  const [totpCode, setTotpCode] = useState("");
   const credentials = useQuery({
     queryKey: ["credentials"],
     queryFn: () =>
@@ -34,6 +35,7 @@ export default function ApiKeysPage(): React.JSX.Element {
     try {
       await apiRequest("/credentials", {
         method: "POST",
+        headers: totpCode ? { "X-TOTP-Code": totpCode } : undefined,
         body: JSON.stringify({
           provider: form.get("provider"),
           label: form.get("label") || undefined,
@@ -43,6 +45,7 @@ export default function ApiKeysPage(): React.JSX.Element {
         }),
       });
       formElement.reset();
+      setTotpCode("");
       setMessage("Credential encrypted and saved.");
       await client.invalidateQueries({ queryKey: ["credentials"] });
     } catch (caught) {
@@ -59,7 +62,11 @@ export default function ApiKeysPage(): React.JSX.Element {
     setError(undefined);
     setMessage(undefined);
     try {
-      await apiRequest(path, { method });
+      await apiRequest(path, {
+        method,
+        headers: totpCode ? { "X-TOTP-Code": totpCode } : undefined,
+      });
+      setTotpCode("");
       setMessage(messageText);
       await client.invalidateQueries({ queryKey: ["credentials"] });
     } catch (caught) {
@@ -95,6 +102,13 @@ export default function ApiKeysPage(): React.JSX.Element {
             label="Secret (optional)"
             name="secret"
             type="password"
+          />
+          <Field
+            inputMode="numeric"
+            label="2FA code (required when enabled)"
+            maxLength={6}
+            onChange={(event) => setTotpCode(event.target.value)}
+            value={totpCode}
           />
           <Field
             autoComplete="new-password"

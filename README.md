@@ -96,7 +96,6 @@ Docker Compose 5.
    ```
 
 6. Open the local services:
-
    - Dashboard: <http://localhost:3000>
    - API health: <http://localhost:3001/api/health>
    - Swagger UI: <http://localhost:3001/docs>
@@ -117,22 +116,30 @@ Docker Compose 5.
 
 ## Environment variables
 
-| Variable                   | Used by        | Purpose                                           |
-| -------------------------- | -------------- | ------------------------------------------------- |
-| `NODE_ENV`                 | API            | `development`, `test`, or `production`            |
-| `API_PORT`                 | API            | HTTP listen port; defaults to `3001`              |
-| `DATABASE_URL`             | API / Prisma   | PostgreSQL connection URL                         |
-| `REDIS_URL`                | API            | Redis connection URL                              |
-| `CORS_ORIGINS`             | API            | Comma-separated allowed browser origins           |
-| `SESSION_SECRET`           | API            | HMAC secret for persisted session identifiers     |
-| `SESSION_TTL`              | API            | Session and cookie lifetime in seconds            |
-| `COOKIE_SECURE`            | API            | Require HTTPS for the session cookie              |
-| `COOKIE_DOMAIN`            | API            | Optional session-cookie domain                    |
-| `ENCRYPTION_MASTER_KEY`    | API            | Base64-encoded 32-byte AES credential key         |
-| `NEXT_PUBLIC_API_BASE_URL` | Web            | Browser-visible API origin                        |
-| `POSTGRES_DB`              | Docker Compose | Local PostgreSQL database                         |
-| `POSTGRES_USER`            | Docker Compose | Local PostgreSQL user                             |
-| `POSTGRES_PASSWORD`        | Docker Compose | Local-only PostgreSQL password; never use in prod |
+| Variable                              | Used by        | Purpose                                           |
+| ------------------------------------- | -------------- | ------------------------------------------------- |
+| `NODE_ENV`                            | API            | `development`, `test`, or `production`            |
+| `API_PORT`                            | API            | HTTP listen port; defaults to `3001`              |
+| `DATABASE_URL`                        | API / Prisma   | PostgreSQL connection URL                         |
+| `REDIS_URL`                           | API            | Redis connection URL                              |
+| `CORS_ORIGINS`                        | API            | Comma-separated allowed browser origins           |
+| `SESSION_SECRET`                      | API            | HMAC secret for persisted session identifiers     |
+| `SESSION_TTL`                         | API            | Session and cookie lifetime in seconds            |
+| `REMEMBER_ME_TTL`                     | API            | Persistent remembered-device lifetime             |
+| `SESSION_FINGERPRINT_ENABLED`         | API            | Bind sessions to a device fingerprint             |
+| `SESSION_FINGERPRINT_BIND_IP`         | API            | Also bind fingerprints to an IP prefix            |
+| `EMAIL_VERIFICATION_ENABLED`          | API            | Require verified email before login               |
+| `AUTH_EMAIL_WEBHOOK_URL`              | API            | Auth-email delivery webhook                       |
+| `AUTH_EMAIL_WEBHOOK_SECRET`           | API            | Bearer secret for the email webhook               |
+| `PASSWORD_BREACH_CHECK_ENABLED`       | API            | Enable k-anonymous breached-password lookup       |
+| `TOTP_REQUIRED_FOR_SENSITIVE_ACTIONS` | API            | Require 2FA enrollment for sensitive changes      |
+| `COOKIE_SECURE`                       | API            | Require HTTPS for the session cookie              |
+| `COOKIE_DOMAIN`                       | API            | Optional session-cookie domain                    |
+| `ENCRYPTION_MASTER_KEY`               | API            | Base64-encoded 32-byte AES credential key         |
+| `NEXT_PUBLIC_API_BASE_URL`            | Web            | Browser-visible API origin                        |
+| `POSTGRES_DB`                         | Docker Compose | Local PostgreSQL database                         |
+| `POSTGRES_USER`                       | Docker Compose | Local PostgreSQL user                             |
+| `POSTGRES_PASSWORD`                   | Docker Compose | Local-only PostgreSQL password; never use in prod |
 
 Backend startup fails fast on missing or invalid configuration. Frontend build
 and startup likewise validate `NEXT_PUBLIC_API_BASE_URL`. Never place exchange,
@@ -144,9 +151,11 @@ Set `COOKIE_SECURE=true` in production.
 
 ## Authentication and credential security
 
-The API stores only an HMAC digest of each random session token. Redis holds
-active sessions with the configured TTL; PostgreSQL stores session and device
-metadata. Cookies are HttpOnly, SameSite=Lax, and secure in production. Five
+The API stores only HMAC digests of random session and CSRF tokens. Redis holds
+active sessions with the configured TTL; PostgreSQL stores session families,
+rotation history, fingerprints, and device metadata. Reuse of a rotated token
+revokes its full family. Session cookies are HttpOnly, SameSite=Lax, and secure
+in production; unsafe requests use double-submit CSRF validation. Five
 failed login attempts trigger a 15-minute account lock, with an additional
 source-and-identifier throttle.
 
@@ -156,9 +165,11 @@ characters. Credential tests currently verify decryptability and integrity of
 stored ciphertext; provider network verification is intentionally deferred to
 the exchange and AI integration phases.
 
-Password-reset tokens are short-lived, single-use Redis values. Phase 2 defines
-secure issuance and consumption, but a mail delivery adapter is not configured
-because no email provider is part of this phase.
+Password-reset and email-verification tokens are short-lived, single-use Redis
+values delivered through the configured authenticated webhook. Email
+verification and k-anonymous breached-password checks are disabled by default
+for local development. TOTP secrets are encrypted with AES-256-GCM and used as
+step-up authentication for API-key changes and future live-trading controls.
 
 ## Workspace commands
 

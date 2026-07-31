@@ -23,21 +23,26 @@ import {
   requestMetadata,
 } from "../common/request-context";
 import { SessionGuard } from "../session/session.guard";
-import { SessionService } from "../session/session.service";
+import {
+  type SessionCredentials,
+  SessionService,
+} from "../session/session.service";
 import {
   ChangePasswordDto,
+  DisableTotpDto,
   ForgotPasswordDto,
   LoginDto,
   RegisterDto,
   ResetPasswordDto,
+  TotpCodeDto,
+  VerifyEmailDto,
 } from "./auth.dto";
 import { AuthService } from "./auth.service";
 
 @ApiTags("authentication")
 @Controller("auth")
 export class AuthController {
-  private readonly cookieOptions: CookieOptions;
-  private readonly clearCookieOptions: CookieOptions;
+  private readonly baseCookieOptions: CookieOptions;
 
   constructor(
     private readonly auth: AuthService,
@@ -46,16 +51,11 @@ export class AuthController {
     config: ConfigService,
   ) {
     const domain = config.get<string>("COOKIE_DOMAIN");
-    this.clearCookieOptions = {
-      httpOnly: true,
+    this.baseCookieOptions = {
       sameSite: "lax",
       secure: config.getOrThrow<boolean>("COOKIE_SECURE"),
       ...(domain ? { domain } : {}),
       path: "/",
-    };
-    this.cookieOptions = {
-      ...this.clearCookieOptions,
-      maxAge: config.getOrThrow<number>("SESSION_TTL") * 1000,
     };
   }
 
@@ -66,8 +66,11 @@ export class AuthController {
     @Res({ passthrough: true }) response: Response,
   ) {
     const result = await this.auth.register(dto, requestMetadata(request));
-    this.setCookie(response, result.token);
-    return result.user;
+    if (result.session) this.setCookies(response, result.session);
+    return {
+      ...result.user,
+      requiresEmailVerification: result.requiresEmailVerification,
+    };
   }
 
   @Post("login")
@@ -78,7 +81,7 @@ export class AuthController {
     @Res({ passthrough: true }) response: Response,
   ) {
     const result = await this.auth.login(dto, requestMetadata(request));
-    this.setCookie(response, result.token);
+    if (result.session) this.setCookies(response, result.session);
     return result.user;
   }
 
@@ -96,7 +99,7 @@ export class AuthController {
       request.auth.userId,
       requestMetadata(request),
     );
-    response.clearCookie(SessionService.cookieName, this.clearCookieOptions);
+    this.clearCookies(response);
   }
 
   @Post("refresh")
@@ -107,13 +110,37 @@ export class AuthController {
     @Req() request: AuthenticatedRequest,
     @Res({ passthrough: true }) response: Response,
   ): Promise<void> {
-    this.setCookie(
+    this.setCookies(
       response,
       await this.sessions.refresh(
         request.auth.sessionToken,
         requestMetadata(request),
       ),
     );
+  }
+
+  @Post("verify-email")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  verifyEmail(
+    @Body() dto: VerifyEmailDto,
+    @Req() request: Request,
+  ): Promise<void> {
+    return this.auth.verifyEmail(dto.token, requestMetadata(request));
+  }
+
+  @Post("resend-verification")
+  @HttpCode(HttpStatus.ACCEPTED)
+  async resendVerification(
+    @Body() dto: ForgotPasswordDto,
+    @Req() request: Request,
+  ) {
+    await this.auth.resendEmailVerification(
+      dto.email,
+      requestMetadata(request),
+    );
+    return {
+      message: "If verification is needed, a new email has been requested",
+    };
   }
 
   @Post("forgot-password")
@@ -130,11 +157,11 @@ export class AuthController {
 
   @Post("reset-password")
   @HttpCode(HttpStatus.NO_CONTENT)
-  async resetPassword(
+  resetPassword(
     @Body() dto: ResetPasswordDto,
     @Req() request: Request,
   ): Promise<void> {
-    await this.auth.resetPassword(dto, requestMetadata(request));
+    return this.auth.resetPassword(dto, requestMetadata(request));
   }
 
   @Post("change-password")
@@ -146,7 +173,7 @@ export class AuthController {
     @Req() request: AuthenticatedRequest,
     @Res({ passthrough: true }) response: Response,
   ): Promise<void> {
-    this.setCookie(
+    this.setCookies(
       response,
       await this.auth.changePassword(
         request.auth.userId,
@@ -163,6 +190,17 @@ export class AuthController {
     return this.auth.me(request.auth.userId);
   }
 
+  @Get("session")
+  @UseGuards(SessionGuard)
+  @ApiCookieAuth(SessionService.cookieName)
+  async currentSession(@Req() request: AuthenticatedRequest) {
+    const current = (await this.sessions.list(request.auth.userId)).find(
+      (item) => item.id === request.auth.sessionRecordId,
+    );
+    if (!current) throw new NotFoundException("Session not found");
+    return { expiresAt: current.expiresAt, rememberMe: current.rememberMe };
+  }
+
   @Get("sessions")
   @UseGuards(SessionGuard)
   @ApiCookieAuth(SessionService.cookieName)
@@ -175,8 +213,47 @@ export class AuthController {
       expiresAt: session.expiresAt,
       createdAt: session.createdAt,
       lastActivity: session.lastActivity,
+      rememberMe: session.rememberMe,
       current: session.id === request.auth.sessionRecordId,
     }));
+  }
+
+  @Post("totp/setup")
+  @UseGuards(SessionGuard)
+  @ApiCookieAuth(SessionService.cookieName)
+  beginTotp(@Req() request: AuthenticatedRequest) {
+    return this.auth.beginTotpSetup(request.auth.userId);
+  }
+
+  @Post("totp/confirm")
+  @UseGuards(SessionGuard)
+  @ApiCookieAuth(SessionService.cookieName)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  confirmTotp(
+    @Body() dto: TotpCodeDto,
+    @Req() request: AuthenticatedRequest,
+  ): Promise<void> {
+    return this.auth.confirmTotpSetup(
+      request.auth.userId,
+      dto.code,
+      requestMetadata(request),
+    );
+  }
+
+  @Post("totp/disable")
+  @UseGuards(SessionGuard)
+  @ApiCookieAuth(SessionService.cookieName)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  disableTotp(
+    @Body() dto: DisableTotpDto,
+    @Req() request: AuthenticatedRequest,
+  ): Promise<void> {
+    return this.auth.disableTotp(
+      request.auth.userId,
+      dto.currentPassword,
+      dto.code,
+      requestMetadata(request),
+    );
   }
 
   @Delete("sessions/:id")
@@ -188,18 +265,15 @@ export class AuthController {
     @Req() request: AuthenticatedRequest,
     @Res({ passthrough: true }) response: Response,
   ): Promise<void> {
-    if (!(await this.sessions.destroyByRecordId(request.auth.userId, id))) {
+    if (!(await this.sessions.destroyByRecordId(request.auth.userId, id)))
       throw new NotFoundException("Session not found");
-    }
     await this.audit.record(
       "SESSION_REVOKE",
       request.auth.userId,
       requestMetadata(request),
       { sessionRecordId: id },
     );
-    if (id === request.auth.sessionRecordId) {
-      response.clearCookie(SessionService.cookieName, this.clearCookieOptions);
-    }
+    if (id === request.auth.sessionRecordId) this.clearCookies(response);
   }
 
   @Delete("sessions")
@@ -217,10 +291,36 @@ export class AuthController {
       requestMetadata(request),
       { allDevices: true },
     );
-    response.clearCookie(SessionService.cookieName, this.clearCookieOptions);
+    this.clearCookies(response);
   }
 
-  private setCookie(response: Response, token: string): void {
-    response.cookie(SessionService.cookieName, token, this.cookieOptions);
+  private setCookies(
+    response: Response,
+    credentials: SessionCredentials,
+  ): void {
+    const persistent = credentials.rememberMe
+      ? { maxAge: Math.max(0, credentials.expiresAt.getTime() - Date.now()) }
+      : {};
+    response.cookie(SessionService.cookieName, credentials.token, {
+      ...this.baseCookieOptions,
+      ...persistent,
+      httpOnly: true,
+    });
+    response.cookie(SessionService.csrfCookieName, credentials.csrfToken, {
+      ...this.baseCookieOptions,
+      ...persistent,
+      httpOnly: false,
+    });
+  }
+
+  private clearCookies(response: Response): void {
+    response.clearCookie(SessionService.cookieName, {
+      ...this.baseCookieOptions,
+      httpOnly: true,
+    });
+    response.clearCookie(SessionService.csrfCookieName, {
+      ...this.baseCookieOptions,
+      httpOnly: false,
+    });
   }
 }

@@ -4,6 +4,8 @@ export const publicUserSchema = z.object({
   id: z.string().uuid(),
   email: z.string().email(),
   username: z.string(),
+  emailVerified: z.boolean(),
+  totpEnabled: z.boolean(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -14,6 +16,7 @@ export const sessionViewSchema = z.object({
   expiresAt: z.string().datetime(),
   createdAt: z.string().datetime(),
   lastActivity: z.string().datetime(),
+  rememberMe: z.boolean(),
   current: z.boolean(),
 });
 export const credentialViewSchema = z.object({

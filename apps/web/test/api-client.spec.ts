@@ -4,7 +4,17 @@ import { z } from "zod";
 
 import { apiRequest, apiRequestValidated } from "../src/lib/api-client";
 
-afterEach(() => vi.unstubAllGlobals());
+const originalCookieDescriptor = Object.getOwnPropertyDescriptor(
+  document,
+  "cookie",
+);
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  if (originalCookieDescriptor) {
+    Object.defineProperty(document, "cookie", originalCookieDescriptor);
+  }
+});
 
 describe("apiRequest", () => {
   it("always sends browser-managed credentials", async () => {
@@ -33,5 +43,29 @@ describe("apiRequest", () => {
     await expect(
       apiRequestValidated("/auth/me", z.object({ id: z.string().uuid() })),
     ).rejects.toThrow();
+  });
+
+  it("adds the double-submit CSRF token to mutation requests", async () => {
+    const originalCookie = document.cookie;
+    Object.defineProperty(document, "cookie", {
+      configurable: true,
+      value: "csrf_token=test-csrf-token",
+    });
+    try {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(new Response(null, { status: 204 }));
+      vi.stubGlobal("fetch", fetchMock);
+      await apiRequest("/auth/logout", { method: "POST" });
+      const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+      expect(new Headers(request.headers).get("X-CSRF-Token")).toBe(
+        "test-csrf-token",
+      );
+    } finally {
+      Object.defineProperty(document, "cookie", {
+        configurable: true,
+        value: originalCookie,
+      });
+    }
   });
 });

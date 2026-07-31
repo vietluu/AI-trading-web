@@ -6,6 +6,9 @@ unknown properties are rejected.
 
 Authenticated routes use the opaque `sid` HttpOnly cookie. The cookie is
 SameSite=Lax, secure in production, and never read by frontend code.
+Unsafe authenticated requests also require the non-HttpOnly `csrf_token`
+cookie value in the `X-CSRF-Token` header. Credential mutations require
+`X-TOTP-Code` when 2FA is enabled (or globally required).
 
 ## Health
 
@@ -13,16 +16,22 @@ SameSite=Lax, secure in production, and never read by frontend code.
 
 ## Authentication
 
-- `POST /api/auth/register` creates a user and session.
-- `POST /api/auth/login` creates a session after credential and lock checks.
+- `POST /api/auth/register` creates a user and, when verification is disabled, a session.
+- `POST /api/auth/login` creates a normal or Remember Me session after credential and lock checks.
 - `POST /api/auth/logout` destroys the current session.
 - `POST /api/auth/refresh` rotates the current session.
+- `POST /api/auth/verify-email` consumes a single-use verification token.
+- `POST /api/auth/resend-verification` requests another verification email.
 - `POST /api/auth/forgot-password` issues a generic accepted response.
 - `POST /api/auth/reset-password` consumes a short-lived, single-use token.
 - `POST /api/auth/change-password` changes the password, revokes all sessions,
   and creates a replacement session for the current device.
 - `GET /api/auth/me` returns only public user fields.
+- `GET /api/auth/session` returns the current session expiry and persistence mode.
 - `GET /api/auth/sessions` lists active device sessions.
+- `POST /api/auth/totp/setup` begins authenticator enrollment.
+- `POST /api/auth/totp/confirm` confirms enrollment with a six-digit code.
+- `POST /api/auth/totp/disable` disables 2FA after password and code verification.
 - `DELETE /api/auth/sessions/:id` revokes one user-owned session.
 - `DELETE /api/auth/sessions` logs out all devices.
 
