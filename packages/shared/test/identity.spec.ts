@@ -10,6 +10,7 @@ describe("credentialViewSchema", () => {
       label: null,
       status: "NOT_VERIFIED",
       maskedKey: "••••abcd",
+      apiKey: "should-not-be-accepted",
       lastVerified: null,
       createdAt: "2026-07-31T00:00:00.000Z",
       updatedAt: "2026-07-31T00:00:00.000Z",
