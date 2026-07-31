@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -10,6 +11,7 @@ from fastapi import APIRouter
 from src.core.config import get_settings
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/health", summary="Platform health check")
@@ -30,8 +32,9 @@ async def health_check() -> dict[str, Any]:
         redis = get_redis()
         await redis.ping()
         checks["redis"] = "ok"
-    except Exception as exc:
-        checks["redis"] = f"error: {exc}"
+    except Exception:
+        logger.exception("Redis health check failed")
+        checks["redis"] = "error"
 
     # Database check
     try:
@@ -42,8 +45,9 @@ async def health_check() -> dict[str, Any]:
         async with get_db_session() as session:
             await session.execute(text("SELECT 1"))
         checks["database"] = "ok"
-    except Exception as exc:
-        checks["database"] = f"error: {exc}"
+    except Exception:
+        logger.exception("Database health check failed")
+        checks["database"] = "error"
 
     all_ok = all(v == "ok" for v in checks.values())
 
