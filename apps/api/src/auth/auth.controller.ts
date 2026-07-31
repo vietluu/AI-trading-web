@@ -220,12 +220,14 @@ export class AuthController {
 
   @Post("totp/setup")
   @UseGuards(SessionGuard)
+  @ApiCookieAuth(SessionService.cookieName)
   beginTotp(@Req() request: AuthenticatedRequest) {
     return this.auth.beginTotpSetup(request.auth.userId);
   }
 
   @Post("totp/confirm")
   @UseGuards(SessionGuard)
+  @ApiCookieAuth(SessionService.cookieName)
   @HttpCode(HttpStatus.NO_CONTENT)
   confirmTotp(
     @Body() dto: TotpCodeDto,
@@ -240,6 +242,7 @@ export class AuthController {
 
   @Post("totp/disable")
   @UseGuards(SessionGuard)
+  @ApiCookieAuth(SessionService.cookieName)
   @HttpCode(HttpStatus.NO_CONTENT)
   disableTotp(
     @Body() dto: DisableTotpDto,
@@ -255,6 +258,7 @@ export class AuthController {
 
   @Delete("sessions/:id")
   @UseGuards(SessionGuard)
+  @ApiCookieAuth(SessionService.cookieName)
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteSession(
     @Param("id", new ParseUUIDPipe({ version: "4" })) id: string,
@@ -274,6 +278,7 @@ export class AuthController {
 
   @Delete("sessions")
   @UseGuards(SessionGuard)
+  @ApiCookieAuth(SessionService.cookieName)
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteAllSessions(
     @Req() request: AuthenticatedRequest,

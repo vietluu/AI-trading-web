@@ -1,10 +1,20 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { z } from "zod";
 
 import { apiRequest, apiRequestValidated } from "../src/lib/api-client";
 
-afterEach(() => vi.unstubAllGlobals());
+const originalCookieDescriptor = Object.getOwnPropertyDescriptor(
+  document,
+  "cookie",
+);
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  if (originalCookieDescriptor) {
+    Object.defineProperty(document, "cookie", originalCookieDescriptor);
+  }
+});
 
 describe("apiRequest", () => {
   it("always sends browser-managed credentials", async () => {
