@@ -121,8 +121,9 @@ export class CredentialService {
       existing.encryptedData,
       this.additionalData(userId, existing.provider),
     );
-    if (secret.apiKey.length < 4)
-      throw new Error("Stored credential is invalid");
+    if (secret.apiKey.length < 4) {
+      throw new BadRequestException("Stored credential is invalid");
+    }
     const credential = await this.repository.markVerified(id, new Date());
     await this.audit.record("CREDENTIAL_TEST", userId, context, {
       provider: existing.provider,
