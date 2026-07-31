@@ -60,6 +60,84 @@ const environmentSchema = z
       .enum(["true", "false"])
       .default("false")
       .transform((value) => value === "true"),
+    BINANCE_FUTURES_BASE_URL: z
+      .string()
+      .url()
+      .default("https://fapi.binance.com"),
+    BINANCE_FUTURES_TESTNET_BASE_URL: z
+      .string()
+      .url()
+      .default("https://testnet.binancefuture.com"),
+    OKX_BASE_URL: z.string().url().default("https://www.okx.com"),
+    OKX_DEMO_TRADING_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((value) => value === "true"),
+    EXCHANGE_HTTP_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(1000)
+      .max(30_000)
+      .default(10_000),
+    EXCHANGE_MAX_RETRIES: z.coerce.number().int().min(0).max(3).default(2),
+    EXCHANGE_RETRY_BASE_DELAY_MS: z.coerce
+      .number()
+      .int()
+      .min(50)
+      .max(2_000)
+      .default(300),
+    EXCHANGE_PUBLIC_RATE_LIMIT_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((value) => value === "true"),
+    EXCHANGE_PRIVATE_RATE_LIMIT_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((value) => value === "true"),
+    EXCHANGE_PUBLIC_RATE_LIMIT_PER_MINUTE: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(10_000)
+      .default(1200),
+    EXCHANGE_PRIVATE_RATE_LIMIT_PER_MINUTE: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(10_000)
+      .default(300),
+    EXCHANGE_INSTRUMENT_CACHE_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(60)
+      .max(86_400)
+      .default(3600),
+    EXCHANGE_TICKER_CACHE_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(60)
+      .default(3),
+    EXCHANGE_TIME_OFFSET_CACHE_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(30)
+      .max(3600)
+      .default(300),
+    EXCHANGE_PRODUCTION_CONNECTIONS_ENABLED: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
+    EXCHANGE_REQUIRE_RECENT_AUTH: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((value) => value === "true"),
+    EXCHANGE_RECENT_AUTH_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(300)
+      .max(900)
+      .default(600),
     COOKIE_SECURE: z
       .enum(["true", "false"])
       .default("false")

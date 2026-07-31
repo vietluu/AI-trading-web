@@ -14,6 +14,24 @@ export {
   sessionViewSchema,
   settingsViewSchema,
 } from "./schemas/identity.js";
+export {
+  exchangeAccountSummarySchema,
+  exchangeBalanceSchema,
+  exchangeConnectionSchema,
+  exchangeConnectionTestSchema,
+  exchangeEnvironmentSchema,
+  exchangeOrderSchema,
+  exchangePositionSchema,
+  exchangeProviderSchema,
+} from "./schemas/exchange.js";
+export type {
+  ExchangeAccountSummary,
+  ExchangeBalance,
+  ExchangeConnection,
+  ExchangeConnectionTest,
+  ExchangeOrder,
+  ExchangePosition,
+} from "./schemas/exchange.js";
 export type {
   CredentialView,
   PublicUser,

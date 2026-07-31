@@ -43,7 +43,7 @@ export default function RootLayout({
             </header>
             <main className="flex-1 py-10">{children}</main>
             <footer className="border-t border-border py-6 text-xs text-muted-foreground">
-              Phase 2 · Secure multi-user authentication
+              Phase 3 · Secure futures exchange integration
             </footer>
           </div>
         </QueryProvider>

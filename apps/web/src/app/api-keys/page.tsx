@@ -35,7 +35,7 @@ export default function ApiKeysPage(): React.JSX.Element {
     try {
       await apiRequest("/credentials", {
         method: "POST",
-        headers: totpCode ? { "X-TOTP-Code": totpCode } : undefined,
+        ...(totpCode ? { headers: { "X-TOTP-Code": totpCode } } : {}),
         body: JSON.stringify({
           provider: form.get("provider"),
           label: form.get("label") || undefined,
@@ -64,7 +64,7 @@ export default function ApiKeysPage(): React.JSX.Element {
     try {
       await apiRequest(path, {
         method,
-        headers: totpCode ? { "X-TOTP-Code": totpCode } : undefined,
+        ...(totpCode ? { headers: { "X-TOTP-Code": totpCode } } : {}),
       });
       setTotpCode("");
       setMessage(messageText);

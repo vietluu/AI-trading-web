@@ -18,6 +18,7 @@ cookie value in the `X-CSRF-Token` header. Credential mutations require
 
 - `POST /api/auth/register` creates a user and, when verification is disabled, a session.
 - `POST /api/auth/login` creates a normal or Remember Me session after credential and lock checks.
+- `POST /api/auth/reauthenticate` records a session-scoped recent-password proof for sensitive exchange changes.
 - `POST /api/auth/logout` destroys the current session.
 - `POST /api/auth/refresh` rotates the current session.
 - `POST /api/auth/verify-email` consumes a single-use verification token.
@@ -52,6 +53,64 @@ passphrases, or ciphertext.
 - `GET /api/settings` returns settings owned by the current user.
 - `PUT /api/settings` validates and updates those settings.
 
+## Exchange providers and public data
+
+- `GET /api/exchanges/providers`
+- `GET /api/exchanges/:provider/time`
+- `GET /api/exchanges/:provider/instruments`
+- `GET /api/exchanges/:provider/instruments/:symbol`
+- `GET /api/exchanges/:provider/ticker/:symbol`
+- `GET /api/exchanges/:provider/order-book/:symbol?depth=`
+- `GET /api/exchanges/:provider/trades/:symbol?limit=`
+- `GET /api/exchanges/:provider/klines/:symbol?interval=&limit=&startTime=&endTime=`
+- `GET /api/exchanges/:provider/funding-rate/:symbol`
+- `GET /api/exchanges/:provider/open-interest/:symbol`
+
+Providers are `BINANCE_FUTURES` and `OKX_FUTURES`. Symbols use normalized
+uppercase `BASE-QUOTE` form such as `BTC-USDT`. Decimal prices, quantities,
+balances, PnL, rates, margin, and leverage are strings. Public instrument data
+is cached globally for the configured TTL; ticker, funding, and open-interest
+snapshots use the short ticker TTL. Local throttling returns HTTP 429.
+
+Intervals are `1m`, `3m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `6h`, `8h`,
+`12h`, `1d`, `1w`, and `1M`; OKX rejects `8h`, which its mapping does not
+support. Date query values use ISO 8601.
+
+## User exchange connections
+
+All routes below require the session cookie; unsafe requests also require CSRF
+and pass the sensitive-action TOTP guard. The ID is always combined with the
+session user ID, and a foreign ID returns 404.
+
+- `GET /api/exchange-connections`
+- `POST /api/exchange-connections`
+- `GET /api/exchange-connections/:id`
+- `PATCH /api/exchange-connections/:id`
+- `DELETE /api/exchange-connections/:id`
+- `POST /api/exchange-connections/:id/test`
+- `POST /api/exchange-connections/:id/enable`
+- `POST /api/exchange-connections/:id/disable`
+- `GET /api/exchange-connections/:id/account`
+- `GET /api/exchange-connections/:id/balances`
+- `GET /api/exchange-connections/:id/positions`
+- `GET /api/exchange-connections/:id/orders/open?symbol=`
+- `GET /api/exchange-connections/:id/orders/:orderId?symbol=`
+- `GET /api/exchange-connections/:id/configuration`
+
+Binance accepts `TESTNET` or `PRODUCTION` and requires `apiKey`/`apiSecret`.
+OKX accepts `DEMO` or `PRODUCTION` and additionally requires `passphrase`.
+Responses expose only `maskedApiKey` and safe metadata. Production creation,
+switching, and enabling require both the production feature flag and a recent
+password proof. Credential replacement and deletion require a recent proof in
+all environments. Private account reads require an enabled, verified
+connection and are never placed in the global cache.
+
+The connection test performs read-only account, balance, position, open-order,
+and server-time calls. No endpoint places/cancels orders, changes leverage or
+margin mode, transfers funds, or closes positions. GET semantics plus provider
+timestamps/`recvWindow` provide the Phase 3 replay/idempotency boundary; no
+idempotency key is invented because there are no provider mutations.
+
 ## Error response
 
 HTTP failures use the global shape below. Unexpected server exceptions return
@@ -68,7 +127,11 @@ logs.
 }
 ```
 
+Exchange failures may add `code`, `provider`, `retryable`, and `correlationId`.
+Normalized codes distinguish timeout, unavailable, throttled, credentials,
+signature, timestamp, permission, symbol, request, and resource failures.
+
 ## Reserved for later roadmap phases
 
-Market, news, signal, analysis, paper-trading, live-trading, and performance
-routes are not implemented in Phase 2.
+Realtime collection/WebSockets, news, signal, analysis, paper trading, live
+trading, and performance routes are not implemented in Phase 3.

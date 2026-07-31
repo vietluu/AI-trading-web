@@ -63,6 +63,13 @@ export class DisableTotpDto extends TotpCodeDto {
   currentPassword!: string;
 }
 
+export class ReauthenticateDto {
+  @ApiProperty({ format: "password" })
+  @IsString()
+  @MaxLength(128)
+  password!: string;
+}
+
 export class ForgotPasswordDto {
   @ApiProperty({ example: "trader@example.com" })
   @IsEmail()

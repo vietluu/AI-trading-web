@@ -8,6 +8,7 @@ import { validateEnvironment } from "./config/environment";
 import { CredentialModule } from "./credentials/credential.module";
 import { DatabaseModule } from "./database/database.module";
 import { HealthModule } from "./health/health.module";
+import { ExchangeModule } from "./exchange/exchange.module";
 import { RedisModule } from "./redis/redis.module";
 import { SessionModule } from "./session/session.module";
 import { SettingsModule } from "./settings/settings.module";
@@ -31,6 +32,7 @@ import { SettingsModule } from "./settings/settings.module";
     AuthModule,
     CredentialModule,
     SettingsModule,
+    ExchangeModule,
   ],
 })
 export class AppModule {}

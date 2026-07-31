@@ -9,11 +9,14 @@ import {
 import type { ApiError } from "@platform/shared";
 import type { Request, Response } from "express";
 
+import { ExchangeError } from "../../exchange/domain/exchange.error";
+
 function hasMessage(value: object): value is { message: unknown } {
   return "message" in value;
 }
 
 function extractMessage(exception: unknown): string {
+  if (exception instanceof ExchangeError) return exception.message;
   if (exception instanceof HttpException) {
     const response = exception.getResponse();
 
@@ -46,13 +49,17 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const request = context.getRequest<Request>();
     const response = context.getResponse<Response>();
     const statusCode =
-      exception instanceof HttpException
-        ? exception.getStatus()
-        : HttpStatus.INTERNAL_SERVER_ERROR;
+      exception instanceof ExchangeError
+        ? exception.statusCode
+        : exception instanceof HttpException
+          ? exception.getStatus()
+          : HttpStatus.INTERNAL_SERVER_ERROR;
     const errorName =
-      exception instanceof HttpException
-        ? exception.name
-        : "InternalServerError";
+      exception instanceof ExchangeError
+        ? exception.code
+        : exception instanceof HttpException
+          ? exception.name
+          : "InternalServerError";
 
     const body: ApiError = {
       statusCode,
@@ -60,6 +67,16 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       path: request.originalUrl,
       message: extractMessage(exception),
       error: errorName,
+      ...(exception instanceof ExchangeError
+        ? {
+            code: exception.code,
+            provider: exception.provider,
+            retryable: exception.retryable,
+            ...(exception.correlationId
+              ? { correlationId: exception.correlationId }
+              : {}),
+          }
+        : {}),
     };
 
     const logContext = {

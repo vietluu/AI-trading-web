@@ -9,6 +9,8 @@
     "lint": "eslint src test",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:integration": "RUN_INTEGRATION_TESTS=true vitest run test/phase2.integration.spec.ts test/phase3.integration.spec.ts",
+    "test:e2e": "RUN_E2E_TESTS=true vitest run test/phase3.e2e.spec.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:studio": "prisma studio"

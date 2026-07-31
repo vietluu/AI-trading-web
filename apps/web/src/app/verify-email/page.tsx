@@ -19,7 +19,10 @@ function Verification(): React.JSX.Element {
       body: JSON.stringify({ token }),
     }).then(
       () => setMessage("Email verified. You can sign in now."),
-      (error: unknown) => setMessage(error instanceof Error ? error.message : "Verification failed"),
+      (error: unknown) =>
+        setMessage(
+          error instanceof Error ? error.message : "Verification failed",
+        ),
     );
   }, [token]);
   return <p className="mt-4 text-sm text-muted-foreground">{message}</p>;
@@ -29,8 +32,15 @@ export default function VerifyEmailPage(): React.JSX.Element {
   return (
     <section className="mx-auto max-w-md">
       <h1 className="text-3xl font-semibold">Email verification</h1>
-      <Suspense fallback={<p className="mt-4">Loading...</p>}><Verification /></Suspense>
-      <Link className="mt-6 inline-block text-sm text-emerald-300" href="/login">Return to sign in</Link>
+      <Suspense fallback={<p className="mt-4">Loading...</p>}>
+        <Verification />
+      </Suspense>
+      <Link
+        className="mt-6 inline-block text-sm text-emerald-300"
+        href="/login"
+      >
+        Return to sign in
+      </Link>
     </section>
   );
 }
