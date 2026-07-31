@@ -166,6 +166,24 @@ describe.skipIf(!runIntegration)("Phase 3 HTTP integration", () => {
         )
       ).status,
     ).toBe(204);
+    expect(
+      (
+        await request(
+          `/exchange-connections/${connection.id}`,
+          { method: "DELETE" },
+          owner.cookie,
+        )
+      ).status,
+    ).toBe(204);
+    expect(
+      (
+        await request(
+          `/exchange-connections/${connection.id}`,
+          { method: "DELETE" },
+          other.cookie,
+        )
+      ).status,
+    ).toBe(404);
   }, 30_000);
 
   it("rejects malformed providers, environments, and unauthenticated access", async () => {

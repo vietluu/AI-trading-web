@@ -259,11 +259,18 @@ export class ExchangeConnectionService {
     id: string,
     context: RequestMetadata,
   ): Promise<void> {
-    await this.owned(id, userId);
-    await this.assertRecent(userId, sessionRecordId);
-    if (!(await this.repository.deleteOwned(id, userId))) {
+    const existing = await this.repository.findOwned(id, userId);
+    if (!existing) {
+      const wasDeleted = await this.audit.hasConnectionEvent(
+        "EXCHANGE_CONNECTION_DELETE",
+        userId,
+        id,
+      );
+      if (wasDeleted) return;
       throw new NotFoundException("Exchange connection not found");
     }
+    await this.assertRecent(userId, sessionRecordId);
+    if (!(await this.repository.deleteOwned(id, userId))) return;
     await this.audit.record("EXCHANGE_CONNECTION_DELETE", userId, context, {
       connectionId: id,
     });

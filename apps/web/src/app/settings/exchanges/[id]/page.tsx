@@ -232,7 +232,13 @@ export default function ExchangeDetailPage(): React.JSX.Element {
         method: "DELETE",
         ...(totpCode ? { headers: { "X-TOTP-Code": totpCode } } : {}),
       });
-      router.push("/settings/exchanges");
+      queryClient.removeQueries({
+        predicate: (query) => query.queryKey.includes(id),
+      });
+      await queryClient.invalidateQueries({
+        queryKey: ["exchange-connections"],
+      });
+      router.replace("/settings/exchanges");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Delete failed");
       setBusy(false);

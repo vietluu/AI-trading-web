@@ -24,4 +24,20 @@ export class AuditRepository {
       },
     });
   }
+
+  async hasConnectionEvent(
+    action: string,
+    userId: string,
+    connectionId: string,
+  ): Promise<boolean> {
+    const event = await this.prisma.auditLog.findFirst({
+      where: {
+        action,
+        userId,
+        metadata: { path: ["connectionId"], equals: connectionId },
+      },
+      select: { id: true },
+    });
+    return event !== null;
+  }
 }
