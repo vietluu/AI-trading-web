@@ -1,0 +1,32 @@
+# Dependencies and package manager
+node_modules/
+.pnpm-store/
+
+# Build and test output
+.next/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Environment and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Runtime files
+*.log
+logs/
+tmp/
+.cache/
+
+# Prisma
+apps/api/prisma/*.db
+apps/api/prisma/*.db-journal
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,13 @@
+.next
+coverage
+dist
+node_modules
+pnpm-lock.yaml
+
+# Preserve the original formatting of project governance documents.
+AGENTS.md
+DEFINITION_OF_DONE.md
+PHASE_TEMPLATE.md
+PROJECT_CONTEXT.md
+PROJECT_RULES.md
+ROADMAP.md
