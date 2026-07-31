@@ -1,0 +1,26 @@
+# DATABASE
+
+- users
+- settings
+- api_keys
+- market_symbols
+- candles
+- funding_rates
+- order_books
+- liquidations
+- open_interest
+- fear_greed
+- news
+- social_posts
+- onchain_events
+- agent_results
+- signals
+- paper_trades
+- live_trades
+- trade_logs
+- positions
+- portfolios
+- performance_reports
+- ai_requests
+- ai_responses
+- audit_logs
