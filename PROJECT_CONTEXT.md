@@ -97,3 +97,16 @@ Every module must be independently testable.
 The project must always remain runnable.
 Never leave unfinished implementations.
 Never break previous phases.
+
+## Current delivery: Phase 3
+
+The repository now includes the authenticated, multi-user exchange integration
+boundary for Binance USD-M Futures and OKX perpetual swaps. Public REST market
+queries and read-only private account queries are normalized behind a shared
+adapter contract. Each private call resolves its connection from the current
+server-side session and decrypts that user's credential immediately before use.
+
+Phase 3 deliberately exposes no order placement, cancellation, leverage,
+margin-mode, transfer, automation, agent, or WebSocket path. Production
+connections are feature-flagged off by default. Realtime collection remains
+owned by Phase 4.

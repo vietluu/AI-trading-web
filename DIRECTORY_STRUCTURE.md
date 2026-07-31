@@ -9,6 +9,8 @@
 │   │   │   ├── migrations/
 │   │   │   │   ├── 20260731000000_foundation/
 │   │   │   │   └── 20260731010000_authentication/
+│   │   │   │   ├── 20260731020000_auth_hardening/
+│   │   │   │   └── 20260731030000_add_exchange_connections/
 │   │   │   └── schema.prisma
 │   │   ├── src/
 │   │   │   ├── audit/
@@ -18,6 +20,12 @@
 │   │   │   ├── credentials/
 │   │   │   ├── database/
 │   │   │   ├── health/
+│   │   │   ├── exchange/
+│   │   │   │   ├── application/
+│   │   │   │   ├── domain/
+│   │   │   │   ├── infrastructure/binance/
+│   │   │   │   ├── infrastructure/okx/
+│   │   │   │   └── presentation/
 │   │   │   ├── redis/
 │   │   │   ├── session/
 │   │   │   └── settings/
@@ -33,6 +41,7 @@
 │       │   │   ├── reset-password/
 │       │   │   ├── security/
 │       │   │   └── settings/
+│       │   │       └── exchanges/
 │       │   ├── components/
 │       │   └── lib/
 │       └── test/
@@ -48,6 +57,5 @@
 └── tsconfig.base.json
 ```
 
-Only modules owned by completed phases are present. Exchange integrations,
-market collectors, AI agents, risk, and trading modules are added only by their
-roadmap phases; empty future directories are not scaffolded.
+Only modules owned by completed phases are present. Market collectors, AI
+agents, risk, and trading modules remain absent until their roadmap phases.

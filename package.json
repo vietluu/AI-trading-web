@@ -16,6 +16,8 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "pretest": "pnpm --filter @platform/shared build",
     "test": "pnpm -r --if-present test",
+    "test:integration": "pnpm --filter @platform/api test:integration",
+    "test:e2e": "pnpm --filter @platform/api test:e2e",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "db:generate": "pnpm --filter @platform/api db:generate",

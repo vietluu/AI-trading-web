@@ -16,4 +16,12 @@ export class AuditService {
   ): Promise<void> {
     await this.repository.create(action, userId, context, metadata);
   }
+
+  async hasConnectionEvent(
+    action: string,
+    userId: string,
+    connectionId: string,
+  ): Promise<boolean> {
+    return this.repository.hasConnectionEvent(action, userId, connectionId);
+  }
 }

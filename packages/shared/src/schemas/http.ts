@@ -20,6 +20,10 @@ export const apiErrorSchema = z.object({
   path: z.string().startsWith("/"),
   message: z.string().min(1),
   error: z.string().min(1),
+  code: z.string().optional(),
+  provider: z.string().optional(),
+  retryable: z.boolean().optional(),
+  correlationId: z.string().optional(),
 });
 
 export type ServiceHealth = z.infer<typeof serviceHealthSchema>;

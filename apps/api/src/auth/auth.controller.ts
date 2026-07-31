@@ -33,11 +33,13 @@ import {
   ForgotPasswordDto,
   LoginDto,
   RegisterDto,
+  ReauthenticateDto,
   ResetPasswordDto,
   TotpCodeDto,
   VerifyEmailDto,
 } from "./auth.dto";
 import { AuthService } from "./auth.service";
+import { RecentAuthService } from "./recent-auth.service";
 
 @ApiTags("authentication")
 @Controller("auth")
@@ -48,6 +50,7 @@ export class AuthController {
     private readonly auth: AuthService,
     private readonly sessions: SessionService,
     private readonly audit: AuditService,
+    private readonly recentAuth: RecentAuthService,
     config: ConfigService,
   ) {
     const domain = config.get<string>("COOKIE_DOMAIN");
@@ -223,6 +226,21 @@ export class AuthController {
   @ApiCookieAuth(SessionService.cookieName)
   beginTotp(@Req() request: AuthenticatedRequest) {
     return this.auth.beginTotpSetup(request.auth.userId);
+  }
+
+  @Post("reauthenticate")
+  @UseGuards(SessionGuard)
+  @ApiCookieAuth(SessionService.cookieName)
+  @HttpCode(HttpStatus.OK)
+  reauthenticate(
+    @Body() dto: ReauthenticateDto,
+    @Req() request: AuthenticatedRequest,
+  ): Promise<{ expiresAt: Date }> {
+    return this.recentAuth.authenticate(
+      request.auth.userId,
+      request.auth.sessionRecordId,
+      dto.password,
+    );
   }
 
   @Post("totp/confirm")

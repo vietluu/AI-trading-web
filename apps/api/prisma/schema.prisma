@@ -11,47 +11,61 @@ enum CredentialProvider {
   OPENAI
   BINANCE
   OKX
+  BINANCE_FUTURES
+  OKX_FUTURES
   NEWS_API
   CUSTOM
 }
 
+enum ExchangeProvider {
+  BINANCE_FUTURES
+  OKX_FUTURES
+}
+
+enum ExchangeEnvironment {
+  TESTNET
+  DEMO
+  PRODUCTION
+}
+
 model User {
-  id           String                @id @default(uuid()) @db.Uuid
-  email        String                @unique
-  username     String                @unique
-  passwordHash String
-  failedLogins Int                   @default(0)
-  lockedUntil  DateTime?
-  emailVerifiedAt DateTime?
-  totpSecret      String?
-  totpEnabledAt   DateTime?
-  createdAt    DateTime              @default(now())
-  updatedAt    DateTime              @updatedAt
-  sessions     Session[]
-  credentials  EncryptedCredential[]
-  setting      UserSetting?
-  auditLogs    AuditLog[]
+  id                  String                @id @default(uuid()) @db.Uuid
+  email               String                @unique
+  username            String                @unique
+  passwordHash        String
+  failedLogins        Int                   @default(0)
+  lockedUntil         DateTime?
+  emailVerifiedAt     DateTime?
+  totpSecret          String?
+  totpEnabledAt       DateTime?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  sessions            Session[]
+  credentials         EncryptedCredential[]
+  setting             UserSetting?
+  auditLogs           AuditLog[]
+  exchangeConnections ExchangeConnection[]
 
   @@map("users")
 }
 
 model Session {
-  id           String   @id @default(uuid()) @db.Uuid
-  userId       String   @db.Uuid
-  sessionId    String   @unique
+  id           String    @id @default(uuid()) @db.Uuid
+  userId       String    @db.Uuid
+  sessionId    String    @unique
   tokenFamily  String
-  generation   Int      @default(0)
+  generation   Int       @default(0)
   csrfHash     String
   fingerprint  String
-  rememberMe   Boolean  @default(false)
+  rememberMe   Boolean   @default(false)
   revokedAt    DateTime?
   rotatedAt    DateTime?
   ip           String?
   userAgent    String?
   expiresAt    DateTime
-  createdAt    DateTime @default(now())
-  lastActivity DateTime @default(now())
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt    DateTime  @default(now())
+  lastActivity DateTime  @default(now())
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([tokenFamily])
@@ -60,21 +74,46 @@ model Session {
 }
 
 model EncryptedCredential {
-  id            String             @id @default(uuid()) @db.Uuid
-  userId        String             @db.Uuid
-  provider      CredentialProvider
-  label         String?
-  encryptedData String
-  lastFour      String
-  status        String             @default("NOT_VERIFIED")
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
-  lastVerified  DateTime?
-  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                 String              @id @default(uuid()) @db.Uuid
+  userId             String              @db.Uuid
+  provider           CredentialProvider
+  label              String?
+  encryptedData      String
+  lastFour           String
+  status             String              @default("NOT_VERIFIED")
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  lastVerified       DateTime?
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exchangeConnection ExchangeConnection?
 
-  @@index([userId])
   @@unique([userId, provider, label])
+  @@index([userId])
   @@map("encrypted_credentials")
+}
+
+model ExchangeConnection {
+  id            String              @id @default(uuid()) @db.Uuid
+  userId        String              @db.Uuid
+  provider      ExchangeProvider
+  environment   ExchangeEnvironment
+  credentialId  String              @unique @db.Uuid
+  displayName   String?
+  isEnabled     Boolean             @default(true)
+  isVerified    Boolean             @default(false)
+  verifiedAt    DateTime?
+  permissions   Json?
+  lastErrorCode String?
+  lastErrorAt   DateTime?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  credential    EncryptedCredential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider, environment])
+  @@index([userId])
+  @@index([provider, environment])
+  @@map("exchange_connections")
 }
 
 model UserSetting {

@@ -7,6 +7,7 @@ import { PasswordPolicyService } from "./password-policy.service";
 import { SensitiveActionGuard } from "./sensitive-action.guard";
 import { TotpService } from "./totp.service";
 import { EmailDeliveryService } from "./email-delivery.service";
+import { RecentAuthService } from "./recent-auth.service";
 
 @Module({
   controllers: [AuthController],
@@ -17,7 +18,13 @@ import { EmailDeliveryService } from "./email-delivery.service";
     TotpService,
     SensitiveActionGuard,
     EmailDeliveryService,
+    RecentAuthService,
   ],
-  exports: [SensitiveActionGuard],
+  exports: [
+    SensitiveActionGuard,
+    RecentAuthService,
+    UserRepository,
+    TotpService,
+  ],
 })
 export class AuthModule {}

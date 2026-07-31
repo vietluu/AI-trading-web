@@ -52,7 +52,7 @@ async function bootstrap(): Promise<void> {
   const swaggerConfig = new DocumentBuilder()
     .setTitle("AI Trading Platform API")
     .setDescription(
-      "Multi-user authentication and secure credential API for the cryptocurrency futures research platform.",
+      "Multi-user authentication, secure credentials, and normalized Binance/OKX futures integration for the cryptocurrency research platform.",
     )
     .setVersion("1.0")
     .addCookieAuth("sid", { type: "apiKey", in: "cookie" })

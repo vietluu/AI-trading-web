@@ -29,9 +29,9 @@ async function request(
 }
 
 function responseCookies(response: Response): string {
-  const values =
-    response.headers.getSetCookie?.() ??
-    [response.headers.get("set-cookie") ?? ""];
+  const values = response.headers.getSetCookie?.() ?? [
+    response.headers.get("set-cookie") ?? "",
+  ];
   return values
     .map((value) => value.split(";")[0] ?? "")
     .filter(Boolean)

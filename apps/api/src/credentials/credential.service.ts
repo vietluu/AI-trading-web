@@ -34,9 +34,9 @@ export class CredentialService {
   ) {}
 
   async list(userId: string): Promise<CredentialView[]> {
-    return (await this.repository.list(userId)).map((credential) =>
-      this.view(credential),
-    );
+    return (await this.repository.list(userId))
+      .filter((credential) => !this.exchangeManaged(credential.provider))
+      .map((credential) => this.view(credential));
   }
 
   async create(
@@ -44,6 +44,11 @@ export class CredentialService {
     dto: CreateCredentialDto,
     context: RequestMetadata,
   ): Promise<CredentialView> {
+    if (this.exchangeManaged(dto.provider)) {
+      throw new BadRequestException(
+        "Use the exchange connection API for futures credentials",
+      );
+    }
     const credential = await this.repository.create({
       userId,
       provider: dto.provider,
@@ -138,8 +143,14 @@ export class CredentialService {
     userId: string,
   ): Promise<EncryptedCredential> {
     const credential = await this.repository.findOwned(id, userId);
-    if (!credential) throw new NotFoundException("Credential not found");
+    if (!credential || this.exchangeManaged(credential.provider)) {
+      throw new NotFoundException("Credential not found");
+    }
     return credential;
+  }
+
+  private exchangeManaged(provider: string): boolean {
+    return provider === "BINANCE_FUTURES" || provider === "OKX_FUTURES";
   }
 
   private secret(

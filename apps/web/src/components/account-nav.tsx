@@ -5,6 +5,7 @@ const links = [
   ["Security", "/security"],
   ["Settings", "/settings"],
   ["API keys", "/api-keys"],
+  ["Exchanges", "/settings/exchanges"],
 ] as const;
 
 export function AccountNav(): React.JSX.Element {
