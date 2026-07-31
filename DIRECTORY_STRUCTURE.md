@@ -2,33 +2,43 @@
 
 ```text
 .
-├── .github/
-│   └── workflows/
-│       └── ci.yml
+├── .github/workflows/ci.yml
 ├── apps/
 │   ├── api/
 │   │   ├── prisma/
 │   │   │   ├── migrations/
+│   │   │   │   ├── 20260731000000_foundation/
+│   │   │   │   └── 20260731010000_authentication/
 │   │   │   └── schema.prisma
 │   │   ├── src/
+│   │   │   ├── audit/
+│   │   │   ├── auth/
 │   │   │   ├── common/
 │   │   │   ├── config/
+│   │   │   ├── credentials/
 │   │   │   ├── database/
 │   │   │   ├── health/
 │   │   │   ├── redis/
-│   │   │   ├── app.module.ts
-│   │   │   └── main.ts
+│   │   │   ├── session/
+│   │   │   └── settings/
 │   │   └── test/
 │   └── web/
 │       ├── src/
 │       │   ├── app/
+│       │   │   ├── api-keys/
+│       │   │   ├── forgot-password/
+│       │   │   ├── login/
+│       │   │   ├── profile/
+│       │   │   ├── register/
+│       │   │   ├── reset-password/
+│       │   │   ├── security/
+│       │   │   └── settings/
 │       │   ├── components/
 │       │   └── lib/
 │       └── test/
 ├── packages/
 │   └── shared/
-│       ├── src/
-│       │   └── schemas/
+│       ├── src/schemas/
 │       └── test/
 ├── .env.example
 ├── docker-compose.yml
@@ -38,6 +48,6 @@
 └── tsconfig.base.json
 ```
 
-Only Phase 1 directories exist. Domain modules and specialized agent packages
-will be added by the roadmap phase that implements and owns them; empty future
-directories are not scaffolded.
+Only modules owned by completed phases are present. Exchange integrations,
+market collectors, AI agents, risk, and trading modules are added only by their
+roadmap phases; empty future directories are not scaffolded.

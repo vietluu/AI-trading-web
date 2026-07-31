@@ -34,10 +34,6 @@ function extractMessage(exception: unknown): string {
     }
   }
 
-  if (exception instanceof Error && exception.message.length > 0) {
-    return exception.message;
-  }
-
   return "An unexpected error occurred";
 }
 
@@ -54,9 +50,9 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         ? exception.getStatus()
         : HttpStatus.INTERNAL_SERVER_ERROR;
     const errorName =
-      exception instanceof Error
+      exception instanceof HttpException
         ? exception.name
-        : String(HttpStatus[statusCode] ?? "Error");
+        : "InternalServerError";
 
     const body: ApiError = {
       statusCode,

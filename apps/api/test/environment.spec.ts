@@ -10,6 +10,8 @@ describe("validateEnvironment", () => {
       DATABASE_URL: "postgresql://user:password@localhost:5432/platform",
       REDIS_URL: "redis://localhost:6379",
       CORS_ORIGINS: "http://localhost:3000, http://127.0.0.1:3000",
+      SESSION_SECRET: "a-secure-test-session-secret-with-32-characters",
+      ENCRYPTION_MASTER_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     });
 
     expect(environment.API_PORT).toBe(3100);
@@ -24,7 +26,22 @@ describe("validateEnvironment", () => {
       validateEnvironment({
         DATABASE_URL: "mysql://localhost/platform",
         REDIS_URL: "redis://localhost:6379",
+        SESSION_SECRET: "a-secure-test-session-secret-with-32-characters",
+        ENCRYPTION_MASTER_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
       }),
     ).toThrow();
+  });
+
+  it("requires secure cookies in production", () => {
+    expect(() =>
+      validateEnvironment({
+        NODE_ENV: "production",
+        DATABASE_URL: "postgresql://user:password@localhost:5432/platform",
+        REDIS_URL: "redis://localhost:6379",
+        SESSION_SECRET: "a-secure-test-session-secret-with-32-characters",
+        ENCRYPTION_MASTER_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        COOKIE_SECURE: "false",
+      }),
+    ).toThrow("COOKIE_SECURE must be true in production");
   });
 });

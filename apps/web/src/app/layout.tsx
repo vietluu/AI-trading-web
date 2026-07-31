@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import type { PropsWithChildren } from "react";
 
 import { QueryProvider } from "@/components/query-provider";
@@ -35,12 +36,12 @@ export default function RootLayout({
                 </div>
               </div>
               <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1 text-xs font-medium text-amber-200">
-                Live trading disabled
+                <Link href="/login">Account</Link> · Live trading disabled
               </span>
             </header>
             <main className="flex-1 py-10">{children}</main>
             <footer className="border-t border-border py-6 text-xs text-muted-foreground">
-              Phase 1 · Project foundation
+              Phase 2 · Secure multi-user authentication
             </footer>
           </div>
         </QueryProvider>

@@ -51,6 +51,73 @@ services:
     ports:
       - "8080:8080"
 
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      API_PORT: 3001
+      DATABASE_URL: postgresql://${POSTGRES_USER:-platform}:${POSTGRES_PASSWORD:-platform_dev}@postgres:5432/${POSTGRES_DB:-crypto_platform}?schema=public
+      REDIS_URL: redis://redis:6379
+      CORS_ORIGINS: http://localhost:3000
+      SESSION_SECRET: ${SESSION_SECRET}
+      SESSION_TTL: ${SESSION_TTL:-86400}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
+      ENCRYPTION_MASTER_KEY: ${ENCRYPTION_MASTER_KEY}
+    ports:
+      - "3001:3001"
+    command:
+      [
+        "sh",
+        "-c",
+        "pnpm --filter @platform/api db:migrate && pnpm --filter @platform/api start",
+      ]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3001/api/health').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:3001}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:3001}
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
 volumes:
   postgres_data:
   redis_data:
