@@ -49,9 +49,15 @@ export default function SettingsPage(): React.JSX.Element {
             .split(",")
             .map((v) => v.trim())
             .filter(Boolean),
-          aiDailyBudget: Number(form.get("aiDailyBudget")),
-          paperTradingBalance: Number(form.get("paperTradingBalance")),
-          defaultLeverage: Number(form.get("defaultLeverage")),
+          aiDailyBudget: formString(form, "aiDailyBudget")
+            ? Number(formString(form, "aiDailyBudget"))
+            : undefined,
+          paperTradingBalance: formString(form, "paperTradingBalance")
+            ? Number(formString(form, "paperTradingBalance"))
+            : undefined,
+          defaultLeverage: formString(form, "defaultLeverage")
+            ? Number(formString(form, "defaultLeverage"))
+            : undefined,
           riskPreference: form.get("riskPreference"),
         }),
       });
