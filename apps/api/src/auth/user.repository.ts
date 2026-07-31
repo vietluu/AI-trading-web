@@ -25,12 +25,18 @@ export class UserRepository {
     return this.prisma.user.findUnique({ where: { id } });
   }
 
-  create(email: string, username: string, passwordHash: string): Promise<User> {
+  create(
+    email: string,
+    username: string,
+    passwordHash: string,
+    emailVerifiedAt: Date | null,
+  ): Promise<User> {
     return this.prisma.user.create({
       data: {
         email: email.toLowerCase(),
         username,
         passwordHash,
+        emailVerifiedAt,
         setting: { create: {} },
       },
     });
@@ -61,6 +67,27 @@ export class UserRepository {
     return this.prisma.user.update({
       where: { id },
       data: { passwordHash, failedLogins: 0, lockedUntil: null },
+    });
+  }
+
+  markEmailVerified(id: string): Promise<User> {
+    return this.prisma.user.update({
+      where: { id },
+      data: { emailVerifiedAt: new Date() },
+    });
+  }
+
+  enableTotp(id: string, totpSecret: string): Promise<User> {
+    return this.prisma.user.update({
+      where: { id },
+      data: { totpSecret, totpEnabledAt: new Date() },
+    });
+  }
+
+  disableTotp(id: string): Promise<User> {
+    return this.prisma.user.update({
+      where: { id },
+      data: { totpSecret: null, totpEnabledAt: null },
     });
   }
 }

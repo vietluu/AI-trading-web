@@ -2,15 +2,27 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import { publicUserSchema } from "@platform/shared";
 
 import { buttonClass, Feedback, Field } from "@/components/form-controls";
-import { apiRequest } from "@/lib/api-client";
+import { apiRequest, apiRequestValidated } from "@/lib/api-client";
 
 export default function LoginPage(): React.JSX.Element {
   const router = useRouter();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void apiRequestValidated("/auth/me", publicUserSchema)
+      .then(() => {
+        if (active) router.replace("/profile");
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [router]);
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     setBusy(true);
@@ -22,6 +34,7 @@ export default function LoginPage(): React.JSX.Element {
         body: JSON.stringify({
           identifier: form.get("identifier"),
           password: form.get("password"),
+          rememberMe: form.get("rememberMe") === "on",
         }),
       });
       router.push("/profile");
@@ -44,6 +57,10 @@ export default function LoginPage(): React.JSX.Element {
       >
         <Field label="Email or username" name="identifier" required />
         <Field label="Password" name="password" type="password" required />
+        <label className="flex items-center gap-2 text-sm text-muted-foreground">
+          <input className="h-4 w-4" name="rememberMe" type="checkbox" />
+          Remember this device for 30 days
+        </label>
         <Feedback error={error} />
         <button className={buttonClass} disabled={busy}>
           {busy ? "Signing in…" : "Sign in"}

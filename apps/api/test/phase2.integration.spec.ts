@@ -12,11 +12,33 @@ async function request(
 ): Promise<Response> {
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
-  if (cookie) headers.set("Cookie", cookie);
+  if (cookie) {
+    headers.set("Cookie", cookie);
+    const csrf = cookie.match(/(?:^|; )csrf_token=([^;]+)/)?.[1];
+    if (
+      csrf &&
+      !["GET", "HEAD", "OPTIONS"].includes((init.method ?? "GET").toUpperCase())
+    ) {
+      headers.set("X-CSRF-Token", csrf);
+    }
+  }
   return fetch(`${apiBaseUrl}${path}`, {
     ...init,
     headers,
   });
+}
+
+function responseCookies(response: Response): string {
+  const values =
+    "getSetCookie" in response.headers
+      ? (
+          response.headers as Headers & { getSetCookie(): string[] }
+        ).getSetCookie()
+      : [response.headers.get("set-cookie") ?? ""];
+  return values
+    .map((value) => value.split(";")[0])
+    .filter(Boolean)
+    .join("; ");
 }
 
 describe.skipIf(!runIntegration)("Phase 2 HTTP integration", () => {
@@ -24,15 +46,16 @@ describe.skipIf(!runIntegration)("Phase 2 HTTP integration", () => {
     const suffix = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
     const email = `integration-${suffix}@example.com`;
     const username = `integration_${suffix}`.slice(0, 32);
-    const password = "integration-password-one";
+    const password = "Strong-Passphrase1!";
 
     const register = await request("/auth/register", {
       method: "POST",
       body: JSON.stringify({ email, username, password }),
     });
     expect(register.status).toBe(201);
-    let cookie = register.headers.get("set-cookie")?.split(";")[0];
-    expect(cookie).toMatch(/^sid=/);
+    let cookie = responseCookies(register);
+    expect(cookie).toContain("sid=");
+    expect(cookie).toContain("csrf_token=");
 
     const me = await request("/auth/me", {}, cookie);
     expect(me.status).toBe(200);
@@ -44,8 +67,8 @@ describe.skipIf(!runIntegration)("Phase 2 HTTP integration", () => {
 
     const refresh = await request("/auth/refresh", { method: "POST" }, cookie);
     expect(refresh.status).toBe(204);
-    const rotatedCookie = refresh.headers.get("set-cookie")?.split(";")[0];
-    expect(rotatedCookie).toMatch(/^sid=/);
+    const rotatedCookie = responseCookies(refresh);
+    expect(rotatedCookie).toContain("sid=");
     expect(rotatedCookie).not.toBe(cookie);
     cookie = rotatedCookie;
 
@@ -124,7 +147,7 @@ describe.skipIf(!runIntegration)("Phase 2 HTTP integration", () => {
       body: JSON.stringify({ identifier: email, password }),
     });
     expect(login.status).toBe(200);
-    const loginCookie = login.headers.get("set-cookie")?.split(";")[0];
+    const loginCookie = responseCookies(login);
     const prisma = new PrismaClient();
     try {
       await prisma.session.updateMany({

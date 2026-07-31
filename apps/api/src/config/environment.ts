@@ -25,6 +25,41 @@ const environmentSchema = z
       .min(300)
       .max(2_592_000)
       .default(86_400),
+    REMEMBER_ME_TTL: z.coerce
+      .number()
+      .int()
+      .min(86_400)
+      .max(7_776_000)
+      .default(2_592_000),
+    SESSION_FINGERPRINT_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((value) => value === "true"),
+    SESSION_FINGERPRINT_BIND_IP: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
+    EMAIL_VERIFICATION_ENABLED: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
+    WEB_APP_URL: z.string().url().default("http://localhost:3000"),
+    AUTH_EMAIL_WEBHOOK_URL: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z.string().url().optional(),
+    ),
+    AUTH_EMAIL_WEBHOOK_SECRET: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z.string().min(16).optional(),
+    ),
+    PASSWORD_BREACH_CHECK_ENABLED: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
+    TOTP_REQUIRED_FOR_SENSITIVE_ACTIONS: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
     COOKIE_SECURE: z
       .enum(["true", "false"])
       .default("false")
@@ -58,6 +93,18 @@ const environmentSchema = z
         code: z.ZodIssueCode.custom,
         message: "COOKIE_SECURE must be true in production",
         path: ["COOKIE_SECURE"],
+      });
+    }
+    if (
+      environment.EMAIL_VERIFICATION_ENABLED &&
+      (!environment.AUTH_EMAIL_WEBHOOK_URL ||
+        !environment.AUTH_EMAIL_WEBHOOK_SECRET)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Email verification requires AUTH_EMAIL_WEBHOOK_URL and AUTH_EMAIL_WEBHOOK_SECRET",
+        path: ["EMAIL_VERIFICATION_ENABLED"],
       });
     }
   });

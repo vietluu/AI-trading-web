@@ -1,6 +1,8 @@
 import { ApiProperty } from "@nestjs/swagger";
 import {
+  IsBoolean,
   IsEmail,
+  IsOptional,
   IsString,
   Length,
   Matches,
@@ -37,6 +39,28 @@ export class LoginDto {
   @IsString()
   @MaxLength(128)
   password!: string;
+
+  @IsOptional()
+  @IsBoolean()
+  rememberMe?: boolean;
+}
+
+export class VerifyEmailDto {
+  @IsString()
+  @Length(32, 128)
+  token!: string;
+}
+
+export class TotpCodeDto {
+  @IsString()
+  @Matches(/^\d{6}$/)
+  code!: string;
+}
+
+export class DisableTotpDto extends TotpCodeDto {
+  @IsString()
+  @MaxLength(128)
+  currentPassword!: string;
 }
 
 export class ForgotPasswordDto {

@@ -3,6 +3,7 @@ import Link from "next/link";
 import type { PropsWithChildren } from "react";
 
 import { QueryProvider } from "@/components/query-provider";
+import { SessionMonitor } from "@/components/session-monitor";
 
 import "./globals.css";
 
@@ -22,6 +23,7 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <QueryProvider>
+          <SessionMonitor />
           <div className="mx-auto flex min-h-screen max-w-7xl flex-col px-5 sm:px-8">
             <header className="flex h-20 items-center justify-between border-b border-border">
               <div className="flex items-center gap-3">

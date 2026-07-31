@@ -46,6 +46,15 @@ export default function ProfilePage(): React.JSX.Element {
             <p>{user.data.username}</p>
           </div>
           <div>
+            <p className="text-xs text-muted-foreground">Security</p>
+            <p>
+              {user.data.emailVerified
+                ? "Email verified"
+                : "Email not verified"}{" "}
+              · {user.data.totpEnabled ? "2FA enabled" : "2FA not enabled"}
+            </p>
+          </div>
+          <div>
             <p className="text-xs text-muted-foreground">Email</p>
             <p>{user.data.email}</p>
           </div>

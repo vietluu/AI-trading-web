@@ -34,4 +34,20 @@ describe("apiRequest", () => {
       apiRequestValidated("/auth/me", z.object({ id: z.string().uuid() })),
     ).rejects.toThrow();
   });
+
+  it("adds the double-submit CSRF token to mutation requests", async () => {
+    Object.defineProperty(document, "cookie", {
+      configurable: true,
+      value: "csrf_token=test-csrf-token",
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await apiRequest("/auth/logout", { method: "POST" });
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(new Headers(request.headers).get("X-CSRF-Token")).toBe(
+      "test-csrf-token",
+    );
+  });
 });
