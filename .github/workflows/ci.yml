@@ -44,6 +44,10 @@ jobs:
       REDIS_URL: redis://localhost:6379
       CORS_ORIGINS: http://localhost:3000
       NEXT_PUBLIC_API_BASE_URL: http://localhost:3001
+      SESSION_SECRET: ci-only-session-secret-with-at-least-32-characters
+      SESSION_TTL: 3600
+      COOKIE_SECURE: "false"
+      ENCRYPTION_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
 
     steps:
       - name: Checkout
@@ -80,3 +84,20 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Start API for integration tests
+        run: |
+          pnpm --filter @platform/api start > api.log 2>&1 &
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:3001/api/health > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat api.log
+          exit 1
+
+      - name: HTTP integration tests
+        env:
+          RUN_INTEGRATION_TESTS: "true"
+        run: pnpm --filter @platform/api test

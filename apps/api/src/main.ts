@@ -52,9 +52,10 @@ async function bootstrap(): Promise<void> {
   const swaggerConfig = new DocumentBuilder()
     .setTitle("AI Trading Platform API")
     .setDescription(
-      "Foundation API for the cryptocurrency futures research platform.",
+      "Multi-user authentication and secure credential API for the cryptocurrency futures research platform.",
     )
     .setVersion("1.0")
+    .addCookieAuth("sid", { type: "apiKey", in: "cookie" })
     .build();
   const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup("docs", app, swaggerDocument, {

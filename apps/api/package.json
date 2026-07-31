@@ -21,6 +21,7 @@
     "@nestjs/swagger": "^11.2.0",
     "@platform/shared": "workspace:*",
     "@prisma/client": "^6.12.0",
+    "argon2": "^0.41.1",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
     "ioredis": "^5.6.1",

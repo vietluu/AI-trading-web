@@ -40,4 +40,38 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   async checkConnection(): Promise<void> {
     await this.client.ping();
   }
+
+  async get(key: string): Promise<string | null> {
+    return this.client.get(key);
+  }
+
+  async getAndDelete(key: string): Promise<string | null> {
+    return this.client.getdel(key);
+  }
+
+  async setWithTtl(
+    key: string,
+    value: string,
+    ttlSeconds: number,
+  ): Promise<void> {
+    await this.client.set(key, value, "EX", ttlSeconds);
+  }
+
+  async delete(...keys: string[]): Promise<void> {
+    if (keys.length > 0) {
+      await this.client.del(...keys);
+    }
+  }
+
+  async expire(key: string, ttlSeconds: number): Promise<boolean> {
+    return (await this.client.expire(key, ttlSeconds)) === 1;
+  }
+
+  async incrementWithTtl(key: string, ttlSeconds: number): Promise<number> {
+    const transaction = this.client.multi().incr(key).expire(key, ttlSeconds);
+    const results = await transaction.exec();
+    const count = results?.[0]?.[1];
+    if (typeof count !== "number") throw new Error("Redis counter failed");
+    return count;
+  }
 }
