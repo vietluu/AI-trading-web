@@ -30,13 +30,10 @@ async function request(
 
 function responseCookies(response: Response): string {
   const values =
-    "getSetCookie" in response.headers
-      ? (
-          response.headers as Headers & { getSetCookie(): string[] }
-        ).getSetCookie()
-      : [response.headers.get("set-cookie") ?? ""];
+    response.headers.getSetCookie?.() ??
+    [response.headers.get("set-cookie") ?? ""];
   return values
-    .map((value) => value.split(";")[0])
+    .map((value) => value.split(";")[0] ?? "")
     .filter(Boolean)
     .join("; ");
 }
