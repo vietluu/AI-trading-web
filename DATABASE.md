@@ -1,4 +1,18 @@
-# DATABASE
+# Database
+
+## Phase 1 state
+
+PostgreSQL is managed through Prisma. The initial `foundation` migration
+establishes migration history without creating domain tables. This keeps Phase
+1 limited to infrastructure and prevents later domains from inheriting
+premature schemas.
+
+The API health check uses Prisma to execute a read-only connectivity probe.
+Adminer is available locally for database inspection.
+
+## Planned domain tables
+
+Each table below is reserved for the roadmap phase that owns its domain:
 
 - users
 - settings

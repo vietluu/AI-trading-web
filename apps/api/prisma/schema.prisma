@@ -1,0 +1,11 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Phase 1 establishes Prisma and migration history only.
+// Domain tables are introduced by the roadmap phase that owns each domain.

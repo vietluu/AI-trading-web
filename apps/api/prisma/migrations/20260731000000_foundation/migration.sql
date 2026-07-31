@@ -1,0 +1,2 @@
+-- Phase 1 intentionally creates no domain tables.
+-- Prisma records this migration to establish the platform migration history.
