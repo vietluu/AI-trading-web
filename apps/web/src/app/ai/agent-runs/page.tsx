@@ -80,6 +80,7 @@ export default function AgentRunHistoryPage() {
             <option value="MARKET_ANALYST">MARKET_ANALYST</option>
             <option value="TECHNICAL_ANALYST">TECHNICAL_ANALYST</option>
             <option value="NEWS_ANALYST">NEWS_ANALYST</option>
+            <option value="SENTIMENT_ANALYST">SENTIMENT_ANALYST</option>
           </select>
         </div>
       </div>

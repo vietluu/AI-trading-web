@@ -4,7 +4,7 @@ import type { ToolDefinition } from "../../domain/contracts/tool-definition.cont
 import type { ToolExecutionContext } from "../../domain/contracts/tool-context.contract";
 
 @Injectable()
-export class NewsArticlesListTool implements ToolDefinition<{ limit?: number }, Record<string, unknown>> {
+export class NewsArticlesListTool implements ToolDefinition<{ symbol?: string; lookbackHours?: number; limit?: number }, Record<string, unknown>> {
   public readonly name = "news.articles.list";
   public readonly version = 1;
   public readonly displayName = "List News Articles";
@@ -12,6 +12,8 @@ export class NewsArticlesListTool implements ToolDefinition<{ limit?: number }, 
   public readonly category = "NEWS" as const;
 
   public readonly inputSchema = z.object({
+    symbol: z.enum(["BTC", "ETH"]).optional(),
+    lookbackHours: z.number().int().min(1).max(24).optional().default(6),
     limit: z.number().int().min(1).max(50).optional().default(10),
   });
 
@@ -33,10 +35,12 @@ export class NewsArticlesListTool implements ToolDefinition<{ limit?: number }, 
   public readonly status = "ACTIVE" as const;
   public readonly schemaHash = "hash-news-articles-list-v1";
 
-  public async execute(input: { limit?: number }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
+  public async execute(input: { symbol?: string; lookbackHours?: number; limit?: number }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
     await Promise.resolve();
     return {
       limit: input.limit || 10,
+      symbol: input.symbol,
+      lookbackHours: input.lookbackHours || 6,
       articles: [
         {
           id: "news-1",
@@ -98,7 +102,7 @@ export class NewsArticleGetTool implements ToolDefinition<{ articleId: string },
 }
 
 @Injectable()
-export class NewsHighImportanceListTool implements ToolDefinition<{ minimumImportance?: number }, Record<string, unknown>> {
+export class NewsHighImportanceListTool implements ToolDefinition<{ symbol?: string; lookbackHours?: number; limit?: number; minimumImportance?: number }, Record<string, unknown>> {
   public readonly name = "news.high_importance.list";
   public readonly version = 1;
   public readonly displayName = "List High Importance News";
@@ -106,6 +110,9 @@ export class NewsHighImportanceListTool implements ToolDefinition<{ minimumImpor
   public readonly category = "NEWS" as const;
 
   public readonly inputSchema = z.object({
+    symbol: z.enum(["BTC", "ETH"]).optional(),
+    lookbackHours: z.number().int().min(1).max(24).optional().default(6),
+    limit: z.number().int().min(1).max(50).optional().default(20),
     minimumImportance: z.number().int().min(50).max(100).optional().default(70),
   });
 
@@ -127,9 +134,12 @@ export class NewsHighImportanceListTool implements ToolDefinition<{ minimumImpor
   public readonly status = "ACTIVE" as const;
   public readonly schemaHash = "hash-news-high-importance-list-v1";
 
-  public async execute(input: { minimumImportance?: number }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
+  public async execute(input: { symbol?: string; lookbackHours?: number; limit?: number; minimumImportance?: number }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
     await Promise.resolve();
     return {
+      symbol: input.symbol,
+      lookbackHours: input.lookbackHours || 6,
+      limit: input.limit || 20,
       articles: [
         {
           id: "news-hi-1",
@@ -144,14 +154,17 @@ export class NewsHighImportanceListTool implements ToolDefinition<{ minimumImpor
 }
 
 @Injectable()
-export class SentimentMarketGetTool implements ToolDefinition<Record<string, unknown>, Record<string, unknown>> {
+export class SentimentMarketGetTool implements ToolDefinition<{ symbol?: string; lookbackHours?: number }, Record<string, unknown>> {
   public readonly name = "sentiment.market.get";
   public readonly version = 1;
   public readonly displayName = "Get Market Sentiment";
   public readonly description = "Fetch Crypto Fear and Greed Index score and classification";
   public readonly category = "SENTIMENT" as const;
 
-  public readonly inputSchema = z.object({});
+  public readonly inputSchema = z.object({
+    symbol: z.enum(["BTC", "ETH"]).optional(),
+    lookbackHours: z.number().int().min(1).max(24).optional().default(6),
+  });
 
   public readonly outputSchema = z.object({
     score: z.number(),
@@ -173,12 +186,14 @@ export class SentimentMarketGetTool implements ToolDefinition<Record<string, unk
   public readonly status = "ACTIVE" as const;
   public readonly schemaHash = "hash-sentiment-market-get-v1";
 
-  public async execute(_input: Record<string, unknown>, context: ToolExecutionContext): Promise<Record<string, unknown>> {
+  public async execute(input: { symbol?: string; lookbackHours?: number }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
     await Promise.resolve();
     return {
       score: 68,
       classification: "Greed",
       timestamp: new Date().toISOString(),
+      symbol: input.symbol,
+      lookbackHours: input.lookbackHours || 6,
       invocationId: context.invocationId,
     };
   }
@@ -236,7 +251,7 @@ export class MacroEventsListTool implements ToolDefinition<{ limit?: number }, R
 }
 
 @Injectable()
-export class SocialPostsListTool implements ToolDefinition<{ symbol?: string; limit?: number }, Record<string, unknown>> {
+export class SocialPostsListTool implements ToolDefinition<{ symbol?: string; lookbackHours?: number; limit?: number }, Record<string, unknown>> {
   public readonly name = "social.posts.list";
   public readonly version = 1;
   public readonly displayName = "List Social Posts";
@@ -244,7 +259,8 @@ export class SocialPostsListTool implements ToolDefinition<{ symbol?: string; li
   public readonly category = "SOCIAL" as const;
 
   public readonly inputSchema = z.object({
-    symbol: z.string().optional().describe("Crypto symbol filter"),
+    symbol: z.enum(["BTC", "ETH"]).optional().describe("Crypto symbol filter"),
+    lookbackHours: z.number().int().min(1).max(24).optional().default(6),
     limit: z.number().int().min(1).max(50).optional().default(10),
   });
 
@@ -266,10 +282,11 @@ export class SocialPostsListTool implements ToolDefinition<{ symbol?: string; li
   public readonly status = "ACTIVE" as const;
   public readonly schemaHash = "hash-social-posts-list-v1";
 
-  public async execute(input: { symbol?: string; limit?: number }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
+  public async execute(input: { symbol?: string; lookbackHours?: number; limit?: number }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
     await Promise.resolve();
     return {
-      symbol: input.symbol || "BTC-USDT",
+      symbol: input.symbol || "BTC",
+      lookbackHours: input.lookbackHours || 6,
       posts: [
         {
           id: "post-1",

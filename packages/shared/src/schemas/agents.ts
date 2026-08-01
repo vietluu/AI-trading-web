@@ -4,6 +4,7 @@ export const AgentTypeSchema = z.enum([
   'MARKET_ANALYST',
   'TECHNICAL_ANALYST',
   'NEWS_ANALYST',
+  'SENTIMENT_ANALYST',
   'SOCIAL_ANALYST',
   'MACRO_ANALYST',
   'ON_CHAIN_ANALYST',
@@ -287,6 +288,84 @@ export const TechnicalAgentOutputSchema = z
   })
   .strict();
 export type TechnicalAgentOutput = z.infer<typeof TechnicalAgentOutputSchema>;
+
+
+export const NewsSentimentInputSchema = z
+  .object({
+    symbol: z.enum(['BTC', 'ETH']).optional(),
+    lookbackHours: z.number().int().min(1).max(24).default(6),
+    maxItems: z.number().int().min(1).max(50).default(20),
+  })
+  .strict();
+export type NewsSentimentInput = z.infer<typeof NewsSentimentInputSchema>;
+
+export const NewsAgentToolNameSchema = z.enum([
+  'news.articles.list',
+  'news.article.get',
+  'news.high_importance.list',
+]);
+
+export const NewsAgentOutputSchema = z
+  .object({
+    summary: z.string().min(1),
+    impact: z
+      .object({
+        level: z.enum(['LOW', 'MEDIUM', 'HIGH']),
+        direction: z.enum(['POSITIVE', 'NEGATIVE', 'NEUTRAL']),
+      })
+      .strict(),
+    keyEvents: z.array(
+      z
+        .object({
+          title: z.string().min(1),
+          impact: z.enum(['POSITIVE', 'NEGATIVE', 'NEUTRAL']),
+          importance: z.number().min(0).max(100),
+        })
+        .strict(),
+    ),
+    themes: z.array(z.string()),
+    riskSignals: z.array(z.string()),
+    dataQuality: z.enum(['GOOD', 'PARTIAL', 'INSUFFICIENT']),
+    usedTools: z.array(NewsAgentToolNameSchema).max(3),
+    generatedAt: z.string().datetime(),
+  })
+  .strict();
+export type NewsAgentOutput = z.infer<typeof NewsAgentOutputSchema>;
+
+export const SentimentAgentToolNameSchema = z.enum([
+  'sentiment.market.get',
+  'social.posts.list',
+]);
+
+export const SentimentAgentOutputSchema = z
+  .object({
+    summary: z.string().min(1),
+    sentiment: z
+      .object({
+        overall: z.enum(['BULLISH', 'BEARISH', 'NEUTRAL']),
+        intensity: z.enum(['LOW', 'MEDIUM', 'HIGH']),
+      })
+      .strict(),
+    crowdBehavior: z
+      .object({
+        fomo: z.boolean(),
+        panic: z.boolean(),
+        euphoria: z.boolean(),
+      })
+      .strict(),
+    sources: z
+      .object({
+        social: z.string().optional(),
+        marketSentimentIndex: z.string().optional(),
+      })
+      .strict(),
+    anomalies: z.array(z.string()),
+    dataQuality: z.enum(['GOOD', 'PARTIAL', 'INSUFFICIENT']),
+    usedTools: z.array(SentimentAgentToolNameSchema).max(2),
+    generatedAt: z.string().datetime(),
+  })
+  .strict();
+export type SentimentAgentOutput = z.infer<typeof SentimentAgentOutputSchema>;
 
 export const AgentRunFilterDtoSchema = z.object({
   agentType: AgentTypeSchema.optional(),
