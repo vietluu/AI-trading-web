@@ -8,7 +8,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY packages/shared/package.json packages/shared/package.json
-RUN pnpm install --filter @platform/api... --frozen-lockfile --ignore-scripts
+RUN pnpm install --filter @platform/api... --no-frozen-lockfile --ignore-scripts
 COPY packages/shared packages/shared
 COPY apps/api apps/api
 RUN pnpm --filter @platform/api exec prisma generate
