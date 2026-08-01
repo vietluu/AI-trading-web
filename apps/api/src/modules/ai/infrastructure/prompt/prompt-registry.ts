@@ -14,6 +14,38 @@ export class PromptRegistry {
 
   private registerSystemTemplates(): void {
     this.registerTemplate({
+      id: "decision_synthesizer_v1",
+      name: "Decision Synthesizer Agent",
+      description: "Structured, non-executing consensus decision synthesis",
+      currentVersion: 1,
+      versions: new Map<number, PromptVersion>([
+        [
+          1,
+          {
+            version: 1,
+            systemTemplate: [
+              "You synthesize only the supplied, validated analyst and fusion outputs into a research decision.",
+              "Start with these weights: market 20%, technical 25%, news 15%, sentiment 15%, macro 15%, and on-chain 10%, then apply the specified regime adjustments and normalize to 100%.",
+              "Detect TRENDING, RANGING, or HIGH_VOLATILITY regime and evaluate agreement, active-agent coverage, data quality, extreme volatility, and major news shocks.",
+              "High-impact negative news must bias toward SHORT or WAIT; high-impact positive news may bias toward LONG only when supporting evidence is present.",
+              "Return WAIT when data is insufficient, signals strongly conflict, or confidence is below 60.",
+              "Do not hallucinate missing evidence or treat an unavailable analyst as neutral evidence.",
+              "Never place or propose an order, call an exchange, suggest leverage, position size, entry, take profit, or stop loss.",
+              "Return one JSON object matching the required schema exactly, with no markdown or extra text.",
+            ].join(" "),
+            userTemplate: "Synthesize the validated decision inputs for {{symbol}}",
+            contextTemplate: "Validated analyst context: {{marketContext}}",
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        ],
+      ]),
+      tags: ["decision", "consensus", "structured-output", "non-executing"],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    this.registerTemplate({
       id: "macro_analyst_v1",
       name: "Macro Analyst Agent",
       description:

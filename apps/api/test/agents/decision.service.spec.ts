@@ -1,0 +1,208 @@
+import { describe, expect, it, vi } from 'vitest';
+import {
+  DecisionOutputSchema,
+  type DecisionInput,
+  type FusionInput,
+  type FusionOutput,
+} from '@platform/shared';
+import { DecisionService } from '../../src/modules/agents/application/services/decision.service';
+import { FusionService } from '../../src/modules/agents/application/services/fusion.service';
+import { DECISION_SYNTHESIZER_DEFINITION } from '../../src/modules/agents/domain/definitions/decision-synthesizer.definition';
+import { AgentInvocationSource, AgentType } from '../../src/modules/agents/domain/enums';
+import { PromptRegistry } from '../../src/modules/ai/infrastructure/prompt/prompt-registry';
+
+function fixture(): { analyses: FusionInput; fusionOutput: FusionOutput } {
+  const generatedAt = new Date().toISOString();
+  const analyses: FusionInput = {
+    market: {
+      summary: 'Market trend is rising.',
+      trend: { direction: 'UP', strength: 'STRONG' },
+      volatility: { level: 'MEDIUM' },
+      liquidity: {}, derivatives: {}, anomalies: [], dataQuality: 'GOOD',
+      usedTools: ['market.ticker.get'], generatedAt,
+    },
+    technical: {
+      summary: 'Technical structure is bullish.',
+      trend: { direction: 'UP', strength: 'STRONG' },
+      momentum: { rsi: '58', rsiState: 'NEUTRAL', macd: { trend: 'BULLISH' } },
+      movingAverages: { alignment: 'BULLISH', pricePosition: 'ABOVE' },
+      volatility: { bollinger: { position: 'MIDDLE', squeeze: false } },
+      structure: { marketStructure: 'HH_HL' }, divergence: {}, signals: [],
+      dataQuality: 'GOOD', usedTools: ['market.indicators.get'], generatedAt,
+    },
+    news: {
+      summary: 'News flow is constructive.',
+      impact: { level: 'MEDIUM', direction: 'POSITIVE' }, keyEvents: [], themes: [],
+      riskSignals: [], dataQuality: 'GOOD', usedTools: ['news.articles.list'], generatedAt,
+    },
+    sentiment: {
+      summary: 'Sentiment is bullish.',
+      sentiment: { overall: 'BULLISH', intensity: 'MEDIUM' },
+      crowdBehavior: { fomo: false, panic: false, euphoria: false }, sources: {},
+      anomalies: [], dataQuality: 'GOOD', usedTools: ['sentiment.market.get'], generatedAt,
+    },
+    macro: {
+      summary: 'Macro conditions are supportive.', macroTrend: 'RISK_ON', keyEvents: [],
+      riskFactors: ['Policy uncertainty remains elevated.'], dataQuality: 'GOOD', generatedAt,
+    },
+    onchain: {
+      summary: 'Exchange inflows are rising.', activity: 'HIGH',
+      flows: { exchangeInflow: 'Inflow is rising' }, signals: ['Distribution is elevated.'],
+      dataQuality: 'GOOD', generatedAt,
+    },
+  };
+  return {
+    analyses,
+    fusionOutput: {
+      summary: 'Strong bullish majority with an on-chain conflict.',
+      combinedAnalysis: {
+        market: analyses.market.summary, technical: analyses.technical.summary,
+        news: analyses.news.summary, sentiment: analyses.sentiment.summary,
+        macro: analyses.macro.summary, onchain: analyses.onchain.summary,
+      },
+      overallBias: 'BULLISH', confidence: 67,
+      conflicts: ['onchain indicates bearish conditions.'],
+      dataQuality: 'GOOD', generatedAt,
+    },
+  };
+}
+
+function decisionInput(): DecisionInput {
+  const value = fixture();
+  return { symbol: 'BTC-USDT', fusionOutput: value.fusionOutput, ...value.analyses };
+}
+
+describe('DecisionService', () => {
+  it('detects a trending regime and increases technical weight', () => {
+    const output = new DecisionService({} as never).decide(decisionInput());
+
+    expect(DecisionOutputSchema.safeParse(output).success).toBe(true);
+    expect(output.decision).toBe('LONG');
+    expect(output.regime.type).toBe('TRENDING');
+    expect(output.weighting.technical).toBe(30);
+    expect(output.weighting.news).toBe(10);
+    expect(Object.values(output.weighting).reduce((sum, weight) => sum + weight, 0)).toBe(100);
+    expect(output.agreementScore).toBe(83);
+    expect(output.confidence).toBeGreaterThanOrEqual(60);
+    expect(output.signals.bullishFactors).toEqual(expect.arrayContaining([
+      expect.stringContaining('Market (20%)'),
+      expect.stringContaining('Technical (30%)'),
+    ]));
+    expect(output.risks).toContain('Policy uncertainty remains elevated.');
+  });
+
+  it('forces WAIT when confidence is below 60 due to mixed signals', () => {
+    const input = decisionInput();
+    input.sentiment!.sentiment.overall = 'BEARISH';
+    input.news!.impact.direction = 'NEGATIVE';
+    const output = new DecisionService({} as never).decide(input);
+
+    expect(output.decision).toBe('WAIT');
+    expect(output.confidence).toBeLessThan(60);
+    expect(output.conflictLevel).toBe('HIGH');
+    expect(output.risks.some((risk) => risk.toLowerCase().includes('conflict'))).toBe(true);
+  });
+
+  it('forces WAIT for insufficient active data', () => {
+    const input = decisionInput();
+    input.fusionOutput.dataQuality = 'INSUFFICIENT';
+    for (const name of ['market', 'technical', 'news', 'sentiment'] as const) {
+      input[name]!.dataQuality = 'INSUFFICIENT';
+    }
+    const output = new DecisionService({} as never).decide(input);
+
+    expect(output.decision).toBe('WAIT');
+    expect(output.confidence).toBeLessThan(60);
+    expect(output.dataQuality).toBe('INSUFFICIENT');
+    expect(output.overrides).toContain('Insufficient data forced WAIT.');
+  });
+
+  it('reduces confidence in high volatility and detects major news events', () => {
+    const input = decisionInput();
+    const baseline = new DecisionService({} as never).decide(input);
+    input.market!.volatility.level = 'HIGH';
+    input.news!.impact.level = 'HIGH';
+    const output = new DecisionService({} as never).decide(input);
+
+    expect(output.regime.type).toBe('HIGH_VOLATILITY');
+    expect(output.volatilityAdjustment).toBe(-20);
+    expect(output.confidence).toBeLessThan(baseline.confidence);
+    expect(output.risks).toEqual(expect.arrayContaining([
+      'High market volatility is present.',
+      'A major news event may cause abrupt market repricing.',
+    ]));
+  });
+
+  it('uses a high-impact negative news override when bearish evidence supports SHORT', () => {
+    const input = decisionInput();
+    input.market!.trend.direction = 'DOWN';
+    input.technical!.trend.direction = 'DOWN';
+    input.news!.impact = { level: 'HIGH', direction: 'NEGATIVE' };
+    input.sentiment!.sentiment.overall = 'BEARISH';
+    input.macro!.macroTrend = 'RISK_OFF';
+    const output = new DecisionService({} as never).decide(input);
+
+    expect(output.decision).toBe('SHORT');
+    expect(output.overrides).toEqual(expect.arrayContaining([
+      expect.stringContaining('negative news'),
+      expect.stringContaining('toward SHORT'),
+    ]));
+  });
+
+  it('forces WAIT when extreme volatility is detected', () => {
+    const input = decisionInput();
+    input.market!.volatility.level = 'HIGH';
+    input.market!.anomalies = ['Extreme liquidation cascade detected.'];
+    const output = new DecisionService({} as never).decide(input);
+
+    expect(output.decision).toBe('WAIT');
+    expect(output.volatilityAdjustment).toBe(-30);
+    expect(output.overrides).toContain('Extreme volatility forced WAIT.');
+  });
+
+  it('detects a ranging regime and shifts weight from market to technical', () => {
+    const input = decisionInput();
+    input.market!.volatility.level = 'LOW';
+    const output = new DecisionService({} as never).decide(input);
+
+    expect(output.regime.type).toBe('RANGING');
+    expect(output.weighting.market).toBe(15);
+    expect(output.weighting.technical).toBe(30);
+    expect(Object.values(output.weighting).reduce((sum, weight) => sum + weight, 0)).toBe(100);
+  });
+
+  it('runs fusion analysis and decision as one pipeline', async () => {
+    const detailed = fixture();
+    const outputs: Partial<Record<AgentType, unknown>> = {
+      [AgentType.MARKET_ANALYST]: detailed.analyses.market,
+      [AgentType.TECHNICAL_ANALYST]: detailed.analyses.technical,
+      [AgentType.NEWS_ANALYST]: detailed.analyses.news,
+      [AgentType.SENTIMENT_ANALYST]: detailed.analyses.sentiment,
+      [AgentType.MACRO_ANALYST]: detailed.analyses.macro,
+      [AgentType.ON_CHAIN_ANALYST]: detailed.analyses.onchain,
+    };
+    const executeSync = vi.fn().mockImplementation(
+      ({ agentType }: { agentType: AgentType }) => Promise.resolve({ output: outputs[agentType] }),
+    );
+    const service = new DecisionService(new FusionService({ executeSync } as never));
+    const output = await service.run({
+      input: {
+        symbol: 'BTC-USDT', provider: 'BINANCE_FUTURES', interval: '15m',
+        lookbackCandles: 150, lookbackHours: 6, maxItems: 20,
+      },
+      invocationSource: AgentInvocationSource.SYSTEM_TEST,
+    });
+
+    expect(executeSync).toHaveBeenCalledTimes(6);
+    expect(output.decision).toBe('LONG');
+    expect(DecisionOutputSchema.safeParse(output).success).toBe(true);
+  });
+
+  it('registers a bounded, non-executing decision agent prompt', () => {
+    expect(DECISION_SYNTHESIZER_DEFINITION.type).toBe(AgentType.DECISION_SYNTHESIZER);
+    expect(DECISION_SYNTHESIZER_DEFINITION.allowedToolNames).toEqual([]);
+    const prompt = new PromptRegistry().getVersion('decision_synthesizer_v1', 1);
+    expect(prompt?.systemTemplate).toContain('confidence is below 60');
+    expect(prompt?.systemTemplate).toContain('Never place or propose an order');
+  });
+});

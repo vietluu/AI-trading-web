@@ -1,0 +1,92 @@
+import {
+  DecisionInputSchema,
+  DecisionOutputSchema,
+  type DecisionInput,
+  type DecisionOutput,
+} from '@platform/shared';
+import type { AgentDefinition } from '../models/agent-definition.model';
+import {
+  AgentExecutionMode,
+  AgentMemoryMode,
+  AgentStatus,
+  AgentType,
+} from '../enums';
+
+export const DECISION_SYNTHESIZER_DEFINITION: AgentDefinition<
+  DecisionInput,
+  DecisionOutput
+> = {
+  type: AgentType.DECISION_SYNTHESIZER,
+  version: 1,
+  displayName: 'Decision Synthesizer Agent',
+  description:
+    'Synthesizes validated analyst evidence into a non-executing LONG, SHORT, or WAIT research decision.',
+  status: AgentStatus.ACTIVE,
+  executionMode: AgentExecutionMode.SYNCHRONOUS,
+  inputSchema: DecisionInputSchema,
+  outputSchema: DecisionOutputSchema,
+  promptId: 'decision_synthesizer_v1',
+  promptVersion: 1,
+  allowedToolNames: [],
+  requiredCapabilities: [],
+  memoryPolicy: {
+    mode: AgentMemoryMode.NONE,
+    readTypes: [],
+    writeTypes: [],
+    maxItems: 0,
+    persistFinalOutput: false,
+  },
+  contextPolicy: {
+    allowedSections: [],
+    requiredSections: [],
+    maximumAgeSecondsBySection: {},
+    maxItemsBySection: {},
+    includeUserSettings: false,
+    includeOpenPositions: false,
+    includeMemory: false,
+    includePreviousAgentResults: true,
+  },
+  modelPolicy: {
+    requiresToolCalling: false,
+    requiresStructuredOutput: true,
+    defaultTemperature: 0,
+    maximumTemperature: 0,
+    fallbackProviders: ['ANTHROPIC', 'GEMINI', 'OLLAMA'],
+    supportsStreaming: false,
+  },
+  retryPolicy: {
+    maxRetries: 1,
+    baseDelayMs: 500,
+    maxDelayMs: 2_000,
+    retryableErrorCodes: ['AGENT_PROVIDER_UNAVAILABLE', 'AGENT_TIMEOUT'],
+  },
+  timeoutMs: 30_000,
+  maxToolRounds: 0,
+  maxToolCalls: 0,
+  maxInputTokens: 12_000,
+  maxOutputTokens: 2_000,
+  requiresUserContext: false,
+  allowsPublicSystemRun: true,
+  buildInsufficientOutput: (_usedTools, reason) => ({
+    decision: 'WAIT',
+    confidence: 0,
+    reasoning: `A reliable decision could not be produced: ${reason}`,
+    signals: { bullishFactors: [], bearishFactors: [] },
+    risks: ['Decision inputs were unavailable or invalid.'],
+    agreementScore: 0,
+    dataQuality: 'INSUFFICIENT',
+    regime: { type: 'RANGING' },
+    weighting: {
+      market: 20,
+      technical: 25,
+      news: 15,
+      sentiment: 15,
+      macro: 15,
+      onchain: 10,
+    },
+    overrides: ['Insufficient data forced WAIT.'],
+    volatilityAdjustment: 0,
+    conflictLevel: 'LOW',
+    generatedAt: new Date().toISOString(),
+  }),
+};

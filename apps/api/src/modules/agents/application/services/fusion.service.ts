@@ -29,11 +29,22 @@ export interface RunFusionOptions {
   correlationId?: string;
 }
 
+export interface FusionAnalysisResult {
+  analyses: FusionInput;
+  fusionOutput: FusionOutput;
+}
+
 @Injectable()
 export class FusionService {
   constructor(private readonly agentExecutionService: AgentExecutionService) {}
 
   public async run(options: RunFusionOptions): Promise<FusionOutput> {
+    return (await this.runDetailed(options)).fusionOutput;
+  }
+
+  public async runDetailed(
+    options: RunFusionOptions,
+  ): Promise<FusionAnalysisResult> {
     const input = FusionRunInputSchema.parse(options.input);
     const correlationId = options.correlationId ?? randomUUID();
     const assetSymbol = input.symbol.startsWith('ETH') ? 'ETH' : 'BTC';
@@ -122,7 +133,11 @@ export class FusionService {
       });
     }
 
-    return this.fuse(FusionInputSchema.parse(analyses));
+    const parsedAnalyses = FusionInputSchema.parse(analyses);
+    return {
+      analyses: parsedAnalyses,
+      fusionOutput: this.fuse(parsedAnalyses),
+    };
   }
 
   public fuse(rawInput: FusionInput): FusionOutput {
