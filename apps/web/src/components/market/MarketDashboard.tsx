@@ -112,9 +112,9 @@ export function MarketDashboard({
 
   const priceColor = useMemo(() => {
     if (!historicalData.length || !ticker) return "text-white";
-    const lastClose = historicalData[historicalData.length - 1].close;
+    const lastClose = historicalData[historicalData.length - 1]!.close;
     const currentPrice = parseFloat(ticker.lastPrice);
-    return currentPrice >= lastClose ? "text-[#26a69a]" : "text-[#ef5350]";
+    return currentPrice >= parseFloat(lastClose) ? "text-[#26a69a]" : "text-[#ef5350]";
   }, [ticker, historicalData]);
 
   return (
