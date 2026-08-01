@@ -12,7 +12,32 @@ import { MarketRedisCacheService } from "../infrastructure/redis/market-redis-ca
 import { MarketDataRepository } from "../infrastructure/persistence/market-data.repository";
 import { MarketDataConfigService } from "../application/market-data-config.service";
 import { MarketDataService } from "../application/market-data.service";
-import { type ExchangeProvider } from "../../exchange/domain/exchange.types";
+import {
+  ExchangeInterval,
+  ExchangeProvider,
+} from "../../exchange/domain/exchange.types";
+import { DataGapStatus } from "../domain/market-data.enums";
+
+function parseExchangeProvider(value: string): ExchangeProvider {
+  if (Object.values(ExchangeProvider).includes(value as ExchangeProvider)) {
+    return value as ExchangeProvider;
+  }
+  throw new HttpException("provider is invalid", HttpStatus.BAD_REQUEST);
+}
+
+function parseExchangeInterval(value: string): ExchangeInterval {
+  if (Object.values(ExchangeInterval).includes(value as ExchangeInterval)) {
+    return value as ExchangeInterval;
+  }
+  throw new HttpException("interval is invalid", HttpStatus.BAD_REQUEST);
+}
+
+function parseDataGapStatus(value: string): DataGapStatus {
+  if (Object.values(DataGapStatus).includes(value as DataGapStatus)) {
+    return value as DataGapStatus;
+  }
+  throw new HttpException("status is invalid", HttpStatus.BAD_REQUEST);
+}
 
 @ApiTags("Market Data")
 @Controller("market")
@@ -45,7 +70,7 @@ export class MarketDataController {
     @Query("status") status?: string,
   ) {
     return this.repository.getInstruments({
-      ...(provider ? { provider } : {}),
+      ...(provider ? { provider: parseExchangeProvider(provider) } : {}),
       ...(status ? { status } : {}),
     });
   }
@@ -59,7 +84,7 @@ export class MarketDataController {
     @Param("symbol") symbol: string,
   ) {
     const ticker = await this.cache.getTicker(
-      provider as ExchangeProvider,
+      parseExchangeProvider(provider),
       symbol.toUpperCase(),
     );
     if (!ticker) {
@@ -88,9 +113,9 @@ export class MarketDataController {
       throw new HttpException("interval is required", HttpStatus.BAD_REQUEST);
     }
     return this.marketData.getHistoricalCandles({
-      provider,
+      provider: parseExchangeProvider(provider),
       symbol: symbol.toUpperCase(),
-      interval,
+      interval: parseExchangeInterval(interval),
       ...(startTime ? { startTime: new Date(startTime) } : {}),
       ...(endTime ? { endTime: new Date(endTime) } : {}),
       ...(limit ? { limit: Math.min(Number(limit), 1000) } : { limit: 500 }),
@@ -111,9 +136,9 @@ export class MarketDataController {
       throw new HttpException("interval is required", HttpStatus.BAD_REQUEST);
     }
     const snapshot = await this.marketData.getIndicatorSnapshot(
-      provider,
+      parseExchangeProvider(provider),
       symbol.toUpperCase(),
-      interval,
+      parseExchangeInterval(interval),
     );
     if (!snapshot) {
       throw new HttpException("Indicators not available", HttpStatus.NOT_FOUND);
@@ -134,7 +159,7 @@ export class MarketDataController {
     @Query("limit") limit?: string,
   ) {
     return this.repository.getFundingRates({
-      provider,
+      provider: parseExchangeProvider(provider),
       symbol: symbol.toUpperCase(),
       ...(startTime ? { startTime: new Date(startTime) } : {}),
       ...(endTime ? { endTime: new Date(endTime) } : {}),
@@ -155,7 +180,7 @@ export class MarketDataController {
     @Query("limit") limit?: string,
   ) {
     return this.repository.getOpenInterestHistory({
-      provider,
+      provider: parseExchangeProvider(provider),
       symbol: symbol.toUpperCase(),
       ...(startTime ? { startTime: new Date(startTime) } : {}),
       ...(endTime ? { endTime: new Date(endTime) } : {}),
@@ -173,7 +198,7 @@ export class MarketDataController {
   ) {
     const d = depth ? Number(depth) : 20;
     const book = await this.cache.getOrderBook(
-      provider as ExchangeProvider,
+      parseExchangeProvider(provider),
       symbol.toUpperCase(),
       d,
     );
@@ -203,7 +228,7 @@ export class MarketDataController {
   @ApiOperation({ summary: "Get stream status for specific provider" })
   async getProviderStatus(@Param("provider") provider: string) {
     const status = await this.cache.getStreamStatus(
-      provider as ExchangeProvider,
+      parseExchangeProvider(provider),
     );
     return status ?? { provider, state: "UNKNOWN" };
   }
@@ -221,9 +246,9 @@ export class MarketDataController {
     @Query("limit") limit?: string,
   ) {
     return this.repository.getGaps({
-      ...(provider ? { provider } : {}),
+      ...(provider ? { provider: parseExchangeProvider(provider) } : {}),
       ...(symbol ? { symbol } : {}),
-      ...(status ? { status } : {}),
+      ...(status ? { status: parseDataGapStatus(status) } : {}),
       ...(limit ? { limit: Number(limit) } : {}),
     });
   }
@@ -251,7 +276,7 @@ export class MarketDataController {
   @Post("gaps/:id/repair")
   @ApiOperation({ summary: "Trigger a repair job for a specific data gap" })
   async repairGap(@Param("id") id: string) {
-    await this.repository.updateGapStatus(id, "REPAIRING");
+    await this.repository.updateGapStatus(id, DataGapStatus.REPAIRING);
 
     // In full implementation, this triggers a BullMQ worker to fetch missing candles
     return {

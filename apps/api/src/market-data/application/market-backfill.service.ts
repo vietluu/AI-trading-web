@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { MarketDataRepository } from '../infrastructure/persistence/market-data.repository';
 import { MarketDataConfigService } from './market-data-config.service';
+import { DataGapStatus } from '../domain/market-data.enums';
 
 @Injectable()
 export class MarketBackfillService {
@@ -60,6 +61,7 @@ export class MarketBackfillService {
             for (let i = 1; i < recentCandles.length; i++) {
               const prev = recentCandles[i - 1];
               const curr = recentCandles[i];
+              if (!prev || !curr) continue;
               
               const prevOpenTime = prev.openTime.getTime();
               const currOpenTime = curr.openTime.getTime();
@@ -75,8 +77,8 @@ export class MarketBackfillService {
                   symbol,
                   interval,
                   gapStart: expectedNextOpen,
-                  gapEnd: gapEnd,
-                  status: 'DETECTED',
+                  gapEnd,
+                  status: DataGapStatus.DETECTED,
                 });
                 
                 this.logger.warn({

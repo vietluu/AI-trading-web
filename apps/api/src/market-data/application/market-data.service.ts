@@ -234,13 +234,13 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
 
   private async handleOpenInterest(oi: NormalizedOpenInterest): Promise<void> {
     await this.cache.setOpenInterest(oi.provider, oi.symbol, oi);
-    await this.repository.upsertOpenInterest({
-      provider: oi.provider,
-      symbol: oi.symbol,
-      openInterest: oi.openInterest,
-      openInterestValue: oi.openInterestValue,
-      recordedAt: oi.timestamp,
-    });
+      await this.repository.upsertOpenInterest({
+        provider: oi.provider,
+        symbol: oi.symbol,
+        openInterest: oi.openInterest,
+        openInterestValue: oi.openInterestValue,
+        timestamp: oi.timestamp,
+      });
   }
 
   private async flushCandleBuffer(): Promise<void> {

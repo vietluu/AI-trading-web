@@ -1,5 +1,9 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { Prisma, type MarketDataInterval as DbMarketDataInterval } from "@prisma/client";
+import {
+  Prisma,
+  type ExchangeProvider as DbExchangeProvider,
+  type MarketDataInterval as DbMarketDataInterval,
+} from "@prisma/client";
 import { PrismaService } from "../../../database/prisma.service";
 import {
   ExchangeInterval,
@@ -7,10 +11,7 @@ import {
   type ExchangeInstrumentStatus,
   type ExchangeInstrumentType,
 } from "../../../exchange/domain/exchange.types";
-import type {
-  IndicatorStatus,
-  DataGapStatus,
-} from "../../domain/market-data.enums";
+import { IndicatorStatus, DataGapStatus } from "../../domain/market-data.enums";
 import type {
   IndicatorSnapshot,
   NormalizedCandle,
@@ -181,6 +182,10 @@ function toOptionalString(value: Prisma.Decimal | number | string | null): strin
   return value === null ? undefined : value.toString();
 }
 
+function toDomainProvider(value: DbExchangeProvider): ExchangeProvider {
+  return value as ExchangeProvider;
+}
+
 function toInstrumentType(value: string): ExchangeInstrumentType {
   return value === "FUTURE" ? "FUTURE" : "PERPETUAL";
 }
@@ -200,30 +205,36 @@ function toInstrumentStatus(value: string): ExchangeInstrumentStatus {
 function toGapStatus(value: string): DataGapStatus {
   switch (value) {
     case "DETECTED":
+      return DataGapStatus.DETECTED;
     case "REPAIRING":
+      return DataGapStatus.REPAIRING;
     case "REPAIRED":
+      return DataGapStatus.REPAIRED;
     case "FAILED":
+      return DataGapStatus.FAILED;
     case "IGNORED":
-      return value;
+      return DataGapStatus.IGNORED;
     default:
-      return "DETECTED";
+      return DataGapStatus.DETECTED;
   }
 }
 
 function toIndicatorStatus(value: string): IndicatorStatus {
   switch (value) {
     case "CLOSED":
+      return IndicatorStatus.CLOSED;
     case "PROVISIONAL":
+      return IndicatorStatus.PROVISIONAL;
     case "INSUFFICIENT_DATA":
-      return value;
+      return IndicatorStatus.INSUFFICIENT_DATA;
     default:
-      return "CLOSED";
+      return IndicatorStatus.CLOSED;
   }
 }
 
 function mapCandleRow(row: CandleRow): NormalizedCandle {
   return {
-    provider: row.provider,
+    provider: toDomainProvider(row.provider),
     symbol: row.symbol,
     interval: fromDbInterval(row.interval),
     openTime: row.openTime,
@@ -241,7 +252,7 @@ function mapCandleRow(row: CandleRow): NormalizedCandle {
 
 function mapFundingRateRow(row: FundingRateRow): NormalizedFundingRate {
   return {
-    provider: row.provider,
+    provider: toDomainProvider(row.provider),
     symbol: row.symbol,
     fundingRate: toStringValue(row.fundingRate),
     fundingTime: row.fundingTime,
@@ -252,7 +263,7 @@ function mapFundingRateRow(row: FundingRateRow): NormalizedFundingRate {
 
 function mapOpenInterestRow(row: OpenInterestRow): NormalizedOpenInterest {
   return {
-    provider: row.provider,
+    provider: toDomainProvider(row.provider),
     symbol: row.symbol,
     openInterest: toStringValue(row.openInterest),
     openInterestValue: toOptionalString(row.openInterestValue),
@@ -262,7 +273,7 @@ function mapOpenInterestRow(row: OpenInterestRow): NormalizedOpenInterest {
 
 function mapInstrumentRow(row: InstrumentRow): MarketInstrumentView {
   return {
-    provider: row.provider,
+    provider: toDomainProvider(row.provider),
     symbol: row.symbol,
     baseAsset: row.baseAsset,
     quoteAsset: row.quoteAsset,
@@ -286,7 +297,7 @@ function mapInstrumentRow(row: InstrumentRow): MarketInstrumentView {
 function mapGapRow(row: GapRow): MarketDataGapView {
   return {
     id: row.id,
-    provider: row.provider,
+    provider: toDomainProvider(row.provider),
     symbol: row.symbol,
     interval: fromDbInterval(row.interval),
     gapStart: row.gapStart,
@@ -302,7 +313,7 @@ function mapGapRow(row: GapRow): MarketDataGapView {
 function mapIncidentRow(row: IncidentRow): MarketStreamIncidentView {
   return {
     id: row.id,
-    provider: row.provider,
+    provider: toDomainProvider(row.provider),
     symbol: row.symbol,
     code: row.code,
     message: row.message,
@@ -314,7 +325,7 @@ function mapIncidentRow(row: IncidentRow): MarketStreamIncidentView {
 
 function mapSnapshotRow(row: SnapshotRow): IndicatorSnapshot {
   return {
-    provider: row.provider,
+    provider: toDomainProvider(row.provider),
     symbol: row.symbol,
     interval: fromDbInterval(row.interval),
     candleOpenTime: row.candleOpenTime,
@@ -706,7 +717,7 @@ export class MarketDataRepository {
   async getGaps(query?: {
     provider?: ExchangeProvider;
     symbol?: string;
-    status?: string;
+    status?: DataGapStatus;
     limit?: number;
   }): Promise<MarketDataGapView[]> {
     const rows = await this.prisma.marketDataGap.findMany({

@@ -44,7 +44,7 @@ describe("Technical Indicators", () => {
       ];
       const result = calculateEMA(values, 10);
       expect(result).toBeDefined();
-      expect(result!).toBeCloseTo(22.2241, 2);
+      expect(result!).toBeCloseTo(22.2412, 4);
     });
   });
 
