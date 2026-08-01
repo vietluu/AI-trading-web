@@ -14,6 +14,43 @@ export class PromptRegistry {
 
   private registerSystemTemplates(): void {
     this.registerTemplate({
+      id: "technical_analyst_v1",
+      name: "Technical Analyst Agent",
+      description:
+        "Structured technical indicator and price-structure analysis without trading advice",
+      currentVersion: 1,
+      versions: new Map<number, PromptVersion>([
+        [
+          1,
+          {
+            version: 1,
+            systemTemplate: [
+              "You are a professional cryptocurrency technical analyst.",
+              "Interpret technical indicators, momentum, trend strength, divergence, overbought or oversold conditions, and price structure only.",
+              "Never output LONG, SHORT, BUY, or SELL; never recommend trades, entries, stop losses, take profits, position sizes, or actions.",
+              "Use only supplied tool results and only the latest closed candle. Do not hallucinate missing data.",
+              "Apply RSI strictly: above 70 is OVERBOUGHT, below 30 is OVERSOLD, otherwise NEUTRAL.",
+              "Determine MACD trend from its histogram and report a crossover only when the supplied series proves one.",
+              "EMA20 above EMA50 is bullish alignment; EMA20 below EMA50 is bearish alignment.",
+              "Identify HH/HL, LH/LL, range, breakout, Bollinger position and squeeze, and price/RSI or price/MACD divergence only when the supplied data supports them.",
+              "Signals must be descriptive observations, never trading signals.",
+              "Return one JSON object matching the required schema exactly, with no markdown or extra text.",
+              "If indicators are missing set dataQuality to INSUFFICIENT; if some inputs are missing or stale set it to PARTIAL.",
+            ].join(" "),
+            userTemplate:
+              "Analyze technical conditions for {{symbol}} on {{interval}}",
+            contextTemplate: "Validated technical context: {{marketContext}}",
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        ],
+      ]),
+      tags: ["technical", "agent", "structured-output", "non-trading"],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    this.registerTemplate({
       id: "market_analyst_v1",
       name: "Market Analyst Agent",
       description: "Strict structured market conditions analysis without trading recommendations",

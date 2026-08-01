@@ -4,6 +4,7 @@ import { BullModule } from '@nestjs/bullmq';
 // Domain Definitions
 import { SYSTEM_DIAGNOSTIC_DEFINITION } from './domain/definitions/system-diagnostic.definition';
 import { MARKET_ANALYST_DEFINITION } from './domain/definitions/market-analyst.definition';
+import { TECHNICAL_ANALYST_DEFINITION } from './domain/definitions/technical-analyst.definition';
 
 // Infrastructure
 import { AgentRegistryService } from './infrastructure/registry/agent-registry.service';
@@ -96,5 +97,6 @@ export class AgentsModule implements OnModuleInit {
   public onModuleInit() {
     this.agentRegistryService.register(SYSTEM_DIAGNOSTIC_DEFINITION);
     this.agentRegistryService.register(MARKET_ANALYST_DEFINITION);
+    this.agentRegistryService.register(TECHNICAL_ANALYST_DEFINITION);
   }
 }
