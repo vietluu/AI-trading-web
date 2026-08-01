@@ -19,8 +19,8 @@ interface ClientSubscription {
 @WebSocketGateway({
   namespace: '/external-data',
   cors: {
-    origin: process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : '*',
-    credentials: true,
+    origin: process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : false,
+    credentials: Boolean(process.env.CORS_ORIGINS),
   },
 })
 export class ExternalDataGateway
