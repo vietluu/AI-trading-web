@@ -114,7 +114,7 @@ export function MarketDashboard({
     if (!historicalData.length || !ticker) return "text-white";
     const lastClose = historicalData[historicalData.length - 1]!.close;
     const currentPrice = parseFloat(ticker.lastPrice);
-    return currentPrice >= parseFloat(lastClose) ? "text-[#26a69a]" : "text-[#ef5350]";
+    return currentPrice >= Number(lastClose) ? "text-[#26a69a]" : "text-[#ef5350]";
   }, [ticker, historicalData]);
 
   return (
