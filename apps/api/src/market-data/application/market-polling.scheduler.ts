@@ -21,64 +21,51 @@ export class MarketPollingScheduler implements OnModuleInit {
 
     this.logger.log('Registering repeating jobs for market data...');
 
-    // Clear existing repeatable jobs to avoid duplicates on restart
-    const jobs = await this.pollingQueue.getRepeatableJobs();
-    for (const job of jobs) {
-      await this.pollingQueue.removeRepeatableByKey(job.key);
-    }
-
+    // In BullMQ v6, we use upsertJobScheduler for repeatable jobs
     if (config.funding.enabled) {
-      await this.pollingQueue.add(
-        'poll-funding-rate',
-        {},
+      await this.pollingQueue.upsertJobScheduler(
+        'repeat-funding',
+        { every: config.funding.pollIntervalSeconds * 1000 },
         {
-          repeat: {
-            every: config.funding.pollIntervalSeconds * 1000,
-          },
-          removeOnComplete: true,
-          removeOnFail: false,
-          jobId: 'repeat-funding',
-        },
+          name: 'poll-funding-rate',
+          data: {},
+          opts: { removeOnComplete: true, removeOnFail: false },
+        }
       );
     }
 
     if (config.openInterest.enabled) {
-      await this.pollingQueue.add(
-        'poll-open-interest',
-        {},
+      await this.pollingQueue.upsertJobScheduler(
+        'repeat-oi',
+        { every: config.openInterest.pollIntervalSeconds * 1000 },
         {
-          repeat: {
-            every: config.openInterest.pollIntervalSeconds * 1000,
-          },
-          removeOnComplete: true,
-          removeOnFail: false,
-          jobId: 'repeat-oi',
-        },
+          name: 'poll-open-interest',
+          data: {},
+          opts: { removeOnComplete: true, removeOnFail: false },
+        }
       );
     }
 
     // Refresh instruments hourly
-    await this.pollingQueue.add(
-      'refresh-instruments',
-      {},
+    await this.pollingQueue.upsertJobScheduler(
+      'repeat-instruments',
+      { every: 3600000 },
       {
-        repeat: { every: 3600000 },
-        removeOnComplete: true,
-        removeOnFail: false,
-        jobId: 'repeat-instruments',
-      },
+        name: 'refresh-instruments',
+        data: {},
+        opts: { removeOnComplete: true, removeOnFail: false },
+      }
     );
 
     // Candle gap scan every 10 minutes
-    await this.pollingQueue.add(
-      'scan-candle-gaps',
-      {},
+    await this.pollingQueue.upsertJobScheduler(
+      'repeat-gap-scan',
+      { every: 600000 },
       {
-        repeat: { every: 600000 },
-        removeOnComplete: true,
-        removeOnFail: false,
-        jobId: 'repeat-gap-scan',
-      },
+        name: 'scan-candle-gaps',
+        data: {},
+        opts: { removeOnComplete: true, removeOnFail: false },
+      }
     );
   }
 }
