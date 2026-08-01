@@ -79,9 +79,7 @@ export class ExternalDataGateway
       data,
     };
 
-    // Broadcast to room matching channel name
-    this.server.emit(channel, message);
-
+    // Note: per-socket emits below enforce filters; avoid broadcasting raw channel events globally.
     // Also check filtered subscriptions per connected client
     for (const [clientId, subs] of this.clientSubscriptions.entries()) {
       const socket = this.server.sockets.sockets.get(clientId);
