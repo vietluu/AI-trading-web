@@ -292,6 +292,10 @@ const environmentSchema = z
       .string()
       .url()
       .default("wss://ws.okx.com:8443/ws/v5/public"),
+    OKX_WS_BUSINESS_URL: z
+      .string()
+      .url()
+      .default("wss://ws.okx.com:8443/ws/v5/business"),
     // Phase 6.1: AI Infrastructure
     OPENAI_API_KEY: z.string().optional(),
     ANTHROPIC_API_KEY: z.string().optional(),
