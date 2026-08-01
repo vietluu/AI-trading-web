@@ -25,8 +25,8 @@ export default function RootLayout({
         <QueryProvider>
           <SessionMonitor />
           <div className="mx-auto flex min-h-screen max-w-7xl flex-col px-5 sm:px-8">
-            <header className="flex h-20 items-center justify-between border-b border-border">
-              <div className="flex items-center gap-3">
+            <header className="flex min-h-20 flex-wrap items-center justify-between gap-4 border-b border-border py-4">
+              <Link className="flex items-center gap-3" href="/">
                 <div className="grid h-9 w-9 place-items-center rounded-xl bg-primary text-sm font-black text-primary-foreground">
                   AX
                 </div>
@@ -36,14 +36,43 @@ export default function RootLayout({
                     Multi-agent futures intelligence
                   </p>
                 </div>
-              </div>
-              <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1 text-xs font-medium text-amber-200">
-                <Link href="/login">Account</Link> · Live trading disabled
-              </span>
+              </Link>
+              <nav className="flex flex-wrap items-center gap-1 text-sm">
+                <Link className="rounded-lg px-3 py-2 hover:bg-muted" href="/">
+                  Dashboard
+                </Link>
+                <Link
+                  className="rounded-lg px-3 py-2 hover:bg-muted"
+                  href="/market"
+                >
+                  Market
+                </Link>
+                <Link
+                  className="rounded-lg px-3 py-2 hover:bg-muted"
+                  href="/settings/exchanges"
+                >
+                  Exchanges
+                </Link>
+                <Link
+                  className="rounded-lg px-3 py-2 hover:bg-muted"
+                  href="/settings"
+                >
+                  Settings
+                </Link>
+                <Link
+                  className="rounded-lg px-3 py-2 hover:bg-muted"
+                  href="/profile"
+                >
+                  Account
+                </Link>
+                <span className="ml-1 rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-xs font-medium text-amber-200">
+                  Live trading disabled
+                </span>
+              </nav>
             </header>
             <main className="flex-1 py-10">{children}</main>
             <footer className="border-t border-border py-6 text-xs text-muted-foreground">
-              Phase 3 · Secure futures exchange integration
+              Phase 4 · Realtime market-data research
             </footer>
           </div>
         </QueryProvider>

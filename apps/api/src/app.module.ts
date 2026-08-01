@@ -9,6 +9,7 @@ import { CredentialModule } from "./credentials/credential.module";
 import { DatabaseModule } from "./database/database.module";
 import { HealthModule } from "./health/health.module";
 import { ExchangeModule } from "./exchange/exchange.module";
+import { MarketDataModule } from "./market-data/market-data.module";
 import { RedisModule } from "./redis/redis.module";
 import { SessionModule } from "./session/session.module";
 import { SettingsModule } from "./settings/settings.module";
@@ -33,6 +34,7 @@ import { SettingsModule } from "./settings/settings.module";
     CredentialModule,
     SettingsModule,
     ExchangeModule,
+    MarketDataModule,
   ],
 })
 export class AppModule {}

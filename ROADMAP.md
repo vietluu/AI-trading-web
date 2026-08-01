@@ -24,7 +24,16 @@
 ------------------------------------------------
 
 ## Phase 4: Market Data Collector
-- **Status: [ ]**
+- [x] Integrate Binance Futures public WebSocket
+- [x] Integrate OKX Futures public WebSocket
+- [x] Implement Market Event Bus
+- [x] Maintain latest market snapshot in Redis
+- [x] Calculate deterministic technical indicators (SMA, EMA, RSI, MACD, etc.)
+- [x] Persist historical candles with configurable retention
+- [x] Implement data gap detection and backfill CLI
+- [x] Build application WebSocket gateway for frontend
+- [x] Create realtime market data dashboard UI using Lightweight Charts
+- **Status: [x]**
 
 ------------------------------------------------
 
