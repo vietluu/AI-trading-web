@@ -1,9 +1,9 @@
 "use client";
 
 import React, { useEffect, useState, useMemo } from "react";
-import io, { Socket } from "socket.io-client";
+import io from "socket.io-client";
 import { TradingChart } from "./TradingChart";
-import { CandlestickData, Time } from "lightweight-charts";
+import type { CandlestickData, Time } from "lightweight-charts";
 import { Loader2 } from "lucide-react";
 
 interface TickerData {
@@ -14,6 +14,19 @@ interface TickerData {
   volume24h: string;
   high24h: string;
   low24h: string;
+}
+
+interface RawCandle {
+  openTime: string | number | Date;
+  open: string | number;
+  high: string | number;
+  low: string | number;
+  close: string | number;
+}
+
+interface SocketCandleEvent extends RawCandle {
+  symbol: string;
+  interval: string;
 }
 
 interface MarketDashboardProps {
@@ -27,13 +40,12 @@ export function MarketDashboard({
   defaultSymbol = "BTC-USDT",
   defaultInterval = "1h",
 }: MarketDashboardProps) {
-  const [socket, setSocket] = useState<Socket | null>(null);
   const [ticker, setTicker] = useState<TickerData | null>(null);
   const [historicalData, setHistoricalData] = useState<CandlestickData[]>([]);
   const [realtimeCandle, setRealtimeCandle] = useState<CandlestickData | undefined>();
   const [isConnected, setIsConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [symbol, setSymbol] = useState(defaultSymbol);
+  const [symbol] = useState(defaultSymbol);
 
   // Fetch historical candles initially
   useEffect(() => {
@@ -44,14 +56,14 @@ export function MarketDashboard({
           `${apiBaseUrl}/api/market/candles/BINANCE_FUTURES/${symbol}?interval=${defaultInterval}&limit=500`
         );
         if (!res.ok) throw new Error("Failed to fetch historical data");
-        const data = await res.json();
+        const data = (await res.json()) as RawCandle[];
         
-        const formattedData: CandlestickData[] = data.map((d: any) => ({
+        const formattedData: CandlestickData[] = data.map((d: RawCandle) => ({
           time: (new Date(d.openTime).getTime() / 1000) as Time,
-          open: parseFloat(d.open),
-          high: parseFloat(d.high),
-          low: parseFloat(d.low),
-          close: parseFloat(d.close),
+          open: Number(d.open),
+          high: Number(d.high),
+          low: Number(d.low),
+          close: Number(d.close),
         }));
         setHistoricalData(formattedData);
       } catch (error) {
@@ -60,7 +72,7 @@ export function MarketDashboard({
         setIsLoading(false);
       }
     }
-    fetchHistoricalData();
+    void fetchHistoricalData();
   }, [symbol, defaultInterval, apiBaseUrl]);
 
   // Handle WebSocket connection
@@ -83,25 +95,23 @@ export function MarketDashboard({
       setIsConnected(false);
     });
 
-    newSocket.on("ticker", (data: any) => {
+    newSocket.on("ticker", (data: TickerData) => {
       if (data.symbol === symbol) {
         setTicker(data);
       }
     });
 
-    newSocket.on("candle", (data: any) => {
+    newSocket.on("candle", (data: SocketCandleEvent) => {
       if (data.symbol === symbol && data.interval === defaultInterval) {
         setRealtimeCandle({
           time: (new Date(data.openTime).getTime() / 1000) as Time,
-          open: parseFloat(data.open),
-          high: parseFloat(data.high),
-          low: parseFloat(data.low),
-          close: parseFloat(data.close),
+          open: Number(data.open),
+          high: Number(data.high),
+          low: Number(data.low),
+          close: Number(data.close),
         });
       }
     });
-
-    setSocket(newSocket);
 
     return () => {
       newSocket.emit("unsubscribe", { channel: "ticker", symbol });
