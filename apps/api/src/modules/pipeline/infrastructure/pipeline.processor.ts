@@ -3,11 +3,12 @@ import { Logger } from '@nestjs/common';
 import { Job, Queue } from 'bullmq';
 import type { PipelineJob } from './pipeline-queue.service';
 import { PipelineRunnerService } from '../application/pipeline-runner.service';
+import { PIPELINE_DEAD_LETTER_QUEUE_NAME, PIPELINE_RUN_QUEUE_NAME } from './pipeline-queue.constants';
 
-@Processor('pipeline:run', { concurrency: 5 })
+@Processor(PIPELINE_RUN_QUEUE_NAME, { concurrency: 5 })
 export class PipelineProcessor extends WorkerHost {
   private readonly logger = new Logger(PipelineProcessor.name);
-  constructor(private readonly runner: PipelineRunnerService, @InjectQueue('pipeline:dead-letter') private readonly deadLetter: Queue) { super(); }
+  constructor(private readonly runner: PipelineRunnerService, @InjectQueue(PIPELINE_DEAD_LETTER_QUEUE_NAME) private readonly deadLetter: Queue) { super(); }
   process(job: Job<PipelineJob>) { return this.runner.run(job.data); }
   @OnWorkerEvent('failed')
   async failed(job: Job<PipelineJob> | undefined, error: Error) {

@@ -3,10 +3,11 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { RedisService } from '../../../redis/redis.service';
 import { PipelineRepository } from './pipeline.repository';
+import { PIPELINE_RUN_QUEUE_NAME } from './pipeline-queue.constants';
 
 @Injectable()
 export class PipelineCancellationService {
-  constructor(@InjectQueue('pipeline:run') private readonly queue: Queue, private readonly redis: RedisService, private readonly repository: PipelineRepository) {}
+  constructor(@InjectQueue(PIPELINE_RUN_QUEUE_NAME) private readonly queue: Queue, private readonly redis: RedisService, private readonly repository: PipelineRepository) {}
   async request(runId: string, userId: string): Promise<boolean> {
     const run = await this.repository.findRun(runId, userId);
     if (!run || ['COMPLETED', 'FAILED', 'CANCELLED', 'TIMEOUT', 'SKIPPED'].includes(run.status)) return false;

@@ -3,6 +3,7 @@ import { cronMatches, validateCron } from '../../src/modules/pipeline/domain/cro
 import { pipelineSkipReason } from '../../src/modules/pipeline/domain/rate-limit';
 import { FULL_ANALYSIS_DECISION } from '../../src/modules/pipeline/domain/pipeline.definition';
 import { PipelineThresholdService } from '../../src/modules/pipeline/application/pipeline-threshold.service';
+import { PIPELINE_DEAD_LETTER_QUEUE_NAME, PIPELINE_RETRY_QUEUE_NAME, PIPELINE_RUN_QUEUE_NAME } from '../../src/modules/pipeline/infrastructure/pipeline-queue.constants';
 
 describe('Phase 6.6 pipeline runtime policies', () => {
   it('validates and matches five-field cron expressions in the requested timezone', () => {
@@ -31,5 +32,14 @@ describe('Phase 6.6 pipeline runtime policies', () => {
   it('uses bounded exponential retry settings for safe research jobs', () => {
     expect(FULL_ANALYSIS_DECISION.retryPolicy).toEqual({ attempts: 2, backoffMs: 5000 });
     expect(FULL_ANALYSIS_DECISION.steps.at(-1)?.type).toBe('DECISION');
+  });
+
+  it('uses BullMQ-safe pipeline queue names', () => {
+    expect([PIPELINE_RUN_QUEUE_NAME, PIPELINE_RETRY_QUEUE_NAME, PIPELINE_DEAD_LETTER_QUEUE_NAME]).toEqual([
+      'pipeline-run',
+      'pipeline-retry',
+      'pipeline-dead-letter',
+    ]);
+    expect([PIPELINE_RUN_QUEUE_NAME, PIPELINE_RETRY_QUEUE_NAME, PIPELINE_DEAD_LETTER_QUEUE_NAME].every((name) => !name.includes(':'))).toBe(true);
   });
 });
