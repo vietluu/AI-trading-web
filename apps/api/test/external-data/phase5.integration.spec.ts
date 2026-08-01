@@ -1,7 +1,9 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 
-describe('Phase 5 External Data Integration Tests', () => {
+const describeIfDb = process.env.DATABASE_URL ? describe : describe.skip;
+
+describeIfDb('Phase 5 External Data Integration Tests', () => {
   let prisma: PrismaClient;
 
   beforeAll(() => {
