@@ -292,6 +292,16 @@ const environmentSchema = z
       .string()
       .url()
       .default("wss://ws.okx.com:8443/ws/v5/public"),
+    // Phase 6.1: AI Infrastructure
+    OPENAI_API_KEY: z.string().optional(),
+    ANTHROPIC_API_KEY: z.string().optional(),
+    GOOGLE_API_KEY: z.string().optional(),
+    OLLAMA_BASE_URL: z.string().url().default("http://localhost:11434"),
+    DEFAULT_PROVIDER: z.enum(["OPENAI", "ANTHROPIC", "GEMINI", "OLLAMA"]).default("OPENAI"),
+    DEFAULT_MODEL: z.string().default("gpt-5-mini"),
+    DEFAULT_MAX_TOKENS: z.coerce.number().int().default(2048),
+    DEFAULT_TEMPERATURE: z.coerce.number().default(0.7),
+    DEFAULT_TIMEOUT: z.coerce.number().int().default(30000),
   })
   .superRefine((environment, context) => {
     if (environment.NODE_ENV === "production" && !environment.COOKIE_SECURE) {

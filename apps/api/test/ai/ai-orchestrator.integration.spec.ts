@@ -1,0 +1,157 @@
+import { describe, expect, it, beforeEach } from "vitest";
+import type { ConfigService } from "@nestjs/config";
+import { ModelRegistryService } from "../../src/modules/ai/infrastructure/registry/model-registry.service";
+import { OpenAIProvider } from "../../src/modules/ai/infrastructure/provider/openai.provider";
+import { AnthropicProvider } from "../../src/modules/ai/infrastructure/provider/anthropic.provider";
+import { GeminiProvider } from "../../src/modules/ai/infrastructure/provider/gemini.provider";
+import { OllamaProvider } from "../../src/modules/ai/infrastructure/provider/ollama.provider";
+import { LLMProviderFactory } from "../../src/modules/ai/infrastructure/provider/llm-provider.factory";
+import { PromptRegistry } from "../../src/modules/ai/infrastructure/prompt/prompt-registry";
+import { PromptRenderer } from "../../src/modules/ai/infrastructure/prompt/prompt-renderer";
+import { PromptEngineService } from "../../src/modules/ai/infrastructure/prompt/prompt-engine.service";
+import { ContextCompressor } from "../../src/modules/ai/infrastructure/context/context-compressor";
+import { ContextBuilderService } from "../../src/modules/ai/infrastructure/context/context-builder.service";
+import { CostEstimatorService } from "../../src/modules/ai/infrastructure/budget/cost-estimator.service";
+import { AIOrchestratorService } from "../../src/modules/ai/application/ai-orchestrator.service";
+import type { AIConfigService } from "../../src/modules/ai/infrastructure/config/ai-config.service";
+import type { BudgetManagerService } from "../../src/modules/ai/infrastructure/budget/budget-manager.service";
+import type { AIHistoryService } from "../../src/modules/ai/infrastructure/history/ai-history.service";
+import type { Prisma } from "@prisma/client";
+
+describe("AI Orchestrator & Fallback Integration", () => {
+  let modelRegistry: ModelRegistryService;
+  let openAIProvider: OpenAIProvider;
+  let anthropicProvider: AnthropicProvider;
+  let geminiProvider: GeminiProvider;
+  let ollamaProvider: OllamaProvider;
+  let factory: LLMProviderFactory;
+  let promptEngine: PromptEngineService;
+  let contextBuilder: ContextBuilderService;
+  let orchestrator: AIOrchestratorService;
+  let mockConfigService: AIConfigService;
+  let mockBudgetManager: BudgetManagerService;
+  let mockHistoryService: AIHistoryService;
+
+  beforeEach(() => {
+    process.env.MOCK_AI_RESPONSES = "true";
+    mockConfigService = {
+      getOrCreateConfig: () => Promise.resolve({
+        id: "cfg-1",
+        userId: "user-123",
+        preferredProvider: "OPENAI",
+        preferredModel: "gpt-5-mini",
+        temperature: 0.7,
+        maxTokens: 2048,
+        timeoutMs: 5000,
+        dailyBudget: 10 as unknown as Prisma.Decimal,
+        monthlyBudget: 100 as unknown as Prisma.Decimal,
+        tokenBudget: 1000000,
+        requestBudget: 1000,
+        fallbackEnabled: true,
+        fallbackProviders: ["ANTHROPIC", "GEMINI", "OLLAMA"],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }),
+    } as unknown as AIConfigService;
+
+    mockBudgetManager = {
+      checkBudget: () => Promise.resolve({ allowed: true, status: "OK" }),
+      recordUsage: () => Promise.resolve(),
+    } as unknown as BudgetManagerService;
+
+    mockHistoryService = {
+      logExecution: () => Promise.resolve(),
+    } as unknown as AIHistoryService;
+
+    const mockEnvConfig = { get: () => undefined } as unknown as ConfigService;
+    modelRegistry = new ModelRegistryService();
+    openAIProvider = new OpenAIProvider(mockEnvConfig, modelRegistry);
+    anthropicProvider = new AnthropicProvider(mockEnvConfig, modelRegistry);
+    geminiProvider = new GeminiProvider(mockEnvConfig, modelRegistry);
+    ollamaProvider = new OllamaProvider(mockEnvConfig, modelRegistry);
+
+    factory = new LLMProviderFactory(
+      openAIProvider,
+      anthropicProvider,
+      geminiProvider,
+      ollamaProvider
+    );
+
+    const registry = new PromptRegistry();
+    const renderer = new PromptRenderer();
+    promptEngine = new PromptEngineService(registry, renderer);
+
+    const compressor = new ContextCompressor();
+    contextBuilder = new ContextBuilderService(compressor);
+
+    const costEstimator = new CostEstimatorService(modelRegistry);
+
+    orchestrator = new AIOrchestratorService(
+      mockConfigService,
+      mockBudgetManager,
+      contextBuilder,
+      promptEngine,
+      factory,
+      mockHistoryService,
+      costEstimator
+    );
+  });
+
+  it("should execute AI Request successfully using default preferred provider", async () => {
+    const res = await orchestrator.execute({
+      userId: "user-123",
+      userPrompt: "Analyze ETH 4h trend",
+    });
+
+    expect(res.text).toBeDefined();
+    expect(res.provider).toBe("OPENAI");
+    expect(res.usage.totalTokens).toBeGreaterThan(0);
+  });
+
+  it("should fallback to Anthropic if primary OpenAI provider throws a retryable error", async () => {
+    openAIProvider.chat = () => {
+      const err = new Error("Rate limit exceeded 429");
+      Object.assign(err, { status: 429 });
+      return Promise.reject(err);
+    };
+
+    const res = await orchestrator.execute({
+      userId: "user-123",
+      userPrompt: "Analyze SOL funding rates",
+      provider: "OPENAI",
+    });
+
+    expect(res.provider).toBe("ANTHROPIC");
+  });
+
+  it("should fail fast and NOT retry on a non-retryable 401 Unauthorized error", async () => {
+    openAIProvider.chat = () => {
+      const err = new Error("Invalid API key (401)");
+      Object.assign(err, { status: 401 });
+      return Promise.reject(err);
+    };
+
+    await expect(
+      orchestrator.execute({
+        userId: "user-123",
+        userPrompt: "Test 401 fail fast",
+        provider: "OPENAI",
+      })
+    ).rejects.toThrow("Invalid API key (401)");
+  });
+
+  it("should stream tokens chunk by chunk", async () => {
+    const stream = orchestrator.stream({
+      userId: "user-123",
+      userPrompt: "Stream BTC test",
+    });
+
+    const chunks = [];
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(chunks[chunks.length - 1]?.isComplete).toBe(true);
+  });
+});

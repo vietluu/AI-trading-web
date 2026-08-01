@@ -12,6 +12,7 @@ const links = [
   ["Exchanges", "/settings/exchanges"],
   ["Data Sources", "/settings/data-sources"],
   ["Providers", "/system/providers"],
+  ["AI Infrastructure", "/settings/ai"],
 ] as const;
 
 export function AccountNav(): React.JSX.Element {
