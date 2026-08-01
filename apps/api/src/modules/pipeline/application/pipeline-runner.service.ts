@@ -10,12 +10,13 @@ import { PipelineThresholdService } from './pipeline-threshold.service';
 import { PipelineAlertService } from './pipeline-alert.service';
 import { resolvePipelineDefinition } from '../domain/pipeline.definition';
 import type { PipelineJob } from '../infrastructure/pipeline-queue.service';
+import { PaperTradingService } from '../../paper-trading/application/paper-trading.service';
 
 class PipelineCancelledError extends Error {}
 
 @Injectable()
 export class PipelineRunnerService {
-  constructor(private readonly fusion: FusionService, private readonly decision: DecisionService, private readonly repository: PipelineRepository, private readonly cancellation: PipelineCancellationService, private readonly threshold: PipelineThresholdService, private readonly alerts: PipelineAlertService) {}
+  constructor(private readonly fusion: FusionService, private readonly decision: DecisionService, private readonly repository: PipelineRepository, private readonly cancellation: PipelineCancellationService, private readonly threshold: PipelineThresholdService, private readonly alerts: PipelineAlertService, private readonly paperTrading: PaperTradingService) {}
 
   async run(job: PipelineJob): Promise<void> {
     const definition = resolvePipelineDefinition(job.pipelineId);
@@ -46,8 +47,10 @@ export class PipelineRunnerService {
       const output = this.decision.decide({ symbol: job.symbol, fusionOutput, ...analyses });
       await this.finishStep(job.runId, 'decision', output, new Date());
       const filter = this.threshold.evaluate(output);
+      const executionDecision = filter.actionable ? output : { ...output, decision: 'WAIT' as const };
+      const paperExecution = await this.paperTrading.execute({ userId: job.userId, pipelineRunId: job.runId, symbol: job.symbol, provider: job.provider, decision: executionDecision });
       const completedAt = new Date();
-      await this.repository.updateRun(job.runId, { status: 'COMPLETED', completedAt, durationMs: completedAt.getTime() - startedAt.getTime(), decision: filter.actionable ? output.decision : 'WAIT', confidence: output.confidence, dataQuality: output.dataQuality, skippedReason: filter.reason, storedContext: { analyses, fusionOutput }, result: { ...output, actionable: filter.actionable, skippedReason: filter.reason } });
+      await this.repository.updateRun(job.runId, { status: 'COMPLETED', completedAt, durationMs: completedAt.getTime() - startedAt.getTime(), decision: executionDecision.decision, confidence: output.confidence, dataQuality: output.dataQuality, skippedReason: filter.reason, storedContext: { analyses, fusionOutput }, result: { ...output, actionable: filter.actionable, skippedReason: filter.reason, paperExecution } });
       await this.alerts.contextual(job.runId, job.symbol, analyses);
       if (filter.actionable) await this.alerts.decision(job.runId, job.symbol, output);
     } catch (error) {

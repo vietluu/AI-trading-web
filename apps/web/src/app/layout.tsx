@@ -71,6 +71,9 @@ export default function RootLayout({
                 <Link className="rounded-lg px-3 py-2 hover:bg-muted" href="/ai/performance">
                   Performance
                 </Link>
+                <Link className="rounded-lg px-3 py-2 hover:bg-muted" href="/ai/paper-trading">
+                  Paper Trading
+                </Link>
                 <Link
                   className="rounded-lg px-3 py-2 hover:bg-muted"
                   href="/settings/exchanges"

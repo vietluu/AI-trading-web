@@ -44,3 +44,4 @@ export * from "./schemas/ai-tools.js";
 export * from "./schemas/agents.js";
 export * from "./schemas/pipeline.js";
 export * from "./schemas/reflection.js";
+export * from "./schemas/paper-trading.js";
