@@ -1,4 +1,5 @@
 import { Injectable, Logger, type OnModuleInit, type OnModuleDestroy } from '@nestjs/common';
+import * as crypto from 'node:crypto';
 import { MarketDataConfigService } from './market-data-config.service';
 import { MarketEventBus } from '../infrastructure/event-bus/market-event-bus';
 import { BinancePublicStreamAdapter } from '../infrastructure/streams/binance-public-stream.adapter';
