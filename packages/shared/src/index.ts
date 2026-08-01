@@ -38,3 +38,5 @@ export type {
   SessionView,
   SettingsView,
 } from "./schemas/identity.js";
+export * from "./schemas/external-data.js";
+

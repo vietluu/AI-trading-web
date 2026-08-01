@@ -16,7 +16,7 @@ import {
   ExchangeInterval,
   ExchangeProvider,
 } from "../../exchange/domain/exchange.types";
-import { DataGapStatus } from "../domain/market-data.enums";
+import { DataGapStatus, IndicatorStatus } from "../domain/market-data.enums";
 
 function parseExchangeProvider(value: string): ExchangeProvider {
   if (Object.values(ExchangeProvider).includes(value as ExchangeProvider)) {
@@ -135,14 +135,31 @@ export class MarketDataController {
     if (!interval) {
       throw new HttpException("interval is required", HttpStatus.BAD_REQUEST);
     }
+
+    const parsedProvider = parseExchangeProvider(provider);
+    const parsedSymbol = symbol.toUpperCase();
+    const parsedInterval = parseExchangeInterval(interval);
+
     const snapshot = await this.marketData.getIndicatorSnapshot(
-      parseExchangeProvider(provider),
-      symbol.toUpperCase(),
-      parseExchangeInterval(interval),
+      parsedProvider,
+      parsedSymbol,
+      parsedInterval,
     );
+
     if (!snapshot) {
-      throw new HttpException("Indicators not available", HttpStatus.NOT_FOUND);
+      return {
+        provider: parsedProvider,
+        symbol: parsedSymbol,
+        interval: parsedInterval,
+        candleOpenTime: new Date(0),
+        candleCloseTime: new Date(0),
+        status: IndicatorStatus.INSUFFICIENT_DATA,
+        values: {},
+        calculatedAt: new Date(),
+        calculationVersion: 0,
+      };
     }
+
     return snapshot;
   }
 

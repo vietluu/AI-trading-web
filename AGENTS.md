@@ -1,7 +1,8 @@
 # AI AGENTS
 
 ## News Agent
-- **Input:** CoinDesk, Cointelegraph, Reuters, RSS
+- **Input:** CoinDesk, Cointelegraph, Reuters, RSS, Binance/OKX Announcements
+- **Ingestion Pipeline:** URL Canonicalization, Title Normalization, Jaccard & Cosine TF-IDF Deduplication, Symbol & Topic Extraction, Deterministic 0-100 Importance Scoring.
 - **Output:** Summary, Importance, Bullish/Bearish, Confidence
 
 ------------------------------------------------
@@ -13,7 +14,8 @@
 ------------------------------------------------
 
 ## Social Agent
-- **Input:** Reddit, Twitter, Telegram, Fear & Greed
+- **Input:** Reddit, Twitter, Telegram, Fear & Greed Index
+- **Ingestion Pipeline:** Alternative.me Fear & Greed Observation Normalization, Reddit Public JSON / OAuth Ingestion with SHA256 Author Hashing.
 - **Output:** Sentiment Score
 
 ------------------------------------------------
@@ -25,7 +27,8 @@
 ------------------------------------------------
 
 ## Macro Agent
-- **Input:** CPI, FOMC, Interest Rate, DXY
+- **Input:** CPI, FOMC, Interest Rate, DXY, GDP, Nonfarm Payrolls
+- **Ingestion Pipeline:** Scheduled Economic Calendar Normalization, Manual CSV/JSON Importer with Dry-Run Validation.
 - **Output:** Macro Risk
 
 ------------------------------------------------

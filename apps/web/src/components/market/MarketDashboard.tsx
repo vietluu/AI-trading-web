@@ -181,9 +181,13 @@ export function MarketDashboard({
   useEffect(() => {
     const socket = io(`${apiBaseUrl}/market`, {
       path: "/socket.io/",
+      reconnection: true,
+      reconnectionAttempts: 5,
       reconnectionDelay: 1_000,
-      reconnectionDelayMax: 5_000,
+      reconnectionDelayMax: 3_000,
       transports: ["websocket", "polling"],
+      timeout: 3_000,
+      forceNew: true,
     });
     const subscription = { provider, symbol };
     const candleSubscription = { provider, symbol, interval };

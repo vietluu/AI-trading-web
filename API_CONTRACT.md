@@ -111,6 +111,48 @@ margin mode, transfers funds, or closes positions. GET semantics plus provider
 timestamps/`recvWindow` provide the Phase 3 replay/idempotency boundary; no
 idempotency key is invented because there are no provider mutations.
 
+## External Data Ingestion & Feeds (Phase 5)
+
+### News & Market Events
+- `GET /api/external-data/news`: Search and filter normalized news articles (`symbol`, `topic`, `minImportance`, `saved`, `unread`, `limit`, `cursor`).
+- `GET /api/external-data/news/:id`: Retrieve detailed news article with excerpt, source references, and deterministic importance scoring factors.
+- `PATCH /api/external-data/news/:id/read`: Toggle or set per-user read state (`isRead`).
+- `PATCH /api/external-data/news/:id/save`: Toggle or set per-user bookmark state (`isSaved`).
+
+### Exchange Announcements & Incidents
+- `GET /api/external-data/announcements`: List normalized Binance/OKX exchange announcements (`exchange`, `category`, `limit`).
+- `GET /api/external-data/announcements/:id`: Announcement detail view.
+- `GET /api/external-data/incidents`: List security incidents and hacks (`severity`, `status`, `limit`).
+
+### Market Sentiment & Social
+- `GET /api/external-data/sentiment`: Fetch current Fear & Greed index observation.
+- `GET /api/external-data/sentiment/history`: Fetch historical sentiment observations (`limit`).
+- `GET /api/external-data/social/providers`: List community providers and user credential statuses.
+
+### Macroeconomic Calendar
+- `GET /api/external-data/macro/events`: List economic events (`importance`, `category`, `fromDate`, `toDate`).
+- `POST /api/external-data/macro/import/preview`: Dry-run validation of manual CSV/JSON macro import content.
+- `POST /api/external-data/macro/import`: Confirm and insert validated macroeconomic events.
+
+### Data Sources & Provider Telemetry
+- `GET /api/external-data/sources`: List configured external RSS feeds and providers.
+- `POST /api/external-data/sources`: Create or add custom RSS/Atom feed source.
+- `PATCH /api/external-data/sources/:id`: Toggle source enablement or edit settings.
+- `POST /api/external-data/sources/:id/test`: Test feed URL fetching and parsing.
+- `GET /api/external-data/providers/health`: List health status, latency, error rates, and failure tracking.
+- `POST /api/external-data/providers/:provider/run`: Trigger manual ingestion job.
+
+### WebSocket Realtime Stream
+- **Namespace:** `/external-data`
+- **Client Subscription:** `socket.emit("subscribe", { channels: [{ type: "high-importance-news", minimumImportance: 70 }, { type: "news" }] })`
+- **Events Emitted:**
+  - `NEWS_ARTICLE_CREATED`
+  - `HIGH_IMPORTANCE_NEWS_DETECTED`
+  - `EXCHANGE_ANNOUNCEMENT_CREATED`
+  - `SECURITY_INCIDENT_CREATED`
+  - `SENTIMENT_INDEX_UPDATED`
+  - `MACRO_EVENT_CREATED`
+
 ## Error response
 
 HTTP failures use the global shape below. Unexpected server exceptions return

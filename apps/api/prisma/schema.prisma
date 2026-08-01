@@ -14,6 +14,7 @@ enum CredentialProvider {
   BINANCE_FUTURES
   OKX_FUTURES
   NEWS_API
+  REDDIT
   CUSTOM
 }
 
@@ -29,22 +30,25 @@ enum ExchangeEnvironment {
 }
 
 model User {
-  id                  String                @id @default(uuid()) @db.Uuid
-  email               String                @unique
-  username            String                @unique
-  passwordHash        String
-  failedLogins        Int                   @default(0)
-  lockedUntil         DateTime?
-  emailVerifiedAt     DateTime?
-  totpSecret          String?
-  totpEnabledAt       DateTime?
-  createdAt           DateTime              @default(now())
-  updatedAt           DateTime              @updatedAt
-  sessions            Session[]
-  credentials         EncryptedCredential[]
-  setting             UserSetting?
-  auditLogs           AuditLog[]
-  exchangeConnections ExchangeConnection[]
+  id                     String                      @id @default(uuid()) @db.Uuid
+  email                  String                      @unique
+  username               String                      @unique
+  passwordHash           String
+  failedLogins           Int                         @default(0)
+  lockedUntil            DateTime?
+  emailVerifiedAt        DateTime?
+  totpSecret             String?
+  totpEnabledAt          DateTime?
+  createdAt              DateTime                    @default(now())
+  updatedAt              DateTime                    @updatedAt
+  sessions               Session[]
+  credentials            EncryptedCredential[]
+  setting                UserSetting?
+  auditLogs              AuditLog[]
+  exchangeConnections    ExchangeConnection[]
+  externalDataPreference UserExternalDataPreference?
+  newsStates             UserNewsState[]
+  macroImportRuns        MacroImportRun[]
 
   @@map("users")
 }
@@ -305,4 +309,497 @@ model IndicatorSnapshotRecord {
   @@unique([provider, symbol, interval, candleOpenTime, status])
   @@index([provider, symbol, interval, candleOpenTime])
   @@map("indicator_snapshots")
+}
+
+// ============================================================
+// Phase 5: External Data Ingestion Platform
+// ============================================================
+
+enum NewsSourceType {
+  RSS
+  ATOM
+  EXCHANGE_ANNOUNCEMENT
+  CRYPTO_NEWS_API
+  SECURITY_FEED
+  SENTIMENT_INDEX
+  REDDIT
+  MACRO_API
+  MANUAL_IMPORT
+}
+
+enum NewsArticleStatus {
+  ACTIVE
+  DUPLICATE
+  RETRACTED
+  UNAVAILABLE
+  ARCHIVED
+}
+
+enum ExchangeAnnouncementCategory {
+  LISTING
+  DELISTING
+  FUTURES_LAUNCH
+  FUTURES_DELISTING
+  MAINTENANCE
+  TRADING_SUSPENSION
+  MARGIN_RULES
+  API_CHANGE
+  SECURITY_NOTICE
+  PROOF_OF_RESERVES
+  PROMOTION
+}
+
+enum IncidentSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum IncidentStatus {
+  ACTIVE
+  INVESTIGATING
+  RESOLVED
+  FALSE_ALARM
+}
+
+enum SecurityIncidentType {
+  EXPLOIT
+  HACK
+  BRIDGE_INCIDENT
+  PROTOCOL_VULNERABILITY
+  WALLET_COMPROMISE
+  EXCHANGE_OUTAGE
+  WITHDRAWAL_SUSPENSION
+  STABLECOIN_DEPEG
+  NETWORK_HALT
+  CHAIN_REORG
+  ORACLE_INCIDENT
+  GOVERNANCE_ATTACK
+  RUG_PULL
+  REGULATORY_ENFORCEMENT
+  PHISHING
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  SINGLE_SOURCE
+  MULTI_SOURCE
+  OFFICIAL_SOURCE
+  RESOLVED
+}
+
+enum MarketSentimentIndexType {
+  FEAR_AND_GREED
+  COMMUNITY_SENTIMENT
+  CUSTOM_INDEX
+}
+
+enum SocialProvider {
+  REDDIT
+  TWITTER
+  TELEGRAM
+  DISCORD
+}
+
+enum SocialPostStatus {
+  ACTIVE
+  REMOVED
+  FLAGGED
+}
+
+enum MacroEventCategory {
+  CPI
+  PPI
+  GDP
+  UNEMPLOYMENT
+  NONFARM_PAYROLLS
+  INTEREST_RATE_DECISION
+  CENTRAL_BANK_SPEECH
+  FOMC
+  RETAIL_SALES
+  PMI
+  DOLLAR_INDEX
+  TREASURY_AUCTION
+  OTHER
+}
+
+enum MacroImportance {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum MacroEventStatus {
+  SCHEDULED
+  RELEASED
+  REVISED
+  CANCELLED
+  UNKNOWN
+}
+
+enum ExternalDataProvider {
+  GENERIC_RSS
+  BINANCE_ANNOUNCEMENTS
+  OKX_ANNOUNCEMENTS
+  ALTERNATIVE_ME_FEAR_GREED
+  REDDIT
+  MANUAL_MACRO
+  X
+  TELEGRAM
+  DISCORD
+}
+
+enum ExternalDataHealthStatus {
+  HEALTHY
+  DEGRADED
+  STALE
+  RATE_LIMITED
+  AUTHENTICATION_FAILED
+  DISABLED
+  NOT_CONFIGURED
+  FAILED
+}
+
+model ExternalDataSource {
+  id                  String                @id @default(uuid()) @db.Uuid
+  sourceId            String                @unique
+  displayName         String
+  provider            ExternalDataProvider  @default(GENERIC_RSS)
+  sourceType          NewsSourceType        @default(RSS)
+  baseDomain          String
+  feedUrl             String
+  language            String                @default("en")
+  categories          String[]              @default([])
+  reliabilityScore    Int                   @default(70)
+  isEnabled           Boolean               @default(true)
+  isCustom            Boolean               @default(false)
+  pollIntervalSeconds Int                   @default(300)
+  etag                String?
+  lastModified        String?
+  lastFetchedAt       DateTime?
+  lastSuccessAt       DateTime?
+  lastError           String?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  references          NewsSourceReference[]
+
+  @@map("external_data_sources")
+}
+
+model NewsDuplicateGroup {
+  id               String        @id @default(uuid()) @db.Uuid
+  primaryArticleId String?       @unique @db.Uuid
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  primaryArticle   NewsArticle?  @relation("PrimaryArticle", fields: [primaryArticleId], references: [id])
+  articles         NewsArticle[] @relation("GroupArticles")
+
+  @@map("news_duplicate_groups")
+}
+
+model NewsArticle {
+  id                    String                @id @default(uuid()) @db.Uuid
+  sourceId              String
+  externalId            String?
+  sourceType            NewsSourceType
+  title                 String
+  normalizedTitle       String
+  summary               String?
+  excerpt               String?
+  canonicalUrl          String                @unique
+  originalUrl           String?
+  author                String?
+  language              String?               @default("en")
+  imageUrl              String?
+  publishedAt           DateTime
+  receivedAt            DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  reliabilityScore      Int
+  importanceScore       Int
+  contentHash           String
+  duplicateGroupId      String?               @db.Uuid
+  status                NewsArticleStatus     @default(ACTIVE)
+  duplicateGroup        NewsDuplicateGroup?   @relation("GroupArticles", fields: [duplicateGroupId], references: [id])
+  primaryDuplicateGroup NewsDuplicateGroup?   @relation("PrimaryArticle")
+  sourceReferences      NewsSourceReference[]
+  symbols               ArticleSymbol[]
+  topics                ArticleTopic[]
+  entities              ArticleEntity[]
+  userStates            UserNewsState[]
+
+  @@index([publishedAt])
+  @@index([importanceScore])
+  @@index([sourceId])
+  @@index([status])
+  @@index([duplicateGroupId])
+  @@map("news_articles")
+}
+
+model NewsSourceReference {
+  id           String             @id @default(uuid()) @db.Uuid
+  articleId    String             @db.Uuid
+  sourceId     String
+  externalId   String?
+  publishedAt  DateTime
+  canonicalUrl String
+  source       ExternalDataSource @relation(fields: [sourceId], references: [sourceId])
+  article      NewsArticle        @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@index([articleId])
+  @@index([sourceId])
+  @@map("news_source_references")
+}
+
+model ArticleSymbol {
+  id         String      @id @default(uuid()) @db.Uuid
+  articleId  String      @db.Uuid
+  symbol     String
+  confidence Float       @default(1.0)
+  article    NewsArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@unique([articleId, symbol])
+  @@index([symbol])
+  @@map("article_symbols")
+}
+
+model ArticleTopic {
+  id         String      @id @default(uuid()) @db.Uuid
+  articleId  String      @db.Uuid
+  topic      String
+  confidence Float       @default(1.0)
+  article    NewsArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@unique([articleId, topic])
+  @@index([topic])
+  @@map("article_topics")
+}
+
+model ArticleEntity {
+  id         String      @id @default(uuid()) @db.Uuid
+  articleId  String      @db.Uuid
+  entity     String
+  entityType String
+  confidence Float       @default(1.0)
+  article    NewsArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@unique([articleId, entity])
+  @@index([entity])
+  @@map("article_entities")
+}
+
+model ExchangeAnnouncement {
+  id                     String                       @id @default(uuid()) @db.Uuid
+  externalId             String?
+  provider               ExchangeProvider
+  category               ExchangeAnnouncementCategory
+  title                  String
+  summary                String?
+  canonicalUrl           String                       @unique
+  publishedAt            DateTime
+  receivedAt             DateTime                     @default(now())
+  relatedSymbols         String[]                     @default([])
+  importanceScore        Int
+  sourceReliabilityScore Int                          @default(100)
+  rawLanguage            String?
+
+  @@index([provider, publishedAt])
+  @@index([category])
+  @@index([importanceScore])
+  @@map("exchange_announcements")
+}
+
+model SecurityIncident {
+  id                String                    @id @default(uuid()) @db.Uuid
+  externalId        String?
+  title             String
+  summary           String?
+  incidentType      SecurityIncidentType
+  severity          IncidentSeverity
+  status            IncidentStatus            @default(ACTIVE)
+  verificationState VerificationStatus        @default(UNVERIFIED)
+  relatedSymbols    String[]                  @default([])
+  relatedProtocols  String[]                  @default([])
+  firstReportedAt   DateTime
+  lastUpdatedAt     DateTime                  @updatedAt
+  canonicalUrl      String?
+  importanceScore   Int                       @default(90)
+  sourceReferences  IncidentSourceReference[]
+
+  @@index([severity])
+  @@index([status])
+  @@index([firstReportedAt])
+  @@map("security_incidents")
+}
+
+model IncidentSourceReference {
+  id           String           @id @default(uuid()) @db.Uuid
+  incidentId   String           @db.Uuid
+  sourceId     String
+  canonicalUrl String?
+  reportedAt   DateTime         @default(now())
+  incident     SecurityIncident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([incidentId])
+  @@map("incident_source_references")
+}
+
+model MarketSentimentObservation {
+  id             String                   @id @default(uuid()) @db.Uuid
+  provider       String
+  indexType      MarketSentimentIndexType @default(FEAR_AND_GREED)
+  value          Int
+  classification String
+  observedAt     DateTime
+  receivedAt     DateTime                 @default(now())
+  metadata       Json?
+
+  @@unique([provider, indexType, observedAt])
+  @@index([provider, observedAt])
+  @@map("market_sentiment_observations")
+}
+
+model SocialPost {
+  id              String           @id @default(uuid()) @db.Uuid
+  provider        SocialProvider
+  externalId      String
+  community       String?
+  title           String?
+  textExcerpt     String?
+  authorHash      String?
+  canonicalUrl    String?
+  publishedAt     DateTime
+  receivedAt      DateTime         @default(now())
+  engagementScore Int?
+  commentsCount   Int?
+  upvoteRatio     Float?
+  relatedSymbols  String[]         @default([])
+  topics          String[]         @default([])
+  status          SocialPostStatus @default(ACTIVE)
+
+  @@unique([provider, externalId])
+  @@index([provider, publishedAt])
+  @@map("social_posts")
+}
+
+model MacroEconomicEvent {
+  id          String             @id @default(uuid()) @db.Uuid
+  provider    String
+  externalId  String?
+  name        String
+  country     String?
+  currency    String?
+  category    MacroEventCategory
+  importance  MacroImportance
+  scheduledAt DateTime
+  actual      String?
+  forecast    String?
+  previous    String?
+  unit        String?
+  status      MacroEventStatus   @default(SCHEDULED)
+  sourceUrl   String?
+  receivedAt  DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@unique([provider, name, scheduledAt])
+  @@index([scheduledAt])
+  @@index([importance])
+  @@index([category])
+  @@map("macro_economic_events")
+}
+
+model MacroImportRun {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @db.Uuid
+  fileName     String
+  fileFormat   String
+  totalRows    Int
+  acceptedRows Int
+  rejectedRows Int
+  errors       Json?
+  createdAt    DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("macro_import_runs")
+}
+
+model ExternalDataIngestionRun {
+  id                 String               @id @default(uuid()) @db.Uuid
+  provider           ExternalDataProvider
+  sourceId           String?
+  itemsReceived      Int                  @default(0)
+  itemsAccepted      Int                  @default(0)
+  duplicatesDetected Int                  @default(0)
+  itemsRejected      Int                  @default(0)
+  durationMs         Int
+  status             String
+  errorCode          String?
+  errorMessage       String?
+  startedAt          DateTime
+  completedAt        DateTime
+
+  @@index([provider, startedAt])
+  @@map("external_data_ingestion_runs")
+}
+
+model ExternalDataProviderHealth {
+  id                  String                   @id @default(uuid()) @db.Uuid
+  provider            ExternalDataProvider     @unique
+  status              ExternalDataHealthStatus @default(NOT_CONFIGURED)
+  lastAttemptAt       DateTime?
+  lastSuccessAt       DateTime?
+  lastItemAt          DateTime?
+  consecutiveFailures Int                      @default(0)
+  averageLatencyMs    Int                      @default(0)
+  lastErrorCode       String?
+  rateLimitResetAt    DateTime?
+  itemsFetchedTotal   Int                      @default(0)
+  itemsAcceptedTotal  Int                      @default(0)
+  metadata            Json?
+  updatedAt           DateTime                 @updatedAt
+
+  @@map("external_data_provider_health")
+}
+
+model UserExternalDataPreference {
+  id                           String          @id @default(uuid()) @db.Uuid
+  userId                       String          @unique @db.Uuid
+  preferredLanguage            String          @default("en")
+  followedSymbols              String[]        @default([])
+  followedTopics               String[]        @default([])
+  hiddenSourceIds              String[]        @default([])
+  minImportanceScore           Int             @default(0)
+  highImportanceAlertThreshold Int             @default(70)
+  macroCountries               String[]        @default([])
+  minMacroImportance           MacroImportance @default(LOW)
+  redditCommunities            String[]        @default([])
+  realtimeNewsEnabled          Boolean         @default(true)
+  autoMarkRead                 Boolean         @default(false)
+  createdAt                    DateTime        @default(now())
+  updatedAt                    DateTime        @updatedAt
+  user                         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_external_data_preferences")
+}
+
+model UserNewsState {
+  id        String      @id @default(uuid()) @db.Uuid
+  userId    String      @db.Uuid
+  articleId String      @db.Uuid
+  isRead    Boolean     @default(false)
+  isSaved   Boolean     @default(false)
+  isHidden  Boolean     @default(false)
+  readAt    DateTime?
+  savedAt   DateTime?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  article   NewsArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, articleId])
+  @@index([userId, isSaved])
+  @@index([userId, isRead])
+  @@map("user_news_states")
 }

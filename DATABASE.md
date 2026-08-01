@@ -20,20 +20,31 @@ tokens; it is not a source of long-term user data.
   one-to-one to an existing encrypted credential. It stores safe enablement,
   verification, permission, and last normalized error metadata only.
 
+## Phase 5 external data tables
+
+- `external_data_sources`: Configured external RSS feeds, exchange announcement endpoints, and API providers with reliability score and poll interval settings.
+- `news_duplicate_groups`: Clusters of near-duplicate news articles identified by title and content hash similarity.
+- `news_articles`: Shared normalized cryptocurrency news articles with deterministic importance scores, title hashes, canonical URLs, and duplicate counts.
+- `news_source_references`: Secondary source attributions associated with duplicate news groups.
+- `article_symbols`: Explicit symbol tags linked to news articles (e.g. `BTC-USDT`) with extraction confidence scores.
+- `article_topics`: Topic classifications linked to news articles (e.g. `regulation`, `layer_1`, `oracle`).
+- `article_entities`: Named entity extractions (e.g. `SEC`, `Binance`, `Fed`) linked to news articles.
+- `exchange_announcements`: Normalized exchange announcements (delisting, listing, maintenance, leverage change) for Binance and OKX.
+- `security_incidents`: Security incident, exploit, and hack tracking with verification status and severity levels.
+- `incident_source_references`: Source citations for security incidents.
+- `market_sentiment_observations`: Crypto Fear & Greed index history and observations.
+- `social_posts`: Normalized social media community posts (e.g. Reddit) with SHA256 author privacy hashing.
+- `macro_economic_events`: Scheduled macroeconomic calendar events (CPI, FOMC, GDP, Interest Rates) with actual/forecast/previous metrics.
+- `macro_import_runs`: Audit trail for dry-run preview and confirmed manual CSV/JSON macro imports.
+- `external_data_ingestion_runs`: Execution logs for BullMQ scheduled ingestion workers.
+- `external_data_provider_health`: Provider telemetry tracking average latency, rate limit usage, error codes, and health statuses.
+- `user_external_data_preferences`: Per-user source preferences, minimum importance filters, and notification settings.
+- `user_news_states`: Per-user article state tracking (`isRead`, `isSaved`, `isHidden`, `notes`) with strict cross-user isolation.
+
 `ExchangeProvider` contains explicit `BINANCE_FUTURES` and `OKX_FUTURES`
-values. `ExchangeEnvironment` contains `TESTNET`, `DEMO`, and `PRODUCTION`;
-application validation restricts Binance to testnet/production and OKX to
-demo/production. `CredentialProvider` retains the older ambiguous values for
-Phase 2 compatibility and adds the explicit futures values for new records.
+values. `ExchangeEnvironment` contains `TESTNET`, `DEMO`, and `PRODUCTION`.
 
-The `add_exchange_connections` migration adds unique indexes on
-`credentialId` and `(userId, provider, environment)`, plus indexes on `userId`
-and `(provider, environment)`. Its rollback removes the table and recreates the
-previous credential enum safely after casting the column through text.
-
-Foreign keys cascade user-owned sessions, credentials, and settings when a
-user is removed. Audit records retain the action and set `userId` to null.
-Every committed migration includes a reviewed `rollback.sql` companion.
+Migration `20260801051515_external_data_ingestion` creates the Phase 5 schema, unique indexes, and FK cascades. Companion `rollback.sql` safely drops Phase 5 tables, indexes, and enums.
 
 ## Reserved domain tables
 
