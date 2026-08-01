@@ -38,6 +38,6 @@ import { PublicExchangesController } from "./presentation/public-exchanges.contr
     OkxFuturesClient,
     OkxFuturesAdapter,
   ],
-  exports: [PublicExchangeService],
+  exports: [PublicExchangeService, ExchangeConnectionService],
 })
 export class ExchangeModule {}

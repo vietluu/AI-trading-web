@@ -302,6 +302,23 @@ const environmentSchema = z
     DEFAULT_MAX_TOKENS: z.coerce.number().int().default(2048),
     DEFAULT_TEMPERATURE: z.coerce.number().default(0.7),
     DEFAULT_TIMEOUT: z.coerce.number().int().default(30000),
+
+    // Phase 6.2: AI Tool Calling Framework
+    AI_TOOL_CALLING_ENABLED: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
+    AI_TOOL_MANUAL_TEST_ENABLED: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
+    AI_TOOL_MAX_ROUNDS: z.coerce.number().int().default(5),
+    AI_TOOL_MAX_CALLS_PER_REQUEST: z.coerce.number().int().default(10),
+    AI_TOOL_MAX_PARALLEL_CALLS: z.coerce.number().int().default(3),
+    AI_TOOL_RECURSION_LIMIT: z.coerce.number().int().default(2),
+    AI_TOOL_IDENTICAL_CALL_LIMIT: z.coerce.number().int().default(2),
+    AI_TOOL_DEFAULT_TIMEOUT_MS: z.coerce.number().int().default(10000),
+    AI_TOOL_TOTAL_REQUEST_TIMEOUT_MS: z.coerce.number().int().default(60000),
+    AI_TOOL_MAX_ARGUMENT_BYTES: z.coerce.number().int().default(32768),
+    AI_TOOL_MAX_RESULT_BYTES: z.coerce.number().int().default(262144),
+    AI_TOOL_MAX_RESULT_TOKENS_PER_REQUEST: z.coerce.number().int().default(12000),
+    AI_TOOL_MAX_CALLS_PER_MINUTE: z.coerce.number().int().default(30),
+    AI_TOOL_MAX_CALLS_PER_HOUR: z.coerce.number().int().default(500),
+    AI_TOOL_MAX_CALLS_PER_DAY: z.coerce.number().int().default(5000),
   })
   .superRefine((environment, context) => {
     if (environment.NODE_ENV === "production" && !environment.COOKIE_SECURE) {

@@ -43,7 +43,10 @@
 ------------------------------------------------
 
 ## Phase 6: AI Multi Agent
-- **Status: [ ]**
+- [x] Phase 6.1: AI Infrastructure (Provider Abstraction, Budget, Memory, Context, Streaming, Fallback)
+- [x] Phase 6.2: AI Tool Calling Framework (Typed Registration, Policy Engine, Mappers, 18 Safe Tools)
+- [ ] Phase 6.3: Multi-Agent Framework and Agent Lifecycle
+- **Status: [In Progress]**
 
 ------------------------------------------------
 
