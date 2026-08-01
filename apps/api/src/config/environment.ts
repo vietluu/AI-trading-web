@@ -164,6 +164,134 @@ const environmentSchema = z
       .refine((origins) => origins.length > 0, {
         message: "CORS_ORIGINS must contain at least one origin",
       }),
+    // Phase 4: Market Data Pipeline
+    MARKET_DATA_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((value) => value === "true"),
+    MARKET_DATA_PROVIDERS: z
+      .string()
+      .default("BINANCE_FUTURES,OKX_FUTURES")
+      .transform((value) =>
+        value
+          .split(",")
+          .map((p) => p.trim())
+          .filter((p) => p.length > 0),
+      ),
+    MARKET_DATA_SYMBOLS: z
+      .string()
+      .default("BTC-USDT,ETH-USDT")
+      .transform((value) =>
+        value
+          .split(",")
+          .map((s) => s.trim().toUpperCase())
+          .filter((s) => s.length > 0),
+      ),
+    MARKET_DATA_INTERVALS: z
+      .string()
+      .default("1m,5m,15m,1h,4h")
+      .transform((value) =>
+        value
+          .split(",")
+          .map((i) => i.trim())
+          .filter((i) => i.length > 0),
+      ),
+    MARKET_TICKER_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((value) => value === "true"),
+    MARKET_TRADES_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((value) => value === "true"),
+    MARKET_CANDLES_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((value) => value === "true"),
+    MARKET_ORDER_BOOK_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((value) => value === "true"),
+    MARKET_FUNDING_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((value) => value === "true"),
+    MARKET_OPEN_INTEREST_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((value) => value === "true"),
+    MARKET_ORDER_BOOK_DEPTH: z.coerce
+      .number()
+      .int()
+      .min(5)
+      .max(100)
+      .default(20),
+    MARKET_ORDER_BOOK_SNAPSHOT_INTERVAL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(60)
+      .default(10),
+    MARKET_FUNDING_POLL_INTERVAL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(30)
+      .max(3600)
+      .default(300),
+    MARKET_OPEN_INTEREST_POLL_INTERVAL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(10)
+      .max(3600)
+      .default(60),
+    MARKET_STALE_AFTER_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(5)
+      .max(300)
+      .default(30),
+    MARKET_RECONNECT_BASE_DELAY_MS: z.coerce
+      .number()
+      .int()
+      .min(100)
+      .max(10_000)
+      .default(500),
+    MARKET_RECONNECT_MAX_DELAY_MS: z.coerce
+      .number()
+      .int()
+      .min(1000)
+      .max(60_000)
+      .default(30_000),
+    MARKET_MAX_RECONNECT_ATTEMPTS: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(100)
+      .default(0),
+    MARKET_WRITE_BATCH_SIZE: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(1000)
+      .default(100),
+    MARKET_WRITE_FLUSH_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(100)
+      .max(10_000)
+      .default(1000),
+    BINANCE_FUTURES_WS_URL: z
+      .string()
+      .url()
+      .default("wss://fstream.binance.com"),
+    BINANCE_FUTURES_TESTNET_WS_URL: z
+      .string()
+      .url()
+      .default("wss://stream.binancefuture.com"),
+    OKX_WS_PUBLIC_URL: z
+      .string()
+      .url()
+      .default("wss://ws.okx.com:8443/ws/v5/public"),
   })
   .superRefine((environment, context) => {
     if (environment.NODE_ENV === "production" && !environment.COOKIE_SECURE) {

@@ -148,3 +148,161 @@ model AuditLog {
   @@index([userId, createdAt])
   @@map("audit_logs")
 }
+
+// ============================================================
+// Phase 4: Market Data Pipeline
+// ============================================================
+
+enum MarketDataInterval {
+  i1m  @map("1m")
+  i3m  @map("3m")
+  i5m  @map("5m")
+  i15m @map("15m")
+  i30m @map("30m")
+  i1h  @map("1h")
+  i2h  @map("2h")
+  i4h  @map("4h")
+  i6h  @map("6h")
+  i8h  @map("8h")
+  i12h @map("12h")
+  i1d  @map("1d")
+  i1w  @map("1w")
+  i1M  @map("1M")
+}
+
+enum GapStatus {
+  DETECTED
+  REPAIRING
+  REPAIRED
+  FAILED
+  IGNORED
+}
+
+model MarketInstrument {
+  id                String           @id @default(uuid()) @db.Uuid
+  provider          ExchangeProvider
+  symbol            String
+  baseAsset         String
+  quoteAsset        String
+  settlementAsset   String
+  instrumentType    String           @default("PERPETUAL")
+  status            String           @default("TRADING")
+  pricePrecision    Int
+  quantityPrecision Int
+  tickSize          Decimal          @db.Decimal(24, 8)
+  stepSize          Decimal          @db.Decimal(24, 8)
+  minQuantity       Decimal?         @db.Decimal(24, 8)
+  maxQuantity       Decimal?         @db.Decimal(24, 8)
+  minNotional       Decimal?         @db.Decimal(24, 8)
+  contractSize      Decimal?         @db.Decimal(24, 8)
+  lastSyncedAt      DateTime         @default(now())
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  @@unique([provider, symbol])
+  @@index([provider, status])
+  @@map("market_instruments")
+}
+
+model MarketCandle {
+  id          String             @id @default(uuid()) @db.Uuid
+  provider    ExchangeProvider
+  symbol      String
+  interval    MarketDataInterval
+  openTime    DateTime
+  closeTime   DateTime
+  open        Decimal            @db.Decimal(24, 8)
+  high        Decimal            @db.Decimal(24, 8)
+  low         Decimal            @db.Decimal(24, 8)
+  close       Decimal            @db.Decimal(24, 8)
+  volume      Decimal            @db.Decimal(36, 8)
+  quoteVolume Decimal?           @db.Decimal(36, 8)
+  tradeCount  Int?
+  isClosed    Boolean            @default(false)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@unique([provider, symbol, interval, openTime])
+  @@index([symbol, openTime])
+  @@index([provider, symbol, interval, openTime])
+  @@map("market_candles")
+}
+
+model FundingRateSnapshot {
+  id              String           @id @default(uuid()) @db.Uuid
+  provider        ExchangeProvider
+  symbol          String
+  fundingRate     Decimal          @db.Decimal(24, 12)
+  fundingTime     DateTime
+  nextFundingTime DateTime?
+  markPrice       Decimal?         @db.Decimal(24, 8)
+  createdAt       DateTime         @default(now())
+
+  @@unique([provider, symbol, fundingTime])
+  @@index([provider, symbol, fundingTime])
+  @@map("funding_rate_snapshots")
+}
+
+model OpenInterestSnapshot {
+  id                String           @id @default(uuid()) @db.Uuid
+  provider          ExchangeProvider
+  symbol            String
+  openInterest      Decimal          @db.Decimal(36, 8)
+  openInterestValue Decimal?         @db.Decimal(36, 8)
+  recordedAt        DateTime
+  createdAt         DateTime         @default(now())
+
+  @@unique([provider, symbol, recordedAt])
+  @@index([provider, symbol, recordedAt])
+  @@map("open_interest_snapshots")
+}
+
+model MarketDataGap {
+  id         String             @id @default(uuid()) @db.Uuid
+  provider   ExchangeProvider
+  symbol     String
+  interval   MarketDataInterval
+  gapStart   DateTime
+  gapEnd     DateTime
+  status     GapStatus          @default(DETECTED)
+  retryCount Int                @default(0)
+  lastError  String?
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+
+  @@unique([provider, symbol, interval, gapStart])
+  @@index([provider, symbol, interval, status])
+  @@map("market_data_gaps")
+}
+
+model MarketStreamIncident {
+  id         String           @id @default(uuid()) @db.Uuid
+  provider   ExchangeProvider
+  symbol     String?
+  code       String
+  message    String
+  metadata   Json?
+  resolvedAt DateTime?
+  createdAt  DateTime         @default(now())
+
+  @@index([provider, code, createdAt])
+  @@index([createdAt])
+  @@map("market_stream_incidents")
+}
+
+model IndicatorSnapshotRecord {
+  id                 String             @id @default(uuid()) @db.Uuid
+  provider           ExchangeProvider
+  symbol             String
+  interval           MarketDataInterval
+  candleOpenTime     DateTime
+  candleCloseTime    DateTime
+  status             String             @default("CLOSED")
+  values             Json
+  calculationVersion Int                @default(1)
+  createdAt          DateTime           @default(now())
+
+  @@unique([provider, symbol, interval, candleOpenTime, status])
+  @@index([provider, symbol, interval, candleOpenTime])
+  @@map("indicator_snapshots")
+}
