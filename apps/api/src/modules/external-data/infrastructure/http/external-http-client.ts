@@ -131,8 +131,8 @@ export class ExternalHttpClient {
               statusCode: 304,
               headers: res.headers,
               body: '',
-              etag: (res.headers['etag'] as string) || etag,
-              lastModified: (res.headers['last-modified'] as string) || lastModified,
+              etag: (res.headers['etag']) || etag,
+              lastModified: (res.headers['last-modified']) || lastModified,
               notModified: true,
             });
           }
@@ -198,8 +198,8 @@ export class ExternalHttpClient {
               statusCode,
               headers: res.headers,
               body,
-              etag: (res.headers['etag'] as string) || undefined,
-              lastModified: (res.headers['last-modified'] as string) || undefined,
+              etag: (res.headers['etag']) || undefined,
+              lastModified: (res.headers['last-modified']) || undefined,
               notModified: false,
             });
           });

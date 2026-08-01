@@ -51,7 +51,7 @@ export class NewsIngestionService {
 
         // 1. Canonicalization
         const { canonicalUrl } = this.canonicalizer.canonicalize(rawItem.url);
-        const { normalizedTitle, titleHash } = this.canonicalizer.normalizeTitle(rawItem.title);
+        const { normalizedTitle } = this.canonicalizer.normalizeTitle(rawItem.title);
 
         // 2. Exact Deduplication Check (by canonical URL)
         const existingByUrl = await this.prisma.newsArticle.findUnique({
@@ -93,7 +93,7 @@ export class NewsIngestionService {
 
         if (duplicateMatchId) {
           duplicates++;
-          await this.handleNearDuplicate(duplicateMatchId, sourceId, rawItem, canonicalUrl);
+          await this.handleNearDuplicate(duplicateMatchId, sourceId, rawItem);
           continue;
         }
 
@@ -165,8 +165,10 @@ export class NewsIngestionService {
 
         // 7. Event Bus & WebSocket Broadcast
         await this.eventPublisher.publishNewsArticleCreated(createdArticle, assessment, symbols, topics);
-      } catch (err: any) {
-        this.logger.error(`Error processing raw news item "${rawItem.title}": ${err.message}`, err.stack);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const stack = err instanceof Error ? err.stack : undefined;
+        this.logger.error(`Error processing raw news item "${rawItem.title}": ${msg}`, stack);
         rejected++;
       }
     }
@@ -200,7 +202,6 @@ export class NewsIngestionService {
     primaryArticleId: string,
     sourceId: string,
     item: RawNewsItem,
-    canonicalUrl: string,
   ) {
     const primary = await this.prisma.newsArticle.findUnique({
       where: { id: primaryArticleId },

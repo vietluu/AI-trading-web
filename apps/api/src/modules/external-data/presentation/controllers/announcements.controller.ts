@@ -1,5 +1,6 @@
 import { Controller, Get, NotFoundException, Param, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ExchangeAnnouncementCategory, ExchangeProvider, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../../database/prisma.service';
 
 @ApiTags('External Data - Exchange Announcements')
@@ -19,9 +20,9 @@ export class AnnouncementsController {
     const page = Math.max(parseInt(pageStr, 10), 1);
     const limit = Math.min(Math.max(parseInt(limitStr, 10), 1), 100);
 
-    const where: any = {};
-    if (provider) where.provider = provider;
-    if (category) where.category = category;
+    const where: Prisma.ExchangeAnnouncementWhereInput = {};
+    if (provider) where.provider = provider as ExchangeProvider;
+    if (category) where.category = category as ExchangeAnnouncementCategory;
     if (symbol) where.relatedSymbols = { has: symbol.toUpperCase() };
 
     const total = await this.prisma.exchangeAnnouncement.count({ where });

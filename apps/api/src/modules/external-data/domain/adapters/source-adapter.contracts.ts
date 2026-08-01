@@ -1,7 +1,7 @@
 import {
-  ExternalDataHealthStatus,
-  ExternalDataProvider,
-  NewsSourceType,
+  type ExternalDataHealthStatus,
+  type ExternalDataProvider,
+  type NewsSourceType,
   SocialProvider,
 } from '@prisma/client';
 

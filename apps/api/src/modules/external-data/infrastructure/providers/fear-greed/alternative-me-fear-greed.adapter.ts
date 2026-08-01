@@ -24,12 +24,13 @@ export class AlternativeMeFearGreedAdapter implements SentimentSourceAdapter {
     const url = `${this.apiUrl}?limit=${limit}&format=json`;
 
     const response = await this.httpClient.fetch({ url });
-    let parsed: any;
+    let parsed: Record<string, unknown>;
     try {
-      parsed = JSON.parse(response.body);
-    } catch (err: any) {
+      parsed = JSON.parse(response.body) as Record<string, unknown>;
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
       throw new ExternalDataError({
-        message: `Failed to parse Fear & Greed JSON payload: ${err.message}`,
+        message: `Failed to parse Fear & Greed JSON payload: ${errorMsg}`,
         code: ExternalDataErrorCode.SOURCE_PARSE_FAILED,
         provider: this.provider,
         retryable: false,
@@ -48,22 +49,31 @@ export class AlternativeMeFearGreedAdapter implements SentimentSourceAdapter {
     }
 
     const observations: SentimentObservation[] = [];
-    for (const item of parsed.data) {
-      const valNum = parseInt(item.value, 10);
+    for (const itemRaw of parsed.data) {
+      if (!itemRaw || typeof itemRaw !== 'object') continue;
+      const item = itemRaw as Record<string, unknown>;
+
+      const valValue = typeof item.value === 'string' || typeof item.value === 'number' ? item.value : '';
+      const valStr = typeof valValue === 'string' ? valValue : String(valValue);
+      const valNum = parseInt(valStr, 10);
       if (isNaN(valNum) || valNum < 0 || valNum > 100) continue;
 
-      const timestampSec = parseInt(item.timestamp, 10);
+      const timeValue = typeof item.timestamp === 'string' || typeof item.timestamp === 'number' ? item.timestamp : '';
+      const timeStr = typeof timeValue === 'string' ? timeValue : String(timeValue);
+      const timestampSec = parseInt(timeStr, 10);
       if (isNaN(timestampSec)) continue;
 
       const observedAt = new Date(timestampSec * 1000);
       // Validate observation timestamp is not in far future (> 1 day in future)
       if (observedAt.getTime() > Date.now() + 86400000) continue;
 
+      const classificationStr = typeof item.value_classification === 'string' ? item.value_classification : this.classifyValue(valNum);
+
       observations.push({
         provider: 'alternative.me',
         indexType: 'FEAR_AND_GREED',
         value: valNum,
-        classification: item.value_classification || this.classifyValue(valNum),
+        classification: classificationStr,
         observedAt,
         metadata: {
           timeUntilUpdate: item.time_until_update,
@@ -83,13 +93,13 @@ export class AlternativeMeFearGreedAdapter implements SentimentSourceAdapter {
   }
 
   async getHealth(): Promise<ProviderHealth> {
-    return {
+    return Promise.resolve({
       provider: this.provider,
       status: 'HEALTHY',
       latencyMs: 0,
       lastAttemptAt: new Date(),
       lastSuccessAt: new Date(),
       consecutiveFailures: 0,
-    };
+    });
   }
 }

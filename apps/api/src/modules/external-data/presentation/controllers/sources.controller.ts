@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../../database/prisma.service';
 import { SessionGuard } from '../../../../session/session.guard';
 import { ExternalHttpClient } from '../../infrastructure/http/external-http-client';
@@ -36,7 +37,7 @@ export class SourcesController {
   @Post()
   @UseGuards(SessionGuard)
   @ApiOperation({ summary: 'Add a new custom RSS/Atom news source with SSRF validation' })
-  async createSource(@Body() body: any) {
+  async createSource(@Body() body: Record<string, unknown>) {
     const validated = createExternalDataSourceSchema.parse(body);
 
     // Validate SSRF target safety before saving
@@ -61,7 +62,7 @@ export class SourcesController {
   @Patch(':id')
   @UseGuards(SessionGuard)
   @ApiOperation({ summary: 'Update an existing news source' })
-  async updateSource(@Param('id') id: string, @Body() body: any) {
+  async updateSource(@Param('id') id: string, @Body() body: Record<string, unknown>) {
     const validated = updateExternalDataSourceSchema.parse(body);
 
     const source = await this.prisma.externalDataSource.findUnique({ where: { id } });
@@ -76,7 +77,7 @@ export class SourcesController {
 
     return this.prisma.externalDataSource.update({
       where: { id },
-      data: validated as any,
+      data: validated as Prisma.ExternalDataSourceUpdateInput,
     });
   }
 

@@ -40,8 +40,9 @@ export class OkxAnnouncementAdapter {
           rawLanguage: item.rawLanguage || 'en',
         };
       });
-    } catch (err: any) {
-      this.logger.warn(`Failed to fetch OKX announcements: ${err.message}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Failed to fetch OKX announcements: ${msg}`);
       return [];
     }
   }

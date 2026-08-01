@@ -9,13 +9,14 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { NewsArticleStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../../database/prisma.service';
 import { SessionGuard } from '../../../../session/session.guard';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import { UserNewsStateService } from '../../application/services/user-news-state.service';
 import { queryNewsFilterSchema } from '@platform/shared';
 
-@ApiTags('External Data - News')
+@ApiTags('External Data - Cryptocurrency News')
 @Controller('external-data/news')
 export class NewsController {
   constructor(
@@ -24,21 +25,21 @@ export class NewsController {
   ) {}
 
   @Get()
-  @ApiOperation({ summary: 'Get paginated news articles with filtering' })
-  async getNews(
-    @Query() rawQuery: any,
+  @ApiOperation({ summary: 'Search and filter normalized cryptocurrency news articles' })
+  async getNewsArticles(
+    @Query() rawQuery: Record<string, unknown>,
     @CurrentUser() user?: { id: string },
   ) {
     const query = queryNewsFilterSchema.parse(rawQuery);
-    const { page, limit, sort, sourceId, symbol, topic, category, language, minImportance, minReliability, status, saved, unread, search } = query;
+    const { page, limit, symbol, topic, sourceId, language, minImportance, minReliability, status, saved, unread, search, sort } = query;
 
-    const where: any = {};
+    const where: Prisma.NewsArticleWhereInput = {};
 
     if (sourceId) where.sourceId = sourceId;
     if (language) where.language = language;
     if (minImportance != null) where.importanceScore = { gte: minImportance };
     if (minReliability != null) where.reliabilityScore = { gte: minReliability };
-    if (status) where.status = status;
+    if (status) where.status = status as NewsArticleStatus;
 
     if (symbol) {
       where.symbols = { some: { symbol: symbol.toUpperCase() } };
@@ -53,7 +54,6 @@ export class NewsController {
       ];
     }
 
-    // Filter by user saved / unread state if user authenticated
     if (user && (saved || unread)) {
       where.userStates = {
         some: {
@@ -64,14 +64,12 @@ export class NewsController {
       };
     }
 
-    const orderBy: any = {};
-    if (sort === 'importance_desc') {
-      orderBy.importanceScore = 'desc';
-    } else if (sort === 'published_asc') {
-      orderBy.publishedAt = 'asc';
-    } else {
-      orderBy.publishedAt = 'desc';
-    }
+    const orderBy: Prisma.NewsArticleOrderByWithRelationInput =
+      sort === 'importance_desc'
+        ? { importanceScore: 'desc' }
+        : sort === 'published_asc'
+        ? { publishedAt: 'asc' }
+        : { publishedAt: 'desc' };
 
     const total = await this.prisma.newsArticle.count({ where });
     const articles = await this.prisma.newsArticle.findMany({

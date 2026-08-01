@@ -1,5 +1,6 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Prisma, SocialProvider } from '@prisma/client';
 import { PrismaService } from '../../../../database/prisma.service';
 import { SessionGuard } from '../../../../session/session.guard';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
@@ -21,8 +22,8 @@ export class SocialController {
     const page = Math.max(parseInt(pageStr, 10), 1);
     const limit = Math.min(Math.max(parseInt(limitStr, 10), 1), 100);
 
-    const where: any = {};
-    if (provider) where.provider = provider;
+    const where: Prisma.SocialPostWhereInput = {};
+    if (provider) where.provider = provider as SocialProvider;
     if (community) where.community = community;
     if (symbol) where.relatedSymbols = { has: symbol.toUpperCase() };
 

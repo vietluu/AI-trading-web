@@ -1,5 +1,6 @@
 import { Controller, Get, NotFoundException, Param, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { IncidentSeverity, IncidentStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../../database/prisma.service';
 
 @ApiTags('External Data - Security Incidents')
@@ -19,9 +20,9 @@ export class IncidentsController {
     const page = Math.max(parseInt(pageStr, 10), 1);
     const limit = Math.min(Math.max(parseInt(limitStr, 10), 1), 100);
 
-    const where: any = {};
-    if (severity) where.severity = severity;
-    if (status) where.status = status;
+    const where: Prisma.SecurityIncidentWhereInput = {};
+    if (severity) where.severity = severity as IncidentSeverity;
+    if (status) where.status = status as IncidentStatus;
     if (symbol) where.relatedSymbols = { has: symbol.toUpperCase() };
 
     const total = await this.prisma.securityIncident.count({ where });

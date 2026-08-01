@@ -9,16 +9,22 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  MacroEventCategory,
+  MacroEventStatus,
+  MacroImportance,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '../../../../database/prisma.service';
 import { SessionGuard } from '../../../../session/session.guard';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import { MacroImportService } from '../../application/services/macro-import.service';
 import {
+  MacroImportConfirmRequest,
   macroImportConfirmRequestSchema,
-  queryMacroFilterSchema,
 } from '@platform/shared';
 
-@ApiTags('External Data - Macroeconomic Events')
+@ApiTags('External Data - Macroeconomic Calendar')
 @Controller('external-data/macro')
 export class MacroController {
   constructor(
@@ -28,20 +34,29 @@ export class MacroController {
 
   @Get('events')
   @ApiOperation({ summary: 'Get macroeconomic calendar events' })
-  async getMacroEvents(@Query() rawQuery: any) {
-    const query = queryMacroFilterSchema.parse(rawQuery);
-    const { page, limit, country, category, importance, status, fromDate, toDate } = query;
+  async getMacroEvents(
+    @Query('importance') importance?: string,
+    @Query('category') category?: string,
+    @Query('country') country?: string,
+    @Query('status') status?: string,
+    @Query('startDate') startDateStr?: string,
+    @Query('endDate') endDateStr?: string,
+    @Query('page') pageStr: string = '1',
+    @Query('limit') limitStr: string = '20',
+  ) {
+    const page = Math.max(parseInt(pageStr, 10), 1);
+    const limit = Math.min(Math.max(parseInt(limitStr, 10), 1), 100);
 
-    const where: any = {};
+    const where: Prisma.MacroEconomicEventWhereInput = {};
+    if (importance) where.importance = importance as MacroImportance;
+    if (category) where.category = category as MacroEventCategory;
     if (country) where.country = country;
-    if (category) where.category = category;
-    if (importance) where.importance = importance;
-    if (status) where.status = status;
+    if (status) where.status = status as MacroEventStatus;
 
-    if (fromDate || toDate) {
+    if (startDateStr || endDateStr) {
       where.scheduledAt = {};
-      if (fromDate) where.scheduledAt.gte = new Date(fromDate);
-      if (toDate) where.scheduledAt.lte = new Date(toDate);
+      if (startDateStr) where.scheduledAt.gte = new Date(startDateStr);
+      if (endDateStr) where.scheduledAt.lte = new Date(endDateStr);
     }
 
     const total = await this.prisma.macroEconomicEvent.count({ where });
@@ -108,14 +123,14 @@ export class MacroController {
     if (!fileContent) {
       throw new NotFoundException('fileContent must be provided');
     }
-    return this.macroImportService.previewImport(fileContent, fileFormat);
+    return Promise.resolve(this.macroImportService.previewImport(fileContent, fileFormat));
   }
 
   @Post('import')
   @UseGuards(SessionGuard)
   @ApiOperation({ summary: 'Confirm and execute manual macro event import' })
   async confirmImport(
-    @Body() body: any,
+    @Body() body: Record<string, unknown>,
     @CurrentUser() user: { id: string },
   ) {
     const validatedRequest = macroImportConfirmRequestSchema.parse(body);

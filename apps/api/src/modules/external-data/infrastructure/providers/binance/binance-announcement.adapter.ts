@@ -54,8 +54,9 @@ export class BinanceAnnouncementAdapter {
           rawLanguage: item.rawLanguage || 'en',
         };
       });
-    } catch (err: any) {
-      this.logger.warn(`Failed to fetch Binance announcements: ${err.message}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Failed to fetch Binance announcements: ${msg}`);
       return [];
     }
   }

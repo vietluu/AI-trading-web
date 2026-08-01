@@ -70,7 +70,7 @@ export class ProviderHealthService {
     const recordMap = new Map(records.map((r: any) => [r.provider, r]));
 
     return allProviders.map((provider) => {
-      const record = recordMap.get(provider as ExternalDataProvider);
+      const record = recordMap.get(provider);
       if (record) return record;
 
       return {

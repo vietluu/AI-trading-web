@@ -56,12 +56,13 @@ export class GenericRssAdapter implements NewsSourceAdapter {
   }
 
   parseFeedXml(xmlContent: string): RawNewsItem[] {
-    let parsed: any;
+    let parsed: Record<string, unknown>;
     try {
-      parsed = this.xmlParser.parse(xmlContent);
-    } catch (err: any) {
+      parsed = this.xmlParser.parse(xmlContent) as Record<string, unknown>;
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
       throw new ExternalDataError({
-        message: `Failed to parse RSS/Atom XML feed: ${err.message}`,
+        message: `Failed to parse RSS/Atom XML feed: ${errorMsg}`,
         code: ExternalDataErrorCode.SOURCE_PARSE_FAILED,
         provider: this.provider,
         retryable: false,
@@ -71,31 +72,38 @@ export class GenericRssAdapter implements NewsSourceAdapter {
 
     if (!parsed) return [];
 
+    const rss = parsed.rss as Record<string, unknown> | undefined;
+    const feed = parsed.feed as Record<string, unknown> | undefined;
+    const rdf = parsed['rdf:RDF'] as Record<string, unknown> | undefined;
+
     // Check RSS 2.0
-    if (parsed.rss?.channel) {
-      return this.parseRssItems(parsed.rss.channel.item);
+    if (rss?.channel) {
+      const channel = rss.channel as Record<string, unknown>;
+      return this.parseRssItems(channel.item);
     }
 
     // Check Atom
-    if (parsed.feed) {
-      return this.parseAtomEntries(parsed.feed.entry);
+    if (feed) {
+      return this.parseAtomEntries(feed.entry);
     }
 
     // Check RDF/RSS 1.0
-    if (parsed['rdf:RDF']?.item) {
-      return this.parseRssItems(parsed['rdf:RDF'].item);
+    if (rdf?.item) {
+      return this.parseRssItems(rdf.item);
     }
 
     return [];
   }
 
-  private parseRssItems(itemsRaw: any): RawNewsItem[] {
+  private parseRssItems(itemsRaw: unknown): RawNewsItem[] {
     if (!itemsRaw) return [];
     const itemsArray = Array.isArray(itemsRaw) ? itemsRaw : [itemsRaw];
 
     const results: RawNewsItem[] = [];
-    for (const item of itemsArray) {
-      if (!item) continue;
+    for (const itemRaw of itemsArray) {
+      if (!itemRaw || typeof itemRaw !== 'object') continue;
+      const item = itemRaw as Record<string, unknown>;
+
       const title = this.extractString(item.title);
       const url = this.extractString(item.link) || this.extractString(item.guid);
       if (!title || !url) continue;
@@ -115,7 +123,7 @@ export class GenericRssAdapter implements NewsSourceAdapter {
       const categories: string[] = [];
       if (item.category) {
         if (Array.isArray(item.category)) {
-          item.category.forEach((c: any) => {
+          item.category.forEach((c: unknown) => {
             const val = this.extractString(c);
             if (val) categories.push(val);
           });
@@ -140,23 +148,26 @@ export class GenericRssAdapter implements NewsSourceAdapter {
     return results;
   }
 
-  private parseAtomEntries(entriesRaw: any): RawNewsItem[] {
+  private parseAtomEntries(entriesRaw: unknown): RawNewsItem[] {
     if (!entriesRaw) return [];
     const entriesArray = Array.isArray(entriesRaw) ? entriesRaw : [entriesRaw];
 
     const results: RawNewsItem[] = [];
-    for (const entry of entriesArray) {
-      if (!entry) continue;
+    for (const entryRaw of entriesArray) {
+      if (!entryRaw || typeof entryRaw !== 'object') continue;
+      const entry = entryRaw as Record<string, unknown>;
 
       const title = this.extractString(entry.title);
       let url = '';
       if (typeof entry.link === 'string') {
         url = entry.link;
       } else if (Array.isArray(entry.link)) {
-        const altLink = entry.link.find((l: any) => l['@_rel'] === 'alternate') || entry.link[0];
-        url = altLink?.['@_href'] || '';
-      } else if (entry.link?.['@_href']) {
-        url = entry.link['@_href'];
+        const links = entry.link as Record<string, unknown>[];
+        const altLink = links.find((l) => l['@_rel'] === 'alternate') || links[0];
+        url = typeof altLink?.['@_href'] === 'string' ? altLink['@_href'] : '';
+      } else if (typeof entry.link === 'object' && entry.link !== null) {
+        const linkObj = entry.link as Record<string, unknown>;
+        url = typeof linkObj['@_href'] === 'string' ? linkObj['@_href'] : '';
       }
 
       if (!title || !url) continue;
@@ -172,7 +183,8 @@ export class GenericRssAdapter implements NewsSourceAdapter {
         '';
       const excerpt = this.sanitizeText(content).slice(0, 500);
 
-      const author = this.extractString(entry.author?.name) || this.extractString(entry.author);
+      const authorObj = entry.author as Record<string, unknown> | undefined;
+      const author = this.extractString(authorObj?.name) || this.extractString(entry.author);
       const externalId = this.extractString(entry.id) || url;
 
       results.push({
@@ -189,11 +201,17 @@ export class GenericRssAdapter implements NewsSourceAdapter {
     return results;
   }
 
-  private extractString(val: any): string {
+  private extractString(val: unknown): string {
     if (val == null) return '';
     if (typeof val === 'string') return val;
     if (typeof val === 'number') return String(val);
-    if (typeof val === 'object' && val['#text']) return String(val['#text']);
+    if (typeof val === 'object' && val !== null) {
+      const obj = val as Record<string, unknown>;
+      const textValue = obj['#text'];
+      if (typeof textValue === 'string' || typeof textValue === 'number') {
+        return String(textValue);
+      }
+    }
     return '';
   }
 
@@ -213,14 +231,14 @@ export class GenericRssAdapter implements NewsSourceAdapter {
   }
 
   async getHealth(): Promise<ProviderHealth> {
-    return {
+    return Promise.resolve({
       provider: this.provider,
       status: 'HEALTHY',
       latencyMs: 0,
       lastAttemptAt: new Date(),
       lastSuccessAt: new Date(),
       consecutiveFailures: 0,
-    };
+    });
   }
 
   supportsPagination(): boolean {

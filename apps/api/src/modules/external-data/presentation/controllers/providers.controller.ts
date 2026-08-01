@@ -35,13 +35,13 @@ export class ProvidersController {
   @UseGuards(SessionGuard)
   @ApiOperation({ summary: 'Enable provider ingestion' })
   async enableProvider(@Param('id') providerId: string) {
-    return { provider: providerId, isEnabled: true, status: 'ENABLED' };
+    return Promise.resolve({ provider: providerId, isEnabled: true, status: 'ENABLED' });
   }
 
   @Post(':id/disable')
   @UseGuards(SessionGuard)
   @ApiOperation({ summary: 'Disable provider ingestion' })
   async disableProvider(@Param('id') providerId: string) {
-    return { provider: providerId, isEnabled: false, status: 'DISABLED' };
+    return Promise.resolve({ provider: providerId, isEnabled: false, status: 'DISABLED' });
   }
 }

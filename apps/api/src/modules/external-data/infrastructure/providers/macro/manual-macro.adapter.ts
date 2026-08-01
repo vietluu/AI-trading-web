@@ -34,14 +34,15 @@ export class ManualMacroAdapter implements MacroEventSourceAdapter {
     content: string,
     fileFormat: 'csv' | 'json',
   ): MacroParsePreviewResult {
-    let rows: any[] = [];
+    let rows: unknown[] = [];
     if (fileFormat === 'json') {
       try {
         const parsed = JSON.parse(content);
         rows = Array.isArray(parsed) ? parsed : [parsed];
-      } catch (err: any) {
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
         throw new ExternalDataError({
-          message: `Invalid JSON format: ${err.message}`,
+          message: `Invalid JSON format: ${errorMsg}`,
           code: ExternalDataErrorCode.IMPORT_VALIDATION_FAILED,
           provider: 'MANUAL_MACRO',
           retryable: false,
@@ -67,9 +68,13 @@ export class ManualMacroAdapter implements MacroEventSourceAdapter {
         const validated = macroImportItemSchema.parse(normalized);
         previewItems.push(validated);
         validCount++;
-      } catch (err: any) {
+      } catch (err: unknown) {
         invalidCount++;
-        const errMsg = err.errors ? err.errors.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ') : err.message;
+        let errMsg = err instanceof Error ? err.message : String(err);
+        if (typeof err === 'object' && err !== null && 'errors' in err && Array.isArray((err as any).errors)) {
+          const zodErrors = (err as any).errors;
+          errMsg = zodErrors.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ');
+        }
         errors.push({ row: rowNum, message: errMsg });
       }
     }
@@ -83,18 +88,20 @@ export class ManualMacroAdapter implements MacroEventSourceAdapter {
     };
   }
 
-  private normalizeRawMacroRow(row: any): Record<string, any> {
+  private normalizeRawMacroRow(row: unknown): Record<string, unknown> {
     if (typeof row !== 'object' || row === null) {
       throw new Error('Row is not an object');
     }
 
+    const r = row as Record<string, unknown>;
+
     // Map common CSV/JSON column name variations
-    const name = row.name || row.Name || row.event || row.Event || '';
-    const country = row.country || row.Country || row.region || '';
-    const currency = row.currency || row.Currency || '';
-    const categoryRaw = (row.category || row.Category || 'OTHER').toUpperCase();
-    const importanceRaw = (row.importance || row.Importance || 'MEDIUM').toUpperCase();
-    const scheduledAtRaw = row.scheduledAt || row.scheduled_at || row.date || row.Date || row.time;
+    const name = typeof r.name === 'string' ? r.name : typeof r.Name === 'string' ? r.Name : typeof r.event === 'string' ? r.event : typeof r.Event === 'string' ? r.Event : '';
+    const country = typeof r.country === 'string' ? r.country : typeof r.Country === 'string' ? r.Country : typeof r.region === 'string' ? r.region : '';
+    const currency = typeof r.currency === 'string' ? r.currency : typeof r.Currency === 'string' ? r.Currency : '';
+    const categoryRaw = String(typeof r.category === 'string' ? r.category : typeof r.Category === 'string' ? r.Category : 'OTHER').toUpperCase();
+    const importanceRaw = String(typeof r.importance === 'string' ? r.importance : typeof r.Importance === 'string' ? r.Importance : 'MEDIUM').toUpperCase();
+    const scheduledAtRaw = typeof r.scheduledAt === 'string' || typeof r.scheduledAt === 'number' ? r.scheduledAt : typeof r.scheduled_at === 'string' || typeof r.scheduled_at === 'number' ? r.scheduled_at : typeof r.date === 'string' || typeof r.date === 'number' ? r.date : typeof r.Date === 'string' || typeof r.Date === 'number' ? r.Date : typeof r.time === 'string' || typeof r.time === 'number' ? r.time : undefined;
 
     let category: MacroEventCategory = 'OTHER';
     if (['CPI', 'PPI', 'GDP', 'UNEMPLOYMENT', 'NONFARM_PAYROLLS', 'INTEREST_RATE_DECISION', 'CENTRAL_BANK_SPEECH', 'FOMC', 'RETAIL_SALES', 'PMI', 'DOLLAR_INDEX', 'TREASURY_AUCTION'].includes(categoryRaw)) {
@@ -108,27 +115,29 @@ export class ManualMacroAdapter implements MacroEventSourceAdapter {
 
     let scheduledAt = new Date().toISOString();
     if (scheduledAtRaw) {
-      const parsedDate = new Date(scheduledAtRaw);
+      const parsedDate = new Date(String(scheduledAtRaw));
       if (!isNaN(parsedDate.getTime())) {
         scheduledAt = parsedDate.toISOString();
       } else {
-        throw new Error(`Invalid scheduledAt date string: ${scheduledAtRaw}`);
+        throw new Error(`Invalid scheduledAt date string: ${String(scheduledAtRaw)}`);
       }
     }
 
+    const sourceUrlVal = r.sourceUrl || r.source_url;
+
     return {
-      name: String(name).trim(),
-      country: country ? String(country).trim() : undefined,
-      currency: currency ? String(currency).trim() : undefined,
+      name: name.trim(),
+      country: country ? country.trim() : undefined,
+      currency: currency ? currency.trim() : undefined,
       category,
       importance,
       scheduledAt,
-      actual: row.actual != null ? String(row.actual).trim() : undefined,
-      forecast: row.forecast != null ? String(row.forecast).trim() : undefined,
-      previous: row.previous != null ? String(row.previous).trim() : undefined,
-      unit: row.unit != null ? String(row.unit).trim() : undefined,
-      status: row.status || 'SCHEDULED',
-      sourceUrl: row.sourceUrl || row.source_url || undefined,
+      actual: r.actual != null ? (typeof r.actual === 'string' || typeof r.actual === 'number' ? String(r.actual) : '').trim() : undefined,
+      forecast: r.forecast != null ? (typeof r.forecast === 'string' || typeof r.forecast === 'number' ? String(r.forecast) : '').trim() : undefined,
+      previous: r.previous != null ? (typeof r.previous === 'string' || typeof r.previous === 'number' ? String(r.previous) : '').trim() : undefined,
+      unit: r.unit != null ? (typeof r.unit === 'string' || typeof r.unit === 'number' ? String(r.unit) : '').trim() : undefined,
+      status: typeof r.status === 'string' ? r.status : 'SCHEDULED',
+      sourceUrl: typeof sourceUrlVal === 'string' ? sourceUrlVal : undefined,
     };
   }
 
@@ -176,13 +185,13 @@ export class ManualMacroAdapter implements MacroEventSourceAdapter {
   }
 
   async getHealth(): Promise<ProviderHealth> {
-    return {
-      provider: 'MANUAL_MACRO' as any,
+    return Promise.resolve({
+      provider: 'MANUAL_MACRO',
       status: 'HEALTHY',
       latencyMs: 0,
       lastAttemptAt: new Date(),
       lastSuccessAt: new Date(),
       consecutiveFailures: 0,
-    };
+    });
   }
 }

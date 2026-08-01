@@ -69,7 +69,7 @@ export class ExternalDataGateway
     });
   }
 
-  broadcastToChannel(channel: string, event: string, data: any) {
+  broadcastToChannel(channel: string, event: string, data: Record<string, unknown>) {
     if (!this.server) return;
 
     const message = {
@@ -90,17 +90,22 @@ export class ExternalDataGateway
       for (const sub of subs) {
         if (sub.type === channel) {
           // Check importance filter
+          const importanceScore = typeof data.importanceScore === 'number' ? data.importanceScore : undefined;
           if (
             sub.minimumImportance != null &&
-            data.importanceScore != null &&
-            data.importanceScore < sub.minimumImportance
+            importanceScore != null &&
+            importanceScore < sub.minimumImportance
           ) {
             continue;
           }
 
           // Check symbol filter
           if (sub.symbols && sub.symbols.length > 0) {
-            const dataSymbols: string[] = data.symbols || data.relatedSymbols || [];
+            const dataSymbols: string[] = Array.isArray(data.symbols)
+              ? (data.symbols as string[])
+              : Array.isArray(data.relatedSymbols)
+              ? (data.relatedSymbols as string[])
+              : [];
             const hasMatchingSymbol = sub.symbols.some((s) => dataSymbols.includes(s));
             if (!hasMatchingSymbol) continue;
           }

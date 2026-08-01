@@ -73,7 +73,7 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
 
         const ingestionResult = await this.newsIngestionService.processRawNewsItems(
           source.sourceId,
-          source.sourceType as any,
+          source.sourceType,
           source.reliabilityScore,
           source.isCustom === false && source.reliabilityScore >= 90,
           fetchResult.items,
@@ -94,7 +94,7 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
         });
 
         await this.providerHealth.recordAttempt(
-          source.provider as any,
+          source.provider,
           Date.now() - startTime,
           ingestionResult.totalFetched,
           ingestionResult.accepted,
@@ -110,7 +110,7 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
         });
 
         await this.providerHealth.recordAttempt(
-          source.provider as any,
+          source.provider,
           Date.now() - startTime,
           0,
           0,
@@ -160,7 +160,7 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
     }
 
     await this.providerHealth.recordAttempt(
-      'BINANCE_ANNOUNCEMENTS' as any,
+      'BINANCE_ANNOUNCEMENTS',
       Date.now() - startTime,
       announcements.length,
       accepted,
@@ -207,7 +207,7 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
     }
 
     await this.providerHealth.recordAttempt(
-      'OKX_ANNOUNCEMENTS' as any,
+      'OKX_ANNOUNCEMENTS',
       Date.now() - startTime,
       announcements.length,
       accepted,
@@ -252,7 +252,7 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
     }
 
     await this.providerHealth.recordAttempt(
-      'ALTERNATIVE_ME_FEAR_GREED' as any,
+      'ALTERNATIVE_ME_FEAR_GREED',
       Date.now() - startTime,
       observations.length,
       accepted,

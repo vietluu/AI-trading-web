@@ -35,12 +35,13 @@ export class RedditAdapter implements SocialSourceAdapter {
         },
       });
 
-      let parsed: any;
+      let parsed: Record<string, unknown>;
       try {
-        parsed = JSON.parse(response.body);
-      } catch (err: any) {
+        parsed = JSON.parse(response.body) as Record<string, unknown>;
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
         throw new ExternalDataError({
-          message: `Failed to parse Reddit JSON response: ${err.message}`,
+          message: `Failed to parse Reddit JSON response: ${errorMsg}`,
           code: ExternalDataErrorCode.SOURCE_PARSE_FAILED,
           provider: this.provider,
           retryable: false,
@@ -48,40 +49,47 @@ export class RedditAdapter implements SocialSourceAdapter {
         });
       }
 
-      if (!parsed?.data?.children || !Array.isArray(parsed.data.children)) {
+      const dataObj = parsed.data as Record<string, unknown> | undefined;
+      const children = dataObj?.children;
+      if (!Array.isArray(children)) {
         return [];
       }
 
       const results: RawSocialPost[] = [];
-      for (const child of parsed.data.children) {
-        const post = child.data;
-        if (!post || !post.id || !post.title) continue;
+      for (const child of children) {
+        if (!child || typeof child !== 'object') continue;
+        const post = (child as Record<string, unknown>).data as Record<string, unknown> | undefined;
+        if (!post || typeof post.id !== 'string' || typeof post.title !== 'string') continue;
 
-        const publishedAt = new Date(post.created_utc * 1000);
-        const authorHash = post.author ? this.hashAuthor(post.author) : undefined;
-        const textExcerpt = (post.selftext || '').slice(0, 500);
-        const permalink = post.permalink ? `https://www.reddit.com${post.permalink}` : undefined;
+        const createdUtc = typeof post.created_utc === 'number' ? post.created_utc : 0;
+        const publishedAt = new Date(createdUtc * 1000);
+        const author = typeof post.author === 'string' ? post.author : '';
+        const authorHash = author ? this.hashAuthor(author) : undefined;
+        const selftext = typeof post.selftext === 'string' ? post.selftext : '';
+        const textExcerpt = selftext.slice(0, 500);
+        const permalink = typeof post.permalink === 'string' ? `https://www.reddit.com${post.permalink}` : undefined;
 
         results.push({
           externalId: post.id,
-          community: post.subreddit,
+          community: typeof post.subreddit === 'string' ? post.subreddit : community,
           title: post.title,
           textExcerpt,
           authorHash,
           canonicalUrl: permalink,
           publishedAt: isNaN(publishedAt.getTime()) ? new Date() : publishedAt,
           engagement: {
-            score: post.score,
-            comments: post.num_comments,
-            upvoteRatio: post.upvote_ratio,
+            score: typeof post.score === 'number' ? post.score : 0,
+            comments: typeof post.num_comments === 'number' ? post.num_comments : 0,
+            upvoteRatio: typeof post.upvote_ratio === 'number' ? post.upvote_ratio : undefined,
           },
         });
       }
 
       return results;
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ExternalDataError) throw err;
-      this.logger.warn(`Reddit fetch error for r/${community}: ${err.message}`);
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Reddit fetch error for r/${community}: ${errorMsg}`);
       return [];
     }
   }
@@ -91,13 +99,13 @@ export class RedditAdapter implements SocialSourceAdapter {
   }
 
   async getHealth(): Promise<ProviderHealth> {
-    return {
+    return Promise.resolve({
       provider: this.provider,
       status: 'HEALTHY',
       latencyMs: 0,
       lastAttemptAt: new Date(),
       lastSuccessAt: new Date(),
       consecutiveFailures: 0,
-    };
+    });
   }
 }
