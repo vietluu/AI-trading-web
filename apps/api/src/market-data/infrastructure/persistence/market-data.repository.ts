@@ -340,7 +340,7 @@ export class MarketDataRepository {
         ...(query?.status ? { status: query.status as any } : {}),
       },
       orderBy: { gapStart: 'asc' },
-      take: query?.limit,
+      ...(query?.limit ? { take: query.limit } : {}),
     });
   }
 

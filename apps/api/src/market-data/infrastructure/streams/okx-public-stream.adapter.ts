@@ -482,12 +482,12 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
     
     for (const data of dataArray) {
       const bids = (data.bids as string[][])?.map((b) => ({
-        price: b[0],
-        quantity: b[1],
+        price: b[0] as string,
+        quantity: b[1] as string,
       })) ?? [];
       const asks = (data.asks as string[][])?.map((a) => ({
-        price: a[0],
-        quantity: a[1],
+        price: a[0] as string,
+        quantity: a[1] as string,
       })) ?? [];
 
       const book: NormalizedOrderBook = {
