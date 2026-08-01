@@ -64,6 +64,7 @@ model User {
   improvementProposals   ImprovementProposal[]
   paperAccount           PaperAccount?
   paperSignals           PaperSignal[]
+  riskAssessments        RiskAssessment[]
 
   @@map("users")
 }
@@ -73,18 +74,18 @@ model User {
 // ============================================================
 
 model PaperAccount {
-  id          String           @id @default(uuid()) @db.Uuid
-  userId      String           @unique @db.Uuid
-  balance     Decimal          @db.Decimal(24, 8)
-  equity      Decimal          @db.Decimal(24, 8)
-  marginUsed  Decimal          @default(0) @db.Decimal(24, 8)
-  peakEquity  Decimal          @db.Decimal(24, 8)
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
-  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  positions   PaperPosition[]
-  orders      SimulatedOrder[]
-  trades      PaperTrade[]
+  id         String           @id @default(uuid()) @db.Uuid
+  userId     String           @unique @db.Uuid
+  balance    Decimal          @db.Decimal(24, 8)
+  equity     Decimal          @db.Decimal(24, 8)
+  marginUsed Decimal          @default(0) @db.Decimal(24, 8)
+  peakEquity Decimal          @db.Decimal(24, 8)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  positions  PaperPosition[]
+  orders     SimulatedOrder[]
+  trades     PaperTrade[]
 
   @@map("paper_accounts")
 }
@@ -101,6 +102,8 @@ model PaperPosition {
   unrealizedPnL Decimal      @default(0) @db.Decimal(24, 8)
   realizedPnL   Decimal      @default(0) @db.Decimal(24, 8)
   entryFee      Decimal      @default(0) @db.Decimal(24, 8)
+  stopLoss      Decimal      @db.Decimal(24, 8)
+  takeProfit    Decimal      @db.Decimal(24, 8)
   openedAt      DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
   account       PaperAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
@@ -108,6 +111,32 @@ model PaperPosition {
   @@unique([accountId, symbol])
   @@index([accountId, updatedAt])
   @@map("paper_positions")
+}
+
+model RiskAssessment {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @db.Uuid
+  pipelineRunId  String?  @unique @db.Uuid
+  symbol         String
+  decision       String
+  confidence     Float
+  approved       Boolean
+  reason         String?
+  positionSize   Decimal? @db.Decimal(30, 12)
+  leverage       Int?
+  stopLoss       Decimal? @db.Decimal(24, 8)
+  takeProfit     Decimal? @db.Decimal(24, 8)
+  riskScore      Float
+  referencePrice Decimal  @db.Decimal(24, 8)
+  volatility     Float
+  exposurePct    Float
+  drawdownPct    Float
+  createdAt      DateTime @default(now())
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, approved, createdAt])
+  @@map("risk_assessments")
 }
 
 model SimulatedOrder {
@@ -154,17 +183,17 @@ model PaperTrade {
 }
 
 model PaperSignal {
-  id            String   @id @default(uuid()) @db.Uuid
-  userId        String   @db.Uuid
-  pipelineRunId String?  @unique @db.Uuid
-  symbol        String
-  decision      String
-  confidence    Float
-  mode          String
-  referencePrice Decimal @db.Decimal(24, 8)
-  outcome       String
-  createdAt     DateTime @default(now())
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @db.Uuid
+  pipelineRunId  String?  @unique @db.Uuid
+  symbol         String
+  decision       String
+  confidence     Float
+  mode           String
+  referencePrice Decimal  @db.Decimal(24, 8)
+  outcome        String
+  createdAt      DateTime @default(now())
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
   @@map("paper_signals")
@@ -213,21 +242,21 @@ enum PipelineScheduleMode {
 }
 
 model PipelineSchedule {
-  id             String               @id @default(uuid()) @db.Uuid
-  userId         String               @db.Uuid
-  pipelineId     String
-  symbols        String[]
-  provider       ExchangeProvider
-  mode           PipelineScheduleMode
-  cron           String?
-  intervalMs     Int?
-  enabled        Boolean              @default(true)
-  timezone       String               @default("UTC")
-  maxRunsPerHour Int                  @default(60)
+  id              String               @id @default(uuid()) @db.Uuid
+  userId          String               @db.Uuid
+  pipelineId      String
+  symbols         String[]
+  provider        ExchangeProvider
+  mode            PipelineScheduleMode
+  cron            String?
+  intervalMs      Int?
+  enabled         Boolean              @default(true)
+  timezone        String               @default("UTC")
+  maxRunsPerHour  Int                  @default(60)
   lastTriggeredAt DateTime?
-  createdAt      DateTime             @default(now())
-  updatedAt      DateTime             @updatedAt
-  user           User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  user            User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, pipelineId, provider, mode, cron, intervalMs])
   @@index([enabled, lastTriggeredAt])
@@ -235,37 +264,37 @@ model PipelineSchedule {
 }
 
 model PipelineRun {
-  id                 String            @id @default(uuid()) @db.Uuid
-  userId             String            @db.Uuid
-  pipelineId         String
-  pipelineVersion    Int               @default(1)
-  symbol             String
-  provider           ExchangeProvider
-  status             PipelineRunStatus @default(QUEUED)
-  trigger            PipelineTrigger
-  params             Json?
-  storedContext      Json?
-  result             Json?
-  startedAt          DateTime?
-  completedAt        DateTime?
-  durationMs         Int?
-  decision           String?
-  confidence         Float?
-  dataQuality        String?
-  skippedReason      String?
-  errorCode          String?
-  safeErrorMessage   String?
-  traceId            String
-  correlationId      String
-  replayOfRunId      String?           @db.Uuid
-  scheduleId         String?           @db.Uuid
+  id                      String              @id @default(uuid()) @db.Uuid
+  userId                  String              @db.Uuid
+  pipelineId              String
+  pipelineVersion         Int                 @default(1)
+  symbol                  String
+  provider                ExchangeProvider
+  status                  PipelineRunStatus   @default(QUEUED)
+  trigger                 PipelineTrigger
+  params                  Json?
+  storedContext           Json?
+  result                  Json?
+  startedAt               DateTime?
+  completedAt             DateTime?
+  durationMs              Int?
+  decision                String?
+  confidence              Float?
+  dataQuality             String?
+  skippedReason           String?
+  errorCode               String?
+  safeErrorMessage        String?
+  traceId                 String
+  correlationId           String
+  replayOfRunId           String?             @db.Uuid
+  scheduleId              String?             @db.Uuid
   cancellationRequestedAt DateTime?
-  createdAt          DateTime          @default(now())
-  updatedAt          DateTime          @updatedAt
-  user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  steps              PipelineStepRun[]
-  alerts             PipelineAlert[]
-  performanceRecords PerformanceRecord[]
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
+  user                    User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  steps                   PipelineStepRun[]
+  alerts                  PipelineAlert[]
+  performanceRecords      PerformanceRecord[]
 
   @@index([userId, createdAt])
   @@index([status, createdAt])
@@ -1262,33 +1291,33 @@ enum ToolStatus {
 }
 
 model ToolInvocationRecord {
-  id                    String    @id @default(uuid()) @db.Uuid
-  invocationId          String    @unique
-  userId                String?   @db.Uuid
+  id                    String   @id @default(uuid()) @db.Uuid
+  invocationId          String   @unique
+  userId                String?  @db.Uuid
   agentRunId            String?
   aiRequestId           String?
   provider              String?
   model                 String?
   toolName              String
-  toolVersion           Int       @default(1)
-  invocationSource      String    @default("AI_PROVIDER")
+  toolVersion           Int      @default(1)
+  invocationSource      String   @default("AI_PROVIDER")
   inputHash             String
   sanitizedInput        Json?
-  status                String    // SUCCESS, DENIED, FAILED, TIMED_OUT, CANCELLED
+  status                String // SUCCESS, DENIED, FAILED, TIMED_OUT, CANCELLED
   startedAt             DateTime
   completedAt           DateTime
   durationMs            Int
-  cached                Boolean   @default(false)
-  retryCount            Int       @default(0)
+  cached                Boolean  @default(false)
+  retryCount            Int      @default(0)
   errorCode             String?
   errorMessage          String?
-  policyVersion         Int       @default(1)
-  resultSizeBytes       Int       @default(0)
-  estimatedResultTokens Int       @default(0)
+  policyVersion         Int      @default(1)
+  resultSizeBytes       Int      @default(0)
+  estimatedResultTokens Int      @default(0)
   traceId               String?
   correlationId         String?
-  createdAt             DateTime  @default(now())
-  user                  User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt             DateTime @default(now())
+  user                  User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
   @@index([toolName, status])
@@ -1297,41 +1326,39 @@ model ToolInvocationRecord {
 }
 
 model ToolDefinitionMetadata {
-  id             String     @id @default(uuid()) @db.Uuid
-  name           String     @unique
-  version        Int        @default(1)
-  displayName    String
-  description    String
-  category       String
-  sensitivity    String
-  sideEffect     String
-  status         ToolStatus @default(ACTIVE)
-  schemaHash     String
-  deprecatedAt   DateTime?
+  id              String     @id @default(uuid()) @db.Uuid
+  name            String     @unique
+  version         Int        @default(1)
+  displayName     String
+  description     String
+  category        String
+  sensitivity     String
+  sideEffect      String
+  status          ToolStatus @default(ACTIVE)
+  schemaHash      String
+  deprecatedAt    DateTime?
   replacementName String?
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
 
   @@map("ai_tool_definitions")
 }
 
 model ToolQuotaUsage {
-  id            String   @id @default(uuid()) @db.Uuid
-  userId        String   @db.Uuid
-  windowKey     String   // e.g. YYYY-MM-DD:HH or YYYY-MM-DD
-  callCount     Int      @default(0)
-  resultTokens  Int      @default(0)
-  failedCount   Int      @default(0)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @db.Uuid
+  windowKey    String // e.g. YYYY-MM-DD:HH or YYYY-MM-DD
+  callCount    Int      @default(0)
+  resultTokens Int      @default(0)
+  failedCount  Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, windowKey])
   @@index([userId, windowKey])
   @@map("ai_tool_quotas")
 }
-
-
 
 // ============================================================
 // Phase 6.3: Multi-Agent Framework
@@ -1382,20 +1409,20 @@ enum AgentInvocationSource {
 }
 
 model AgentDefinitionRecord {
-  id              String      @id @default(uuid()) @db.Uuid
-  agentType       AgentType
-  version         Int         @default(1)
-  displayName     String
-  description     String
-  status          ToolStatus  @default(ACTIVE)
-  promptId        String
-  promptVersion   Int         @default(1)
-  definitionHash  String
-  schemaHash      String
-  allowedTools    String[]    @default([])
-  capabilities    String[]    @default([])
-  registeredAt    DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
+  id             String     @id @default(uuid()) @db.Uuid
+  agentType      AgentType
+  version        Int        @default(1)
+  displayName    String
+  description    String
+  status         ToolStatus @default(ACTIVE)
+  promptId       String
+  promptVersion  Int        @default(1)
+  definitionHash String
+  schemaHash     String
+  allowedTools   String[]   @default([])
+  capabilities   String[]   @default([])
+  registeredAt   DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
 
   @@unique([agentType, version])
   @@index([agentType, status])
@@ -1438,10 +1465,10 @@ model AgentRun {
   createdAt           DateTime              @default(now())
   updatedAt           DateTime              @updatedAt
 
-  user                User?                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  contextSnapshot     AgentContextSnapshot? @relation(fields: [contextSnapshotId], references: [id])
-  transitions         AgentRunTransition[]
-  runOutput           AgentRunOutput?
+  user            User?                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contextSnapshot AgentContextSnapshot? @relation(fields: [contextSnapshotId], references: [id])
+  transitions     AgentRunTransition[]
+  runOutput       AgentRunOutput?
 
   @@index([userId, createdAt])
   @@index([agentType, status])
@@ -1462,32 +1489,32 @@ model AgentRunTransition {
   correlationId String?
   createdAt     DateTime       @default(now())
 
-  run           AgentRun       @relation(fields: [runId], references: [id], onDelete: Cascade)
+  run AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   @@index([runId, createdAt])
   @@map("agent_run_transitions")
 }
 
 model AgentContextSnapshot {
-  id                String     @id @default(uuid()) @db.Uuid
-  userId            String?    @db.Uuid
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String?  @db.Uuid
   symbol            String?
   provider          String?
   timeframe         String?
   sourceDataCutoff  DateTime
-  schemaVersion     Int        @default(1)
-  builderVersion    String     @default("1.0.0")
+  schemaVersion     Int      @default(1)
+  builderVersion    String   @default("1.0.0")
   contextHash       String
-  tokenEstimate     Int        @default(0)
+  tokenEstimate     Int      @default(0)
   serializedContext Json
-  marketRefs        String[]   @default([])
-  newsRefs          String[]   @default([])
-  macroRefs         String[]   @default([])
-  sentimentRefs     String[]   @default([])
-  memoryRefs        String[]   @default([])
-  createdAt         DateTime   @default(now())
+  marketRefs        String[] @default([])
+  newsRefs          String[] @default([])
+  macroRefs         String[] @default([])
+  sentimentRefs     String[] @default([])
+  memoryRefs        String[] @default([])
+  createdAt         DateTime @default(now())
 
-  agentRuns         AgentRun[]
+  agentRuns AgentRun[]
 
   @@index([contextHash])
   @@index([userId, createdAt])
@@ -1502,7 +1529,7 @@ model AgentRunOutput {
   rawOutput       String?
   createdAt       DateTime @default(now())
 
-  run             AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  run AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   @@map("agent_run_outputs")
 }
@@ -1518,7 +1545,7 @@ model AgentQuotaUsage {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, windowKey])
   @@index([userId, windowKey])
