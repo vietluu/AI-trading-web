@@ -10,6 +10,19 @@ const VALID_PROVIDERS = new Set(Object.values(ExchangeProvider));
 const VALID_INTERVALS = new Set(Object.values(ExchangeInterval));
 const SYMBOL_PATTERN = /^[A-Z0-9]{2,15}-[A-Z0-9]{2,15}$/;
 
+function readList(value: unknown, fallback: string[]): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === 'string');
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+  }
+  return fallback;
+}
+
 @Injectable()
 export class MarketDataConfigService {
   private readonly logger = new Logger(MarketDataConfigService.name);
@@ -17,9 +30,18 @@ export class MarketDataConfigService {
 
   constructor(configService: ConfigService) {
     const enabled = configService.get<boolean>('MARKET_DATA_ENABLED') ?? true;
-    const rawProviders = configService.get<string>('MARKET_DATA_PROVIDERS')?.split(',') ?? ['BINANCE_FUTURES', 'OKX_FUTURES'];
-    const rawSymbols = configService.get<string>('MARKET_DATA_SYMBOLS')?.split(',') ?? ['BTC-USDT', 'ETH-USDT'];
-    const rawIntervals = configService.get<string>('MARKET_DATA_INTERVALS')?.split(',') ?? ['1m', '5m', '15m', '1h', '4h'];
+    const rawProviders = readList(
+      configService.get<unknown>('MARKET_DATA_PROVIDERS'),
+      ['BINANCE_FUTURES', 'OKX_FUTURES'],
+    );
+    const rawSymbols = readList(
+      configService.get<unknown>('MARKET_DATA_SYMBOLS'),
+      ['BTC-USDT', 'ETH-USDT'],
+    );
+    const rawIntervals = readList(
+      configService.get<unknown>('MARKET_DATA_INTERVALS'),
+      ['1m', '5m', '15m', '1h', '4h'],
+    );
 
     const providers = rawProviders.filter((p): p is ExchangeProvider =>
       VALID_PROVIDERS.has(p as ExchangeProvider),

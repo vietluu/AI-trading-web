@@ -7,18 +7,21 @@ import { OkxPublicStreamAdapter } from '../infrastructure/streams/okx-public-str
 import { ExchangeProvider } from '../../exchange/domain/exchange.types';
 import type { PublicMarketStreamAdapter } from '../domain/public-market-stream.adapter';
 import { MarketEventType } from '../domain/market-data.enums';
+import { MarketRedisCacheService } from '../infrastructure/redis/market-redis-cache.service';
 
 @Injectable()
 export class MarketStreamManager implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(MarketStreamManager.name);
   private readonly adapters = new Map<ExchangeProvider, PublicMarketStreamAdapter>();
   private readonly unsubscribers: Array<() => void> = [];
+  private statusRefreshTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(
     private readonly configService: MarketDataConfigService,
     private readonly eventBus: MarketEventBus,
     private readonly binanceAdapter: BinancePublicStreamAdapter,
     private readonly okxAdapter: OkxPublicStreamAdapter,
+    private readonly cache: MarketRedisCacheService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -49,6 +52,7 @@ export class MarketStreamManager implements OnModuleInit, OnModuleDestroy {
         this.unsubscribers.push(
           adapter.onStatusChange((status) => {
             this.logger.debug({ event: 'stream_status_changed', provider, status: status.state });
+            void this.cache.setStreamStatus(provider, status);
           })
         );
 
@@ -95,6 +99,7 @@ export class MarketStreamManager implements OnModuleInit, OnModuleDestroy {
             await adapter.subscribeOrderBook(obSubs);
           }
         }
+        await this.cache.setStreamStatus(provider, adapter.getStatus());
       } catch (error) {
         this.logger.error({
           event: 'adapter_init_error',
@@ -103,9 +108,18 @@ export class MarketStreamManager implements OnModuleInit, OnModuleDestroy {
         });
       }
     }
+
+    this.statusRefreshTimer = setInterval(() => {
+      for (const [provider, adapter] of this.adapters) {
+        void this.cache.setStreamStatus(provider, adapter.getStatus());
+      }
+    }, 15_000);
   }
 
   async onModuleDestroy(): Promise<void> {
+    if (this.statusRefreshTimer) {
+      clearInterval(this.statusRefreshTimer);
+    }
     for (const unsub of this.unsubscribers) {
       unsub();
     }

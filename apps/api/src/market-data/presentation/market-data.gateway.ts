@@ -6,21 +6,23 @@ import {
   SubscribeMessage,
   MessageBody,
   ConnectedSocket,
-} from '@nestjs/websockets';
-import { Logger } from '@nestjs/common';
-import { Server, Socket } from 'socket.io';
-import { MarketEventBus } from '../infrastructure/event-bus/market-event-bus';
-import { MarketEventType } from '../domain/market-data.enums';
-import type { NormalizedMarketEvent } from '../domain/market-data.types';
+} from "@nestjs/websockets";
+import { Logger } from "@nestjs/common";
+import { Server, Socket } from "socket.io";
+import { MarketEventBus } from "../infrastructure/event-bus/market-event-bus";
+import { MarketEventType } from "../domain/market-data.enums";
+import type { NormalizedMarketEvent } from "../domain/market-data.types";
 
 @WebSocketGateway({
   cors: {
-    origin: process.env.CORS_ORIGINS?.split(',') || 'http://localhost:3000',
+    origin: process.env.CORS_ORIGINS?.split(",") || "http://localhost:3000",
     credentials: true,
   },
-  namespace: '/market',
+  namespace: "/market",
 })
-export class MarketDataGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class MarketDataGateway
+  implements OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer()
   server!: Server;
 
@@ -30,22 +32,35 @@ export class MarketDataGateway implements OnGatewayConnection, OnGatewayDisconne
   constructor(private readonly eventBus: MarketEventBus) {}
 
   afterInit() {
-    this.logger.log('MarketDataGateway initialized');
-    
+    this.logger.log("MarketDataGateway initialized");
+
     // Subscribe to internal event bus and broadcast to connected WS clients
     this.unsubscribers.push(
-      this.eventBus.on('market.*', (event: NormalizedMarketEvent) => {
+      this.eventBus.on("market.*", (event: NormalizedMarketEvent) => {
         // Broadcast specific event types
         if (event.type === MarketEventType.TICKER_UPDATED) {
-          this.server.to(`ticker:${event.payload.symbol}`).emit('ticker', event.payload);
-        } else if (event.type === MarketEventType.CANDLE_UPDATED || event.type === MarketEventType.CANDLE_CLOSED) {
-          this.server.to(`candle:${event.payload.symbol}:${event.payload.interval}`).emit('candle', event.payload);
+          this.server
+            .to(`ticker:${event.payload.provider}:${event.payload.symbol}`)
+            .emit("ticker", event.payload);
+        } else if (
+          event.type === MarketEventType.CANDLE_UPDATED ||
+          event.type === MarketEventType.CANDLE_CLOSED
+        ) {
+          this.server
+            .to(
+              `candle:${event.payload.provider}:${event.payload.symbol}:${event.payload.interval}`,
+            )
+            .emit("candle", event.payload);
         } else if (event.type === MarketEventType.ORDER_BOOK_UPDATED) {
-          this.server.to(`orderbook:${event.payload.symbol}`).emit('orderbook', event.payload);
+          this.server
+            .to(`orderbook:${event.payload.provider}:${event.payload.symbol}`)
+            .emit("orderbook", event.payload);
         } else if (event.type === MarketEventType.PUBLIC_TRADE_RECEIVED) {
-          this.server.to(`trades:${event.payload.symbol}`).emit('trade', event.payload);
+          this.server
+            .to(`trades:${event.payload.provider}:${event.payload.symbol}`)
+            .emit("trade", event.payload);
         }
-      })
+      }),
     );
   }
 
@@ -57,26 +72,32 @@ export class MarketDataGateway implements OnGatewayConnection, OnGatewayDisconne
     this.logger.debug(`Client disconnected from Market WS: ${client.id}`);
   }
 
-  @SubscribeMessage('subscribe')
+  @SubscribeMessage("subscribe")
   handleSubscribe(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: { channel: string; symbol: string; interval?: string }
+    @MessageBody()
+    payload: {
+      channel: string;
+      provider: string;
+      symbol: string;
+      interval?: string;
+    },
   ): void {
-    let room = '';
-    
+    let room = "";
+
     switch (payload.channel) {
-      case 'ticker':
-        room = `ticker:${payload.symbol}`;
+      case "ticker":
+        room = `ticker:${payload.provider}:${payload.symbol}`;
         break;
-      case 'candle':
+      case "candle":
         if (!payload.interval) return;
-        room = `candle:${payload.symbol}:${payload.interval}`;
+        room = `candle:${payload.provider}:${payload.symbol}:${payload.interval}`;
         break;
-      case 'orderbook':
-        room = `orderbook:${payload.symbol}`;
+      case "orderbook":
+        room = `orderbook:${payload.provider}:${payload.symbol}`;
         break;
-      case 'trades':
-        room = `trades:${payload.symbol}`;
+      case "trades":
+        room = `trades:${payload.provider}:${payload.symbol}`;
         break;
       default:
         return;
@@ -88,26 +109,32 @@ export class MarketDataGateway implements OnGatewayConnection, OnGatewayDisconne
     }
   }
 
-  @SubscribeMessage('unsubscribe')
+  @SubscribeMessage("unsubscribe")
   handleUnsubscribe(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: { channel: string; symbol: string; interval?: string }
+    @MessageBody()
+    payload: {
+      channel: string;
+      provider: string;
+      symbol: string;
+      interval?: string;
+    },
   ): void {
-    let room = '';
-    
+    let room = "";
+
     switch (payload.channel) {
-      case 'ticker':
-        room = `ticker:${payload.symbol}`;
+      case "ticker":
+        room = `ticker:${payload.provider}:${payload.symbol}`;
         break;
-      case 'candle':
+      case "candle":
         if (!payload.interval) return;
-        room = `candle:${payload.symbol}:${payload.interval}`;
+        room = `candle:${payload.provider}:${payload.symbol}:${payload.interval}`;
         break;
-      case 'orderbook':
-        room = `orderbook:${payload.symbol}`;
+      case "orderbook":
+        room = `orderbook:${payload.provider}:${payload.symbol}`;
         break;
-      case 'trades':
-        room = `trades:${payload.symbol}`;
+      case "trades":
+        room = `trades:${payload.provider}:${payload.symbol}`;
         break;
       default:
         return;

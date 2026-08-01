@@ -1,4 +1,10 @@
-import { ArrowRight, BrainCircuit, ShieldCheck } from "lucide-react";
+import Link from "next/link";
+import {
+  ArrowRight,
+  BrainCircuit,
+  CandlestickChart,
+  ShieldCheck,
+} from "lucide-react";
 
 import { HealthStatus } from "@/components/health-status";
 import { Card, CardContent } from "@/components/ui/card";
@@ -23,6 +29,24 @@ export default function DashboardPage(): React.JSX.Element {
       </section>
 
       <HealthStatus />
+
+      <Link
+        className="group flex items-center justify-between rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-5 transition hover:border-emerald-300/40 hover:bg-emerald-400/15"
+        href="/market"
+      >
+        <div className="flex items-center gap-4">
+          <div className="grid h-11 w-11 place-items-center rounded-xl bg-emerald-400/15 text-emerald-300">
+            <CandlestickChart className="h-5 w-5" />
+          </div>
+          <div>
+            <p className="font-semibold">Open realtime market dashboard</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Charts, stream health, indicators, funding and open interest.
+            </p>
+          </div>
+        </div>
+        <ArrowRight className="h-5 w-5 text-emerald-300 transition group-hover:translate-x-1" />
+      </Link>
 
       <section className="grid gap-4 md:grid-cols-2">
         <Card>

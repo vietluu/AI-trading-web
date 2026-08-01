@@ -1,13 +1,11 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
-import {
-  createChart,
-  ColorType,
+import React, { useEffect, useRef } from "react";
+import { createChart, ColorType } from "lightweight-charts";
+import type {
   IChartApi,
   ISeriesApi,
   CandlestickData,
-  Time,
 } from "lightweight-charts";
 
 export interface TradingChartProps {
@@ -62,7 +60,7 @@ export function TradingChart({
 
     // Ensure data is sorted by time and formatted properly
     const formattedData = [...data].sort(
-      (a, b) => (a.time as number) - (b.time as number)
+      (a, b) => (a.time as number) - (b.time as number),
     );
     series.setData(formattedData);
 
@@ -77,7 +75,7 @@ export function TradingChart({
       }
     };
     window.addEventListener("resize", handleResize);
-    
+
     // Fit content on initial load
     chart.timeScale().fitContent();
 
@@ -97,7 +95,9 @@ export function TradingChart({
     <div className="relative w-full h-[500px] bg-[#131722] rounded-xl overflow-hidden border border-[#2B2B43] shadow-lg">
       <div className="absolute top-4 left-4 z-10 text-white font-semibold text-lg flex items-center space-x-2">
         <span className="bg-blue-600 px-2 py-1 rounded text-sm">{symbol}</span>
-        <span className="text-gray-400 text-sm bg-[#2B2B43] px-2 py-1 rounded">{interval}</span>
+        <span className="text-gray-400 text-sm bg-[#2B2B43] px-2 py-1 rounded">
+          {interval}
+        </span>
       </div>
       <div ref={chartContainerRef} className="w-full h-full" />
     </div>

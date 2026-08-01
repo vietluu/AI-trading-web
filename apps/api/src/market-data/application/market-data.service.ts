@@ -3,13 +3,13 @@ import {
   Logger,
   type OnModuleDestroy,
   type OnModuleInit,
-} from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+} from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import {
   ExchangeInterval,
   type ExchangeProvider,
-} from '../../exchange/domain/exchange.types';
-import { MarketEventType, IndicatorStatus } from '../domain/market-data.enums';
+} from "../../exchange/domain/exchange.types";
+import { MarketEventType, IndicatorStatus } from "../domain/market-data.enums";
 import type {
   NormalizedMarketEvent,
   MarketEventMetadata,
@@ -19,15 +19,16 @@ import type {
   NormalizedOpenInterest,
   NormalizedOrderBook,
   IndicatorSnapshot,
-} from '../domain/market-data.types';
+} from "../domain/market-data.types";
 import {
   calculateAllIndicators,
   CALCULATION_VERSION,
-} from '../domain/indicators/indicator-calculator';
-import { MarketEventBus } from '../infrastructure/event-bus/market-event-bus';
-import { MarketRedisCacheService } from '../infrastructure/redis/market-redis-cache.service';
-import { MarketDataRepository } from '../infrastructure/persistence/market-data.repository';
-import { MarketDataConfigService } from './market-data-config.service';
+} from "../domain/indicators/indicator-calculator";
+import { MarketEventBus } from "../infrastructure/event-bus/market-event-bus";
+import { MarketRedisCacheService } from "../infrastructure/redis/market-redis-cache.service";
+import { MarketDataRepository } from "../infrastructure/persistence/market-data.repository";
+import { MarketDataConfigService } from "./market-data-config.service";
+import { PublicExchangeService } from "../../exchange/application/public-exchange.service";
 
 @Injectable()
 export class MarketDataService implements OnModuleInit, OnModuleDestroy {
@@ -41,17 +42,71 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
     private readonly eventBus: MarketEventBus,
     private readonly cache: MarketRedisCacheService,
     private readonly repository: MarketDataRepository,
+    private readonly exchanges: PublicExchangeService,
   ) {}
+
+  async getHistoricalCandles(query: {
+    provider: ExchangeProvider;
+    symbol: string;
+    interval: ExchangeInterval;
+    startTime?: Date;
+    endTime?: Date;
+    limit: number;
+  }): Promise<unknown[]> {
+    const stored = await this.repository.getCandles(query);
+    if (stored.length >= query.limit) return stored;
+
+    const candles = await this.exchanges.klines(query.provider, {
+      symbol: query.symbol,
+      interval: query.interval,
+      limit: query.limit,
+      ...(query.startTime ? { startTime: query.startTime } : {}),
+      ...(query.endTime ? { endTime: query.endTime } : {}),
+    });
+
+    if (candles.length > 0) {
+      await this.repository.upsertCandleBatch(candles);
+      const lastClosed = [...candles]
+        .reverse()
+        .find((candle) => candle.isClosed);
+      if (lastClosed) {
+        await this.calculateAndPersistIndicators(
+          query.provider,
+          query.symbol,
+          query.interval,
+          lastClosed,
+        );
+      }
+    }
+    return candles;
+  }
+
+  async getIndicatorSnapshot(
+    provider: ExchangeProvider,
+    symbol: string,
+    interval: ExchangeInterval,
+  ): Promise<IndicatorSnapshot | null> {
+    const cached = await this.cache.getIndicator(provider, symbol, interval);
+    if (cached) return cached;
+
+    await this.getHistoricalCandles({
+      provider,
+      symbol,
+      interval,
+      limit: 250,
+    });
+    return this.cache.getIndicator(provider, symbol, interval);
+  }
 
   async onModuleInit(): Promise<void> {
     if (!this.configService.isEnabled()) {
-      this.logger.log({ event: 'market_data_disabled' });
+      this.logger.log({ event: "market_data_disabled" });
       return;
     }
 
     // Listen to events on the bus
     this.unsubscribers.push(
-      this.eventBus.on('market.*', (event) => {
+      this.eventBus.on("market.*", (event) => {
         void this.handleEvent(event);
       }),
     );
@@ -62,7 +117,7 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
       void this.flushCandleBuffer();
     }, flushIntervalMs);
 
-    this.logger.log({ event: 'market_data_service_started' });
+    this.logger.log({ event: "market_data_service_started" });
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -74,7 +129,7 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
       clearInterval(this.flushTimer);
     }
     await this.flushCandleBuffer();
-    this.logger.log({ event: 'market_data_service_stopped' });
+    this.logger.log({ event: "market_data_service_stopped" });
   }
 
   private async handleEvent(event: NormalizedMarketEvent): Promise<void> {
@@ -103,7 +158,7 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
       }
     } catch (error) {
       this.logger.error({
-        event: 'event_handling_error',
+        event: "event_handling_error",
         eventType: event.type,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -117,7 +172,12 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
   private async handleCandleUpdate(candle: NormalizedCandle): Promise<void> {
     const key = `${candle.provider}:${candle.symbol}:${candle.interval}:${candle.openTime.getTime()}`;
     this.candleBuffer.set(key, candle);
-    await this.cache.setCandle(candle.provider, candle.symbol, candle.interval, candle);
+    await this.cache.setCandle(
+      candle.provider,
+      candle.symbol,
+      candle.interval,
+      candle,
+    );
   }
 
   private async handleCandleClose(candle: NormalizedCandle): Promise<void> {
@@ -140,7 +200,12 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
       isClosed: true,
     });
 
-    await this.cache.setCandle(candle.provider, candle.symbol, candle.interval, candle);
+    await this.cache.setCandle(
+      candle.provider,
+      candle.symbol,
+      candle.interval,
+      candle,
+    );
 
     // Calculate indicators on candle close
     await this.calculateAndPersistIndicators(
@@ -206,7 +271,7 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
         );
       } catch (error) {
         this.logger.error({
-          event: 'candle_flush_error',
+          event: "candle_flush_error",
           batchSize: batch.length,
           error: error instanceof Error ? error.message : String(error),
         });
@@ -261,13 +326,13 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
         interval,
         candleOpenTime: closedCandle.openTime,
         candleCloseTime: closedCandle.closeTime,
-        status: 'CLOSED',
+        status: "CLOSED",
         values: values as unknown as Record<string, unknown>,
         calculationVersion: CALCULATION_VERSION,
       });
 
       this.logger.debug({
-        event: 'indicators_calculated',
+        event: "indicators_calculated",
         provider,
         symbol,
         interval,
@@ -275,7 +340,7 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
       });
     } catch (error) {
       this.logger.error({
-        event: 'indicator_calculation_error',
+        event: "indicator_calculation_error",
         provider,
         symbol,
         interval,

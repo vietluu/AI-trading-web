@@ -14,10 +14,12 @@ import { BinancePublicStreamAdapter } from './infrastructure/streams/binance-pub
 import { OkxPublicStreamAdapter } from './infrastructure/streams/okx-public-stream.adapter';
 import { MarketDataController } from './presentation/market-data.controller';
 import { MarketDataGateway } from './presentation/market-data.gateway';
+import { ExchangeModule } from '../exchange/exchange.module';
 
 @Module({
   imports: [
     ConfigModule,
+    ExchangeModule,
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
