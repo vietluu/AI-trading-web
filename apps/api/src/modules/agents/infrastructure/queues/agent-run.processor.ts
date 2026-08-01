@@ -2,14 +2,15 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import type { AgentRunJobPayload } from './agent-run.producer';
+import { AgentExecutionService } from '../../application/services/agent-execution.service';
+import { AgentInvocationSource, AgentType } from '../../domain/enums';
 
 @Processor('agent-runs')
 export class AgentRunProcessor extends WorkerHost {
   private readonly logger = new Logger(AgentRunProcessor.name);
 
-  constructor() {
+  constructor(private readonly agentExecutionService: AgentExecutionService) {
     super();
-    // AgentExecutionService will be injected here later
   }
 
   async process(job: Job<AgentRunJobPayload>): Promise<void> {
@@ -23,7 +24,8 @@ export class AgentRunProcessor extends WorkerHost {
         agentType,
         agentVersion,
         inputReference,
-        correlationId
+        correlationId,
+        invocationSource,
       } = job.data;
 
       this.logger.debug(`Extracted payload fields: ${JSON.stringify({
@@ -35,7 +37,16 @@ export class AgentRunProcessor extends WorkerHost {
         hasInputReference: !!inputReference
       })}`);
 
-      // TODO: Call AgentExecutionService.executeRun(agentRunId) in Group 3
+      const input = JSON.parse(inputReference) as Record<string, unknown>;
+      await this.agentExecutionService.executeSync({
+        agentType: agentType as AgentType,
+        version: agentVersion,
+        userId,
+        input,
+        invocationSource: invocationSource as AgentInvocationSource,
+        correlationId,
+        existingRunId: agentRunId,
+      });
 
       this.logger.log(`Completed processing for job ${job.id}`);
     } catch (error) {

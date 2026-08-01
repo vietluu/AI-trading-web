@@ -146,6 +146,75 @@ export const DiagnosticAgentOutputSchema = z.object({
 });
 export type DiagnosticAgentOutput = z.infer<typeof DiagnosticAgentOutputSchema>;
 
+export const MarketAgentProviderSchema = z.enum([
+  'BINANCE_FUTURES',
+  'OKX_FUTURES',
+]);
+
+export const MarketAgentIntervalSchema = z.enum(['1m', '5m', '15m', '1h']);
+
+export const MarketAgentInputSchema = z
+  .object({
+    symbol: z.enum(['BTC-USDT', 'ETH-USDT']),
+    provider: MarketAgentProviderSchema,
+    interval: MarketAgentIntervalSchema,
+    lookbackCandles: z.number().int().min(1).max(500).default(100),
+  })
+  .strict();
+export type MarketAgentInput = z.infer<typeof MarketAgentInputSchema>;
+
+export const MarketAgentToolNameSchema = z.enum([
+  'market.ticker.get',
+  'market.candles.list',
+  'market.indicators.get',
+  'market.funding.get',
+  'market.open_interest.get',
+  'market.order_book.get',
+]);
+
+export const MarketAgentOutputSchema = z
+  .object({
+    summary: z.string().min(1),
+    trend: z
+      .object({
+        direction: z.enum(['UP', 'DOWN', 'SIDEWAYS']),
+        strength: z.enum(['WEAK', 'MODERATE', 'STRONG']),
+      })
+      .strict(),
+    volatility: z
+      .object({
+        level: z.enum(['LOW', 'MEDIUM', 'HIGH']),
+        atr: z.string().optional(),
+      })
+      .strict(),
+    liquidity: z
+      .object({
+        bidAskSpread: z.string().optional(),
+        depthImbalance: z
+          .enum(['BUY_HEAVY', 'SELL_HEAVY', 'BALANCED'])
+          .optional(),
+      })
+      .strict(),
+    derivatives: z
+      .object({
+        fundingRate: z.string().optional(),
+        fundingTrend: z
+          .enum(['INCREASING', 'DECREASING', 'STABLE'])
+          .optional(),
+        openInterest: z.string().optional(),
+        oiTrend: z
+          .enum(['INCREASING', 'DECREASING', 'STABLE'])
+          .optional(),
+      })
+      .strict(),
+    anomalies: z.array(z.string()),
+    dataQuality: z.enum(['GOOD', 'PARTIAL', 'INSUFFICIENT']),
+    usedTools: z.array(MarketAgentToolNameSchema).max(6),
+    generatedAt: z.string().datetime(),
+  })
+  .strict();
+export type MarketAgentOutput = z.infer<typeof MarketAgentOutputSchema>;
+
 export const AgentRunFilterDtoSchema = z.object({
   agentType: AgentTypeSchema.optional(),
   status: AgentRunStatusSchema.optional(),

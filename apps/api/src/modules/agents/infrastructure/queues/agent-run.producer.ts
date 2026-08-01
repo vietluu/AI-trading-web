@@ -9,6 +9,7 @@ export interface AgentRunJobPayload {
   agentVersion: number;
   inputReference: string;
   correlationId: string;
+  invocationSource: string;
 }
 
 @Injectable()
@@ -21,8 +22,7 @@ export class AgentRunProducer {
 
   async enqueue(payload: AgentRunJobPayload): Promise<string> {
     const job = await this.queue.add('process-agent-run', payload, {
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 2000 },
+      attempts: 1,
       removeOnComplete: 100,
       removeOnFail: 50,
     });

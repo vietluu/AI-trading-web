@@ -3,10 +3,12 @@ import { AgentRegistryService } from '../../infrastructure/registry/agent-regist
 import { AgentPolicyEngine } from '../policies/agent-policy.engine';
 import { AgentRunnerService } from '../runners/agent-runner.service';
 import { AgentRunProducer } from '../../infrastructure/queues/agent-run.producer';
-import { AgentType, AgentInvocationSource } from '../../domain/enums';
+import { AgentType, AgentInvocationSource, AgentRunState } from '../../domain/enums';
 import { AgentError, AgentErrorCode } from '../../domain/errors/agent-errors';
 import { AgentRun } from '@prisma/client';
-import { randomUUID } from 'node:crypto';
+import { AgentRunRepository } from '../../infrastructure/persistence/agent-run.repository';
+import { Prisma } from '@prisma/client';
+import { createHash, randomUUID } from 'node:crypto';
 
 export interface ExecuteAgentOptions {
   agentType: AgentType;
@@ -18,6 +20,7 @@ export interface ExecuteAgentOptions {
   correlationId?: string;
   parentRunId?: string;
   replayOfRunId?: string;
+  existingRunId?: string;
 }
 
 @Injectable()
@@ -29,6 +32,7 @@ export class AgentExecutionService {
     private readonly agentPolicyEngine: AgentPolicyEngine,
     private readonly agentRunnerService: AgentRunnerService,
     private readonly agentRunProducer: AgentRunProducer,
+    private readonly agentRunRepository: AgentRunRepository,
   ) {}
 
   public async executeSync(options: ExecuteAgentOptions): Promise<AgentRun> {
@@ -60,6 +64,7 @@ export class AgentExecutionService {
       correlationId: options.correlationId || randomUUID(),
       parentRunId: options.parentRunId,
       replayOfRunId: options.replayOfRunId,
+      existingRunId: options.existingRunId,
     });
   }
 
@@ -84,25 +89,53 @@ export class AgentExecutionService {
     }
 
     const correlationId = options.correlationId || randomUUID();
-    const runId = randomUUID();
+    const inputHash = createHash('sha256')
+      .update(JSON.stringify(options.input))
+      .digest('hex');
+    let run = await this.agentRunRepository.createRun({
+      userId: options.userId,
+      agentType: options.agentType,
+      agentVersion: definition.version,
+      invocationSource: options.invocationSource,
+      inputHash,
+      sanitizedInput: options.input as Prisma.InputJsonValue,
+      promptId: definition.promptId,
+      promptVersion: definition.promptVersion,
+      traceId: randomUUID(),
+      correlationId,
+      parentRunId: options.parentRunId,
+      replayOfRunId: options.replayOfRunId,
+    });
+    await this.agentRunRepository.addTransition({
+      runId: run.id,
+      fromState: AgentRunState.CREATED,
+      toState: AgentRunState.QUEUED,
+      reason: 'Agent run enqueued for asynchronous execution',
+      actor: 'AgentExecutionService',
+      correlationId,
+    });
+    run = await this.agentRunRepository.updateRun(run.id, {
+      status: AgentRunState.QUEUED,
+    });
 
     await this.agentRunProducer.enqueue({
-      agentRunId: runId,
+      agentRunId: run.id,
       userId: options.userId,
       agentType: options.agentType,
       agentVersion: definition.version,
       inputReference: JSON.stringify(options.input),
       correlationId,
+      invocationSource: options.invocationSource,
     });
 
     this.logger.log({
       event: 'agent_run_enqueued',
-      runId,
+      runId: run.id,
       agentType: options.agentType,
       userId: options.userId,
       correlationId,
     });
 
-    return { runId, status: 'QUEUED' };
+    return { runId: run.id, status: 'QUEUED' };
   }
 }

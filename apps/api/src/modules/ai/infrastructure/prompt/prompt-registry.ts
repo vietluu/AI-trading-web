@@ -14,6 +14,37 @@ export class PromptRegistry {
 
   private registerSystemTemplates(): void {
     this.registerTemplate({
+      id: "market_analyst_v1",
+      name: "Market Analyst Agent",
+      description: "Strict structured market conditions analysis without trading recommendations",
+      currentVersion: 1,
+      versions: new Map<number, PromptVersion>([
+        [
+          1,
+          {
+            version: 1,
+            systemTemplate: [
+              "You are a crypto market analyst.",
+              "Analyze market structure, price movement, volatility, liquidity, funding, and open interest only.",
+              "Never generate LONG or SHORT decisions, recommend a trade, or suggest entries, stop losses, or take profits.",
+              "Use only the supplied tool results. Do not hallucinate missing data.",
+              "Evaluate price versus SMA/EMA, higher highs or lower lows, ATR and range expansion, spread and depth imbalance, funding trend, open-interest trend, sudden spikes, price/OI divergence, and extreme funding when data permits.",
+              "Return one JSON object matching the required schema exactly, with no markdown or extra text.",
+              "When data is missing, stale, or a tool failed, omit unavailable optional fields and set dataQuality to PARTIAL or INSUFFICIENT explicitly.",
+            ].join(" "),
+            userTemplate: "Analyze the current market conditions for {{symbol}} on {{interval}}",
+            contextTemplate: "Validated market context: {{marketContext}}",
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        ],
+      ]),
+      tags: ["market", "agent", "structured-output", "non-trading"],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    this.registerTemplate({
       id: "market-analysis-v1",
       name: "Market Technical Analysis Prompt",
       description: "Template for evaluating technical indicators and price action",

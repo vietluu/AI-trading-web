@@ -1,10 +1,12 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { z } from "zod";
 import type { ToolDefinition } from "../../domain/contracts/tool-definition.contract";
 import type { ToolExecutionContext } from "../../domain/contracts/tool-context.contract";
+import { MarketToolDataService } from "./market-tool-data.service";
 
 @Injectable()
 export class MarketTickerGetTool implements ToolDefinition<{ symbol: string; provider?: string }, Record<string, unknown>> {
+  constructor(@Optional() private readonly dataService?: MarketToolDataService) {}
   public readonly name = "market.ticker.get";
   public readonly version = 1;
   public readonly displayName = "Get Market Ticker";
@@ -41,23 +43,29 @@ export class MarketTickerGetTool implements ToolDefinition<{ symbol: string; pro
   public readonly schemaHash = "hash-market-ticker-get-v1";
 
   public async execute(input: { symbol: string; provider?: string }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
-    await Promise.resolve();
+    if (!this.dataService) throw new Error("Phase 4 market data service is unavailable");
+    const ticker = await this.dataService.ticker(input.symbol, input.provider);
+    if (!ticker) throw new Error("Current ticker data is unavailable");
+    const timestamp = new Date(ticker.timestamp);
     return {
       symbol: input.symbol,
-      provider: input.provider || "BINANCE",
-      price: "95420.50",
-      high24h: "96800.00",
-      low24h: "94100.00",
-      volume24h: "14250.85",
-      timestamp: new Date().toISOString(),
-      stale: false,
+      provider: ticker.provider,
+      price: ticker.lastPrice,
+      high24h: ticker.high24h,
+      low24h: ticker.low24h,
+      volume24h: ticker.volume24h,
+      bidPrice: ticker.bidPrice,
+      askPrice: ticker.askPrice,
+      timestamp: timestamp.toISOString(),
+      stale: Date.now() - timestamp.getTime() > 10_000,
       invocationId: context.invocationId,
     };
   }
 }
 
 @Injectable()
-export class MarketCandlesListTool implements ToolDefinition<{ symbol: string; interval?: string; limit?: number }, Record<string, unknown>> {
+export class MarketCandlesListTool implements ToolDefinition<{ symbol: string; provider?: string; interval?: string; limit?: number }, Record<string, unknown>> {
+  constructor(@Optional() private readonly dataService?: MarketToolDataService) {}
   public readonly name = "market.candles.list";
   public readonly version = 1;
   public readonly displayName = "List Market Candles";
@@ -66,6 +74,7 @@ export class MarketCandlesListTool implements ToolDefinition<{ symbol: string; i
 
   public readonly inputSchema = z.object({
     symbol: z.string().describe("Symbol name e.g. BTC-USDT"),
+    provider: z.enum(["BINANCE_FUTURES", "OKX_FUTURES"]).optional(),
     interval: z.string().optional().default("1h").describe("Candle interval: 1m, 5m, 15m, 1h, 4h, 1d"),
     limit: z.number().int().min(1).max(500).optional().default(100).describe("Number of candles to return"),
   });
@@ -90,30 +99,34 @@ export class MarketCandlesListTool implements ToolDefinition<{ symbol: string; i
   public readonly status = "ACTIVE" as const;
   public readonly schemaHash = "hash-market-candles-list-v1";
 
-  public async execute(input: { symbol: string; interval?: string; limit?: number }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
-    await Promise.resolve();
-    const limit = input.limit || 5;
-    const now = Date.now();
-    const candles = Array.from({ length: Math.min(limit, 10) }).map((_, i) => ({
-      timestamp: new Date(now - (10 - i) * 3600000).toISOString(),
-      open: "94500.00",
-      high: "95100.00",
-      low: "94200.00",
-      close: (94800 + i * 50).toFixed(2),
-      volume: "120.5",
-    }));
+  public async execute(input: { symbol: string; provider?: string; interval?: string; limit?: number }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
+    if (!this.dataService) throw new Error("Phase 4 market data service is unavailable");
+    const limit = input.limit || 100;
+    const interval = input.interval || "1h";
+    const candles = await this.dataService.candles(input.symbol, input.provider, interval, limit);
+    if (candles.length === 0) throw new Error("Candle data is unavailable");
 
     return {
       symbol: input.symbol,
-      interval: input.interval || "1h",
-      candles,
+      provider: input.provider,
+      interval,
+      candles: candles.map((candle) => ({
+        timestamp: candle.openTime.toISOString(),
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume,
+        isClosed: candle.isClosed,
+      })),
       invocationId: context.invocationId,
     };
   }
 }
 
 @Injectable()
-export class MarketIndicatorsGetTool implements ToolDefinition<{ symbol: string; interval?: string }, Record<string, unknown>> {
+export class MarketIndicatorsGetTool implements ToolDefinition<{ symbol: string; provider?: string; interval?: string }, Record<string, unknown>> {
+  constructor(@Optional() private readonly dataService?: MarketToolDataService) {}
   public readonly name = "market.indicators.get";
   public readonly version = 1;
   public readonly displayName = "Get Technical Indicators";
@@ -122,16 +135,18 @@ export class MarketIndicatorsGetTool implements ToolDefinition<{ symbol: string;
 
   public readonly inputSchema = z.object({
     symbol: z.string().describe("Symbol name e.g. BTC-USDT"),
+    provider: z.enum(["BINANCE_FUTURES", "OKX_FUTURES"]).optional(),
     interval: z.string().optional().default("1h").describe("Indicator timeframe e.g. 15m, 1h, 4h, 1d"),
   });
 
   public readonly outputSchema = z.object({
     symbol: z.string(),
     interval: z.string(),
-    rsi: z.number(),
-    ema20: z.number(),
-    ema50: z.number(),
-    macdHistogram: z.number(),
+    rsi: z.string().optional(),
+    ema20: z.string().optional(),
+    ema50: z.string().optional(),
+    macdHistogram: z.string().optional(),
+    atr: z.string().optional(),
   });
 
   public readonly executionMode = "SYNCHRONOUS" as const;
@@ -148,22 +163,31 @@ export class MarketIndicatorsGetTool implements ToolDefinition<{ symbol: string;
   public readonly status = "ACTIVE" as const;
   public readonly schemaHash = "hash-market-indicators-get-v1";
 
-  public async execute(input: { symbol: string; interval?: string }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
-    await Promise.resolve();
+  public async execute(input: { symbol: string; provider?: string; interval?: string }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
+    if (!this.dataService) throw new Error("Phase 4 market data service is unavailable");
+    const interval = input.interval || "1h";
+    const snapshot = await this.dataService.indicators(input.symbol, input.provider, interval);
+    if (!snapshot) throw new Error("Indicator data is unavailable");
     return {
       symbol: input.symbol,
-      interval: input.interval || "1h",
-      rsi: 58.4,
-      ema20: 94800,
-      ema50: 93500,
-      macdHistogram: 120.5,
+      provider: snapshot.provider,
+      interval,
+      rsi: snapshot.values.rsi14,
+      ema20: snapshot.values.ema20,
+      ema50: snapshot.values.ema50,
+      macdHistogram: snapshot.values.macd?.histogram,
+      atr: snapshot.values.atr14,
+      sma20: snapshot.values.sma20,
+      sma50: snapshot.values.sma50,
+      calculatedAt: snapshot.calculatedAt.toISOString(),
       invocationId: context.invocationId,
     };
   }
 }
 
 @Injectable()
-export class MarketFundingGetTool implements ToolDefinition<{ symbol: string }, Record<string, unknown>> {
+export class MarketFundingGetTool implements ToolDefinition<{ symbol: string; provider?: string }, Record<string, unknown>> {
+  constructor(@Optional() private readonly dataService?: MarketToolDataService) {}
   public readonly name = "market.funding.get";
   public readonly version = 1;
   public readonly displayName = "Get Funding Rate";
@@ -172,13 +196,14 @@ export class MarketFundingGetTool implements ToolDefinition<{ symbol: string }, 
 
   public readonly inputSchema = z.object({
     symbol: z.string().describe("Symbol name e.g. BTC-USDT"),
+    provider: z.enum(["BINANCE_FUTURES", "OKX_FUTURES"]).optional(),
   });
 
   public readonly outputSchema = z.object({
     symbol: z.string(),
     fundingRate: z.string(),
     predictedRate: z.string().optional(),
-    nextFundingTime: z.string(),
+    nextFundingTime: z.string().optional(),
   });
 
   public readonly executionMode = "SYNCHRONOUS" as const;
@@ -195,20 +220,25 @@ export class MarketFundingGetTool implements ToolDefinition<{ symbol: string }, 
   public readonly status = "ACTIVE" as const;
   public readonly schemaHash = "hash-market-funding-get-v1";
 
-  public async execute(input: { symbol: string }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
-    await Promise.resolve();
+  public async execute(input: { symbol: string; provider?: string }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
+    if (!this.dataService) throw new Error("Phase 4 market data service is unavailable");
+    const history = await this.dataService.funding(input.symbol, input.provider);
+    const current = history[0];
+    if (!current) throw new Error("Funding data is unavailable");
     return {
       symbol: input.symbol,
-      fundingRate: "0.00010000",
-      predictedRate: "0.00012000",
-      nextFundingTime: new Date(Date.now() + 14400000).toISOString(),
+      provider: current.provider,
+      fundingRate: current.fundingRate,
+      nextFundingTime: current.nextFundingTime?.toISOString(),
+      history: history.map((item) => ({ rate: item.fundingRate, timestamp: item.fundingTime.toISOString() })),
       invocationId: context.invocationId,
     };
   }
 }
 
 @Injectable()
-export class MarketOpenInterestGetTool implements ToolDefinition<{ symbol: string }, Record<string, unknown>> {
+export class MarketOpenInterestGetTool implements ToolDefinition<{ symbol: string; provider?: string }, Record<string, unknown>> {
+  constructor(@Optional() private readonly dataService?: MarketToolDataService) {}
   public readonly name = "market.open_interest.get";
   public readonly version = 1;
   public readonly displayName = "Get Open Interest";
@@ -217,12 +247,13 @@ export class MarketOpenInterestGetTool implements ToolDefinition<{ symbol: strin
 
   public readonly inputSchema = z.object({
     symbol: z.string().describe("Symbol name e.g. BTC-USDT"),
+    provider: z.enum(["BINANCE_FUTURES", "OKX_FUTURES"]).optional(),
   });
 
   public readonly outputSchema = z.object({
     symbol: z.string(),
     openInterest: z.string(),
-    openInterestUsd: z.string(),
+    openInterestUsd: z.string().optional(),
     timestamp: z.string(),
   });
 
@@ -240,20 +271,26 @@ export class MarketOpenInterestGetTool implements ToolDefinition<{ symbol: strin
   public readonly status = "ACTIVE" as const;
   public readonly schemaHash = "hash-market-open-interest-get-v1";
 
-  public async execute(input: { symbol: string }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
-    await Promise.resolve();
+  public async execute(input: { symbol: string; provider?: string }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
+    if (!this.dataService) throw new Error("Phase 4 market data service is unavailable");
+    const history = await this.dataService.openInterest(input.symbol, input.provider);
+    const current = history[0];
+    if (!current) throw new Error("Open-interest data is unavailable");
     return {
       symbol: input.symbol,
-      openInterest: "45280.5",
-      openInterestUsd: "4320950000.00",
-      timestamp: new Date().toISOString(),
+      provider: current.provider,
+      openInterest: current.openInterest,
+      openInterestUsd: current.openInterestValue,
+      timestamp: current.timestamp.toISOString(),
+      history: history.map((item) => ({ value: item.openInterest, timestamp: item.timestamp.toISOString() })),
       invocationId: context.invocationId,
     };
   }
 }
 
 @Injectable()
-export class MarketOrderBookGetTool implements ToolDefinition<{ symbol: string; depth?: number }, Record<string, unknown>> {
+export class MarketOrderBookGetTool implements ToolDefinition<{ symbol: string; provider?: string; depth?: number }, Record<string, unknown>> {
+  constructor(@Optional() private readonly dataService?: MarketToolDataService) {}
   public readonly name = "market.order_book.get";
   public readonly version = 1;
   public readonly displayName = "Get Order Book Depth";
@@ -262,6 +299,7 @@ export class MarketOrderBookGetTool implements ToolDefinition<{ symbol: string; 
 
   public readonly inputSchema = z.object({
     symbol: z.string().describe("Symbol name e.g. BTC-USDT"),
+    provider: z.enum(["BINANCE_FUTURES", "OKX_FUTURES"]).optional(),
     depth: z.number().int().min(1).max(50).optional().default(10).describe("Depth level count"),
   });
 
@@ -286,14 +324,18 @@ export class MarketOrderBookGetTool implements ToolDefinition<{ symbol: string; 
   public readonly status = "ACTIVE" as const;
   public readonly schemaHash = "hash-market-order-book-get-v1";
 
-  public async execute(input: { symbol: string; depth?: number }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
-    await Promise.resolve();
+  public async execute(input: { symbol: string; provider?: string; depth?: number }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
+    if (!this.dataService) throw new Error("Phase 4 market data service is unavailable");
+    const depth = input.depth || 10;
+    const book = await this.dataService.orderBook(input.symbol, input.provider, depth);
+    if (!book) throw new Error("Order-book data is unavailable");
     return {
       symbol: input.symbol,
-      depth: input.depth || 10,
-      bids: [["95420.00", "2.45"], ["95419.50", "5.10"]],
-      asks: [["95420.50", "1.80"], ["95421.00", "3.25"]],
-      timestamp: new Date().toISOString(),
+      provider: book.provider,
+      depth,
+      bids: book.bids.map((level) => [level.price, level.quantity]),
+      asks: book.asks.map((level) => [level.price, level.quantity]),
+      timestamp: book.timestamp.toISOString(),
       invocationId: context.invocationId,
     };
   }

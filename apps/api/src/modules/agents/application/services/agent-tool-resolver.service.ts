@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ToolRegistryService } from '../../../ai-tools/infrastructure/registry/tool-registry.service';
 import { AgentError, AgentErrorCode } from '../../domain/errors/agent-errors';
 import { AIProviderType } from '@prisma/client';
+import type { ToolCapability } from '@platform/shared';
 
 @Injectable()
 export class AgentToolResolverService {
@@ -33,7 +34,11 @@ export class AgentToolResolverService {
     }
 
     const providerType = (params.provider.toUpperCase() as AIProviderType) || AIProviderType.OPENAI;
-    const providerSchemas = this.toolRegistryService.getProviderSchemas(providerType);
+    const providerSchemas = this.toolRegistryService.getProviderSchemas(
+      providerType,
+      params.requiredCapabilities as ToolCapability[],
+      resolvedToolNames,
+    );
 
     return {
       toolCount: resolvedToolNames.length,

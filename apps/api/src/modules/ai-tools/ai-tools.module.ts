@@ -26,6 +26,7 @@ import {
   MarketOpenInterestGetTool,
   MarketOrderBookGetTool,
 } from "./infrastructure/tools/market-tools";
+import { MarketToolDataService } from "./infrastructure/tools/market-tool-data.service";
 
 import {
   NewsArticlesListTool,
@@ -50,9 +51,10 @@ import { RedisModule } from "../../redis/redis.module";
 import { SessionModule } from "../../session/session.module";
 import { ExchangeModule } from "../../exchange/exchange.module";
 import { AIModule } from "../ai/ai.module";
+import { MarketDataModule } from "../../market-data/market-data.module";
 
 @Module({
-  imports: [DatabaseModule, RedisModule, SessionModule, ExchangeModule, AIModule],
+  imports: [DatabaseModule, RedisModule, SessionModule, ExchangeModule, MarketDataModule, AIModule],
   controllers: [AIToolsController],
   providers: [
     OpenAIToolSchemaMapper,
@@ -72,6 +74,7 @@ import { AIModule } from "../ai/ai.module";
     ToolInvocationService,
     ToolLoopRunnerService,
     ToolHealthService,
+    MarketToolDataService,
 
     // 18 Safe Tools
     MarketTickerGetTool,

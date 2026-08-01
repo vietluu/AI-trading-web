@@ -1,4 +1,4 @@
-import type { ZodType } from 'zod';
+import type { ZodType, ZodTypeDef } from 'zod';
 import { type AgentType, type AgentStatus, type AgentExecutionMode, type AgentContextSection, type AgentMemoryMode } from '../enums';
 
 export interface AgentContextPolicy {
@@ -48,7 +48,7 @@ export interface AgentDefinition<TInput = unknown, TOutput = unknown> {
   readonly description: string;
   readonly status: AgentStatus;
   readonly executionMode: AgentExecutionMode;
-  readonly inputSchema: ZodType<TInput>;
+  readonly inputSchema: ZodType<TInput, ZodTypeDef, unknown>;
   readonly outputSchema: ZodType<TOutput>;
   readonly promptId: string;
   readonly promptVersion: number;
@@ -65,4 +65,12 @@ export interface AgentDefinition<TInput = unknown, TOutput = unknown> {
   readonly maxOutputTokens: number;
   readonly requiresUserContext: boolean;
   readonly allowsPublicSystemRun: boolean;
+  buildToolCalls?(input: TInput): Array<{
+    toolName: string;
+    arguments: Record<string, unknown>;
+  }>;
+  buildInsufficientOutput?(
+    usedTools: string[],
+    reason: string,
+  ): TOutput;
 }
