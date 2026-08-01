@@ -14,6 +14,7 @@ import { ExchangeEnvironment, ExchangeProvider, type ExchangePosition, type Orde
 import { ExchangeError } from "../../../exchange/domain/exchange.error";
 import { LiveTradingConfigService } from "./live-trading-config.service";
 import type { CloseApprovedPositionDto, ExecuteApprovedOrderDto } from "./live-trading.dto";
+import { RiskConfigService } from "../../risk/application/risk-config.service";
 
 @Injectable()
 export class LiveTradingService {
@@ -24,6 +25,7 @@ export class LiveTradingService {
     private readonly connections: ExchangeConnectionService,
     private readonly config: LiveTradingConfigService,
     private readonly audit: AuditService,
+    private readonly riskConfig: RiskConfigService,
   ) {}
 
   async execute(userId: string, dto: ExecuteApprovedOrderDto, context: RequestMetadata) {
@@ -58,6 +60,11 @@ export class LiveTradingService {
     const positions = await this.prisma.livePosition.findMany({
       where: { userId, connectionId: dto.connectionId, symbol: assessment.symbol },
     });
+    await this.assertExchangePortfolioRisk(
+      userId,
+      dto.connectionId,
+      assessment,
+    );
     const desiredSide = assessment.decision as "LONG" | "SHORT";
     const same = positions.find((position) => position.side === desiredSide);
     if (same) throw new ConflictException("A position already exists in the approved direction");
@@ -372,6 +379,66 @@ export class LiveTradingService {
       ).catch((error: unknown) =>
         this.logger.error({ event: "protective_exit_failed", connectionId: connection.id, symbol: position.symbol, purpose, error: this.safeError(error) }),
       );
+    }
+  }
+
+  private async assertExchangePortfolioRisk(
+    userId: string,
+    connectionId: string,
+    assessment: {
+      symbol: string;
+      positionSize: Prisma.Decimal | null;
+      leverage: number | null;
+      referencePrice: Prisma.Decimal;
+    },
+  ): Promise<void> {
+    if (!assessment.positionSize || !assessment.leverage) {
+      throw new ForbiddenException("Exchange preflight failed: incomplete risk approval");
+    }
+    const [snapshot, peak, positions] = await Promise.all([
+      this.prisma.liveAccountSnapshot.findFirst({
+        where: { userId, connectionId },
+        orderBy: { syncedAt: "desc" },
+      }),
+      this.prisma.liveAccountSnapshot.aggregate({
+        where: { userId, connectionId },
+        _max: { totalEquity: true },
+      }),
+      this.prisma.livePosition.findMany({ where: { userId, connectionId } }),
+    ]);
+    if (!snapshot) {
+      throw new ForbiddenException("Exchange preflight failed: synchronized account state is unavailable");
+    }
+    const limits = this.riskConfig.values;
+    const equity = Number(snapshot.totalEquity);
+    const peakEquity = Number(peak._max.totalEquity ?? snapshot.totalEquity);
+    if (!Number.isFinite(equity) || equity <= 0) {
+      throw new ForbiddenException("Exchange preflight failed: account equity is unavailable");
+    }
+    const drawdown = peakEquity > 0 ? Math.max(0, (peakEquity - equity) / peakEquity) : 1;
+    if (drawdown >= limits.maxDrawdown) {
+      throw new ForbiddenException("Exchange preflight failed: maximum drawdown exceeded");
+    }
+    if (assessment.leverage > limits.maxLeverage) {
+      throw new ForbiddenException("Exchange preflight failed: leverage exceeds configured maximum");
+    }
+    const retained = positions.filter((position) => position.symbol !== assessment.symbol);
+    if (retained.length >= limits.maxPositions) {
+      throw new ForbiddenException("Exchange preflight failed: maximum open positions exceeded");
+    }
+    const retainedExposure = retained.reduce((sum, position) => {
+      const explicit = position.notional ? Math.abs(Number(position.notional)) : 0;
+      const calculated = Math.abs(Number(position.quantity) * Number(position.markPrice ?? position.entryPrice));
+      return sum + (explicit > 0 ? explicit : calculated);
+    }, 0);
+    const orderNotional = Number(assessment.positionSize) * Number(assessment.referencePrice);
+    const projectedExposure = retainedExposure + orderNotional;
+    if (!Number.isFinite(projectedExposure) || projectedExposure > equity * limits.maxExposure + 1e-8) {
+      throw new ForbiddenException("Exchange preflight failed: maximum portfolio exposure exceeded");
+    }
+    const requiredMargin = orderNotional / assessment.leverage;
+    if (requiredMargin > Number(snapshot.availableBalance) + 1e-8) {
+      throw new ForbiddenException("Exchange preflight failed: insufficient available margin");
     }
   }
 

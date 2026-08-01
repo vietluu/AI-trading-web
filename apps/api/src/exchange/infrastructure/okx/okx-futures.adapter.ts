@@ -409,8 +409,11 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       .parse(
         await this.client.signedGet("/api/v5/account/balance", credentials),
       )[0]!;
-    const available = value.availEq ?? value.details[0]?.availBal ?? "0";
-    const upl = value.upl ?? value.details[0]?.upl ?? "0";
+    const settlement =
+      value.details.find((detail) => detail.ccy === "USDT") ??
+      value.details[0];
+    const available = this.nonEmptyDecimal(value.availEq, settlement?.availBal);
+    const upl = this.nonEmptyDecimal(value.upl, settlement?.upl);
     return {
       provider: this.provider,
       totalEquity: value.totalEq,
@@ -445,14 +448,24 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
   async getPositions(
     credentials: ExchangeCredentials,
   ): Promise<ExchangePosition[]> {
-    const values = z.array(positionSchema).parse(
-      await this.client.signedGet("/api/v5/account/positions", credentials, {
+    const [rawPositions, instruments] = await Promise.all([
+      this.client.signedGet("/api/v5/account/positions", credentials, {
         instType: "SWAP",
       }),
-    );
+      this.getInstruments(),
+    ]);
+    const values = z.array(positionSchema).parse(rawPositions);
     return values
       .filter((item) => item.pos !== "0" && item.pos !== "0.0")
       .map((item) => {
+        const normalizedSymbol = fromOkxSymbol(item.instId);
+        const instrument = instruments.find(
+          (candidate) => candidate.symbol === normalizedSymbol,
+        );
+        const quantity = this.baseQuantity(
+          item.pos.startsWith("-") ? item.pos.slice(1) : item.pos,
+          instrument?.contractSize,
+        );
         const side: PositionSide =
           item.posSide === "long"
             ? "LONG"
@@ -463,10 +476,10 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
                 : "LONG";
         return {
           provider: this.provider,
-          symbol: fromOkxSymbol(item.instId),
+          symbol: normalizedSymbol,
           side,
           positionMode: item.posSide === "net" ? "ONE_WAY" : "HEDGE",
-          quantity: item.pos.startsWith("-") ? item.pos.slice(1) : item.pos,
+          quantity,
           entryPrice: item.avgPx,
           ...(item.markPx ? { markPrice: item.markPx } : {}),
           ...(item.liqPx ? { liquidationPrice: item.liqPx } : {}),
@@ -534,6 +547,21 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     command: PlaceOrderCommand,
   ): Promise<ExchangeOrder> {
     const instId = toOkxSymbol(command.symbol);
+    const instrument = (await this.getInstruments()).find(
+      (candidate) => candidate.symbol === command.symbol,
+    );
+    if (!instrument?.contractSize) {
+      throw ExchangeError.invalidRequest(
+        this.provider,
+        "OKX contract metadata is unavailable for this symbol",
+      );
+    }
+    const contractQuantity = this.contractQuantity(
+      command.quantity,
+      instrument.contractSize,
+      instrument.stepSize,
+      instrument.quantityPrecision,
+    );
     await this.client.signedPost("/api/v5/account/set-leverage", credentials, {
       instId,
       lever: String(command.leverage),
@@ -544,7 +572,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       tdMode: "cross",
       side: command.side.toLowerCase(),
       ordType: "market",
-      sz: command.quantity,
+      sz: contractQuantity,
       clOrdId: command.clientOrderId,
       reduceOnly: command.reduceOnly ?? false,
       ...(command.positionSide ? { posSide: command.positionSide.toLowerCase() } : {}),
@@ -646,6 +674,46 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       supportsLimitOrder: true,
       supportsStopOrder: true,
     };
+  }
+
+  private nonEmptyDecimal(...values: Array<string | undefined>): string {
+    return values.find((value) => value !== undefined && value.trim() !== "") ?? "0";
+  }
+
+  private baseQuantity(contracts: string, contractSize?: string): string {
+    if (!contractSize) return contracts;
+    const value = Number(contracts) * Number(contractSize);
+    if (!Number.isFinite(value) || value <= 0) return contracts;
+    return this.decimalString(value, 12);
+  }
+
+  private contractQuantity(
+    baseQuantity: string,
+    contractSize: string,
+    lotSize: string,
+    precision: number,
+  ): string {
+    const raw = Number(baseQuantity) / Number(contractSize);
+    const lot = Number(lotSize);
+    if (!Number.isFinite(raw) || !Number.isFinite(lot) || raw <= 0 || lot <= 0) {
+      throw ExchangeError.invalidRequest(this.provider, "Invalid OKX order quantity");
+    }
+    const lots = Math.floor((raw + Number.EPSILON) / lot);
+    const quantity = lots * lot;
+    if (quantity <= 0) {
+      throw ExchangeError.invalidRequest(
+        this.provider,
+        `Order size is below the OKX minimum contract lot (${lotSize})`,
+      );
+    }
+    return this.decimalString(quantity, precision);
+  }
+
+  private decimalString(value: number, precision: number): string {
+    const fixed = value.toFixed(Math.min(precision, 12));
+    return fixed.includes(".")
+      ? fixed.replace(/0+$/, "").replace(/\.$/, "")
+      : fixed;
   }
 
   private intervalMilliseconds(interval: ExchangeInterval): number {
