@@ -55,6 +55,8 @@ model User {
   aiUsages               AIUsage[]
   toolInvocations        ToolInvocationRecord[]
   toolQuotas             ToolQuotaUsage[]
+  agentRuns              AgentRun[]
+  agentQuotas            AgentQuotaUsage[]
 
   @@map("users")
 }
@@ -998,3 +1000,194 @@ model ToolQuotaUsage {
 }
 
 
+
+// ============================================================
+// Phase 6.3: Multi-Agent Framework
+// ============================================================
+
+enum AgentType {
+  MARKET_ANALYST
+  TECHNICAL_ANALYST
+  NEWS_ANALYST
+  SOCIAL_ANALYST
+  MACRO_ANALYST
+  ON_CHAIN_ANALYST
+  RISK_REVIEWER
+  DECISION_SYNTHESIZER
+  JUDGE
+  MEMORY_AGENT
+  PERFORMANCE
+  REFLECTION
+  SYSTEM_DIAGNOSTIC
+}
+
+enum AgentRunStatus {
+  CREATED
+  QUEUED
+  PREPARING_CONTEXT
+  READY
+  RUNNING
+  WAITING_FOR_TOOL
+  PROCESSING_TOOL_RESULT
+  VALIDATING_OUTPUT
+  COMPLETED
+  PARTIALLY_COMPLETED
+  FAILED
+  TIMED_OUT
+  CANCEL_REQUESTED
+  CANCELLED
+  REJECTED
+}
+
+enum AgentInvocationSource {
+  USER_MANUAL
+  INTERNAL_SERVICE
+  SYSTEM_TEST
+  REPLAY
+  FUTURE_SCHEDULED
+  FUTURE_EVENT_DRIVEN
+}
+
+model AgentDefinitionRecord {
+  id              String      @id @default(uuid()) @db.Uuid
+  agentType       AgentType
+  version         Int         @default(1)
+  displayName     String
+  description     String
+  status          ToolStatus  @default(ACTIVE)
+  promptId        String
+  promptVersion   Int         @default(1)
+  definitionHash  String
+  schemaHash      String
+  allowedTools    String[]    @default([])
+  capabilities    String[]    @default([])
+  registeredAt    DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@unique([agentType, version])
+  @@index([agentType, status])
+  @@map("agent_definitions")
+}
+
+model AgentRun {
+  id                  String                @id @default(uuid()) @db.Uuid
+  userId              String?               @db.Uuid
+  agentType           AgentType
+  agentVersion        Int                   @default(1)
+  status              AgentRunStatus        @default(CREATED)
+  invocationSource    AgentInvocationSource @default(USER_MANUAL)
+  inputHash           String
+  sanitizedInput      Json?
+  output              Json?
+  outputSchemaVersion Int                   @default(1)
+  promptId            String
+  promptVersion       Int                   @default(1)
+  contextSnapshotId   String?               @db.Uuid
+  provider            String?
+  model               String?
+  startedAt           DateTime?
+  completedAt         DateTime?
+  durationMs          Int?
+  inputTokens         Int                   @default(0)
+  outputTokens        Int                   @default(0)
+  cachedTokens        Int                   @default(0)
+  estimatedCost       Decimal               @default(0) @db.Decimal(18, 6)
+  actualCost          Decimal?              @db.Decimal(18, 6)
+  toolCallCount       Int                   @default(0)
+  toolRoundCount      Int                   @default(0)
+  retryCount          Int                   @default(0)
+  failureCode         String?
+  safeFailureMessage  String?
+  traceId             String?
+  correlationId       String?
+  parentRunId         String?               @db.Uuid
+  replayOfRunId       String?               @db.Uuid
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  user                User?                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contextSnapshot     AgentContextSnapshot? @relation(fields: [contextSnapshotId], references: [id])
+  transitions         AgentRunTransition[]
+  runOutput           AgentRunOutput?
+
+  @@index([userId, createdAt])
+  @@index([agentType, status])
+  @@index([correlationId])
+  @@index([parentRunId])
+  @@index([replayOfRunId])
+  @@index([traceId])
+  @@map("agent_runs")
+}
+
+model AgentRunTransition {
+  id            String         @id @default(uuid()) @db.Uuid
+  runId         String         @db.Uuid
+  fromState     AgentRunStatus
+  toState       AgentRunStatus
+  reason        String
+  actor         String
+  correlationId String?
+  createdAt     DateTime       @default(now())
+
+  run           AgentRun       @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, createdAt])
+  @@map("agent_run_transitions")
+}
+
+model AgentContextSnapshot {
+  id                String     @id @default(uuid()) @db.Uuid
+  userId            String?    @db.Uuid
+  symbol            String?
+  provider          String?
+  timeframe         String?
+  sourceDataCutoff  DateTime
+  schemaVersion     Int        @default(1)
+  builderVersion    String     @default("1.0.0")
+  contextHash       String
+  tokenEstimate     Int        @default(0)
+  serializedContext Json
+  marketRefs        String[]   @default([])
+  newsRefs          String[]   @default([])
+  macroRefs         String[]   @default([])
+  sentimentRefs     String[]   @default([])
+  memoryRefs        String[]   @default([])
+  createdAt         DateTime   @default(now())
+
+  agentRuns         AgentRun[]
+
+  @@index([contextHash])
+  @@index([userId, createdAt])
+  @@map("agent_context_snapshots")
+}
+
+model AgentRunOutput {
+  id              String   @id @default(uuid()) @db.Uuid
+  runId           String   @unique @db.Uuid
+  schemaVersion   Int      @default(1)
+  validatedOutput Json
+  rawOutput       String?
+  createdAt       DateTime @default(now())
+
+  run             AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@map("agent_run_outputs")
+}
+
+model AgentQuotaUsage {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @db.Uuid
+  windowKey   String
+  runCount    Int      @default(0)
+  tokenCount  Int      @default(0)
+  costTotal   Decimal  @default(0) @db.Decimal(18, 6)
+  failedCount Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, windowKey])
+  @@index([userId, windowKey])
+  @@map("agent_quota_usages")
+}

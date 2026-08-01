@@ -67,6 +67,7 @@ import { AIController } from "./presentation/controllers/ai.controller";
   exports: [
     AIOrchestratorService,
     LLMProviderFactory,
+    PromptRegistry,
     PromptEngineService,
     ContextBuilderService,
     MemoryManagerService,
