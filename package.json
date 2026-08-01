@@ -8,7 +8,7 @@
     "pnpm": ">=11.0.0"
   },
   "pnpm": {
-    "approvedBuilds": [
+    "onlyBuiltDependencies": [
       "msgpackr-extract",
       "@prisma/engines",
       "@prisma/client",
