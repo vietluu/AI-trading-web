@@ -75,8 +75,8 @@ export class MarketBackfillService {
                   interval,
                   gapStart: expectedNextOpen,
                   gapEnd: gapEnd,
-                  status: 'PENDING',
-                });
+                  status: 'DETECTED',
+                );
                 
                 this.logger.warn({
                   event: 'market_data_gap_detected',
