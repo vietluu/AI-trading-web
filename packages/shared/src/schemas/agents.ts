@@ -464,6 +464,70 @@ export const FusionOutputSchema = z
   .strict();
 export type FusionOutput = z.infer<typeof FusionOutputSchema>;
 
+export const DecisionSchema = z.enum(['LONG', 'SHORT', 'WAIT']);
+export type Decision = z.infer<typeof DecisionSchema>;
+
+export const MarketRegimeSchema = z
+  .object({
+    type: z.enum(['TRENDING', 'RANGING', 'HIGH_VOLATILITY']),
+  })
+  .strict();
+export type MarketRegime = z.infer<typeof MarketRegimeSchema>;
+
+export const DecisionWeightingSchema = z
+  .object({
+    market: z.number().min(0).max(100),
+    technical: z.number().min(0).max(100),
+    news: z.number().min(0).max(100),
+    sentiment: z.number().min(0).max(100),
+    macro: z.number().min(0).max(100),
+    onchain: z.number().min(0).max(100),
+  })
+  .strict();
+
+export const DecisionInputSchema = z
+  .object({
+    symbol: z.string().min(1),
+    fusionOutput: FusionOutputSchema,
+    market: MarketAgentOutputSchema.optional(),
+    technical: TechnicalAgentOutputSchema.optional(),
+    news: NewsAgentOutputSchema.optional(),
+    sentiment: SentimentAgentOutputSchema.optional(),
+    macro: MacroAgentOutputSchema.optional(),
+    onchain: OnChainAgentOutputSchema.optional(),
+  })
+  .strict();
+export type DecisionInput = z.infer<typeof DecisionInputSchema>;
+
+export const DecisionRunInputSchema = FusionRunInputSchema;
+export type DecisionRunInput = z.infer<typeof DecisionRunInputSchema>;
+
+export const DecisionOutputSchema = z
+  .object({
+    decision: DecisionSchema,
+    confidence: z.number().min(0).max(100),
+    reasoning: z.string().min(1),
+    signals: z
+      .object({
+        bullishFactors: z.array(z.string()),
+        bearishFactors: z.array(z.string()),
+      })
+      .strict(),
+    risks: z.array(z.string()),
+    agreementScore: z.number().min(0).max(100),
+    dataQuality: AgentDataQualitySchema,
+    regime: MarketRegimeSchema,
+    weighting: DecisionWeightingSchema,
+    overrides: z.array(z.string()),
+    volatilityAdjustment: z.number().min(-100).max(0),
+    conflictLevel: z.enum(['LOW', 'MEDIUM', 'HIGH']),
+    generatedAt: z.string().datetime(),
+  })
+  .strict();
+export type DecisionOutput = z.infer<typeof DecisionOutputSchema>;
+export const DecisionOutputProSchema = DecisionOutputSchema;
+export type DecisionOutputPro = DecisionOutput;
+
 export const AgentRunFilterDtoSchema = z.object({
   agentType: AgentTypeSchema.optional(),
   status: AgentRunStatusSchema.optional(),

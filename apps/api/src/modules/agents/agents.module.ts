@@ -9,6 +9,7 @@ import { NEWS_ANALYST_DEFINITION } from './domain/definitions/news-analyst.defin
 import { SENTIMENT_ANALYST_DEFINITION } from './domain/definitions/sentiment-analyst.definition';
 import { MACRO_ANALYST_DEFINITION } from './domain/definitions/macro-analyst.definition';
 import { ON_CHAIN_ANALYST_DEFINITION } from './domain/definitions/on-chain-analyst.definition';
+import { DECISION_SYNTHESIZER_DEFINITION } from './domain/definitions/decision-synthesizer.definition';
 
 // Infrastructure
 import { AgentRegistryService } from './infrastructure/registry/agent-registry.service';
@@ -34,6 +35,7 @@ import { AgentToolResolverService } from './application/services/agent-tool-reso
 import { AgentContextBuilderService } from './application/context/agent-context-builder.service';
 import { AgentPolicyEngine } from './application/policies/agent-policy.engine';
 import { FusionService } from './application/services/fusion.service';
+import { DecisionService } from './application/services/decision.service';
 
 // Shared Infra Modules
 import { DatabaseModule } from '../../database/database.module';
@@ -45,6 +47,7 @@ import { AIToolsModule } from '../ai-tools/ai-tools.module';
 // Controllers
 import { AgentsController, AgentRunsController } from './presentation/controllers/agents.controller';
 import { AgentSseController } from './presentation/controllers/agent-sse.controller';
+import { DecisionController } from './presentation/controllers/decision.controller';
 
 @Module({
   imports: [
@@ -57,7 +60,7 @@ import { AgentSseController } from './presentation/controllers/agent-sse.control
       name: 'agent-runs',
     }),
   ],
-  controllers: [AgentsController, AgentRunsController, AgentSseController],
+  controllers: [AgentsController, AgentRunsController, AgentSseController, DecisionController],
   providers: [
     // Registry
     AgentRegistryService,
@@ -89,6 +92,7 @@ import { AgentSseController } from './presentation/controllers/agent-sse.control
     AgentContextBuilderService,
     AgentPolicyEngine,
     FusionService,
+    DecisionService,
   ],
   exports: [
     AgentRegistryService,
@@ -96,6 +100,7 @@ import { AgentSseController } from './presentation/controllers/agent-sse.control
     AgentRunnerService,
     AgentHealthService,
     FusionService,
+    DecisionService,
   ],
 })
 export class AgentsModule implements OnModuleInit {
@@ -109,5 +114,6 @@ export class AgentsModule implements OnModuleInit {
     this.agentRegistryService.register(SENTIMENT_ANALYST_DEFINITION);
     this.agentRegistryService.register(MACRO_ANALYST_DEFINITION);
     this.agentRegistryService.register(ON_CHAIN_ANALYST_DEFINITION);
+    this.agentRegistryService.register(DECISION_SYNTHESIZER_DEFINITION);
   }
 }
