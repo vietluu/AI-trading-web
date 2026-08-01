@@ -27,16 +27,18 @@ export class MarketRedisCacheService {
 
   private parseCachedPayload<T>(data: string): T {
     try {
-      return JSON.parse(data, (key, value) => {
+      const parsed: unknown = JSON.parse(data, (_key: string, value: unknown) => {
         // Parse ISO string dates
         if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) {
           return new Date(value);
         }
         return value;
-      }) as T;
+      });
+      return parsed as T;
     } catch (error) {
       this.logger.error('Failed to parse cached payload', error);
-      return JSON.parse(data) as T;
+      const parsed: unknown = JSON.parse(data);
+      return parsed as T;
     }
   }
 

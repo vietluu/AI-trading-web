@@ -17,9 +17,7 @@ import type {
   MarketStreamError,
   MarketStreamStatus,
   NormalizedCandle,
-  NormalizedFundingRate,
   NormalizedMarketEvent,
-  NormalizedOpenInterest,
   NormalizedOrderBook,
   NormalizedTicker,
   NormalizedTrade,
@@ -55,6 +53,42 @@ function fromBinanceStreamSymbol(raw: string): string {
     return `${upper.slice(0, -4)}-USDC`;
   }
   return upper;
+}
+
+type UnknownRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isUnknownArray(value: unknown): value is unknown[] {
+  return Array.isArray(value);
+}
+
+function toStringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function toNumberValue(value: unknown): number | undefined {
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function toBooleanValue(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function toWebSocketMessage(data: WebSocket.Data): string {
+  if (typeof data === "string") return data;
+  if (Buffer.isBuffer(data)) return data.toString("utf8");
+  if (data instanceof ArrayBuffer) {
+    return Buffer.from(data).toString("utf8");
+  }
+  return Buffer.concat(data).toString("utf8");
 }
 
 @Injectable()
@@ -159,7 +193,7 @@ export class BinancePublicStreamAdapter implements PublicMarketStreamAdapter {
         this.lastMessageAt = new Date();
         this.messageCount++;
         try {
-          this.handleMessage(data.toString());
+          this.handleMessage(toWebSocketMessage(data));
         } catch {
           this.malformedMessageCount++;
         }
@@ -184,7 +218,9 @@ export class BinancePublicStreamAdapter implements PublicMarketStreamAdapter {
       this.ws!.on("close", (code: number, reason: Buffer) => {
         clearTimeout(timeout);
         this.stopStaleDetection();
-        const reasonStr = reason.toString();
+        const reasonStr = Buffer.isBuffer(reason)
+          ? reason.toString("utf8")
+          : String(reason);
         this.logger.warn({
           event: "ws_close",
           code,
@@ -207,7 +243,7 @@ export class BinancePublicStreamAdapter implements PublicMarketStreamAdapter {
     });
   }
 
-  async disconnect(): Promise<void> {
+  disconnect(): Promise<void> {
     this.setState(MarketStreamState.DISCONNECTED);
     this.stopStaleDetection();
     if (this.reconnectTimer) {
@@ -225,31 +261,35 @@ export class BinancePublicStreamAdapter implements PublicMarketStreamAdapter {
       this.ws = null;
     }
     this.activeSubscriptions.clear();
+    return Promise.resolve();
   }
 
-  async subscribeTicker(symbols: string[]): Promise<void> {
+  subscribeTicker(symbols: string[]): Promise<void> {
     const streams = symbols.map(
       (s) => `${toBinanceStreamSymbol(s)}@ticker`,
     );
     this.subscribe(streams);
+    return Promise.resolve();
   }
 
-  async subscribeCandles(subscriptions: CandleSubscription[]): Promise<void> {
+  subscribeCandles(subscriptions: CandleSubscription[]): Promise<void> {
     const streams = subscriptions.map(
       (sub) =>
         `${toBinanceStreamSymbol(sub.symbol)}@kline_${toBinanceInterval(sub.interval)}`,
     );
     this.subscribe(streams);
+    return Promise.resolve();
   }
 
-  async subscribeTrades(symbols: string[]): Promise<void> {
+  subscribeTrades(symbols: string[]): Promise<void> {
     const streams = symbols.map(
       (s) => `${toBinanceStreamSymbol(s)}@aggTrade`,
     );
     this.subscribe(streams);
+    return Promise.resolve();
   }
 
-  async subscribeOrderBook(
+  subscribeOrderBook(
     subscriptions: OrderBookSubscription[],
   ): Promise<void> {
     const streams = subscriptions.map(
@@ -257,13 +297,14 @@ export class BinancePublicStreamAdapter implements PublicMarketStreamAdapter {
         `${toBinanceStreamSymbol(sub.symbol)}@depth${sub.depth}@100ms`,
     );
     this.subscribe(streams);
+    return Promise.resolve();
   }
 
-  async unsubscribe(subscriptionIds: string[]): Promise<void> {
+  unsubscribe(subscriptionIds: string[]): Promise<void> {
     const params = subscriptionIds.filter((id) =>
       this.activeSubscriptions.has(id),
     );
-    if (params.length === 0) return;
+    if (params.length === 0) return Promise.resolve();
 
     for (const id of params) {
       this.activeSubscriptions.delete(id);
@@ -278,6 +319,7 @@ export class BinancePublicStreamAdapter implements PublicMarketStreamAdapter {
         }),
       );
     }
+    return Promise.resolve();
   }
 
   getStatus(): MarketStreamStatus {
@@ -346,12 +388,13 @@ export class BinancePublicStreamAdapter implements PublicMarketStreamAdapter {
   }
 
   private handleMessage(raw: string): void {
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed)) return;
 
     // Binance combined stream wraps in { stream, data }
-    if (parsed.result !== undefined) return; // subscription ack
-    const data = parsed.data ?? parsed;
-    const stream: string = parsed.stream ?? "";
+    if ("result" in parsed && parsed.result !== undefined) return;
+    const data = "data" in parsed ? parsed.data : parsed;
+    const stream = toStringValue(parsed.stream) ?? "";
 
     if (stream.includes("@ticker")) {
       this.handleTickerMessage(data);
@@ -364,24 +407,29 @@ export class BinancePublicStreamAdapter implements PublicMarketStreamAdapter {
     }
   }
 
-  private handleTickerMessage(data: Record<string, unknown>): void {
-    const symbol = fromBinanceStreamSymbol(data.s as string);
+  private handleTickerMessage(data: unknown): void {
+    if (!isRecord(data)) return;
+    const symbolValue = toStringValue(data.s);
+    const timestamp = toNumberValue(data.E);
+    if (!symbolValue || timestamp === undefined) return;
+
+    const symbol = fromBinanceStreamSymbol(symbolValue);
     const ticker: NormalizedTicker = {
       provider: this.provider,
       symbol,
-      lastPrice: String(data.c),
+      lastPrice: toStringValue(data.c) ?? "",
       markPrice: undefined,
-      bidPrice: String(data.b),
-      askPrice: String(data.a),
-      bidQuantity: String(data.B),
-      askQuantity: String(data.A),
-      high24h: String(data.h),
-      low24h: String(data.l),
-      volume24h: String(data.v),
-      quoteVolume24h: String(data.q),
-      priceChange24h: String(data.p),
-      priceChangePercent24h: String(data.P),
-      timestamp: new Date(data.E as number),
+      bidPrice: toStringValue(data.b),
+      askPrice: toStringValue(data.a),
+      bidQuantity: toStringValue(data.B),
+      askQuantity: toStringValue(data.A),
+      high24h: toStringValue(data.h),
+      low24h: toStringValue(data.l),
+      volume24h: toStringValue(data.v),
+      quoteVolume24h: toStringValue(data.q),
+      priceChange24h: toStringValue(data.p),
+      priceChangePercent24h: toStringValue(data.P),
+      timestamp: new Date(timestamp),
     };
 
     this.emitEvent({
@@ -391,28 +439,40 @@ export class BinancePublicStreamAdapter implements PublicMarketStreamAdapter {
     });
   }
 
-  private handleKlineMessage(
-    data: Record<string, unknown>,
-    stream: string,
-  ): void {
-    const kline = data.k as Record<string, unknown>;
-    const symbol = fromBinanceStreamSymbol(kline.s as string);
-    const interval = kline.i as ExchangeInterval;
-    const isClosed = kline.x as boolean;
+  private handleKlineMessage(data: unknown, stream: string): void {
+    if (!isRecord(data) || !isRecord(data.k)) return;
+    const kline = data.k;
+    const symbolValue = toStringValue(kline.s);
+    const intervalValue = toStringValue(kline.i);
+    const isClosed = toBooleanValue(kline.x);
+    const openTime = toNumberValue(kline.t);
+    const closeTime = toNumberValue(kline.T);
+    if (
+      !symbolValue ||
+      !intervalValue ||
+      isClosed === undefined ||
+      openTime === undefined ||
+      closeTime === undefined
+    ) {
+      return;
+    }
+
+    const symbol = fromBinanceStreamSymbol(symbolValue);
+    const interval = intervalValue as ExchangeInterval;
 
     const candle: NormalizedCandle = {
       provider: this.provider,
       symbol,
       interval,
-      openTime: new Date(kline.t as number),
-      closeTime: new Date(kline.T as number),
-      open: String(kline.o),
-      high: String(kline.h),
-      low: String(kline.l),
-      close: String(kline.c),
-      volume: String(kline.v),
-      quoteVolume: String(kline.q),
-      tradeCount: kline.n as number,
+      openTime: new Date(openTime),
+      closeTime: new Date(closeTime),
+      open: toStringValue(kline.o) ?? "",
+      high: toStringValue(kline.h) ?? "",
+      low: toStringValue(kline.l) ?? "",
+      close: toStringValue(kline.c) ?? "",
+      volume: toStringValue(kline.v) ?? "",
+      quoteVolume: toStringValue(kline.q),
+      tradeCount: toNumberValue(kline.n),
       isClosed,
     };
 
@@ -425,16 +485,21 @@ export class BinancePublicStreamAdapter implements PublicMarketStreamAdapter {
     });
   }
 
-  private handleTradeMessage(data: Record<string, unknown>): void {
-    const symbol = fromBinanceStreamSymbol(data.s as string);
+  private handleTradeMessage(data: unknown): void {
+    if (!isRecord(data)) return;
+    const symbolValue = toStringValue(data.s);
+    const timestamp = toNumberValue(data.T);
+    if (!symbolValue || timestamp === undefined) return;
+
+    const symbol = fromBinanceStreamSymbol(symbolValue);
     const trade: NormalizedTrade = {
       provider: this.provider,
       symbol,
-      tradeId: String(data.a),
-      price: String(data.p),
-      quantity: String(data.q),
-      side: data.m ? "SELL" : "BUY",
-      timestamp: new Date(data.T as number),
+      tradeId: toStringValue(data.a) ?? "",
+      price: toStringValue(data.p) ?? "",
+      quantity: toStringValue(data.q) ?? "",
+      side: toBooleanValue(data.m) ? "SELL" : "BUY",
+      timestamp: new Date(timestamp),
     };
 
     this.emitEvent({
@@ -444,27 +509,38 @@ export class BinancePublicStreamAdapter implements PublicMarketStreamAdapter {
     });
   }
 
-  private handleOrderBookMessage(
-    data: Record<string, unknown>,
-    stream: string,
-  ): void {
+  private handleOrderBookMessage(data: unknown, stream: string): void {
+    if (!isRecord(data)) return;
     const rawSymbol = stream.split("@")[0] ?? "";
     const symbol = fromBinanceStreamSymbol(rawSymbol);
-    const bids = (data.b as [string, string][])?.map(([price, quantity]) => ({
-      price,
-      quantity,
-    })) ?? [];
-    const asks = (data.a as [string, string][])?.map(([price, quantity]) => ({
-      price,
-      quantity,
-    })) ?? [];
+    const bids = isUnknownArray(data.b)
+      ? data.b
+          .filter(isUnknownArray)
+          .map((level) => {
+            const price = toStringValue(level[0]);
+            const quantity = toStringValue(level[1]);
+            return price && quantity ? { price, quantity } : null;
+          })
+          .filter((level): level is { price: string; quantity: string } => level !== null)
+      : [];
+    const asks = isUnknownArray(data.a)
+      ? data.a
+          .filter(isUnknownArray)
+          .map((level) => {
+            const price = toStringValue(level[0]);
+            const quantity = toStringValue(level[1]);
+            return price && quantity ? { price, quantity } : null;
+          })
+          .filter((level): level is { price: string; quantity: string } => level !== null)
+      : [];
+    const timestamp = toNumberValue(data.E) ?? Date.now();
 
     const book: NormalizedOrderBook = {
       provider: this.provider,
       symbol,
       bids,
       asks,
-      timestamp: new Date(data.E as number ?? Date.now()),
+      timestamp: new Date(timestamp),
       depth: Math.max(bids.length, asks.length),
     };
 

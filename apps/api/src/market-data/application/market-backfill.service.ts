@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { MarketDataRepository } from '../infrastructure/persistence/market-data.repository';
 import { MarketDataConfigService } from './market-data-config.service';
-import { ExchangeProvider } from '../../exchange/domain/exchange.types';
 
 @Injectable()
 export class MarketBackfillService {
@@ -19,11 +18,13 @@ export class MarketBackfillService {
     }
     
     // Initial check on startup
-    setTimeout(() => this.detectGaps(), 10000);
+    setTimeout(() => {
+      void this.detectGaps();
+    }, 10000);
 
     // Periodic check
     this.checkInterval = setInterval(() => {
-      this.detectGaps();
+      void this.detectGaps();
     }, checkIntervalMs);
   }
 

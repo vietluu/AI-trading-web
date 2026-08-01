@@ -23,6 +23,14 @@ function readList(value: unknown, fallback: string[]): string[] {
   return fallback;
 }
 
+function isValidProvider(value: string): value is ExchangeProvider {
+  return VALID_PROVIDERS.has(value as ExchangeProvider);
+}
+
+function isValidInterval(value: string): value is ExchangeInterval {
+  return VALID_INTERVALS.has(value as ExchangeInterval);
+}
+
 @Injectable()
 export class MarketDataConfigService {
   private readonly logger = new Logger(MarketDataConfigService.name);
@@ -43,19 +51,15 @@ export class MarketDataConfigService {
       ['1m', '5m', '15m', '1h', '4h'],
     );
 
-    const providers = rawProviders.filter((p): p is ExchangeProvider =>
-      VALID_PROVIDERS.has(p as ExchangeProvider),
-    ) as ExchangeProvider[];
+    const providers = rawProviders.filter(isValidProvider);
 
     const symbols = rawSymbols.filter((s) => SYMBOL_PATTERN.test(s));
 
-    const intervals = rawIntervals.filter((i): i is ExchangeInterval =>
-      VALID_INTERVALS.has(i as ExchangeInterval),
-    ) as ExchangeInterval[];
+    const intervals = rawIntervals.filter(isValidInterval);
 
     // Log rejections
     for (const p of rawProviders) {
-      if (!VALID_PROVIDERS.has(p as ExchangeProvider)) {
+      if (!isValidProvider(p)) {
         this.logger.warn({ event: 'unsupported_provider', provider: p });
       }
     }
@@ -65,7 +69,7 @@ export class MarketDataConfigService {
       }
     }
     for (const i of rawIntervals) {
-      if (!VALID_INTERVALS.has(i as ExchangeInterval)) {
+      if (!isValidInterval(i)) {
         this.logger.warn({ event: 'unsupported_interval', interval: i });
       }
     }

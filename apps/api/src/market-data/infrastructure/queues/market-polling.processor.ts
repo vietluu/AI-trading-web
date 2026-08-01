@@ -3,7 +3,6 @@ import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { MarketDataConfigService } from '../../application/market-data-config.service';
 import { MarketBackfillService } from '../../application/market-backfill.service';
-import { ExchangeProvider } from '../../../exchange/domain/exchange.types';
 
 @Processor('market-polling')
 export class MarketPollingProcessor extends WorkerHost {
@@ -16,7 +15,7 @@ export class MarketPollingProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<any, any, string>): Promise<any> {
+  process(job: Job<unknown, unknown, string>): Promise<unknown> {
     this.logger.debug(`Processing polling job: ${job.name}`);
     
     switch (job.name) {
@@ -30,24 +29,25 @@ export class MarketPollingProcessor extends WorkerHost {
         return this.backfillService.detectGaps();
       default:
         this.logger.warn(`Unknown job type: ${job.name}`);
+        return Promise.resolve(undefined);
     }
   }
 
-  private async pollFundingRates() {
+  private pollFundingRates(): Promise<{ success: boolean; timestamp: Date }> {
     // In a full implementation, this calls the respective Exchange REST Adapters
     // (e.g. BinanceRestAdapter, OkxRestAdapter) to fetch and dispatch Funding Rate updates
     // to the MarketEventBus or Repository.
     this.logger.log('Polling funding rates...');
-    return { success: true, timestamp: new Date() };
+    return Promise.resolve({ success: true, timestamp: new Date() });
   }
 
-  private async pollOpenInterest() {
+  private pollOpenInterest(): Promise<{ success: boolean; timestamp: Date }> {
     this.logger.log('Polling open interest...');
-    return { success: true, timestamp: new Date() };
+    return Promise.resolve({ success: true, timestamp: new Date() });
   }
 
-  private async refreshInstruments() {
+  private refreshInstruments(): Promise<{ success: boolean; timestamp: Date }> {
     this.logger.log('Refreshing market instruments metadata...');
-    return { success: true, timestamp: new Date() };
+    return Promise.resolve({ success: true, timestamp: new Date() });
   }
 }

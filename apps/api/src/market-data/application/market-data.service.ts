@@ -52,7 +52,7 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
     startTime?: Date;
     endTime?: Date;
     limit: number;
-  }): Promise<unknown[]> {
+  }): Promise<NormalizedCandle[]> {
     const stored = await this.repository.getCandles(query);
     if (stored.length >= query.limit) return stored;
 
@@ -98,7 +98,7 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
     return this.cache.getIndicator(provider, symbol, interval);
   }
 
-  async onModuleInit(): Promise<void> {
+  onModuleInit(): void {
     if (!this.configService.isEnabled()) {
       this.logger.log({ event: "market_data_disabled" });
       return;
@@ -211,7 +211,7 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
     await this.calculateAndPersistIndicators(
       candle.provider,
       candle.symbol,
-      candle.interval as ExchangeInterval,
+      candle.interval,
       candle,
     );
   }
@@ -320,16 +320,7 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
       };
 
       await this.cache.setIndicator(provider, symbol, interval, snapshot);
-      await this.repository.upsertIndicatorSnapshot({
-        provider,
-        symbol,
-        interval,
-        candleOpenTime: closedCandle.openTime,
-        candleCloseTime: closedCandle.closeTime,
-        status: "CLOSED",
-        values: values as unknown as Record<string, unknown>,
-        calculationVersion: CALCULATION_VERSION,
-      });
+      await this.repository.upsertIndicatorSnapshot(snapshot);
 
       this.logger.debug({
         event: "indicators_calculated",

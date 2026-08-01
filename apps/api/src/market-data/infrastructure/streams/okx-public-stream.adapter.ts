@@ -18,6 +18,7 @@ import type {
   MarketStreamStatus,
   NormalizedCandle,
   NormalizedMarketEvent,
+  NormalizedOrderBookLevel,
   NormalizedOrderBook,
   NormalizedTicker,
   NormalizedTrade,
@@ -68,6 +69,50 @@ function fromOkxSymbol(symbol: string): string {
 interface OkxSubscriptionArg {
   channel: string;
   instId: string;
+}
+
+type UnknownRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isUnknownArray(value: unknown): value is unknown[] {
+  return Array.isArray(value);
+}
+
+function isOkxSubscriptionArg(value: unknown): value is OkxSubscriptionArg {
+  return (
+    isRecord(value) &&
+    typeof value.channel === "string" &&
+    typeof value.instId === "string"
+  );
+}
+
+function toStringValue(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "bigint") {
+    return String(value);
+  }
+  return undefined;
+}
+
+function toTimestampDate(value: unknown): Date | null {
+  const numeric =
+    typeof value === "string" || typeof value === "number"
+      ? Number(value)
+      : Number.NaN;
+
+  return Number.isFinite(numeric) ? new Date(numeric) : null;
+}
+
+function toWebSocketMessage(data: WebSocket.Data): string {
+  if (typeof data === "string") return data;
+  if (Buffer.isBuffer(data)) return data.toString("utf8");
+  if (data instanceof ArrayBuffer) {
+    return Buffer.from(data).toString("utf8");
+  }
+  return Buffer.concat(data).toString("utf8");
 }
 
 @Injectable()
@@ -171,7 +216,7 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
         this.lastMessageAt = new Date();
         this.messageCount++;
         try {
-          this.handleMessage(data.toString());
+          this.handleMessage(toWebSocketMessage(data));
         } catch {
           this.malformedMessageCount++;
         }
@@ -196,7 +241,9 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
       this.ws!.on("close", (code: number, reason: Buffer) => {
         clearTimeout(timeout);
         this.stopStaleDetection();
-        const reasonStr = reason.toString();
+        const reasonStr = Buffer.isBuffer(reason)
+          ? reason.toString("utf8")
+          : String(reason);
         this.logger.warn({
           event: "ws_close",
           code,
@@ -219,7 +266,7 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
     });
   }
 
-  async disconnect(): Promise<void> {
+  disconnect(): Promise<void> {
     this.setState(MarketStreamState.DISCONNECTED);
     this.stopStaleDetection();
     if (this.reconnectTimer) {
@@ -237,33 +284,37 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
       this.ws = null;
     }
     this.activeSubscriptions.clear();
+    return Promise.resolve();
   }
 
-  async subscribeTicker(symbols: string[]): Promise<void> {
+  subscribeTicker(symbols: string[]): Promise<void> {
     const args = symbols.map((s) => ({
       channel: "tickers",
       instId: toOkxSymbol(s),
     }));
     this.subscribe(args);
+    return Promise.resolve();
   }
 
-  async subscribeCandles(subscriptions: CandleSubscription[]): Promise<void> {
+  subscribeCandles(subscriptions: CandleSubscription[]): Promise<void> {
     const args = subscriptions.map((sub) => ({
       channel: `candle${toOkxInterval(sub.interval)}`,
       instId: toOkxSymbol(sub.symbol),
     }));
     this.subscribe(args);
+    return Promise.resolve();
   }
 
-  async subscribeTrades(symbols: string[]): Promise<void> {
+  subscribeTrades(symbols: string[]): Promise<void> {
     const args = symbols.map((s) => ({
       channel: "trades",
       instId: toOkxSymbol(s),
     }));
     this.subscribe(args);
+    return Promise.resolve();
   }
 
-  async subscribeOrderBook(
+  subscribeOrderBook(
     subscriptions: OrderBookSubscription[],
   ): Promise<void> {
     const args = subscriptions.map((sub) => ({
@@ -271,14 +322,15 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
       instId: toOkxSymbol(sub.symbol),
     }));
     this.subscribe(args);
+    return Promise.resolve();
   }
 
-  async unsubscribe(subscriptionIds: string[]): Promise<void> {
+  unsubscribe(subscriptionIds: string[]): Promise<void> {
     const args = subscriptionIds
       .map((id) => this.activeSubscriptions.get(id))
       .filter((arg): arg is OkxSubscriptionArg => arg !== undefined);
-    
-    if (args.length === 0) return;
+
+    if (args.length === 0) return Promise.resolve();
 
     for (const arg of args) {
       this.activeSubscriptions.delete(`${arg.channel}:${arg.instId}`);
@@ -292,6 +344,7 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
         }),
       );
     }
+    return Promise.resolve();
   }
 
   getStatus(): MarketStreamStatus {
@@ -360,19 +413,26 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
 
   private handleMessage(raw: string): void {
     if (raw === "pong") return;
-    
-    const parsed = JSON.parse(raw);
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed)) return;
 
     // Event responses
     if (parsed.event === "subscribe" || parsed.event === "unsubscribe") {
       return;
     }
     if (parsed.event === "error") {
-      this.logger.error({ event: 'okx_stream_error', msg: parsed.msg, code: parsed.code });
+      this.logger.error({
+        event: "okx_stream_error",
+        msg: toStringValue(parsed.msg) ?? "OKX stream error",
+        code: toStringValue(parsed.code) ?? "OKX_ERROR",
+      });
       return;
     }
 
-    if (!parsed.arg || !parsed.data) return;
+    if (!isOkxSubscriptionArg(parsed.arg) || !isUnknownArray(parsed.data)) {
+      return;
+    }
 
     const channel = parsed.arg.channel;
     const data = parsed.data;
@@ -388,22 +448,27 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
     }
   }
 
-  private handleTickerMessage(dataArray: any[]): void {
+  private handleTickerMessage(dataArray: unknown[]): void {
     for (const data of dataArray) {
-      const symbol = fromOkxSymbol(data.instId);
+      if (!isRecord(data)) continue;
+      const symbolValue = toStringValue(data.instId);
+      const timestamp = toTimestampDate(data.ts);
+      if (!symbolValue || !timestamp) continue;
+
+      const symbol = fromOkxSymbol(symbolValue);
       const ticker: NormalizedTicker = {
         provider: this.provider,
         symbol,
-        lastPrice: String(data.last),
-        bidPrice: String(data.bidPx),
-        askPrice: String(data.askPx),
-        bidQuantity: String(data.bidSz),
-        askQuantity: String(data.askSz),
-        high24h: String(data.high24h),
-        low24h: String(data.low24h),
-        volume24h: String(data.vol24h),
-        quoteVolume24h: String(data.volCcy24h),
-        timestamp: new Date(Number(data.ts)),
+        lastPrice: toStringValue(data.last) ?? "",
+        bidPrice: toStringValue(data.bidPx),
+        askPrice: toStringValue(data.askPx),
+        bidQuantity: toStringValue(data.bidSz),
+        askQuantity: toStringValue(data.askSz),
+        high24h: toStringValue(data.high24h),
+        low24h: toStringValue(data.low24h),
+        volume24h: toStringValue(data.vol24h),
+        quoteVolume24h: toStringValue(data.volCcy24h),
+        timestamp,
       };
 
       this.emitEvent({
@@ -414,7 +479,11 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
     }
   }
 
-  private handleKlineMessage(dataArray: any[], channel: string, instId: string): void {
+  private handleKlineMessage(
+    dataArray: unknown[],
+    channel: string,
+    instId: string,
+  ): void {
     const symbol = fromOkxSymbol(instId);
     // channel format: candle1m, candle5m, etc.
     const intervalRaw = channel.replace("candle", "");
@@ -427,22 +496,24 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
     const interval = (intervalMap[intervalRaw] ?? intervalRaw) as ExchangeInterval;
 
     for (const data of dataArray) {
-      const [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm] = data;
-      const isClosed = confirm === "1";
+      if (!isUnknownArray(data) || data.length < 9) continue;
+      const timestamp = toTimestampDate(data[0]);
+      if (!timestamp) continue;
+      const isClosed = toStringValue(data[8]) === "1";
 
       const candle: NormalizedCandle = {
         provider: this.provider,
         symbol,
         interval,
-        openTime: new Date(Number(ts)),
+        openTime: timestamp,
         // Estimate close time based on open time and interval
-        closeTime: new Date(Number(ts) + this.intervalToMs(interval) - 1),
-        open: String(o),
-        high: String(h),
-        low: String(l),
-        close: String(c),
-        volume: String(vol),
-        quoteVolume: String(volCcy),
+        closeTime: new Date(timestamp.getTime() + this.intervalToMs(interval) - 1),
+        open: toStringValue(data[1]) ?? "",
+        high: toStringValue(data[2]) ?? "",
+        low: toStringValue(data[3]) ?? "",
+        close: toStringValue(data[4]) ?? "",
+        volume: toStringValue(data[5]) ?? "",
+        quoteVolume: toStringValue(data[6]),
         isClosed,
       };
 
@@ -456,17 +527,22 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
     }
   }
 
-  private handleTradeMessage(dataArray: any[]): void {
+  private handleTradeMessage(dataArray: unknown[]): void {
     for (const data of dataArray) {
-      const symbol = fromOkxSymbol(data.instId);
+      if (!isRecord(data)) continue;
+      const symbolValue = toStringValue(data.instId);
+      const timestamp = toTimestampDate(data.ts);
+      if (!symbolValue || !timestamp) continue;
+
+      const symbol = fromOkxSymbol(symbolValue);
       const trade: NormalizedTrade = {
         provider: this.provider,
         symbol,
-        tradeId: String(data.tradeId),
-        price: String(data.px),
-        quantity: String(data.sz),
+        tradeId: toStringValue(data.tradeId) ?? "",
+        price: toStringValue(data.px) ?? "",
+        quantity: toStringValue(data.sz) ?? "",
         side: data.side === "sell" ? "SELL" : "BUY",
-        timestamp: new Date(Number(data.ts)),
+        timestamp,
       };
 
       this.emitEvent({
@@ -477,25 +553,22 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
     }
   }
 
-  private handleOrderBookMessage(dataArray: any[], instId: string): void {
+  private handleOrderBookMessage(dataArray: unknown[], instId: string): void {
     const symbol = fromOkxSymbol(instId);
     
     for (const data of dataArray) {
-      const bids = (data.bids as string[][])?.map((b) => ({
-        price: b[0] as string,
-        quantity: b[1] as string,
-      })) ?? [];
-      const asks = (data.asks as string[][])?.map((a) => ({
-        price: a[0] as string,
-        quantity: a[1] as string,
-      })) ?? [];
+      if (!isRecord(data)) continue;
+      const timestamp = toTimestampDate(data.ts);
+      if (!timestamp) continue;
+      const bids = this.parseOrderBookLevels(data.bids);
+      const asks = this.parseOrderBookLevels(data.asks);
 
       const book: NormalizedOrderBook = {
         provider: this.provider,
         symbol,
         bids,
         asks,
-        timestamp: new Date(Number(data.ts)),
+        timestamp,
         depth: Math.max(bids.length, asks.length),
       };
 
@@ -636,5 +709,21 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
     if (interval.endsWith("d")) return value * 24 * 60 * 60 * 1000;
     if (interval.endsWith("w")) return value * 7 * 24 * 60 * 60 * 1000;
     return value * 60 * 1000; // default
+  }
+
+  private parseOrderBookLevels(levels: unknown): NormalizedOrderBookLevel[] {
+    if (!isUnknownArray(levels)) return [];
+
+    const parsedLevels: NormalizedOrderBookLevel[] = [];
+    for (const level of levels) {
+      if (!isUnknownArray(level) || level.length < 2) continue;
+      const price = toStringValue(level[0]);
+      const quantity = toStringValue(level[1]);
+      if (!price || !quantity) continue;
+
+      parsedLevels.push({ price, quantity });
+    }
+
+    return parsedLevels;
   }
 }

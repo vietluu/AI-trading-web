@@ -4,7 +4,6 @@ import {
   Post,
   Param,
   Query,
-  UseGuards,
   HttpException,
   HttpStatus,
 } from "@nestjs/common";
@@ -13,10 +12,7 @@ import { MarketRedisCacheService } from "../infrastructure/redis/market-redis-ca
 import { MarketDataRepository } from "../infrastructure/persistence/market-data.repository";
 import { MarketDataConfigService } from "../application/market-data-config.service";
 import { MarketDataService } from "../application/market-data.service";
-import {
-  ExchangeInterval,
-  type ExchangeProvider,
-} from "../../exchange/domain/exchange.types";
+import { type ExchangeProvider } from "../../exchange/domain/exchange.types";
 
 @ApiTags("Market Data")
 @Controller("market")
@@ -49,7 +45,7 @@ export class MarketDataController {
     @Query("status") status?: string,
   ) {
     return this.repository.getInstruments({
-      ...(provider ? { provider: provider as ExchangeProvider } : {}),
+      ...(provider ? { provider } : {}),
       ...(status ? { status } : {}),
     });
   }
@@ -92,9 +88,9 @@ export class MarketDataController {
       throw new HttpException("interval is required", HttpStatus.BAD_REQUEST);
     }
     return this.marketData.getHistoricalCandles({
-      provider: provider as ExchangeProvider,
+      provider,
       symbol: symbol.toUpperCase(),
-      interval: interval as ExchangeInterval,
+      interval,
       ...(startTime ? { startTime: new Date(startTime) } : {}),
       ...(endTime ? { endTime: new Date(endTime) } : {}),
       ...(limit ? { limit: Math.min(Number(limit), 1000) } : { limit: 500 }),
@@ -115,9 +111,9 @@ export class MarketDataController {
       throw new HttpException("interval is required", HttpStatus.BAD_REQUEST);
     }
     const snapshot = await this.marketData.getIndicatorSnapshot(
-      provider as ExchangeProvider,
+      provider,
       symbol.toUpperCase(),
-      interval as ExchangeInterval,
+      interval,
     );
     if (!snapshot) {
       throw new HttpException("Indicators not available", HttpStatus.NOT_FOUND);
@@ -138,7 +134,7 @@ export class MarketDataController {
     @Query("limit") limit?: string,
   ) {
     return this.repository.getFundingRates({
-      provider: provider as ExchangeProvider,
+      provider,
       symbol: symbol.toUpperCase(),
       ...(startTime ? { startTime: new Date(startTime) } : {}),
       ...(endTime ? { endTime: new Date(endTime) } : {}),
@@ -159,7 +155,7 @@ export class MarketDataController {
     @Query("limit") limit?: string,
   ) {
     return this.repository.getOpenInterestHistory({
-      provider: provider as ExchangeProvider,
+      provider,
       symbol: symbol.toUpperCase(),
       ...(startTime ? { startTime: new Date(startTime) } : {}),
       ...(endTime ? { endTime: new Date(endTime) } : {}),
@@ -225,7 +221,7 @@ export class MarketDataController {
     @Query("limit") limit?: string,
   ) {
     return this.repository.getGaps({
-      ...(provider ? { provider: provider as ExchangeProvider } : {}),
+      ...(provider ? { provider } : {}),
       ...(symbol ? { symbol } : {}),
       ...(status ? { status } : {}),
       ...(limit ? { limit: Number(limit) } : {}),
@@ -236,7 +232,7 @@ export class MarketDataController {
   @ApiOperation({
     summary: "Trigger historical backfill (Requires Auth in production)",
   })
-  async triggerBackfill(
+  triggerBackfill(
     @Query("provider") provider: string,
     @Query("symbol") symbol: string,
     @Query("interval") interval: string,
