@@ -62,9 +62,34 @@ export class AgentRunnerService {
 
     const inputString = JSON.stringify(input);
     const inputHash = createHash('sha256').update(inputString).digest('hex');
+    const idempotencyFingerprint = createHash('sha256')
+      .update(
+        `${userId ?? 'public'}:${definition.type}:${definition.version}:${inputHash}`,
+      )
+      .digest('hex');
 
-    const lockResult = await this.agentIdempotencyService.checkAndLock(inputHash);
+    const lockResult = await this.agentIdempotencyService.checkAndLock(
+      idempotencyFingerprint,
+    );
     if (!lockResult.locked) {
+      if (
+        lockResult.existingRunId &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          lockResult.existingRunId,
+        )
+      ) {
+        const existingRun = await this.agentRunRepository.findById(
+          lockResult.existingRunId,
+          userId,
+        );
+        if (
+          existingRun &&
+          (existingRun.status === AgentRunState.COMPLETED ||
+            existingRun.status === AgentRunState.PARTIALLY_COMPLETED)
+        ) {
+          return existingRun;
+        }
+      }
       throw new AgentError(
         AgentErrorCode.AGENT_DUPLICATE_RUN,
         `A run with this input is already in progress (${lockResult.existingRunId || 'active'})`,
@@ -286,7 +311,7 @@ export class AgentRunnerService {
           usedTools,
           reason: 'All required market data tools failed or returned unavailable data',
           durationMs: Date.now() - startTime,
-          inputHash,
+          idempotencyFingerprint,
           toolCallCount,
           toolRoundCount,
         });
@@ -314,7 +339,7 @@ export class AgentRunnerService {
           usedTools,
           reason,
           durationMs: Date.now() - startTime,
-          inputHash,
+          idempotencyFingerprint,
           toolCallCount,
           toolRoundCount,
         });
@@ -344,7 +369,7 @@ export class AgentRunnerService {
             usedTools.length < toolCallCount && validatedRecord.dataQuality === 'GOOD'
               ? 'PARTIAL'
               : validatedRecord.dataQuality,
-          usedTools,
+          ...(definition.includeUsedToolsInOutput ? { usedTools } : {}),
           generatedAt: new Date().toISOString(),
         };
         validation = this.agentOutputValidatorService.validate({
@@ -397,7 +422,7 @@ export class AgentRunnerService {
             usedTools,
             reason: `Model output failed schema validation: ${(validation.errors || []).join('; ')}`,
             durationMs,
-            inputHash,
+            idempotencyFingerprint,
             toolCallCount,
             toolRoundCount,
             alreadyValidating: true,
@@ -412,7 +437,10 @@ export class AgentRunnerService {
         });
       }
 
-      await this.agentIdempotencyService.setResult(inputHash, runRecord.id);
+      await this.agentIdempotencyService.setResult(
+        idempotencyFingerprint,
+        runRecord.id,
+      );
       return runRecord;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -434,7 +462,7 @@ export class AgentRunnerService {
       if (globalLock) await this.agentConcurrencyService.releaseGlobal();
       if (userLock && userId) await this.agentConcurrencyService.releaseUser(userId);
       if (typeLock) await this.agentConcurrencyService.releaseType(definition.type);
-      await this.agentIdempotencyService.unlock(inputHash);
+      await this.agentIdempotencyService.unlock(idempotencyFingerprint);
     }
   }
 
@@ -444,7 +472,7 @@ export class AgentRunnerService {
     usedTools: string[];
     reason: string;
     durationMs: number;
-    inputHash: string;
+    idempotencyFingerprint: string;
     toolCallCount: number;
     toolRoundCount: number;
     alreadyValidating?: boolean;
@@ -485,7 +513,10 @@ export class AgentRunnerService {
       safeFailureMessage: params.reason,
       completedAt: new Date(),
     });
-    await this.agentIdempotencyService.setResult(params.inputHash, runRecord.id);
+    await this.agentIdempotencyService.setResult(
+      params.idempotencyFingerprint,
+      runRecord.id,
+    );
     return runRecord;
   }
 

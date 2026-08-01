@@ -7,6 +7,8 @@ import { MARKET_ANALYST_DEFINITION } from './domain/definitions/market-analyst.d
 import { TECHNICAL_ANALYST_DEFINITION } from './domain/definitions/technical-analyst.definition';
 import { NEWS_ANALYST_DEFINITION } from './domain/definitions/news-analyst.definition';
 import { SENTIMENT_ANALYST_DEFINITION } from './domain/definitions/sentiment-analyst.definition';
+import { MACRO_ANALYST_DEFINITION } from './domain/definitions/macro-analyst.definition';
+import { ON_CHAIN_ANALYST_DEFINITION } from './domain/definitions/on-chain-analyst.definition';
 
 // Infrastructure
 import { AgentRegistryService } from './infrastructure/registry/agent-registry.service';
@@ -31,6 +33,7 @@ import { AgentPromptResolverService } from './application/services/agent-prompt-
 import { AgentToolResolverService } from './application/services/agent-tool-resolver.service';
 import { AgentContextBuilderService } from './application/context/agent-context-builder.service';
 import { AgentPolicyEngine } from './application/policies/agent-policy.engine';
+import { FusionService } from './application/services/fusion.service';
 
 // Shared Infra Modules
 import { DatabaseModule } from '../../database/database.module';
@@ -85,12 +88,14 @@ import { AgentSseController } from './presentation/controllers/agent-sse.control
     AgentToolResolverService,
     AgentContextBuilderService,
     AgentPolicyEngine,
+    FusionService,
   ],
   exports: [
     AgentRegistryService,
     AgentExecutionService,
     AgentRunnerService,
     AgentHealthService,
+    FusionService,
   ],
 })
 export class AgentsModule implements OnModuleInit {
@@ -102,5 +107,7 @@ export class AgentsModule implements OnModuleInit {
     this.agentRegistryService.register(TECHNICAL_ANALYST_DEFINITION);
     this.agentRegistryService.register(NEWS_ANALYST_DEFINITION);
     this.agentRegistryService.register(SENTIMENT_ANALYST_DEFINITION);
+    this.agentRegistryService.register(MACRO_ANALYST_DEFINITION);
+    this.agentRegistryService.register(ON_CHAIN_ANALYST_DEFINITION);
   }
 }

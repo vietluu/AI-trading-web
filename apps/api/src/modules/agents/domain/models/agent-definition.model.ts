@@ -65,6 +65,7 @@ export interface AgentDefinition<TInput = unknown, TOutput = unknown> {
   readonly maxOutputTokens: number;
   readonly requiresUserContext: boolean;
   readonly allowsPublicSystemRun: boolean;
+  readonly includeUsedToolsInOutput?: boolean;
   buildToolCalls?(input: TInput): Array<{
     toolName: string;
     arguments: Record<string, unknown>;

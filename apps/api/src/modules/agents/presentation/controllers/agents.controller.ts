@@ -9,6 +9,8 @@ import { AgentContextSnapshotRepository } from '../../infrastructure/persistence
 import { AgentReplayService } from '../../application/services/agent-replay.service';
 import { AgentCancellationHandlerService } from '../../application/services/agent-cancellation-handler.service';
 import { AgentType, AgentInvocationSource } from '../../domain/enums';
+import { FusionRunInputSchema } from '@platform/shared';
+import { FusionService } from '../../application/services/fusion.service';
 
 @Controller('agents')
 @UseGuards(SessionGuard)
@@ -21,7 +23,20 @@ export class AgentsController {
     private readonly agentContextSnapshotRepository: AgentContextSnapshotRepository,
     private readonly agentReplayService: AgentReplayService,
     private readonly agentCancellationHandlerService: AgentCancellationHandlerService,
+    private readonly fusionService: FusionService,
   ) {}
+
+  @Post('fusion/run')
+  public async runFusion(
+    @CurrentUser() user: { id: string },
+    @Body() body: { input: Record<string, unknown> },
+  ) {
+    return this.fusionService.run({
+      input: FusionRunInputSchema.parse(body.input || {}),
+      userId: user.id,
+      invocationSource: AgentInvocationSource.USER_MANUAL,
+    });
+  }
 
   @Get()
   public getAgents() {

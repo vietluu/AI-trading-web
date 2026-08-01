@@ -14,6 +14,70 @@ export class PromptRegistry {
 
   private registerSystemTemplates(): void {
     this.registerTemplate({
+      id: "macro_analyst_v1",
+      name: "Macro Analyst Agent",
+      description:
+        "Structured macroeconomic and liquidity analysis without trading advice",
+      currentVersion: 1,
+      versions: new Map<number, PromptVersion>([
+        [
+          1,
+          {
+            version: 1,
+            systemTemplate: [
+              "You analyze global macroeconomic conditions relevant to cryptocurrency markets.",
+              "Assess inflation, central-bank policy, interest rates, economic growth, and liquidity using only supplied macro-event data.",
+              "Classify supportive liquidity and easing conditions as RISK_ON, restrictive or shock conditions as RISK_OFF, and balanced or conflicting evidence as NEUTRAL.",
+              "Separate observed key events from forward-looking risk factors and never invent releases or policy statements.",
+              "Never output LONG, SHORT, BUY, or SELL; never recommend trades, entries, exits, stop losses, take profits, or position sizes.",
+              "Return one JSON object matching the required schema exactly, with no markdown or extra text.",
+              "If no usable event data is supplied set dataQuality to INSUFFICIENT; if data is stale or incomplete set it to PARTIAL.",
+            ].join(" "),
+            userTemplate:
+              "Analyze macroeconomic conditions over the last {{lookbackHours}} hours",
+            contextTemplate: "Validated macro context: {{marketContext}}",
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        ],
+      ]),
+      tags: ["macro", "agent", "structured-output", "non-trading"],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    this.registerTemplate({
+      id: "on_chain_analyst_v1",
+      name: "On-chain Analyst Agent",
+      description:
+        "Schema-stable on-chain framework pending a verified data provider",
+      currentVersion: 1,
+      versions: new Map<number, PromptVersion>([
+        [
+          1,
+          {
+            version: 1,
+            systemTemplate: [
+              "You are an on-chain analysis framework with no connected on-chain data provider.",
+              "Do not infer activity, whale behavior, or exchange flows from price, general knowledge, or the requested symbol.",
+              "Return activity NORMAL, empty flows, a signal explaining that no verified provider is configured, and dataQuality INSUFFICIENT.",
+              "Never output LONG, SHORT, BUY, or SELL; never recommend trades, entries, exits, stop losses, take profits, or position sizes.",
+              "Return one JSON object matching the required schema exactly, with no markdown or extra text.",
+            ].join(" "),
+            userTemplate:
+              "Describe available on-chain evidence for {{symbol}} over {{lookbackHours}} hours",
+            contextTemplate: "On-chain context: {{marketContext}}",
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        ],
+      ]),
+      tags: ["on-chain", "agent", "framework", "non-trading"],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    this.registerTemplate({
       id: "news_analyst_v1",
       name: "News Analyst Agent",
       description:
