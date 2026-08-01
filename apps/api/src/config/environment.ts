@@ -297,15 +297,23 @@ const environmentSchema = z
     ANTHROPIC_API_KEY: z.string().optional(),
     GOOGLE_API_KEY: z.string().optional(),
     OLLAMA_BASE_URL: z.string().url().default("http://localhost:11434"),
-    DEFAULT_PROVIDER: z.enum(["OPENAI", "ANTHROPIC", "GEMINI", "OLLAMA"]).default("OPENAI"),
+    DEFAULT_PROVIDER: z
+      .enum(["OPENAI", "ANTHROPIC", "GEMINI", "OLLAMA"])
+      .default("OPENAI"),
     DEFAULT_MODEL: z.string().default("gpt-5-mini"),
     DEFAULT_MAX_TOKENS: z.coerce.number().int().default(2048),
     DEFAULT_TEMPERATURE: z.coerce.number().default(0.7),
     DEFAULT_TIMEOUT: z.coerce.number().int().default(30000),
 
     // Phase 6.2: AI Tool Calling Framework
-    AI_TOOL_CALLING_ENABLED: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
-    AI_TOOL_MANUAL_TEST_ENABLED: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
+    AI_TOOL_CALLING_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((v) => v === "true"),
+    AI_TOOL_MANUAL_TEST_ENABLED: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((v) => v === "true"),
     AI_TOOL_MAX_ROUNDS: z.coerce.number().int().default(5),
     AI_TOOL_MAX_CALLS_PER_REQUEST: z.coerce.number().int().default(10),
     AI_TOOL_MAX_PARALLEL_CALLS: z.coerce.number().int().default(3),
@@ -315,52 +323,189 @@ const environmentSchema = z
     AI_TOOL_TOTAL_REQUEST_TIMEOUT_MS: z.coerce.number().int().default(60000),
     AI_TOOL_MAX_ARGUMENT_BYTES: z.coerce.number().int().default(32768),
     AI_TOOL_MAX_RESULT_BYTES: z.coerce.number().int().default(262144),
-    AI_TOOL_MAX_RESULT_TOKENS_PER_REQUEST: z.coerce.number().int().default(12000),
+    AI_TOOL_MAX_RESULT_TOKENS_PER_REQUEST: z.coerce
+      .number()
+      .int()
+      .default(12000),
     AI_TOOL_MAX_CALLS_PER_MINUTE: z.coerce.number().int().default(30),
     AI_TOOL_MAX_CALLS_PER_HOUR: z.coerce.number().int().default(500),
     AI_TOOL_MAX_CALLS_PER_DAY: z.coerce.number().int().default(5000),
 
     // Phase 6.3: Multi-Agent Framework
-    AGENT_FRAMEWORK_ENABLED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
-    AGENT_MANUAL_RUN_ENABLED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
-    AGENT_SYSTEM_DIAGNOSTIC_ENABLED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
-    AGENT_DEFAULT_TIMEOUT_MS: z.coerce.number().int().min(5000).max(300000).default(60000),
-    AGENT_MAX_GLOBAL_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(10),
-    AGENT_MAX_USER_CONCURRENCY: z.coerce.number().int().min(1).max(10).default(3),
-    AGENT_MAX_TYPE_CONCURRENCY: z.coerce.number().int().min(1).max(20).default(5),
-    AGENT_MAX_RUNS_PER_MINUTE: z.coerce.number().int().min(1).max(60).default(5),
-    AGENT_MAX_RUNS_PER_HOUR: z.coerce.number().int().min(1).max(1000).default(100),
-    AGENT_MAX_RUNS_PER_DAY: z.coerce.number().int().min(1).max(10000).default(500),
+    AGENT_FRAMEWORK_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((v) => v === "true"),
+    AGENT_MANUAL_RUN_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((v) => v === "true"),
+    AGENT_SYSTEM_DIAGNOSTIC_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((v) => v === "true"),
+    AGENT_DEFAULT_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(5000)
+      .max(300000)
+      .default(60000),
+    AGENT_MAX_GLOBAL_CONCURRENCY: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(50)
+      .default(10),
+    AGENT_MAX_USER_CONCURRENCY: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(10)
+      .default(3),
+    AGENT_MAX_TYPE_CONCURRENCY: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(20)
+      .default(5),
+    AGENT_MAX_RUNS_PER_MINUTE: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(60)
+      .default(5),
+    AGENT_MAX_RUNS_PER_HOUR: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(1000)
+      .default(100),
+    AGENT_MAX_RUNS_PER_DAY: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(10000)
+      .default(500),
     AGENT_MAX_RETRY_ATTEMPTS: z.coerce.number().int().min(0).max(5).default(2),
-    AGENT_IDEMPOTENCY_TTL_SECONDS: z.coerce.number().int().min(10).max(600).default(60),
-    AGENT_RUN_RETENTION_DAYS: z.coerce.number().int().min(7).max(365).default(90),
+    AGENT_IDEMPOTENCY_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(10)
+      .max(600)
+      .default(60),
+    AGENT_RUN_RETENTION_DAYS: z.coerce
+      .number()
+      .int()
+      .min(7)
+      .max(365)
+      .default(90),
     // Phase 6.6: Automation runtime (research only; never exchange execution)
-    PIPELINE_ENABLED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
+    PIPELINE_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((v) => v === "true"),
     PIPELINE_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(5),
-    PIPELINE_COOLDOWN_MS: z.coerce.number().int().min(15_000).max(3_600_000).default(60_000),
-    PIPELINE_MAX_RUNS_PER_HOUR: z.coerce.number().int().min(1).max(1000).default(60),
+    PIPELINE_COOLDOWN_MS: z.coerce
+      .number()
+      .int()
+      .min(15_000)
+      .max(3_600_000)
+      .default(60_000),
+    PIPELINE_MAX_RUNS_PER_HOUR: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(1000)
+      .default(60),
     MIN_CONFIDENCE: z.coerce.number().min(0).max(100).default(60),
     // Phase 6.7: read-only evaluation and human-controlled improvement
-    REFLECTION_ENABLED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
-    EVALUATION_DELAY_MS: z.coerce.number().int().min(1_000).max(86_400_000).default(600_000),
-    MIN_RECORDS_FOR_REFLECTION: z.coerce.number().int().min(1).max(10_000).default(20),
-    REFLECTION_ACCURACY_ALERT_THRESHOLD: z.coerce.number().min(0).max(100).default(50),
+    REFLECTION_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((v) => v === "true"),
+    EVALUATION_DELAY_MS: z.coerce
+      .number()
+      .int()
+      .min(1_000)
+      .max(86_400_000)
+      .default(600_000),
+    MIN_RECORDS_FOR_REFLECTION: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(10_000)
+      .default(20),
+    REFLECTION_ACCURACY_ALERT_THRESHOLD: z.coerce
+      .number()
+      .min(0)
+      .max(100)
+      .default(50),
     // Phase 7: local simulation only; no exchange execution credentials or endpoints
-    PAPER_TRADING_ENABLED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
-    TRADING_MODE: z.enum(['SIGNAL_ONLY', 'PAPER_TRADING']).default('SIGNAL_ONLY'),
-    PAPER_INITIAL_BALANCE: z.coerce.number().positive().max(1_000_000_000).default(10_000),
+    PAPER_TRADING_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((v) => v === "true"),
+    TRADING_MODE: z
+      .enum(["SIGNAL_ONLY", "PAPER_TRADING"])
+      .default("SIGNAL_ONLY"),
+    PAPER_INITIAL_BALANCE: z.coerce
+      .number()
+      .positive()
+      .max(1_000_000_000)
+      .default(10_000),
     RISK_PER_TRADE: z.coerce.number().positive().max(1).default(0.02),
     DEFAULT_LEVERAGE: z.coerce.number().int().min(1).max(125).default(3),
     TAKER_FEE: z.coerce.number().min(0).max(0.01).default(0.0004),
     SLIPPAGE_MIN: z.coerce.number().min(0).max(0.01).default(0.0002),
     SLIPPAGE_MAX: z.coerce.number().min(0).max(0.01).default(0.001),
-    TRADE_COOLDOWN_MS: z.coerce.number().int().min(0).max(86_400_000).default(60_000),
+    TRADE_COOLDOWN_MS: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(86_400_000)
+      .default(60_000),
     STOP_LOSS_PCT: z.coerce.number().positive().max(1).default(0.02),
     TAKE_PROFIT_PCT: z.coerce.number().positive().max(10).default(0.04),
+    // Phase 8: mandatory pre-execution portfolio risk controls
+    MAX_POSITIONS: z.coerce.number().int().min(1).max(20).default(3),
+    MAX_LEVERAGE: z.coerce.number().int().min(1).max(20).default(3),
+    MAX_DRAWDOWN: z.coerce.number().positive().max(1).default(0.15),
+    MAX_EXPOSURE: z.coerce.number().positive().max(1).default(0.4),
+    RISK_REWARD_RATIO: z.coerce.number().min(1).max(10).default(2),
+    HIGH_VOLATILITY_THRESHOLD: z.coerce
+      .number()
+      .positive()
+      .max(1)
+      .default(0.04),
+    ABNORMAL_VOLATILITY_THRESHOLD: z.coerce
+      .number()
+      .positive()
+      .max(2)
+      .default(0.15),
+    HIGH_VOLATILITY_SIZE_FACTOR: z.coerce
+      .number()
+      .min(0.5)
+      .max(0.7)
+      .default(0.6),
   })
   .superRefine((environment, context) => {
     if (environment.SLIPPAGE_MIN > environment.SLIPPAGE_MAX) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: 'SLIPPAGE_MIN must not exceed SLIPPAGE_MAX', path: ['SLIPPAGE_MIN'] });
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "SLIPPAGE_MIN must not exceed SLIPPAGE_MAX",
+        path: ["SLIPPAGE_MIN"],
+      });
+    }
+    if (
+      environment.HIGH_VOLATILITY_THRESHOLD >=
+      environment.ABNORMAL_VOLATILITY_THRESHOLD
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "HIGH_VOLATILITY_THRESHOLD must be below ABNORMAL_VOLATILITY_THRESHOLD",
+        path: ["HIGH_VOLATILITY_THRESHOLD"],
+      });
     }
     if (environment.NODE_ENV === "production" && !environment.COOKIE_SECURE) {
       context.addIssue({

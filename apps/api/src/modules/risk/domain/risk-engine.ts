@@ -1,0 +1,221 @@
+import type { DecisionOutput, RiskOutput } from "@platform/shared";
+
+export interface RiskAccount {
+  balance: number;
+  equity: number;
+  peakEquity: number;
+}
+
+export interface RiskPosition {
+  symbol: string;
+  size: number;
+  markPrice: number;
+}
+
+export interface RiskInput {
+  symbol: string;
+  decision: DecisionOutput;
+  account: RiskAccount;
+  currentPositions: RiskPosition[];
+  marketData: { price: number; volatility: number };
+  lastTradeAt?: Date;
+  now?: Date;
+}
+
+export interface RiskLimits {
+  riskPerTrade: number;
+  maxPositions: number;
+  maxLeverage: number;
+  maxDrawdown: number;
+  maxExposure: number;
+  cooldownMs: number;
+  minimumConfidence: number;
+  stopLossPct: number;
+  riskRewardRatio: number;
+  highVolatility: number;
+  abnormalVolatility: number;
+  highVolatilitySizeFactor: number;
+}
+
+export interface RiskEvaluation extends RiskOutput {
+  exposurePct: number;
+  drawdownPct: number;
+}
+
+const finitePositive = (value: number): boolean =>
+  Number.isFinite(value) && value > 0;
+const clamp = (value: number, minimum: number, maximum: number): number =>
+  Math.min(maximum, Math.max(minimum, value));
+const rounded = (value: number, digits = 8): number =>
+  Number(value.toFixed(digits));
+
+export function calculateDrawdown(equity: number, peakEquity: number): number {
+  return peakEquity > 0 ? clamp((peakEquity - equity) / peakEquity, 0, 1) : 1;
+}
+
+export function calculateProtectivePrices(
+  side: "LONG" | "SHORT",
+  entryPrice: number,
+  stopLossPct: number,
+  riskRewardRatio: number,
+): { stopLoss: number; takeProfit: number } {
+  const stopDistance = entryPrice * stopLossPct;
+  return side === "LONG"
+    ? {
+        stopLoss: rounded(entryPrice - stopDistance),
+        takeProfit: rounded(entryPrice + stopDistance * riskRewardRatio),
+      }
+    : {
+        stopLoss: rounded(entryPrice + stopDistance),
+        takeProfit: rounded(entryPrice - stopDistance * riskRewardRatio),
+      };
+}
+
+export function calculatePositionSize(
+  balance: number,
+  riskPerTrade: number,
+  entryPrice: number,
+  stopLoss: number,
+): number {
+  const distance = Math.abs(entryPrice - stopLoss);
+  return distance > 0 ? rounded((balance * riskPerTrade) / distance, 12) : 0;
+}
+
+export function calculateRiskScore(
+  volatility: number,
+  leverage: number,
+  exposurePct: number,
+  drawdown: number,
+  limits: Pick<
+    RiskLimits,
+    "highVolatility" | "maxLeverage" | "maxExposure" | "maxDrawdown"
+  >,
+): number {
+  const volatilityRisk = clamp(volatility / limits.highVolatility, 0, 2) / 2;
+  const leverageRisk = clamp(leverage / limits.maxLeverage, 0, 1);
+  const exposureRisk = clamp(exposurePct / limits.maxExposure, 0, 1);
+  const drawdownRisk = clamp(drawdown / limits.maxDrawdown, 0, 1);
+  return rounded(
+    (volatilityRisk + leverageRisk + exposureRisk + drawdownRisk) * 25,
+    2,
+  );
+}
+
+export function evaluateRisk(
+  input: RiskInput,
+  limits: RiskLimits,
+): RiskEvaluation {
+  const { account, marketData, decision } = input;
+  const currentExposure = input.currentPositions.reduce(
+    (sum, position) => sum + Math.abs(position.size * position.markPrice),
+    0,
+  );
+  const baseExposurePct =
+    account.equity > 0 ? currentExposure / account.equity : 1;
+  const drawdownPct = calculateDrawdown(account.equity, account.peakEquity);
+  const reject = (reason: string, leverage = 1): RiskEvaluation => ({
+    approved: false,
+    reason,
+    riskScore: calculateRiskScore(
+      Number.isFinite(marketData.volatility)
+        ? marketData.volatility
+        : limits.abnormalVolatility,
+      leverage,
+      baseExposurePct,
+      drawdownPct,
+      limits,
+    ),
+    exposurePct: rounded(baseExposurePct, 6),
+    drawdownPct: rounded(drawdownPct, 6),
+  });
+
+  if (
+    ![
+      account.balance,
+      account.equity,
+      account.peakEquity,
+      marketData.price,
+    ].every(finitePositive) ||
+    !Number.isFinite(marketData.volatility) ||
+    marketData.volatility < 0
+  )
+    return reject("MISSING_OR_INVALID_RISK_DATA");
+  if (decision.decision === "WAIT") return reject("NO_ACTIONABLE_DECISION");
+  if (decision.confidence < limits.minimumConfidence)
+    return reject("CONFIDENCE_BELOW_THRESHOLD");
+  if (decision.conflictLevel === "HIGH") return reject("HIGH_SIGNAL_CONFLICT");
+  if (marketData.volatility >= limits.abnormalVolatility)
+    return reject("ABNORMAL_VOLATILITY");
+  if (drawdownPct >= limits.maxDrawdown) return reject("MAX_DRAWDOWN_EXCEEDED");
+
+  // A reversal replaces the position in the same symbol, so it must not consume an
+  // additional slot or be counted twice in projected exposure.
+  const retainedPositions = input.currentPositions.filter(
+    (position) => position.symbol !== input.symbol,
+  );
+  if (retainedPositions.length >= limits.maxPositions)
+    return reject("MAX_OPEN_POSITIONS_EXCEEDED");
+  if (
+    input.lastTradeAt &&
+    (input.now ?? new Date()).getTime() - input.lastTradeAt.getTime() <
+      limits.cooldownMs
+  )
+    return reject("TRADE_COOLDOWN_ACTIVE");
+
+  const side = decision.decision;
+  const { stopLoss, takeProfit } = calculateProtectivePrices(
+    side,
+    marketData.price,
+    limits.stopLossPct,
+    limits.riskRewardRatio,
+  );
+  let positionSize = calculatePositionSize(
+    account.balance,
+    limits.riskPerTrade,
+    marketData.price,
+    stopLoss,
+  );
+  const highVolatility = marketData.volatility >= limits.highVolatility;
+  if (highVolatility)
+    positionSize = rounded(positionSize * limits.highVolatilitySizeFactor, 12);
+  const leverage = highVolatility
+    ? Math.max(1, Math.floor(limits.maxLeverage / 2))
+    : limits.maxLeverage;
+
+  const retainedExposure = retainedPositions.reduce(
+    (sum, position) => sum + Math.abs(position.size * position.markPrice),
+    0,
+  );
+  const availableExposure = Math.max(
+    0,
+    account.equity * limits.maxExposure - retainedExposure,
+  );
+  positionSize = Math.min(
+    positionSize,
+    rounded(availableExposure / marketData.price, 12),
+  );
+  if (!finitePositive(positionSize))
+    return reject("MAX_PORTFOLIO_EXPOSURE_EXCEEDED", leverage);
+
+  const projectedExposure = retainedExposure + positionSize * marketData.price;
+  const exposurePct = projectedExposure / account.equity;
+  if (exposurePct > limits.maxExposure + 1e-9)
+    return reject("MAX_PORTFOLIO_EXPOSURE_EXCEEDED", leverage);
+
+  return {
+    approved: true,
+    positionSize,
+    leverage,
+    stopLoss,
+    takeProfit,
+    riskScore: calculateRiskScore(
+      marketData.volatility,
+      leverage,
+      exposurePct,
+      drawdownPct,
+      limits,
+    ),
+    exposurePct: rounded(exposurePct, 6),
+    drawdownPct: rounded(drawdownPct, 6),
+  };
+}

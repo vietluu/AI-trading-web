@@ -1,13 +1,14 @@
-import { Module } from '@nestjs/common';
-import { DatabaseModule } from '../../database/database.module';
-import { ExchangeModule } from '../../exchange/exchange.module';
-import { SessionModule } from '../../session/session.module';
-import { PaperTradingConfigService } from './application/paper-trading-config.service';
-import { PaperTradingService } from './application/paper-trading.service';
-import { PaperTradingController } from './presentation/paper-trading.controller';
+import { Module } from "@nestjs/common";
+import { DatabaseModule } from "../../database/database.module";
+import { ExchangeModule } from "../../exchange/exchange.module";
+import { SessionModule } from "../../session/session.module";
+import { PaperTradingConfigService } from "./application/paper-trading-config.service";
+import { PaperTradingService } from "./application/paper-trading.service";
+import { PaperTradingController } from "./presentation/paper-trading.controller";
+import { RiskModule } from "../risk/risk.module";
 
 @Module({
-  imports: [DatabaseModule, ExchangeModule, SessionModule],
+  imports: [DatabaseModule, ExchangeModule, SessionModule, RiskModule],
   controllers: [PaperTradingController],
   providers: [PaperTradingConfigService, PaperTradingService],
   exports: [PaperTradingService],
