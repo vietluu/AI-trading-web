@@ -1,5 +1,6 @@
 "use client";
 
+import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { AccountNav } from "@/components/account-nav";

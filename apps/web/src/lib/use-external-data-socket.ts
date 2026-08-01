@@ -24,13 +24,28 @@ export function useExternalDataSocket(
   const [isConnected, setIsConnected] = useState(false);
   const [lastEvent, setLastEvent] = useState<{ event: string; data: Record<string, unknown> } | null>(null);
   const socketRef = useRef<Socket | null>(null);
+  const callbackRef = useRef(onEvent);
   const channelsSerialized = JSON.stringify(channels);
+  const channelsSignatureRef = useRef<string | null>(null);
+
+  callbackRef.current = onEvent;
 
   useEffect(() => {
+    if (channelsSignatureRef.current === channelsSerialized) {
+      return;
+    }
+    channelsSignatureRef.current = channelsSerialized;
+
     const socket = io(`${publicEnvironment.NEXT_PUBLIC_API_BASE_URL}/external-data`, {
       withCredentials: true,
       transports: ["websocket", "polling"],
       autoConnect: true,
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1_000,
+      reconnectionDelayMax: 3_000,
+      timeout: 3_000,
+      forceNew: true,
     });
 
     socketRef.current = socket;
@@ -48,8 +63,8 @@ export function useExternalDataSocket(
     const handleMessage = (msg: ExternalDataSocketEvent) => {
       if (msg?.event && msg?.data) {
         setLastEvent({ event: msg.event, data: msg.data });
-        if (onEvent) {
-          onEvent(msg.event, msg.data);
+        if (callbackRef.current) {
+          callbackRef.current(msg.event, msg.data);
         }
       }
     };
@@ -64,7 +79,7 @@ export function useExternalDataSocket(
     return () => {
       socket.disconnect();
     };
-  }, [channelsSerialized, onEvent]);
+  }, [channelsSerialized]);
 
   return { isConnected, lastEvent };
 }
