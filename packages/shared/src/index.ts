@@ -41,3 +41,4 @@ export type {
 export * from "./schemas/external-data.js";
 export * from "./schemas/ai.js";
 export * from "./schemas/ai-tools.js";
+export * from "./schemas/agents.js";

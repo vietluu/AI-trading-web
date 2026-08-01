@@ -319,6 +319,21 @@ const environmentSchema = z
     AI_TOOL_MAX_CALLS_PER_MINUTE: z.coerce.number().int().default(30),
     AI_TOOL_MAX_CALLS_PER_HOUR: z.coerce.number().int().default(500),
     AI_TOOL_MAX_CALLS_PER_DAY: z.coerce.number().int().default(5000),
+
+    // Phase 6.3: Multi-Agent Framework
+    AGENT_FRAMEWORK_ENABLED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
+    AGENT_MANUAL_RUN_ENABLED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
+    AGENT_SYSTEM_DIAGNOSTIC_ENABLED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
+    AGENT_DEFAULT_TIMEOUT_MS: z.coerce.number().int().min(5000).max(300000).default(60000),
+    AGENT_MAX_GLOBAL_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(10),
+    AGENT_MAX_USER_CONCURRENCY: z.coerce.number().int().min(1).max(10).default(3),
+    AGENT_MAX_TYPE_CONCURRENCY: z.coerce.number().int().min(1).max(20).default(5),
+    AGENT_MAX_RUNS_PER_MINUTE: z.coerce.number().int().min(1).max(60).default(5),
+    AGENT_MAX_RUNS_PER_HOUR: z.coerce.number().int().min(1).max(1000).default(100),
+    AGENT_MAX_RUNS_PER_DAY: z.coerce.number().int().min(1).max(10000).default(500),
+    AGENT_MAX_RETRY_ATTEMPTS: z.coerce.number().int().min(0).max(5).default(2),
+    AGENT_IDEMPOTENCY_TTL_SECONDS: z.coerce.number().int().min(10).max(600).default(60),
+    AGENT_RUN_RETENTION_DAYS: z.coerce.number().int().min(7).max(365).default(90),
   })
   .superRefine((environment, context) => {
     if (environment.NODE_ENV === "production" && !environment.COOKIE_SECURE) {

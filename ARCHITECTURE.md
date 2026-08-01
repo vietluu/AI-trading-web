@@ -263,3 +263,157 @@ graph TD
     ABORT --> CANCEL_ERR[TOOL_CANCELLED Error & Telemetry Recorded]
 ```
 
+---
+
+## Phase 6.3 Multi-Agent Framework & Agent Lifecycle Architecture
+
+### 1. Agent Run Lifecycle & State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> CREATED
+    CREATED --> QUEUED: Enqueued Async
+    CREATED --> PREPARING_CONTEXT: Sync Start
+    CREATED --> REJECTED: Policy Denied
+
+    QUEUED --> PREPARING_CONTEXT: Worker Picked
+    QUEUED --> CANCEL_REQUESTED: User Cancelled
+    QUEUED --> REJECTED: Quota/Concurrency Error
+
+    PREPARING_CONTEXT --> READY: Context & Prompt Prepared
+    PREPARING_CONTEXT --> FAILED: Build Context Error
+    PREPARING_CONTEXT --> TIMED_OUT: Timeout Reached
+    PREPARING_CONTEXT --> CANCEL_REQUESTED: User Cancelled
+
+    READY --> RUNNING: LLM Execution Started
+    READY --> CANCEL_REQUESTED: User Cancelled
+
+    RUNNING --> WAITING_FOR_TOOL: Tool Call Requested
+    RUNNING --> VALIDATING_OUTPUT: Output Received
+    RUNNING --> FAILED: Provider Error
+    RUNNING --> TIMED_OUT: Timeout Reached
+    RUNNING --> CANCEL_REQUESTED: User Cancelled
+
+    WAITING_FOR_TOOL --> PROCESSING_TOOL_RESULT: Tool Loop Executing
+    WAITING_FOR_TOOL --> FAILED: Tool Error
+    WAITING_FOR_TOOL --> TIMED_OUT: Timeout Reached
+    WAITING_FOR_TOOL --> CANCEL_REQUESTED: User Cancelled
+
+    PROCESSING_TOOL_RESULT --> RUNNING: Return Tool Output to LLM
+    PROCESSING_TOOL_RESULT --> FAILED: Tool Loop Exception
+    PROCESSING_TOOL_RESULT --> TIMED_OUT: Timeout Reached
+    PROCESSING_TOOL_RESULT --> CANCEL_REQUESTED: User Cancelled
+
+    VALIDATING_OUTPUT --> COMPLETED: Output Matches Schema
+    VALIDATING_OUTPUT --> PARTIALLY_COMPLETED: Partial Validation
+    VALIDATING_OUTPUT --> FAILED: Schema Validation Failed
+
+    CANCEL_REQUESTED --> CANCELLED: Cleanup Completed
+
+    COMPLETED --> [*]
+    PARTIALLY_COMPLETED --> [*]
+    FAILED --> [*]
+    TIMED_OUT --> [*]
+    CANCELLED --> [*]
+    REJECTED --> [*]
+```
+
+### 2. Context Building & Snapshot Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Agent as Agent Execution Service
+    participant ContextBuilder as Agent Context Builder
+    participant SystemBuilder as AI Context Builder (Phase 6.1)
+    participant SnapshotRepo as Snapshot Repository
+    participant TokenCounter as Token Counter
+
+    Agent->>ContextBuilder: buildAndPersistSnapshot(agentDef, userId)
+    ContextBuilder->>SystemBuilder: buildContext(sources)
+    SystemBuilder-->>ContextBuilder: contextString
+    ContextBuilder->>TokenCounter: countTokens(contextString)
+    TokenCounter-->>ContextBuilder: tokenEstimate
+    ContextBuilder->>ContextBuilder: Compute SHA-256 contextHash
+    ContextBuilder->>SnapshotRepo: findByHash(contextHash)
+    alt Snapshot Exists
+        SnapshotRepo-->>ContextBuilder: existingSnapshot
+    else New Snapshot
+        ContextBuilder->>SnapshotRepo: create(snapshotData)
+        SnapshotRepo-->>ContextBuilder: newSnapshot
+    end
+    ContextBuilder-->>Agent: { snapshotId, contextString, tokenEstimate }
+```
+
+### 3. Agent Tool Call Loop Sequence
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant AgentRunner as Agent Runner Service
+    participant ToolResolver as Agent Tool Resolver
+    participant Orchestrator as AI Orchestrator Service
+    participant ToolRunner as Tool Loop Runner (Phase 6.2)
+    participant OutputVal as Output Validator
+
+    AgentRunner->>ToolResolver: resolveTools(allowedToolNames, capabilities)
+    ToolResolver-->>AgentRunner: providerSchemas, resolvedToolNames
+    AgentRunner->>Orchestrator: execute(prompt, context, tools)
+    Orchestrator-->>AgentRunner: LLM Response (Text / Tool Calls)
+    alt Has Tool Calls
+        AgentRunner->>ToolRunner: runLoop(initialResult, allowedTools)
+        ToolRunner-->>AgentRunner: Final Tool Loop Response
+    end
+    AgentRunner->>OutputVal: validate(rawOutput, outputSchema)
+    OutputVal-->>AgentRunner: { valid, validatedOutput }
+```
+
+### 4. Asynchronous Queue Processing Flow
+
+```mermaid
+graph TD
+    CLIENT[User / System Request] --> API[POST /agents/:type/runs async=true]
+    API --> POLICY[Agent Policy Engine Check]
+    POLICY --> LOCK[Check Idempotency & Quota]
+    LOCK --> DB_CREATE[Create AgentRun Record - Status: QUEUED]
+    DB_CREATE --> ENQUEUE[AgentRunProducer.enqueue job]
+    ENQUEUE --> BULLMQ[(BullMQ agent-runs Queue)]
+    BULLMQ --> WORKER[AgentRunProcessor Worker]
+    WORKER --> RUNNER[AgentRunnerService.run]
+    RUNNER --> DB_UPDATE[Update AgentRun Record - Status: COMPLETED/FAILED]
+```
+
+### 5. Run Cancellation Flow
+
+```mermaid
+graph TD
+    USER[User Request] --> CANCEL_API[POST /agent-runs/:id/cancel]
+    CANCEL_API --> AUTH_CHK{User Owns Run & Not Terminal?}
+    AUTH_CHK -- No --> ERR[Return Error / 404 / 400]
+    AUTH_CHK -- Yes --> REDIS_FLAG[Set Redis Cancellation Flag ai:agent:cancel:runId]
+    REDIS_FLAG --> TRANSITION[AgentStateMachine.transition -> CANCEL_REQUESTED]
+    TRANSITION --> SIGNAL[Emit AbortSignal to Active Runner]
+    SIGNAL --> RELEASE[Release Concurrency Locks & Update DB -> CANCELLED]
+```
+
+### 6. Replay Execution Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant User as User / Client
+    participant ReplayService as Agent Replay Service
+    participant DB as Agent Run Repository
+    participant Runner as Agent Runner Service
+
+    User->>ReplayService: createReplayRun(originalRunId)
+    ReplayService->>DB: findById(originalRunId, userId)
+    DB-->>ReplayService: originalRun
+    ReplayService->>ReplayService: Verify run is in Terminal State
+    ReplayService->>DB: createRun(replayOfRunId = originalRun.id, same prompt/input)
+    DB-->>ReplayService: newReplayRun
+    ReplayService->>Runner: run(newReplayRun)
+    Runner-->>User: Replay Execution Result
+```
+
+
