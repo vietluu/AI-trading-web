@@ -340,6 +340,11 @@ const environmentSchema = z
     PIPELINE_COOLDOWN_MS: z.coerce.number().int().min(15_000).max(3_600_000).default(60_000),
     PIPELINE_MAX_RUNS_PER_HOUR: z.coerce.number().int().min(1).max(1000).default(60),
     MIN_CONFIDENCE: z.coerce.number().min(0).max(100).default(60),
+    // Phase 6.7: read-only evaluation and human-controlled improvement
+    REFLECTION_ENABLED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
+    EVALUATION_DELAY_MS: z.coerce.number().int().min(1_000).max(86_400_000).default(600_000),
+    MIN_RECORDS_FOR_REFLECTION: z.coerce.number().int().min(1).max(10_000).default(20),
+    REFLECTION_ACCURACY_ALERT_THRESHOLD: z.coerce.number().min(0).max(100).default(50),
   })
   .superRefine((environment, context) => {
     if (environment.NODE_ENV === "production" && !environment.COOKIE_SECURE) {

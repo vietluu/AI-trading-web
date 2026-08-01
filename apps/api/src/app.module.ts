@@ -18,6 +18,7 @@ import { RedisModule } from "./redis/redis.module";
 import { PipelineModule } from "./modules/pipeline/pipeline.module";
 import { SessionModule } from "./session/session.module";
 import { SettingsModule } from "./settings/settings.module";
+import { ReflectionModule } from "./modules/reflection/reflection.module";
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { SettingsModule } from "./settings/settings.module";
     AIToolsModule,
     AgentsModule,
     PipelineModule,
+    ReflectionModule,
   ],
 })
 export class AppModule {}

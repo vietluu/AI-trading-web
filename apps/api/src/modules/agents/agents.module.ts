@@ -10,6 +10,7 @@ import { SENTIMENT_ANALYST_DEFINITION } from './domain/definitions/sentiment-ana
 import { MACRO_ANALYST_DEFINITION } from './domain/definitions/macro-analyst.definition';
 import { ON_CHAIN_ANALYST_DEFINITION } from './domain/definitions/on-chain-analyst.definition';
 import { DECISION_SYNTHESIZER_DEFINITION } from './domain/definitions/decision-synthesizer.definition';
+import { REFLECTION_DEFINITION } from './domain/definitions/reflection.definition';
 
 // Infrastructure
 import { AgentRegistryService } from './infrastructure/registry/agent-registry.service';
@@ -115,5 +116,6 @@ export class AgentsModule implements OnModuleInit {
     this.agentRegistryService.register(MACRO_ANALYST_DEFINITION);
     this.agentRegistryService.register(ON_CHAIN_ANALYST_DEFINITION);
     this.agentRegistryService.register(DECISION_SYNTHESIZER_DEFINITION);
+    this.agentRegistryService.register(REFLECTION_DEFINITION);
   }
 }

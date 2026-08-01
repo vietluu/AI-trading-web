@@ -59,6 +59,9 @@ model User {
   agentQuotas            AgentQuotaUsage[]
   pipelineRuns           PipelineRun[]
   pipelineSchedules      PipelineSchedule[]
+  performanceRecords     PerformanceRecord[]
+  reflectionInsights     ReflectionInsight[]
+  improvementProposals   ImprovementProposal[]
 
   @@map("users")
 }
@@ -158,6 +161,7 @@ model PipelineRun {
   user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   steps              PipelineStepRun[]
   alerts             PipelineAlert[]
+  performanceRecords PerformanceRecord[]
 
   @@index([userId, createdAt])
   @@index([status, createdAt])
@@ -165,6 +169,88 @@ model PipelineRun {
   @@index([correlationId])
   @@index([replayOfRunId])
   @@map("pipeline_runs")
+}
+
+enum EvaluationHorizon {
+  SHORT
+  MID
+  LONG
+}
+
+enum PerformanceOutcome {
+  CORRECT
+  WRONG
+  NEUTRAL
+}
+
+enum ReflectionCategory {
+  RISK
+  BIAS
+  DATA
+  TIMING
+}
+
+enum ReflectionSeverity {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum ImprovementProposalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model PerformanceRecord {
+  id              String             @id @default(uuid()) @db.Uuid
+  userId          String             @db.Uuid
+  runId           String             @db.Uuid
+  symbol          String
+  horizon         EvaluationHorizon
+  decision        String
+  confidence      Float
+  priceAtDecision Decimal            @db.Decimal(24, 8)
+  priceAfter      Decimal            @db.Decimal(24, 8)
+  outcome         PerformanceOutcome
+  returnPct       Float
+  highVolatility  Boolean            @default(false)
+  majorNews       Boolean            @default(false)
+  evaluatedAt     DateTime           @default(now())
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  run             PipelineRun        @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, horizon])
+  @@index([userId, evaluatedAt])
+  @@index([symbol, horizon, evaluatedAt])
+  @@map("performance_records")
+}
+
+model ReflectionInsight {
+  id        String             @id @default(uuid()) @db.Uuid
+  userId    String             @db.Uuid
+  summary   String
+  category  ReflectionCategory
+  severity  ReflectionSeverity
+  createdAt DateTime           @default(now())
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("reflection_insights")
+}
+
+model ImprovementProposal {
+  id             String                    @id @default(uuid()) @db.Uuid
+  userId         String                    @db.Uuid
+  description    String
+  proposedChange String
+  status         ImprovementProposalStatus @default(PENDING)
+  reviewedAt     DateTime?
+  createdAt      DateTime                  @default(now())
+  user           User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("improvement_proposals")
 }
 
 model PipelineStepRun {
