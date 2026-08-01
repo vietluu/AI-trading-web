@@ -39,4 +39,4 @@ export type {
   SettingsView,
 } from "./schemas/identity.js";
 export * from "./schemas/external-data.js";
-
+export * from "./schemas/ai.js";

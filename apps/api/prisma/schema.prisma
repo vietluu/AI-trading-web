@@ -49,6 +49,10 @@ model User {
   externalDataPreference UserExternalDataPreference?
   newsStates             UserNewsState[]
   macroImportRuns        MacroImportRun[]
+  aiHistories            AIHistory[]
+  aiMemories             AIMemory[]
+  aiConfiguration        AIConfiguration?
+  aiUsages               AIUsage[]
 
   @@map("users")
 }
@@ -803,3 +807,109 @@ model UserNewsState {
   @@index([userId, isRead])
   @@map("user_news_states")
 }
+
+// ============================================================
+// Phase 6.1: AI Infrastructure
+// ============================================================
+
+enum AIMemoryType {
+  CONVERSATION
+  DECISION
+  OBSERVATION
+  REFLECTION
+  MARKET_SNAPSHOT
+}
+
+enum AIProviderType {
+  OPENAI
+  ANTHROPIC
+  GEMINI
+  OLLAMA
+}
+
+model AIHistory {
+  id               String         @id @default(uuid()) @db.Uuid
+  userId           String         @db.Uuid
+  sessionId        String?
+  provider         AIProviderType
+  model            String
+  prompt           String
+  systemPrompt     String?
+  response         String
+  responseJson     Json?
+  promptTokens     Int            @default(0)
+  completionTokens Int            @default(0)
+  totalTokens      Int            @default(0)
+  estimatedCost    Decimal        @default(0) @db.Decimal(18, 6)
+  latencyMs        Int            @default(0)
+  success          Boolean        @default(true)
+  finishReason     String?
+  error            String?
+  metadata         Json?
+  createdAt        DateTime       @default(now())
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([provider, model])
+  @@map("ai_histories")
+}
+
+model AIMemory {
+  id         String       @id @default(uuid()) @db.Uuid
+  userId     String       @db.Uuid
+  sessionId  String?
+  type       AIMemoryType
+  key        String
+  content    Json
+  importance Int          @default(50)
+  tags       String[]     @default([])
+  expiresAt  DateTime?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+  @@index([userId, type])
+  @@index([expiresAt])
+  @@map("ai_memories")
+}
+
+model AIConfiguration {
+  id                String         @id @default(uuid()) @db.Uuid
+  userId            String         @unique @db.Uuid
+  preferredProvider AIProviderType @default(OPENAI)
+  preferredModel    String         @default("gpt-5-mini")
+  temperature       Float          @default(0.7)
+  maxTokens         Int            @default(2048)
+  timeoutMs         Int            @default(30000)
+  dailyBudget       Decimal        @default(10.00) @db.Decimal(18, 2)
+  monthlyBudget     Decimal        @default(100.00) @db.Decimal(18, 2)
+  tokenBudget       Int            @default(1000000)
+  requestBudget     Int            @default(1000)
+  fallbackEnabled   Boolean        @default(true)
+  fallbackProviders String[]       @default(["ANTHROPIC", "GEMINI", "OLLAMA"])
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  user              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("ai_configurations")
+}
+
+model AIUsage {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String   @db.Uuid
+  date             String
+  requestCount     Int      @default(0)
+  promptTokens     Int      @default(0)
+  completionTokens Int      @default(0)
+  totalTokens      Int      @default(0)
+  totalCost        Decimal  @default(0) @db.Decimal(18, 6)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+  @@index([userId, date])
+  @@map("ai_usages")
+}
+
