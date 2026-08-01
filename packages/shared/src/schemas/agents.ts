@@ -367,6 +367,103 @@ export const SentimentAgentOutputSchema = z
   .strict();
 export type SentimentAgentOutput = z.infer<typeof SentimentAgentOutputSchema>;
 
+export const AgentDataQualitySchema = z.enum([
+  'GOOD',
+  'PARTIAL',
+  'INSUFFICIENT',
+]);
+export type AgentDataQuality = z.infer<typeof AgentDataQualitySchema>;
+
+export const MacroAgentInputSchema = z
+  .object({
+    lookbackHours: z.number().int().min(1).max(720).default(24),
+  })
+  .strict();
+export type MacroAgentInput = z.infer<typeof MacroAgentInputSchema>;
+
+export const MacroAgentOutputSchema = z
+  .object({
+    summary: z.string().min(1),
+    macroTrend: z.enum(['RISK_ON', 'RISK_OFF', 'NEUTRAL']),
+    keyEvents: z.array(z.string()),
+    riskFactors: z.array(z.string()),
+    dataQuality: AgentDataQualitySchema,
+    generatedAt: z.string().datetime(),
+  })
+  .strict();
+export type MacroAgentOutput = z.infer<typeof MacroAgentOutputSchema>;
+
+export const OnChainAgentInputSchema = z
+  .object({
+    symbol: z.enum(['BTC', 'ETH']).optional(),
+    lookbackHours: z.number().int().min(1).max(720).default(24),
+  })
+  .strict();
+export type OnChainAgentInput = z.infer<typeof OnChainAgentInputSchema>;
+
+export const OnChainAgentOutputSchema = z
+  .object({
+    summary: z.string().min(1),
+    activity: z.enum(['HIGH', 'NORMAL', 'LOW']),
+    flows: z
+      .object({
+        exchangeInflow: z.string().optional(),
+        exchangeOutflow: z.string().optional(),
+      })
+      .strict(),
+    signals: z.array(z.string()),
+    dataQuality: AgentDataQualitySchema,
+    generatedAt: z.string().datetime(),
+  })
+  .strict();
+export type OnChainAgentOutput = z.infer<typeof OnChainAgentOutputSchema>;
+
+export const FusionInputSchema = z
+  .object({
+    market: MarketAgentOutputSchema,
+    technical: TechnicalAgentOutputSchema,
+    news: NewsAgentOutputSchema,
+    sentiment: SentimentAgentOutputSchema,
+    macro: MacroAgentOutputSchema,
+    onchain: OnChainAgentOutputSchema,
+  })
+  .strict();
+export type FusionInput = z.infer<typeof FusionInputSchema>;
+
+export const FusionRunInputSchema = z
+  .object({
+    symbol: z.enum(['BTC-USDT', 'ETH-USDT']),
+    provider: MarketAgentProviderSchema,
+    interval: MarketAgentIntervalSchema,
+    lookbackCandles: z.number().int().min(1).max(500).default(150),
+    lookbackHours: z.number().int().min(1).max(24).default(6),
+    maxItems: z.number().int().min(1).max(50).default(20),
+  })
+  .strict();
+export type FusionRunInput = z.infer<typeof FusionRunInputSchema>;
+
+export const FusionOutputSchema = z
+  .object({
+    summary: z.string().min(1),
+    combinedAnalysis: z
+      .object({
+        market: z.string(),
+        technical: z.string(),
+        news: z.string(),
+        sentiment: z.string(),
+        macro: z.string(),
+        onchain: z.string(),
+      })
+      .strict(),
+    overallBias: z.enum(['BULLISH', 'BEARISH', 'NEUTRAL']),
+    confidence: z.number().min(0).max(100),
+    conflicts: z.array(z.string()),
+    dataQuality: AgentDataQualitySchema,
+    generatedAt: z.string().datetime(),
+  })
+  .strict();
+export type FusionOutput = z.infer<typeof FusionOutputSchema>;
+
 export const AgentRunFilterDtoSchema = z.object({
   agentType: AgentTypeSchema.optional(),
   status: AgentRunStatusSchema.optional(),

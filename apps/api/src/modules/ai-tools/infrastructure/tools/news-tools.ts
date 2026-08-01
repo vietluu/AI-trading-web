@@ -200,7 +200,7 @@ export class SentimentMarketGetTool implements ToolDefinition<{ symbol?: string;
 }
 
 @Injectable()
-export class MacroEventsListTool implements ToolDefinition<{ limit?: number }, Record<string, unknown>> {
+export class MacroEventsListTool implements ToolDefinition<{ lookbackHours?: number; limit?: number }, Record<string, unknown>> {
   public readonly name = "macro.events.list";
   public readonly version = 1;
   public readonly displayName = "List Macroeconomic Events";
@@ -208,6 +208,7 @@ export class MacroEventsListTool implements ToolDefinition<{ limit?: number }, R
   public readonly category = "MACRO" as const;
 
   public readonly inputSchema = z.object({
+    lookbackHours: z.number().int().min(1).max(720).optional().default(24),
     limit: z.number().int().min(1).max(50).optional().default(10),
   });
 
@@ -229,10 +230,11 @@ export class MacroEventsListTool implements ToolDefinition<{ limit?: number }, R
   public readonly status = "ACTIVE" as const;
   public readonly schemaHash = "hash-macro-events-list-v1";
 
-  public async execute(input: { limit?: number }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
+  public async execute(input: { lookbackHours?: number; limit?: number }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
     await Promise.resolve();
     return {
       limit: input.limit || 10,
+      lookbackHours: input.lookbackHours || 24,
       events: [
         {
           id: "macro-1",

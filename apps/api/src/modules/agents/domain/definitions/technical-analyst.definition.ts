@@ -79,6 +79,7 @@ export const TECHNICAL_ANALYST_DEFINITION: AgentDefinition<
   maxOutputTokens: 2_000,
   requiresUserContext: false,
   allowsPublicSystemRun: true,
+  includeUsedToolsInOutput: true,
   buildToolCalls: (input) => [
     {
       toolName: 'market.indicators.get',
