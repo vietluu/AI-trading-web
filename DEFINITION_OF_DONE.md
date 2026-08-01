@@ -29,4 +29,19 @@
 ✓ Production exchange connections are disabled by default
 ✓ Connection list/create/detail/test/enable/disable/delete UI works
 
+## Phase 5 additions
+
+✓ Public RSS/Atom feeds, exchange announcements (Binance/OKX), Fear & Greed, and Reddit ingested reliably
+✓ SSRF IP/hostname blocking and XXE entity resolution protection verified
+✓ URL canonicalization and title normalization strip tracking parameters cleanly
+✓ Exact and near-duplicate similarity deduplication (Jaccard + Cosine TF-IDF) groups duplicated articles
+✓ Metadata extraction maps symbols ($BTC, $ETH, $LINK), topics, and entities automatically
+✓ Deterministic 0-100 importance score formula implemented with score factor breakdown
+✓ BullMQ background ingestion queue and repeatable schedulers running cleanly
+✓ WebSocket `/external-data` gateway streams realtime high-importance news alerts
+✓ Manual CSV/JSON macro import importer with dry-run preview table verified
+✓ Cross-user bookmarks and read states strictly isolated per user
+✓ Frontend UI pages (`/news`, `/news/:id`, `/macro`, `/sentiment`, `/settings/data-sources`, `/system/providers`) fully interactive
+✓ All unit, integration, and workspace production build checks pass cleanly
+
 **Only then continue to the next phase.**

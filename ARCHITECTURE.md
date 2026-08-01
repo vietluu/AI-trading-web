@@ -34,10 +34,63 @@ Browser
               └── ioredis ── Redis (BullMQ-safe noeviction policy)
 ```
 
+## Phase 5 external data ingestion platform
+
+```mermaid
+graph TD
+    subgraph External Sources
+        RSS[Public RSS & Atom Feeds]
+        BINANCE_ANN[Binance Announcements]
+        OKX_ANN[OKX Announcements]
+        FEAR_GREED[Alternative.me Fear & Greed]
+        REDDIT[Reddit JSON / OAuth]
+        MACRO_CSV[Manual Macro CSV / JSON Import]
+    end
+
+    subgraph Security & Network Filter
+        SSRF[ExternalHttpClient - Timeout 10s / Size 5MB / SSRF IP Blocking]
+        XXE[XMLParser - xxE Entity Resolution Disabled]
+    end
+
+    subgraph Ingestion Pipeline
+        CANON[UrlCanonicalizer & Title Normalizer]
+        DEDUP[Deduplication Engine - Jaccard & Cosine TF-IDF]
+        META[Metadata Extractor - Symbol / Topic / Entity]
+        SCORE[Deterministic Importance Scorer - 0-100 Score]
+    end
+
+    subgraph Queue & Storage
+        BULL[BullMQ External Data Queue & Schedulers]
+        PG[(PostgreSQL Shared Global & User State)]
+        REDIS[(Redis Health Metrics & Cache)]
+    end
+
+    subgraph Realtime & Client
+        GATEWAY[ExternalDataGateway - Socket.IO /external-data]
+        FRONTEND[Next.js Web - /news, /macro, /sentiment, /settings/data-sources, /system/providers]
+    end
+
+    RSS --> SSRF
+    BINANCE_ANN --> SSRF
+    OKX_ANN --> SSRF
+    FEAR_GREED --> SSRF
+    REDDIT --> SSRF
+    MACRO_CSV --> Ingestion Pipeline
+
+    SSRF --> XXE --> Ingestion Pipeline
+    BULL --> Ingestion Pipeline
+
+    CANON --> DEDUP --> META --> SCORE --> PG
+    SCORE --> GATEWAY --> FRONTEND
+    Ingestion Pipeline --> REDIS
+```
+
 The pnpm workspace contains `apps/web`, `apps/api`, and `packages/shared`.
 Feature modules use controllers, services, repositories, and dependency
 injection. Every authenticated repository query is scoped to the current user.
-There are no roles, organizations, teams, or tenant hierarchy.
+There are no roles, organizations, teams, or tenant hierarchy. Global external
+data (news, sentiment, macro) is shared, while user-specific bookmarks, read states,
+and watchlist preferences are isolated per user.
 
 ## Security boundaries
 

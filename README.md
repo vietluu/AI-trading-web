@@ -35,9 +35,20 @@ The current foundation includes:
   open-order, order lookup, and configuration reads;
 - request signing, clock synchronization, timeouts, bounded retries, Redis
   throttles, safe public caching, and normalized provider errors.
+- a reliable external-information ingestion platform collecting, normalizing,
+  deduplicating, storing, ranking, and exposing crypto news, exchange announcements,
+  security incidents, Fear & Greed index observations, Reddit posts, and macroeconomic events;
+- SSRF IP blocking and XXE entity protection on all HTTP/XML external fetch adapters;
+- URL canonicalization and title normalization to eliminate tracking query parameters;
+- Jaccard and Cosine TF-IDF deduplication engine to group near-duplicate news items;
+- deterministic 0-100 importance scoring engine with score factor breakdowns;
+- BullMQ background ingestion queue and repeatable schedulers;
+- WebSocket `/external-data` gateway streaming realtime high-importance news alerts;
+- manual macroeconomic CSV/JSON importer with dry-run preview table;
+- isolated user-specific news bookmarks and read states;
+- interactive frontend UI pages for `/news`, `/news/:id`, `/macro`, `/sentiment`, `/settings/data-sources`, and `/system/providers`.
 
-Realtime market ingestion, AI agents, risk evaluation, paper/live trading,
-WebSockets, and analytics are intentionally reserved for later roadmap phases.
+Trading signals, Decision Agent, Judge Agent, Risk Engine, paper trading, and live execution remain intentionally reserved for later roadmap phases.
 There are no roles, organizations, teams, subscriptions, or payments. Phase 3
 contains no provider trading mutation, and production connections are disabled
 by default.

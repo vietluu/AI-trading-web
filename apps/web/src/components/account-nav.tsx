@@ -2,11 +2,16 @@ import Link from "next/link";
 
 const links = [
   ["Market", "/market"],
+  ["News", "/news"],
+  ["Macro", "/macro"],
+  ["Sentiment", "/sentiment"],
   ["Profile", "/profile"],
   ["Security", "/security"],
   ["Settings", "/settings"],
   ["API keys", "/api-keys"],
   ["Exchanges", "/settings/exchanges"],
+  ["Data Sources", "/settings/data-sources"],
+  ["Providers", "/system/providers"],
 ] as const;
 
 export function AccountNav(): React.JSX.Element {

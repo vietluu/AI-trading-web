@@ -26,6 +26,11 @@
 │   │   │   │   ├── infrastructure/binance/
 │   │   │   │   ├── infrastructure/okx/
 │   │   │   │   └── presentation/
+│   │   │   ├── external-data/
+│   │   │   │   ├── application/
+│   │   │   │   ├── domain/
+│   │   │   │   ├── infrastructure/
+│   │   │   │   └── presentation/
 │   │   │   ├── redis/
 │   │   │   ├── session/
 │   │   │   └── settings/
@@ -36,12 +41,18 @@
 │       │   │   ├── api-keys/
 │       │   │   ├── forgot-password/
 │       │   │   ├── login/
+│       │   │   ├── macro/
+│       │   │   ├── news/
 │       │   │   ├── profile/
 │       │   │   ├── register/
 │       │   │   ├── reset-password/
 │       │   │   ├── security/
-│       │   │   └── settings/
-│       │   │       └── exchanges/
+│       │   │   ├── sentiment/
+│       │   │   ├── settings/
+│       │   │   │   ├── data-sources/
+│       │   │   │   └── exchanges/
+│       │   │   └── system/
+│       │   │       └── providers/
 │       │   ├── components/
 │       │   └── lib/
 │       └── test/
