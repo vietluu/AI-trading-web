@@ -1,8 +1,10 @@
 import {
   Controller,
   Get,
+  Post,
   Param,
   Query,
+  UseGuards,
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
@@ -42,8 +44,8 @@ export class MarketDataController {
     @Query('status') status?: string,
   ) {
     return this.repository.getInstruments({
-      provider: provider as ExchangeProvider | undefined,
-      status,
+      ...(provider ? { provider: provider as ExchangeProvider } : {}),
+      ...(status ? { status } : {}),
     });
   }
 
@@ -88,9 +90,9 @@ export class MarketDataController {
       provider: provider as ExchangeProvider,
       symbol: symbol.toUpperCase(),
       interval,
-      startTime: startTime ? new Date(startTime) : undefined,
-      endTime: endTime ? new Date(endTime) : undefined,
-      limit: limit ? Math.min(Number(limit), 1000) : 500,
+      ...(startTime ? { startTime: new Date(startTime) } : {}),
+      ...(endTime ? { endTime: new Date(endTime) } : {}),
+      ...(limit ? { limit: Math.min(Number(limit), 1000) } : { limit: 500 }),
     });
   }
 
@@ -133,9 +135,9 @@ export class MarketDataController {
     return this.repository.getFundingRates({
       provider: provider as ExchangeProvider,
       symbol: symbol.toUpperCase(),
-      startTime: startTime ? new Date(startTime) : undefined,
-      endTime: endTime ? new Date(endTime) : undefined,
-      limit: limit ? Number(limit) : undefined,
+      ...(startTime ? { startTime: new Date(startTime) } : {}),
+      ...(endTime ? { endTime: new Date(endTime) } : {}),
+      ...(limit ? { limit: Number(limit) } : {}),
     });
   }
 
@@ -154,9 +156,9 @@ export class MarketDataController {
     return this.repository.getOpenInterestHistory({
       provider: provider as ExchangeProvider,
       symbol: symbol.toUpperCase(),
-      startTime: startTime ? new Date(startTime) : undefined,
-      endTime: endTime ? new Date(endTime) : undefined,
-      limit: limit ? Number(limit) : undefined,
+      ...(startTime ? { startTime: new Date(startTime) } : {}),
+      ...(endTime ? { endTime: new Date(endTime) } : {}),
+      ...(limit ? { limit: Number(limit) } : {}),
     });
   }
 
@@ -216,10 +218,10 @@ export class MarketDataController {
     @Query('limit') limit?: string,
   ) {
     return this.repository.getGaps({
-      provider: provider as ExchangeProvider | undefined,
-      symbol,
-      status,
-      limit: limit ? Number(limit) : undefined,
+      ...(provider ? { provider: provider as ExchangeProvider } : {}),
+      ...(symbol ? { symbol } : {}),
+      ...(status ? { status } : {}),
+      ...(limit ? { limit: Number(limit) } : {}),
     });
   }
 
