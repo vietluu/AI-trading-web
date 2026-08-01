@@ -12,6 +12,7 @@ import { ExchangeModule } from "./exchange/exchange.module";
 import { MarketDataModule } from "./market-data/market-data.module";
 import { ExternalDataModule } from "./modules/external-data/external-data.module";
 import { AIModule } from "./modules/ai/ai.module";
+import { AIToolsModule } from "./modules/ai-tools/ai-tools.module";
 import { RedisModule } from "./redis/redis.module";
 import { SessionModule } from "./session/session.module";
 import { SettingsModule } from "./settings/settings.module";
@@ -39,6 +40,7 @@ import { SettingsModule } from "./settings/settings.module";
     MarketDataModule,
     ExternalDataModule,
     AIModule,
+    AIToolsModule,
   ],
 })
 export class AppModule {}

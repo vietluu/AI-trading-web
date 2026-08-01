@@ -53,6 +53,8 @@ model User {
   aiMemories             AIMemory[]
   aiConfiguration        AIConfiguration?
   aiUsages               AIUsage[]
+  toolInvocations        ToolInvocationRecord[]
+  toolQuotas             ToolQuotaUsage[]
 
   @@map("users")
 }
@@ -912,4 +914,87 @@ model AIUsage {
   @@index([userId, date])
   @@map("ai_usages")
 }
+
+// ============================================================
+// Phase 6.2: AI Tool Calling Framework
+// ============================================================
+
+enum ToolStatus {
+  ACTIVE
+  DISABLED
+  DEPRECATED
+  EXPERIMENTAL
+  UNAVAILABLE
+}
+
+model ToolInvocationRecord {
+  id                    String    @id @default(uuid()) @db.Uuid
+  invocationId          String    @unique
+  userId                String?   @db.Uuid
+  agentRunId            String?
+  aiRequestId           String?
+  provider              String?
+  model                 String?
+  toolName              String
+  toolVersion           Int       @default(1)
+  invocationSource      String    @default("AI_PROVIDER")
+  inputHash             String
+  sanitizedInput        Json?
+  status                String    // SUCCESS, DENIED, FAILED, TIMED_OUT, CANCELLED
+  startedAt             DateTime
+  completedAt           DateTime
+  durationMs            Int
+  cached                Boolean   @default(false)
+  retryCount            Int       @default(0)
+  errorCode             String?
+  errorMessage          String?
+  policyVersion         Int       @default(1)
+  resultSizeBytes       Int       @default(0)
+  estimatedResultTokens Int       @default(0)
+  traceId               String?
+  correlationId         String?
+  createdAt             DateTime  @default(now())
+  user                  User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([toolName, status])
+  @@index([invocationSource, createdAt])
+  @@map("ai_tool_invocations")
+}
+
+model ToolDefinitionMetadata {
+  id             String     @id @default(uuid()) @db.Uuid
+  name           String     @unique
+  version        Int        @default(1)
+  displayName    String
+  description    String
+  category       String
+  sensitivity    String
+  sideEffect     String
+  status         ToolStatus @default(ACTIVE)
+  schemaHash     String
+  deprecatedAt   DateTime?
+  replacementName String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@map("ai_tool_definitions")
+}
+
+model ToolQuotaUsage {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @db.Uuid
+  windowKey     String   // e.g. YYYY-MM-DD:HH or YYYY-MM-DD
+  callCount     Int      @default(0)
+  resultTokens  Int      @default(0)
+  failedCount   Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, windowKey])
+  @@index([userId, windowKey])
+  @@map("ai_tool_quotas")
+}
+
 

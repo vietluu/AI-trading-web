@@ -40,3 +40,4 @@ export type {
 } from "./schemas/identity.js";
 export * from "./schemas/external-data.js";
 export * from "./schemas/ai.js";
+export * from "./schemas/ai-tools.js";
