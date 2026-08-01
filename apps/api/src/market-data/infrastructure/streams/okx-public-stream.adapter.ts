@@ -110,7 +110,7 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
 
   constructor(configService: ConfigService) {
     this.baseUrl =
-      configService.get<string>("OKX_FUTURES_WS_URL") ??
+      configService.get<string>("OKX_WS_PUBLIC_URL") ??
       "wss://ws.okx.com:8443/ws/v5/public";
     this.staleAfterMs =
       (configService.get<number>("MARKET_STALE_AFTER_SECONDS") ?? 30) * 1000;
