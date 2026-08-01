@@ -215,6 +215,79 @@ export const MarketAgentOutputSchema = z
   .strict();
 export type MarketAgentOutput = z.infer<typeof MarketAgentOutputSchema>;
 
+export const TechnicalAgentInputSchema = z
+  .object({
+    symbol: z.enum(['BTC-USDT', 'ETH-USDT']),
+    provider: MarketAgentProviderSchema,
+    interval: MarketAgentIntervalSchema,
+    lookbackCandles: z.number().int().min(1).max(500).default(150),
+  })
+  .strict();
+export type TechnicalAgentInput = z.infer<typeof TechnicalAgentInputSchema>;
+
+export const TechnicalAgentToolNameSchema = z.enum([
+  'market.candles.list',
+  'market.indicators.get',
+]);
+
+export const TechnicalAgentOutputSchema = z
+  .object({
+    summary: z.string().min(1),
+    trend: z
+      .object({
+        direction: z.enum(['UP', 'DOWN', 'SIDEWAYS']),
+        strength: z.enum(['WEAK', 'MODERATE', 'STRONG']),
+      })
+      .strict(),
+    momentum: z
+      .object({
+        rsi: z.string(),
+        rsiState: z.enum(['OVERBOUGHT', 'OVERSOLD', 'NEUTRAL']),
+        macd: z
+          .object({
+            trend: z.enum(['BULLISH', 'BEARISH', 'NEUTRAL']),
+            crossover: z.enum(['BULLISH', 'BEARISH', 'NONE']).optional(),
+          })
+          .strict(),
+      })
+      .strict(),
+    movingAverages: z
+      .object({
+        alignment: z.enum(['BULLISH', 'BEARISH', 'MIXED']),
+        pricePosition: z.enum(['ABOVE', 'BELOW', 'INSIDE']),
+      })
+      .strict(),
+    volatility: z
+      .object({
+        atr: z.string().optional(),
+        bollinger: z
+          .object({
+            position: z.enum(['UPPER', 'MIDDLE', 'LOWER']),
+            squeeze: z.boolean(),
+          })
+          .strict(),
+      })
+      .strict(),
+    structure: z
+      .object({
+        marketStructure: z.enum(['HH_HL', 'LH_LL', 'RANGE']),
+        breakout: z.boolean().optional(),
+      })
+      .strict(),
+    divergence: z
+      .object({
+        rsiDivergence: z.enum(['BULLISH', 'BEARISH', 'NONE']).optional(),
+        macdDivergence: z.enum(['BULLISH', 'BEARISH', 'NONE']).optional(),
+      })
+      .strict(),
+    signals: z.array(z.string()),
+    dataQuality: z.enum(['GOOD', 'PARTIAL', 'INSUFFICIENT']),
+    usedTools: z.array(TechnicalAgentToolNameSchema).max(2),
+    generatedAt: z.string().datetime(),
+  })
+  .strict();
+export type TechnicalAgentOutput = z.infer<typeof TechnicalAgentOutputSchema>;
+
 export const AgentRunFilterDtoSchema = z.object({
   agentType: AgentTypeSchema.optional(),
   status: AgentRunStatusSchema.optional(),

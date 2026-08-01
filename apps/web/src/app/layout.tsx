@@ -55,6 +55,12 @@ export default function RootLayout({
                 </Link>
                 <Link
                   className="rounded-lg px-3 py-2 hover:bg-muted"
+                  href="/ai/technical-analysis"
+                >
+                  Technical
+                </Link>
+                <Link
+                  className="rounded-lg px-3 py-2 hover:bg-muted"
                   href="/settings/exchanges"
                 >
                   Exchanges
