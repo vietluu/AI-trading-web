@@ -130,7 +130,7 @@ idempotency key is invented because there are no provider mutations.
 - `GET /api/external-data/social/providers`: List community providers and user credential statuses.
 
 ### Macroeconomic Calendar
-- `GET /api/external-data/macro/events`: List economic events (`importance`, `category`, `startDate`, `endDate`).
+- `GET /api/external-data/macro/events`: List economic events (`importance`, `category`, `fromDate`, `toDate`).
 - `POST /api/external-data/macro/import/preview`: Dry-run validation of manual CSV/JSON macro import content.
 - `POST /api/external-data/macro/import`: Confirm and insert validated macroeconomic events.
 
