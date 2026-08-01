@@ -63,6 +63,22 @@ export class BinanceFuturesClient {
     }
   }
 
+  async signedPost(
+    path: string,
+    credentials: ExchangeCredentials,
+    parameters: Record<string, string | number | boolean | undefined>,
+  ): Promise<unknown> {
+    return this.signedWrite("POST", path, credentials, parameters);
+  }
+
+  async signedDelete(
+    path: string,
+    credentials: ExchangeCredentials,
+    parameters: Record<string, string | number | boolean | undefined>,
+  ): Promise<unknown> {
+    return this.signedWrite("DELETE", path, credentials, parameters);
+  }
+
   async serverTime(
     environment = ExchangeEnvironment.PRODUCTION,
   ): Promise<number> {
@@ -92,6 +108,35 @@ export class BinanceFuturesClient {
       operation: path,
       url: `${this.baseUrl(credentials.environment)}${path}?${query}&signature=${signature}`,
       init: { headers: { "X-MBX-APIKEY": credentials.apiKey } },
+    });
+    return response.data;
+  }
+
+  private async signedWrite(
+    method: "POST" | "DELETE",
+    path: string,
+    credentials: ExchangeCredentials,
+    parameters: Record<string, string | number | boolean | undefined>,
+  ): Promise<unknown> {
+    const offset = await this.time.offset(
+      this.provider,
+      credentials.environment,
+      () => this.serverTime(credentials.environment),
+    );
+    const query = this.signatures.query({
+      ...parameters,
+      recvWindow: 5000,
+      timestamp: Date.now() + offset,
+    });
+    const signature = this.signatures.sign(query, credentials.apiSecret);
+    const response = await this.http.request({
+      provider: this.provider,
+      operation: path,
+      url: `${this.baseUrl(credentials.environment)}${path}?${query}&signature=${signature}`,
+      init: { method, headers: { "X-MBX-APIKEY": credentials.apiKey } },
+      // A timed-out order may already exist. The execution service reconciles by
+      // clientOrderId instead of blindly replaying a state-changing request.
+      retryable: false,
     });
     return response.data;
   }

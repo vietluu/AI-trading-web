@@ -29,6 +29,8 @@ import {
   type ExchangeCredentials,
   type ExchangeOrder,
   type ExchangePosition,
+  type PlaceOrderCommand,
+  type CancelOrderCommand,
 } from "../domain/exchange.types";
 import { ExchangeRateLimitService } from "../infrastructure/exchange-rate-limit.service";
 import { normalizeSymbol } from "../infrastructure/exchange-symbol";
@@ -439,6 +441,28 @@ export class ExchangeConnectionService {
       "CONFIGURATION",
       context,
       (adapter, credentials) => adapter.getAccountConfiguration(credentials),
+    );
+  }
+
+  placeOrder(
+    userId: string,
+    id: string,
+    command: PlaceOrderCommand,
+    context: RequestMetadata,
+  ): Promise<ExchangeOrder> {
+    return this.privateCall(userId, id, "PLACE_ORDER", context, (adapter, credentials) =>
+      adapter.placeOrder(credentials, command),
+    );
+  }
+
+  cancelOrder(
+    userId: string,
+    id: string,
+    command: CancelOrderCommand,
+    context: RequestMetadata,
+  ): Promise<ExchangeOrder> {
+    return this.privateCall(userId, id, "CANCEL_ORDER", context, (adapter, credentials) =>
+      adapter.cancelOrder(credentials, command),
     );
   }
 

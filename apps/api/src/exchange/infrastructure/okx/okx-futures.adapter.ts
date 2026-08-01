@@ -27,6 +27,8 @@ import {
   type InstrumentQuery,
   type KlineQuery,
   type OpenOrderQuery,
+  type PlaceOrderCommand,
+  type CancelOrderCommand,
   type OrderStatus,
   type OrderType,
   type PositionSide,
@@ -153,6 +155,12 @@ const orderSchema = z.object({
 const configSchema = z.object({
   posMode: z.string(),
   acctLv: z.string().optional(),
+});
+const orderAckSchema = z.object({
+  ordId: z.string(),
+  clOrdId: z.string().optional(),
+  sCode: z.string(),
+  sMsg: z.string().optional(),
 });
 
 @Injectable()
@@ -518,6 +526,90 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       positionMode: value.posMode === "long_short_mode" ? "HEDGE" : "ONE_WAY",
       ...(value.acctLv ? { accountMode: value.acctLv } : {}),
       canTrade: false,
+    };
+  }
+
+  async placeOrder(
+    credentials: ExchangeCredentials,
+    command: PlaceOrderCommand,
+  ): Promise<ExchangeOrder> {
+    const instId = toOkxSymbol(command.symbol);
+    await this.client.signedPost("/api/v5/account/set-leverage", credentials, {
+      instId,
+      lever: String(command.leverage),
+      mgnMode: "cross",
+    });
+    const body: Record<string, unknown> = {
+      instId,
+      tdMode: "cross",
+      side: command.side.toLowerCase(),
+      ordType: "market",
+      sz: command.quantity,
+      clOrdId: command.clientOrderId,
+      reduceOnly: command.reduceOnly ?? false,
+      ...(command.positionSide ? { posSide: command.positionSide.toLowerCase() } : {}),
+    };
+    if (command.stopLoss || command.takeProfit) {
+      body.attachAlgoOrds = [{
+        ...(command.takeProfit ? { tpTriggerPx: command.takeProfit, tpOrdPx: "-1" } : {}),
+        ...(command.stopLoss ? { slTriggerPx: command.stopLoss, slOrdPx: "-1" } : {}),
+      }];
+    }
+    const ack = z.array(orderAckSchema).min(1).parse(
+      await this.client.signedPost("/api/v5/trade/order", credentials, body),
+    )[0]!;
+    if (ack.sCode !== "0") {
+      throw new ExchangeError(
+        ExchangeErrorCode.INVALID_REQUEST,
+        this.provider,
+        false,
+        400,
+        ack.sMsg || "OKX rejected the order",
+        ack.sCode,
+      );
+    }
+    return {
+      provider: this.provider,
+      symbol: command.symbol,
+      exchangeOrderId: ack.ordId,
+      clientOrderId: ack.clOrdId ?? command.clientOrderId,
+      side: command.side,
+      type: "MARKET",
+      status: "NEW",
+      originalQuantity: command.quantity,
+      executedQuantity: "0",
+      reduceOnly: command.reduceOnly ?? false,
+      ...(command.positionSide ? { positionSide: command.positionSide } : {}),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+  }
+
+  async cancelOrder(
+    credentials: ExchangeCredentials,
+    command: CancelOrderCommand,
+  ): Promise<ExchangeOrder> {
+    const ack = z.array(orderAckSchema).min(1).parse(
+      await this.client.signedPost("/api/v5/trade/cancel-order", credentials, {
+        instId: toOkxSymbol(command.symbol),
+        ...(command.orderId ? { ordId: command.orderId } : {}),
+        ...(command.clientOrderId ? { clOrdId: command.clientOrderId } : {}),
+      }),
+    )[0]!;
+    if (ack.sCode !== "0") {
+      throw new ExchangeError(ExchangeErrorCode.INVALID_REQUEST, this.provider, false, 400, ack.sMsg || "OKX rejected cancellation", ack.sCode);
+    }
+    return {
+      provider: this.provider,
+      symbol: command.symbol,
+      exchangeOrderId: ack.ordId,
+      clientOrderId: ack.clOrdId,
+      side: "BUY",
+      type: "UNKNOWN",
+      status: "CANCELED",
+      originalQuantity: "0",
+      executedQuantity: "0",
+      updatedAt: new Date(),
     };
   }
 

@@ -446,8 +446,32 @@ const environmentSchema = z
       .default("true")
       .transform((v) => v === "true"),
     TRADING_MODE: z
-      .enum(["SIGNAL_ONLY", "PAPER_TRADING"])
-      .default("SIGNAL_ONLY"),
+      .enum(["SIGNAL_ONLY", "PAPER_TRADING", "DEMO", "LIVE"])
+      .default("DEMO"),
+    GLOBAL_TRADING_ENABLED: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((v) => v === "true"),
+    LIVE_TRADING_ENABLED: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((v) => v === "true"),
+    LIVE_POSITION_SYNC_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((v) => v === "true"),
+    LIVE_POSITION_SYNC_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(5_000)
+      .max(300_000)
+      .default(30_000),
+    LIVE_RISK_APPROVAL_TTL_MS: z.coerce
+      .number()
+      .int()
+      .min(10_000)
+      .max(3_600_000)
+      .default(300_000),
     PAPER_INITIAL_BALANCE: z.coerce
       .number()
       .positive()
@@ -489,6 +513,13 @@ const environmentSchema = z
       .default(0.6),
   })
   .superRefine((environment, context) => {
+    if (environment.TRADING_MODE === "LIVE" && !environment.LIVE_TRADING_ENABLED) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "LIVE_TRADING_ENABLED=true is required when TRADING_MODE=LIVE",
+        path: ["LIVE_TRADING_ENABLED"],
+      });
+    }
     if (environment.SLIPPAGE_MIN > environment.SLIPPAGE_MAX) {
       context.addIssue({
         code: z.ZodIssueCode.custom,

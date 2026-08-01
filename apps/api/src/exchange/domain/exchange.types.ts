@@ -258,6 +258,24 @@ export interface KlineQuery {
 export interface OpenOrderQuery {
   symbol?: string;
 }
+
+export interface PlaceOrderCommand {
+  symbol: string;
+  side: OrderSide;
+  quantity: string;
+  clientOrderId: string;
+  leverage: number;
+  reduceOnly?: boolean;
+  positionSide?: "LONG" | "SHORT";
+  stopLoss?: string;
+  takeProfit?: string;
+}
+
+export interface CancelOrderCommand {
+  symbol: string;
+  orderId?: string;
+  clientOrderId?: string;
+}
 export interface GetOrderQuery {
   symbol: string;
   orderId: string;

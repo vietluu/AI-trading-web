@@ -1,6 +1,11 @@
 import { z } from "zod";
 
-export const TradingModeSchema = z.enum(["SIGNAL_ONLY", "PAPER_TRADING"]);
+export const TradingModeSchema = z.enum([
+  "SIGNAL_ONLY",
+  "PAPER_TRADING",
+  "DEMO",
+  "LIVE",
+]);
 export type TradingMode = z.infer<typeof TradingModeSchema>;
 export const PositionSideSchema = z.enum(["LONG", "SHORT"]);
 export const OrderSideSchema = z.enum(["BUY", "SELL"]);

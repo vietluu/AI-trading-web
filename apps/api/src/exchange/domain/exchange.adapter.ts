@@ -20,6 +20,8 @@ import type {
   InstrumentQuery,
   KlineQuery,
   OpenOrderQuery,
+  PlaceOrderCommand,
+  CancelOrderCommand,
 } from "./exchange.types";
 
 export interface ExchangeAdapter {
@@ -57,4 +59,12 @@ export interface ExchangeAdapter {
   getAccountConfiguration(
     credentials: ExchangeCredentials,
   ): Promise<ExchangeAccountConfiguration>;
+  placeOrder(
+    credentials: ExchangeCredentials,
+    command: PlaceOrderCommand,
+  ): Promise<ExchangeOrder>;
+  cancelOrder(
+    credentials: ExchangeCredentials,
+    command: CancelOrderCommand,
+  ): Promise<ExchangeOrder>;
 }

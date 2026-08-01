@@ -15,6 +15,7 @@ import { PipelineAlertService } from "./pipeline-alert.service";
 import { resolvePipelineDefinition } from "../domain/pipeline.definition";
 import type { PipelineJob } from "../infrastructure/pipeline-queue.service";
 import { PaperTradingService } from "../../paper-trading/application/paper-trading.service";
+import { LiveTradingService } from "../../live-trading/application/live-trading.service";
 
 class PipelineCancelledError extends Error {}
 
@@ -28,6 +29,7 @@ export class PipelineRunnerService {
     private readonly threshold: PipelineThresholdService,
     private readonly alerts: PipelineAlertService,
     private readonly paperTrading: PaperTradingService,
+    private readonly liveTrading: LiveTradingService,
   ) {}
 
   async run(job: PipelineJob): Promise<void> {
@@ -121,6 +123,7 @@ export class PipelineRunnerService {
           ? { volatilityAtr }
           : {}),
       });
+      const liveExecution = await this.liveTrading.executePipeline(job.userId, job.runId);
       const completedAt = new Date();
       await this.repository.updateRun(job.runId, {
         status: "COMPLETED",
@@ -136,6 +139,7 @@ export class PipelineRunnerService {
           actionable: filter.actionable,
           skippedReason: filter.reason,
           paperExecution,
+          liveExecution,
         },
       });
       await this.alerts.contextual(job.runId, job.symbol, analyses);
