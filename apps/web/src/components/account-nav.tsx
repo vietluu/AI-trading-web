@@ -5,6 +5,8 @@ const links = [
   ["News", "/news"],
   ["Macro", "/macro"],
   ["Sentiment", "/sentiment"],
+  ["AI News Analysis", "/ai/news-analysis"],
+  ["AI Sentiment Analysis", "/ai/sentiment-analysis"],
   ["Profile", "/profile"],
   ["Security", "/security"],
   ["Settings", "/settings"],

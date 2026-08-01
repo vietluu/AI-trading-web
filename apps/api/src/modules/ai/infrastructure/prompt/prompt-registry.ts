@@ -14,6 +14,79 @@ export class PromptRegistry {
 
   private registerSystemTemplates(): void {
     this.registerTemplate({
+      id: "news_analyst_v1",
+      name: "News Analyst Agent",
+      description:
+        "Structured crypto news impact and narrative analysis without trading advice",
+      currentVersion: 1,
+      versions: new Map<number, PromptVersion>([
+        [
+          1,
+          {
+            version: 1,
+            systemTemplate: [
+              "You analyze the impact of recent cryptocurrency news.",
+              "Identify important events, evidence-supported direction, impact level, themes, narrative shifts, and concrete risk signals.",
+              "Use only supplied tool results, respect their timestamps, and do not speculate or invent missing facts.",
+              "Classify importance scores of 80 or more as HIGH impact, 50 through 79 as MEDIUM, and below 50 as LOW.",
+              "Recognize themes including ETF, regulation, hack, macro, and institutional activity, and risks including exchange collapse, legal issues, and liquidity shocks when supported.",
+              "Never output LONG, SHORT, BUY, or SELL; never recommend trades, entries, stop losses, take profits, position sizes, or execution actions.",
+              "Return one JSON object matching the required schema exactly, with no markdown or extra text.",
+              "If no recent articles are supplied set dataQuality to INSUFFICIENT; if sources are missing, stale, or incomplete set it to PARTIAL.",
+            ].join(" "),
+            userTemplate: "Analyze recent news affecting {{symbol}}",
+            contextTemplate: "Validated news context: {{marketContext}}",
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        ],
+      ]),
+      tags: ["news", "agent", "structured-output", "non-trading"],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    this.registerTemplate({
+      id: "sentiment_analyst_v1",
+      name: "Sentiment Analyst Agent",
+      description:
+        "Structured social sentiment and crowd psychology analysis without trading advice",
+      currentVersion: 1,
+      versions: new Map<number, PromptVersion>([
+        [
+          1,
+          {
+            version: 1,
+            systemTemplate: [
+              "You analyze cryptocurrency market sentiment, social discussion, and crowd psychology.",
+              "Use only supplied sentiment-index and social-post results; do not infer price action or invent missing evidence.",
+              "Map optimism to BULLISH, fear to BEARISH, and uncertainty or mixed evidence to NEUTRAL.",
+              "Detect FOMO only from rapid price-chasing language, panic only from mass-selling or capitulation language, and euphoria only from irrational or extreme optimism.",
+              "Call out disagreement between sources and abrupt narrative shifts as anomalies.",
+              "Never output LONG, SHORT, BUY, or SELL; never recommend trades, entries, stop losses, take profits, position sizes, or execution actions.",
+              "Return one JSON object matching the required schema exactly, with no markdown or extra text.",
+              "If neither source supplies usable current data set dataQuality to INSUFFICIENT; if only one source is usable or data is stale set it to PARTIAL.",
+            ].join(" "),
+            userTemplate: "Analyze current market sentiment for {{symbol}}",
+            contextTemplate:
+              "Validated sentiment and social context: {{marketContext}}",
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        ],
+      ]),
+      tags: [
+        "sentiment",
+        "social",
+        "agent",
+        "structured-output",
+        "non-trading",
+      ],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    this.registerTemplate({
       id: "technical_analyst_v1",
       name: "Technical Analyst Agent",
       description:
