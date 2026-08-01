@@ -65,6 +65,9 @@ export default function RootLayout({
                 >
                   Decision
                 </Link>
+                <Link className="rounded-lg px-3 py-2 hover:bg-muted" href="/ai/pipeline">
+                  Automation
+                </Link>
                 <Link
                   className="rounded-lg px-3 py-2 hover:bg-muted"
                   href="/settings/exchanges"

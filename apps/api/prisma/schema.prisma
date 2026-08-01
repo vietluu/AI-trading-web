@@ -57,8 +57,150 @@ model User {
   toolQuotas             ToolQuotaUsage[]
   agentRuns              AgentRun[]
   agentQuotas            AgentQuotaUsage[]
+  pipelineRuns           PipelineRun[]
+  pipelineSchedules      PipelineSchedule[]
 
   @@map("users")
+}
+
+// ============================================================
+// Phase 6.6: Automation, Scheduler & Runtime Pipeline
+// ============================================================
+
+enum PipelineRunStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+  TIMEOUT
+  SKIPPED
+}
+
+enum PipelineTrigger {
+  SCHEDULE
+  MANUAL
+  REPLAY
+  EVENT
+}
+
+enum PipelineStepType {
+  AGENT
+  FUSION
+  DECISION
+}
+
+enum PipelineStepStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+  TIMEOUT
+  SKIPPED
+}
+
+enum PipelineScheduleMode {
+  CRON
+  INTERVAL
+}
+
+model PipelineSchedule {
+  id             String               @id @default(uuid()) @db.Uuid
+  userId         String               @db.Uuid
+  pipelineId     String
+  symbols        String[]
+  provider       ExchangeProvider
+  mode           PipelineScheduleMode
+  cron           String?
+  intervalMs     Int?
+  enabled        Boolean              @default(true)
+  timezone       String               @default("UTC")
+  maxRunsPerHour Int                  @default(60)
+  lastTriggeredAt DateTime?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  user           User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, pipelineId, provider, mode, cron, intervalMs])
+  @@index([enabled, lastTriggeredAt])
+  @@map("pipeline_schedules")
+}
+
+model PipelineRun {
+  id                 String            @id @default(uuid()) @db.Uuid
+  userId             String            @db.Uuid
+  pipelineId         String
+  pipelineVersion    Int               @default(1)
+  symbol             String
+  provider           ExchangeProvider
+  status             PipelineRunStatus @default(QUEUED)
+  trigger            PipelineTrigger
+  params             Json?
+  storedContext      Json?
+  result             Json?
+  startedAt          DateTime?
+  completedAt        DateTime?
+  durationMs         Int?
+  decision           String?
+  confidence         Float?
+  dataQuality        String?
+  skippedReason      String?
+  errorCode          String?
+  safeErrorMessage   String?
+  traceId            String
+  correlationId      String
+  replayOfRunId      String?           @db.Uuid
+  scheduleId         String?           @db.Uuid
+  cancellationRequestedAt DateTime?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  steps              PipelineStepRun[]
+  alerts             PipelineAlert[]
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([pipelineId, symbol, createdAt])
+  @@index([correlationId])
+  @@index([replayOfRunId])
+  @@map("pipeline_runs")
+}
+
+model PipelineStepRun {
+  id          String             @id @default(uuid()) @db.Uuid
+  runId       String             @db.Uuid
+  stepId      String
+  type        PipelineStepType
+  status      PipelineStepStatus @default(PENDING)
+  startedAt   DateTime?
+  completedAt DateTime?
+  durationMs  Int?
+  outputRef   Json?
+  errorCode   String?
+  createdAt   DateTime           @default(now())
+  run         PipelineRun        @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, stepId])
+  @@index([runId, createdAt])
+  @@map("pipeline_step_runs")
+}
+
+model PipelineAlert {
+  id               String      @id @default(uuid()) @db.Uuid
+  runId            String      @db.Uuid
+  kind             String
+  channel          String      @default("CONSOLE")
+  symbol           String
+  decision         String?
+  confidence       Float?
+  reasoningSummary String
+  delivered        Boolean     @default(false)
+  createdAt        DateTime    @default(now())
+  run              PipelineRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, createdAt])
+  @@map("pipeline_alerts")
 }
 
 model Session {
