@@ -16,6 +16,7 @@ import { AgentInvocationSource, AgentRunState } from '../../domain/enums';
 import { AgentStateMachine } from '../../domain/state-machine/agent-state-machine';
 import { AgentError, AgentErrorCode } from '../../domain/errors/agent-errors';
 import { AgentRun, Prisma } from '@prisma/client';
+import type { AIProviderType } from '@platform/shared';
 import { createHash, randomUUID } from 'node:crypto';
 
 @Injectable()
@@ -110,7 +111,7 @@ export class AgentRunnerService {
       }
       typeLock = true;
 
-      runRecord = await this.transitionState(runRecord.id, runRecord.status as AgentRunState, AgentRunState.PREPARING_CONTEXT, 'Context preparation started');
+      runRecord = await this.transitionState(runRecord.id, runRecord.status, AgentRunState.PREPARING_CONTEXT, 'Context preparation started');
 
       const { snapshotId, contextString } = await this.agentContextBuilderService.buildAndPersistSnapshot({
         agentDefinition: definition,
@@ -132,21 +133,21 @@ export class AgentRunnerService {
         agentType: definition.type,
       });
 
-      runRecord = await this.transitionState(runRecord.id, runRecord.status as AgentRunState, AgentRunState.READY, 'Context and prompt prepared');
+      runRecord = await this.transitionState(runRecord.id, runRecord.status, AgentRunState.READY, 'Context and prompt prepared');
 
-      const { providerSchemas, resolvedToolNames } = this.agentToolResolverService.resolveTools({
+      this.agentToolResolverService.resolveTools({
         allowedToolNames: definition.allowedToolNames,
         requiredCapabilities: definition.requiredCapabilities,
-        provider: definition.modelPolicy.preferredProvider || 'OPENAI',
+        provider: (definition.modelPolicy.preferredProvider as AIProviderType | undefined) || 'OPENAI',
       });
 
-      runRecord = await this.transitionState(runRecord.id, runRecord.status as AgentRunState, AgentRunState.RUNNING, 'AI model execution started');
+      runRecord = await this.transitionState(runRecord.id, runRecord.status, AgentRunState.RUNNING, 'AI model execution started');
 
       const startTime = Date.now();
       const aiResponse = await this.aiOrchestratorService.execute({
         userId: userId || '00000000-0000-0000-0000-000000000000',
         sessionId: params.sessionId,
-        provider: (definition.modelPolicy.preferredProvider as any) || 'OPENAI',
+        provider: (definition.modelPolicy.preferredProvider as AIProviderType | undefined) || 'OPENAI',
         model: definition.modelPolicy.preferredModel,
         systemPrompt: renderedPrompt.systemPrompt,
         userPrompt: renderedPrompt.userPrompt,
@@ -154,7 +155,7 @@ export class AgentRunnerService {
         maxTokens: definition.maxOutputTokens,
       });
 
-      runRecord = await this.transitionState(runRecord.id, runRecord.status as AgentRunState, AgentRunState.VALIDATING_OUTPUT, 'Validating model response');
+      runRecord = await this.transitionState(runRecord.id, runRecord.status, AgentRunState.VALIDATING_OUTPUT, 'Validating model response');
 
       const validation = this.agentOutputValidatorService.validate({
         rawOutput: aiResponse.text || JSON.stringify(aiResponse.json || {}),
@@ -166,17 +167,17 @@ export class AgentRunnerService {
       const durationMs = Date.now() - startTime;
 
       if (validation.valid && validation.validatedOutput) {
-        runRecord = await this.transitionState(runRecord.id, runRecord.status as AgentRunState, AgentRunState.COMPLETED, 'Output successfully validated');
+        runRecord = await this.transitionState(runRecord.id, runRecord.status, AgentRunState.COMPLETED, 'Output successfully validated');
 
         await this.agentRunRepository.saveOutput({
           runId: runRecord.id,
           schemaVersion: 1,
-          validatedOutput: validation.validatedOutput as Prisma.InputJsonValue,
+          validatedOutput: validation.validatedOutput,
           rawOutput: validation.rawOutput,
         });
 
         runRecord = await this.agentRunRepository.updateRun(runRecord.id, {
-          output: validation.validatedOutput as Prisma.InputJsonValue,
+          output: validation.validatedOutput,
           durationMs,
           inputTokens: aiResponse.usage.promptTokens,
           outputTokens: aiResponse.usage.completionTokens,
@@ -198,7 +199,7 @@ export class AgentRunnerService {
           await this.agentQuotaService.recordRun(userId);
         }
       } else {
-        runRecord = await this.transitionState(runRecord.id, runRecord.status as AgentRunState, AgentRunState.FAILED, 'Output validation failed');
+        runRecord = await this.transitionState(runRecord.id, runRecord.status, AgentRunState.FAILED, 'Output validation failed');
         runRecord = await this.agentRunRepository.updateRun(runRecord.id, {
           failureCode: AgentErrorCode.AGENT_OUTPUT_INVALID,
           safeFailureMessage: (validation.errors || []).join('; '),
@@ -214,7 +215,7 @@ export class AgentRunnerService {
       this.logger.error(`Run ${runRecord.id} failed: ${msg}`);
 
       try {
-        await this.transitionState(runRecord.id, runRecord.status as AgentRunState, AgentRunState.FAILED, `Execution error: ${msg}`);
+        await this.transitionState(runRecord.id, runRecord.status, AgentRunState.FAILED, `Execution error: ${msg}`);
         await this.agentRunRepository.updateRun(runRecord.id, {
           failureCode: AgentErrorCode.AGENT_EXECUTION_FAILED,
           safeFailureMessage: msg,
@@ -242,11 +243,11 @@ export class AgentRunnerService {
     AgentStateMachine.transition(runId, from, to, reason, 'AgentRunnerService');
     await this.agentRunRepository.addTransition({
       runId,
-      fromState: from as any,
-      toState: to as any,
+      fromState: from,
+      toState: to,
       reason,
       actor: 'AgentRunnerService',
     });
-    return this.agentRunRepository.updateRun(runId, { status: to as any });
+    return this.agentRunRepository.updateRun(runId, { status: to });
   }
 }

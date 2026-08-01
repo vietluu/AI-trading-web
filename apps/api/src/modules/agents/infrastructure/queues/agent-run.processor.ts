@@ -14,8 +14,9 @@ export class AgentRunProcessor extends WorkerHost {
 
   async process(job: Job<AgentRunJobPayload>): Promise<void> {
     this.logger.log(`Starting processing for job ${job.id} (AgentRun: ${job.data.agentRunId})`);
-    
+
     try {
+      await Promise.resolve();
       const {
         agentRunId,
         userId,

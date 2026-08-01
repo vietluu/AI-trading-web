@@ -1,6 +1,5 @@
 import { Module, OnModuleInit } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
-import { ConfigModule, ConfigService } from '@nestjs/config';
 
 // Domain Definitions
 import { SYSTEM_DIAGNOSTIC_DEFINITION } from './domain/definitions/system-diagnostic.definition';

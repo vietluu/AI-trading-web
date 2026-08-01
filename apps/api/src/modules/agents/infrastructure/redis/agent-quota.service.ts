@@ -55,7 +55,7 @@ export class AgentQuotaService {
     ]);
   }
 
-  async checkGlobalQuota(): Promise<{ allowed: boolean; reason?: string }> {
+  checkGlobalQuota(): { allowed: boolean; reason?: string } {
     return { allowed: true };
   }
 }

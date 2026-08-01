@@ -64,7 +64,7 @@ export class AgentRunRepository {
     return this.databaseService.agentRun.create({
       data: {
         userId: data.userId,
-        agentType: data.agentType as any,
+        agentType: data.agentType,
         agentVersion: data.agentVersion,
         invocationSource: data.invocationSource,
         inputHash: data.inputHash,
@@ -75,7 +75,7 @@ export class AgentRunRepository {
         correlationId: data.correlationId,
         parentRunId: data.parentRunId,
         replayOfRunId: data.replayOfRunId,
-        status: AgentRunState.CREATED as any,
+        status: AgentRunState.CREATED,
       },
     });
   }
@@ -83,7 +83,7 @@ export class AgentRunRepository {
   public async updateRun(id: string, data: UpdateAgentRunInput): Promise<AgentRun> {
     return this.databaseService.agentRun.update({
       where: { id },
-      data: data as any,
+      data,
     });
   }
 
@@ -108,8 +108,8 @@ export class AgentRunRepository {
     const { agentType, status, limit = 10, offset = 0, sort = 'desc' } = filters;
     const where: Prisma.AgentRunWhereInput = { userId };
 
-    if (agentType) where.agentType = agentType as any;
-    if (status) where.status = status as any;
+    if (agentType) where.agentType = agentType;
+    if (status) where.status = status;
 
     return this.databaseService.agentRun.findMany({
       where,
@@ -141,11 +141,11 @@ export class AgentRunRepository {
     const where: Prisma.AgentRunWhereInput = {};
 
     if (userId) where.userId = userId;
-    if (agentType) where.agentType = agentType as any;
-    if (status) where.status = status as any;
+    if (agentType) where.agentType = agentType;
+    if (status) where.status = status;
     if (provider) where.provider = provider;
     if (model) where.model = model;
-    if (invocationSource) where.invocationSource = invocationSource as any;
+    if (invocationSource) where.invocationSource = invocationSource;
     if (parentRunId) where.parentRunId = parentRunId;
     if (replayOfRunId) where.replayOfRunId = replayOfRunId;
 
@@ -210,11 +210,11 @@ export class AgentRunRepository {
     ];
 
     const where: Prisma.AgentRunWhereInput = {
-      status: { in: activeStatuses as any },
+      status: { in: activeStatuses },
     };
 
     if (userId) where.userId = userId;
-    if (agentType) where.agentType = agentType as any;
+    if (agentType) where.agentType = agentType;
 
     return this.databaseService.agentRun.count({ where });
   }
@@ -225,7 +225,7 @@ export class AgentRunRepository {
     totalRuns: number;
   }> {
     const totalRuns = await this.databaseService.agentRun.count({
-      where: { agentType: agentType as any },
+      where: { agentType },
     });
 
     if (totalRuns === 0) {
@@ -233,11 +233,11 @@ export class AgentRunRepository {
     }
 
     const completedRuns = await this.databaseService.agentRun.count({
-      where: { agentType: agentType as any, status: AgentRunState.COMPLETED as any },
+      where: { agentType, status: AgentRunState.COMPLETED },
     });
 
     const aggregate = await this.databaseService.agentRun.aggregate({
-      where: { agentType: agentType as any, status: AgentRunState.COMPLETED as any },
+      where: { agentType, status: AgentRunState.COMPLETED },
       _avg: { durationMs: true },
     });
 

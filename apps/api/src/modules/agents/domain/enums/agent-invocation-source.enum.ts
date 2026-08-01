@@ -1,8 +1,4 @@
-export enum AgentInvocationSource {
-  USER_MANUAL = 'USER_MANUAL',
-  INTERNAL_SERVICE = 'INTERNAL_SERVICE',
-  SYSTEM_TEST = 'SYSTEM_TEST',
-  REPLAY = 'REPLAY',
-  FUTURE_SCHEDULED = 'FUTURE_SCHEDULED',
-  FUTURE_EVENT_DRIVEN = 'FUTURE_EVENT_DRIVEN'
-}
+import { AgentInvocationSource as PrismaAgentInvocationSource } from '@prisma/client';
+
+export const AgentInvocationSource = PrismaAgentInvocationSource;
+export type AgentInvocationSource = PrismaAgentInvocationSource;

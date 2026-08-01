@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AgentRunRepository } from '../../infrastructure/persistence/agent-run.repository';
 import { AgentError, AgentErrorCode } from '../../domain/errors/agent-errors';
-import { AgentRunState } from '../../domain/enums';
 import { AgentStateMachine } from '../../domain/state-machine/agent-state-machine';
 import { AgentRun } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
@@ -26,7 +25,7 @@ export class AgentReplayService {
       );
     }
 
-    if (!AgentStateMachine.isTerminal(originalRun.status as AgentRunState)) {
+    if (!AgentStateMachine.isTerminal(originalRun.status)) {
       throw new AgentError(
         AgentErrorCode.AGENT_STATE_TRANSITION_INVALID,
         `Original run ${params.originalRunId} is not in a terminal state (${originalRun.status})`,
@@ -34,12 +33,11 @@ export class AgentReplayService {
       );
     }
 
-    const replayRunId = randomUUID();
     const replayRun = await this.agentRunRepository.createRun({
       userId: params.userId,
-      agentType: originalRun.agentType as any,
+      agentType: originalRun.agentType,
       agentVersion: originalRun.agentVersion,
-      invocationSource: 'REPLAY' as any,
+      invocationSource: 'REPLAY',
       inputHash: originalRun.inputHash,
       sanitizedInput: originalRun.sanitizedInput || undefined,
       promptId: originalRun.promptId,

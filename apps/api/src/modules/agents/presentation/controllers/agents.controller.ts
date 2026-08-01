@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param, Body, Query, UseGuards, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Param, Body, Query, UseGuards, NotFoundException } from '@nestjs/common';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import { SessionGuard } from '../../../../session/session.guard';
 import { AgentRegistryService } from '../../infrastructure/registry/agent-registry.service';
@@ -120,7 +120,7 @@ export class AgentRunsController {
   ) {
     return this.agentRunRepository.findByFilters(user.id, {
       agentType: agentType as AgentType,
-      status: status as any,
+      status: status as never,
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 20,
     });

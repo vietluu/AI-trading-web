@@ -1,5 +1,5 @@
 import type { ZodType } from 'zod';
-import { AgentType, AgentStatus, AgentExecutionMode, AgentContextSection, AgentMemoryMode } from '../enums';
+import { type AgentType, type AgentStatus, type AgentExecutionMode, type AgentContextSection, type AgentMemoryMode } from '../enums';
 
 export interface AgentContextPolicy {
   readonly allowedSections: AgentContextSection[];

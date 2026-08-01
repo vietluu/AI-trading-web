@@ -26,20 +26,21 @@ interface RunListResponse {
 }
 
 export default function AgentRunHistoryPage() {
-  const [page, setPage] = useState(1);
+  const page = 1;
   const [statusFilter, setStatusFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
 
   const { data, isLoading } = useQuery<RunListResponse>({
     queryKey: ["agent-runs", page, statusFilter, typeFilter],
-    queryFn: async () => {
+    queryFn: async (): Promise<RunListResponse> => {
       const params = new URLSearchParams({ page: String(page), limit: "15" });
       if (statusFilter) params.append("status", statusFilter);
       if (typeFilter) params.append("agentType", typeFilter);
 
       const res = await fetch(`/api/agent-runs?${params.toString()}`);
       if (!res.ok) throw new Error("Failed to fetch agent runs");
-      return res.json();
+      const payload = (await res.json()) as RunListResponse;
+      return payload;
     },
   });
 

@@ -1,10 +1,9 @@
-import { Controller, Sse, Param, UseGuards, MessageEvent, NotFoundException } from '@nestjs/common';
+import { Controller, Sse, Param, UseGuards, MessageEvent } from '@nestjs/common';
 import { Observable, interval } from 'rxjs';
 import { map, filter, switchMap, takeWhile, distinctUntilChanged } from 'rxjs/operators';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import { SessionGuard } from '../../../../session/session.guard';
 import { AgentRunRepository } from '../../infrastructure/persistence/agent-run.repository';
-import { AgentRunState } from '../../domain/enums';
 import { AgentStateMachine } from '../../domain/state-machine/agent-state-machine';
 
 @Controller('agent-runs-sse')
@@ -26,7 +25,7 @@ export class AgentSseController {
       filter((run): run is NonNullable<typeof run> => run !== null && run !== undefined),
       distinctUntilChanged((prev, curr) => prev.status === curr.status),
       map((run) => {
-        const isTerminal = AgentStateMachine.isTerminal(run.status as AgentRunState);
+        const isTerminal = AgentStateMachine.isTerminal(run.status);
 
         return {
           data: {
@@ -37,7 +36,7 @@ export class AgentSseController {
             timestamp: new Date().toISOString(),
           },
           type: isTerminal ? 'done' : 'progress',
-        } as MessageEvent;
+        };
       }),
       takeWhile((event) => event.type !== 'done', true),
     );

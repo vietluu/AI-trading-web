@@ -26,27 +26,27 @@ export class AgentCancellationHandlerService {
       );
     }
 
-    if (AgentStateMachine.isTerminal(run.status as AgentRunState)) {
+    if (AgentStateMachine.isTerminal(run.status)) {
       return false;
     }
 
     await this.agentCancellationService.requestCancellation(runId);
 
-    const fromState = run.status as AgentRunState;
+    const fromState = run.status;
     const toState = AgentRunState.CANCEL_REQUESTED;
 
     AgentStateMachine.transition(runId, fromState, toState, reason || 'User requested cancellation', 'AgentCancellationHandlerService');
 
     await this.agentRunRepository.addTransition({
       runId,
-      fromState: fromState as any,
-      toState: toState as any,
+      fromState: fromState,
+      toState: toState,
       reason: reason || 'User requested cancellation',
       actor: 'AgentCancellationHandlerService',
     });
 
     await this.agentRunRepository.updateRun(runId, {
-      status: toState as any,
+      status: toState,
     });
 
     this.logger.log({ event: 'agent_run_cancellation_requested', runId, userId, reason });

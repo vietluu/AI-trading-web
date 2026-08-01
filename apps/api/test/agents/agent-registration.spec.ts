@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { AgentRegistryService } from '../../src/modules/agents/infrastructure/registry/agent-registry.service';
 import { SYSTEM_DIAGNOSTIC_DEFINITION } from '../../src/modules/agents/domain/definitions/system-diagnostic.definition';
-import { AgentStatus, AgentType } from '../../src/modules/agents/domain/enums';
-import { AgentError, AgentErrorCode } from '../../src/modules/agents/domain/errors/agent-errors';
+import { AgentType } from '../../src/modules/agents/domain/enums';
+import { AgentError } from '../../src/modules/agents/domain/errors/agent-errors';
 
 describe('AgentRegistryService', () => {
   let registry: AgentRegistryService;

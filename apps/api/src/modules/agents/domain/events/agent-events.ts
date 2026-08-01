@@ -1,5 +1,5 @@
-import { AgentRunState } from '../enums/agent-run-state.enum';
-import { AgentType } from '../enums/agent-type.enum';
+import { type AgentRunState } from '../enums/agent-run-state.enum';
+import { type AgentType } from '../enums/agent-type.enum';
 
 export enum AgentEventType {
   AGENT_REGISTERED = 'AGENT_REGISTERED',

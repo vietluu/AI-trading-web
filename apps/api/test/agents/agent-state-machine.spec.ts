@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { AgentStateMachine } from '../../src/modules/agents/domain/state-machine/agent-state-machine';
 import { AgentRunState } from '../../src/modules/agents/domain/enums';
-import { AgentError, AgentErrorCode } from '../../src/modules/agents/domain/errors/agent-errors';
+import { AgentError } from '../../src/modules/agents/domain/errors/agent-errors';
 
 describe('AgentStateMachine', () => {
   it('should validate allowed state transitions', () => {

@@ -41,27 +41,30 @@ export default function AgentRunDetailPage({ params }: { params: Promise<{ id: s
 
   const { data: run, isLoading } = useQuery<AgentRunDetail>({
     queryKey: ["agent-run-detail", runId],
-    queryFn: async () => {
+    queryFn: async (): Promise<AgentRunDetail> => {
       const res = await fetch(`/api/agent-runs/${runId}`);
       if (!res.ok) throw new Error("Failed to fetch run details");
-      return res.json();
+      const payload = (await res.json()) as AgentRunDetail;
+      return payload;
     },
   });
 
   const { data: transitions = [] } = useQuery<Transition[]>({
     queryKey: ["agent-run-transitions", runId],
-    queryFn: async () => {
+    queryFn: async (): Promise<Transition[]> => {
       const res = await fetch(`/api/agent-runs/${runId}/transitions`);
       if (!res.ok) return [];
-      return res.json();
+      const payload = (await res.json()) as Transition[];
+      return payload;
     },
   });
 
-  const cancelMutation = useMutation({
-    mutationFn: async () => {
+  const cancelMutation = useMutation<unknown, Error, void>({
+    mutationFn: async (): Promise<unknown> => {
       const res = await fetch(`/api/agent-runs/${runId}/cancel`, { method: "POST" });
       if (!res.ok) throw new Error("Failed to cancel run");
-      return res.json();
+      const payload = (await res.json()) as unknown;
+      return payload;
     },
   });
 

@@ -18,7 +18,7 @@ export class AgentOutputValidatorService {
     if (typeof params.rawOutput === 'string') {
       try {
         parsed = JSON.parse(params.rawOutput);
-      } catch (e) {
+      } catch {
         return {
           valid: false,
           rawOutput: rawOutputString,

@@ -1,4 +1,4 @@
-import { AgentType, AgentRunState, AgentInvocationSource } from '../enums';
+import { type AgentType, type AgentRunState, type AgentInvocationSource } from '../enums';
 
 export interface AgentRunRecord {
   readonly id: string;

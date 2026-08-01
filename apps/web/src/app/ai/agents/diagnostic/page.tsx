@@ -23,8 +23,8 @@ export default function SystemDiagnosticPage() {
   const [symbol, setSymbol] = useState("BTC-USDT");
   const [provider, setProvider] = useState("OPENAI");
 
-  const runMutation = useMutation<DiagnosticResult>({
-    mutationFn: async () => {
+  const runMutation = useMutation<DiagnosticResult, Error, void>({
+    mutationFn: async (): Promise<DiagnosticResult> => {
       const res = await fetch("/api/agents/system-diagnostic/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -32,13 +32,16 @@ export default function SystemDiagnosticPage() {
       });
 
       if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.message || "Diagnostic run failed");
+        const errorBody = (await res.json()) as { message?: string };
+        throw new Error(errorBody.message || "Diagnostic run failed");
       }
 
-      return res.json();
+      const payload = (await res.json()) as DiagnosticResult;
+      return payload;
     },
   });
+
+  const errorMessage = runMutation.error instanceof Error ? runMutation.error.message : "Diagnostic run failed";
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -86,7 +89,7 @@ export default function SystemDiagnosticPage() {
 
         {runMutation.isError && (
           <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-600 rounded text-sm">
-            {(runMutation.error as Error).message}
+            {errorMessage}
           </div>
         )}
       </div>

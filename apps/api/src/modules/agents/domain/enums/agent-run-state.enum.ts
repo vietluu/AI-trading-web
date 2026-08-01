@@ -1,17 +1,4 @@
-export enum AgentRunState {
-  CREATED = 'CREATED',
-  QUEUED = 'QUEUED',
-  PREPARING_CONTEXT = 'PREPARING_CONTEXT',
-  READY = 'READY',
-  RUNNING = 'RUNNING',
-  WAITING_FOR_TOOL = 'WAITING_FOR_TOOL',
-  PROCESSING_TOOL_RESULT = 'PROCESSING_TOOL_RESULT',
-  VALIDATING_OUTPUT = 'VALIDATING_OUTPUT',
-  COMPLETED = 'COMPLETED',
-  PARTIALLY_COMPLETED = 'PARTIALLY_COMPLETED',
-  FAILED = 'FAILED',
-  TIMED_OUT = 'TIMED_OUT',
-  CANCEL_REQUESTED = 'CANCEL_REQUESTED',
-  CANCELLED = 'CANCELLED',
-  REJECTED = 'REJECTED'
-}
+import { AgentRunStatus as PrismaAgentRunStatus } from '@prisma/client';
+
+export const AgentRunState = PrismaAgentRunStatus;
+export type AgentRunState = PrismaAgentRunStatus;

@@ -41,7 +41,7 @@ export class AgentPromptResolverService {
     const renderedPrompt = this.promptEngineService.render(
       params.promptId,
       {
-        user: (params.variables || {}) as Record<string, unknown>,
+        user: (params.variables || {}),
         context: { marketContext: params.contextString || '' },
       },
       params.promptVersion,

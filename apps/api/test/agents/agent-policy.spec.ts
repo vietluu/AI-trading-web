@@ -7,9 +7,9 @@ import { AgentType, AgentInvocationSource } from '../../src/modules/agents/domai
 describe('AgentPolicyEngine', () => {
   let policyEngine: AgentPolicyEngine;
   let registry: AgentRegistryService;
-  let mockBudgetManager: any;
-  let mockQuotaService: any;
-  let mockConcurrencyService: any;
+  let mockBudgetManager: { checkBudget: ReturnType<typeof vi.fn> };
+  let mockQuotaService: { checkQuota: ReturnType<typeof vi.fn> };
+  let mockConcurrencyService: Record<string, never>;
 
   beforeEach(() => {
     registry = new AgentRegistryService();
@@ -27,9 +27,9 @@ describe('AgentPolicyEngine', () => {
 
     policyEngine = new AgentPolicyEngine(
       registry,
-      mockBudgetManager,
-      mockQuotaService,
-      mockConcurrencyService,
+      mockBudgetManager as never,
+      mockQuotaService as never,
+      mockConcurrencyService as never,
     );
   });
 
@@ -43,12 +43,12 @@ describe('AgentPolicyEngine', () => {
   });
 
   it('should deny execution if agent type does not exist', async () => {
-    const decision = await policyEngine.evaluate('UNKNOWN_AGENT' as any, 1, {
+    const decision = await policyEngine.evaluate('UNKNOWN_AGENT' as AgentType, 1, {
       invocationSource: AgentInvocationSource.USER_MANUAL,
     });
 
     expect(decision.status).toBe('DENY');
-    expect(decision.reasons[0].code).toBe('AGENT_NOT_FOUND');
+    expect(decision.reasons[0]?.code).toBe('AGENT_NOT_FOUND');
   });
 
   it('should deny execution if user budget check fails', async () => {
@@ -63,6 +63,6 @@ describe('AgentPolicyEngine', () => {
     });
 
     expect(decision.status).toBe('DENY');
-    expect(decision.reasons[0].code).toBe('BUDGET_EXCEEDED');
+    expect(decision.reasons[0]?.code).toBe('BUDGET_EXCEEDED');
   });
 });
