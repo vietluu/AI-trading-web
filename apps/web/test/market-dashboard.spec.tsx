@@ -106,9 +106,17 @@ describe("MarketDashboard", () => {
     socket.close.mockClear();
     vi.stubGlobal(
       "fetch",
-      vi.fn((input: RequestInfo | URL) =>
-        Promise.resolve(responseFor(String(input))),
-      ),
+     vi.fn((input: RequestInfo | URL) => {
+       let urlString: string;
+       if (typeof input === 'string') {
+         urlString = input;
+       } else if (input instanceof URL) {
+         urlString = input.href;
+       } else {
+         urlString = input.url;
+       }
+       return Promise.resolve(responseFor(urlString));
+     }),
     );
   });
 
