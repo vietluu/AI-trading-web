@@ -1,4 +1,4 @@
-@import type { ExchangeProvider } from "../../exchange/domain/exchange.types";
+import type { ExchangeProvider } from "../../exchange/domain/exchange.types";
 import type {
   CandleSubscription,
   MarketStreamError,
