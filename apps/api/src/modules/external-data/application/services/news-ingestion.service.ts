@@ -186,13 +186,14 @@ export class NewsIngestionService {
       where: { articleId, sourceId },
     });
     if (!existingRef) {
+      const { canonicalUrl } = this.canonicalizer.canonicalize(item.url);
       await this.prisma.newsSourceReference.create({
         data: {
           articleId,
           sourceId,
           externalId: item.externalId || null,
           publishedAt: item.publishedAt,
-          canonicalUrl: item.url,
+          canonicalUrl,
         },
       });
     }
