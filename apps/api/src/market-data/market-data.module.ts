@@ -54,6 +54,7 @@ import { ExchangeModule } from '../exchange/exchange.module';
     MarketDataConfigService,
     MarketDataRepository,
     MarketBackfillService,
+    MarketDataService,
   ],
 })
 export class MarketDataModule {}

@@ -128,11 +128,19 @@ export class ToolRegistryService implements OnModuleInit {
     };
   }
 
-  public getProviderSchemas(provider: AIProviderType, allowedCapabilities?: ToolCapability[]): unknown[] {
+  public getProviderSchemas(
+    provider: AIProviderType,
+    allowedCapabilities?: ToolCapability[],
+    allowedToolNames?: string[],
+  ): unknown[] {
     const activeTools = this.list().filter((t) => t.status === "ACTIVE" || t.status === "EXPERIMENTAL");
-    const filteredTools = allowedCapabilities
+    let filteredTools = allowedCapabilities
       ? activeTools.filter((t) => t.requiredCapabilities.every((c) => allowedCapabilities.includes(c)))
       : activeTools;
+    if (allowedToolNames) {
+      const allowed = new Set(allowedToolNames);
+      filteredTools = filteredTools.filter((tool) => allowed.has(tool.name));
+    }
 
     return filteredTools.map((t) => {
       const canonical = this.getCanonicalSchema(t);
