@@ -19,6 +19,7 @@ import { PipelineModule } from "./modules/pipeline/pipeline.module";
 import { SessionModule } from "./session/session.module";
 import { SettingsModule } from "./settings/settings.module";
 import { ReflectionModule } from "./modules/reflection/reflection.module";
+import { PaperTradingModule } from "./modules/paper-trading/paper-trading.module";
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { ReflectionModule } from "./modules/reflection/reflection.module";
     AgentsModule,
     PipelineModule,
     ReflectionModule,
+    PaperTradingModule,
   ],
 })
 export class AppModule {}

@@ -345,8 +345,23 @@ const environmentSchema = z
     EVALUATION_DELAY_MS: z.coerce.number().int().min(1_000).max(86_400_000).default(600_000),
     MIN_RECORDS_FOR_REFLECTION: z.coerce.number().int().min(1).max(10_000).default(20),
     REFLECTION_ACCURACY_ALERT_THRESHOLD: z.coerce.number().min(0).max(100).default(50),
+    // Phase 7: local simulation only; no exchange execution credentials or endpoints
+    PAPER_TRADING_ENABLED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
+    TRADING_MODE: z.enum(['SIGNAL_ONLY', 'PAPER_TRADING']).default('SIGNAL_ONLY'),
+    PAPER_INITIAL_BALANCE: z.coerce.number().positive().max(1_000_000_000).default(10_000),
+    RISK_PER_TRADE: z.coerce.number().positive().max(1).default(0.02),
+    DEFAULT_LEVERAGE: z.coerce.number().int().min(1).max(125).default(3),
+    TAKER_FEE: z.coerce.number().min(0).max(0.01).default(0.0004),
+    SLIPPAGE_MIN: z.coerce.number().min(0).max(0.01).default(0.0002),
+    SLIPPAGE_MAX: z.coerce.number().min(0).max(0.01).default(0.001),
+    TRADE_COOLDOWN_MS: z.coerce.number().int().min(0).max(86_400_000).default(60_000),
+    STOP_LOSS_PCT: z.coerce.number().positive().max(1).default(0.02),
+    TAKE_PROFIT_PCT: z.coerce.number().positive().max(10).default(0.04),
   })
   .superRefine((environment, context) => {
+    if (environment.SLIPPAGE_MIN > environment.SLIPPAGE_MAX) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: 'SLIPPAGE_MIN must not exceed SLIPPAGE_MAX', path: ['SLIPPAGE_MIN'] });
+    }
     if (environment.NODE_ENV === "production" && !environment.COOKIE_SECURE) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
