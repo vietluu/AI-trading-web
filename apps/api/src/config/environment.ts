@@ -334,6 +334,17 @@ const environmentSchema = z
     AGENT_MAX_RETRY_ATTEMPTS: z.coerce.number().int().min(0).max(5).default(2),
     AGENT_IDEMPOTENCY_TTL_SECONDS: z.coerce.number().int().min(10).max(600).default(60),
     AGENT_RUN_RETENTION_DAYS: z.coerce.number().int().min(7).max(365).default(90),
+    // Phase 6.6: Automation runtime (research only; never exchange execution)
+    PIPELINE_ENABLED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
+    PIPELINE_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(5),
+    PIPELINE_COOLDOWN_MS: z.coerce.number().int().min(15_000).max(3_600_000).default(60_000),
+    PIPELINE_MAX_RUNS_PER_HOUR: z.coerce.number().int().min(1).max(1000).default(60),
+    MIN_CONFIDENCE: z.coerce.number().min(0).max(100).default(60),
+    // Phase 6.7: read-only evaluation and human-controlled improvement
+    REFLECTION_ENABLED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
+    EVALUATION_DELAY_MS: z.coerce.number().int().min(1_000).max(86_400_000).default(600_000),
+    MIN_RECORDS_FOR_REFLECTION: z.coerce.number().int().min(1).max(10_000).default(20),
+    REFLECTION_ACCURACY_ALERT_THRESHOLD: z.coerce.number().min(0).max(100).default(50),
   })
   .superRefine((environment, context) => {
     if (environment.NODE_ENV === "production" && !environment.COOKIE_SECURE) {
