@@ -303,8 +303,8 @@ const environmentSchema = z
     OLLAMA_BASE_URL: z.string().url().default("http://localhost:11434"),
     DEFAULT_PROVIDER: z
       .enum(["OPENAI", "ANTHROPIC", "GEMINI", "OLLAMA"])
-      .default("OPENAI"),
-    DEFAULT_MODEL: z.string().default("openai/gpt-oss-20b:free"),
+      .default("GEMINI"),
+    DEFAULT_MODEL: z.string().default("gemini-3.1-flash-lite"),
     DEFAULT_MAX_TOKENS: z.coerce.number().int().default(2048),
     DEFAULT_TEMPERATURE: z.coerce.number().default(0.7),
     DEFAULT_TIMEOUT: z.coerce.number().int().default(30000),

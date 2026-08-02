@@ -19,8 +19,8 @@ export default function AISettingsPage(): React.JSX.Element {
 
   // Prompt Sandbox state
   const [testPrompt, setTestPrompt] = useState("Analyze the impact of recent CPI data on BTC futures leverage.");
-  const [testProvider, setTestProvider] = useState<"OPENAI" | "ANTHROPIC" | "GEMINI" | "OLLAMA">("OPENAI");
-  const [testModel, setTestModel] = useState("gpt-5-mini");
+  const [testProvider, setTestProvider] = useState<"OPENAI" | "ANTHROPIC" | "GEMINI" | "OLLAMA">("GEMINI");
+  const [testModel, setTestModel] = useState("gemini-3.1-flash-lite");
   const [testResponseFormat, setTestResponseFormat] = useState<"text" | "json">("text");
   const [testResult, setTestResult] = useState<AIResponseDto | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);

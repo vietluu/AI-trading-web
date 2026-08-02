@@ -21,9 +21,9 @@ export class AIConfigService {
       data: {
         userId,
         preferredProvider:
-          this.config.get<AIProviderType>("DEFAULT_PROVIDER") ?? "OPENAI",
+          this.config.get<AIProviderType>("DEFAULT_PROVIDER") ?? "GEMINI",
         preferredModel:
-          this.config.get<string>("DEFAULT_MODEL") ?? "openai/gpt-oss-20b:free",
+          this.config.get<string>("DEFAULT_MODEL") ?? "gemini-3.1-flash-lite",
         temperature: 0.7,
         maxTokens: 2048,
         timeoutMs: 30000,
@@ -31,8 +31,8 @@ export class AIConfigService {
         monthlyBudget: 100.0,
         tokenBudget: 1000000,
         requestBudget: 1000,
-        fallbackEnabled: true,
-        fallbackProviders: ["ANTHROPIC", "GEMINI", "OLLAMA"],
+        fallbackEnabled: false,
+        fallbackProviders: [],
       },
     });
   }

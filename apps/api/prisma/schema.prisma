@@ -1324,8 +1324,8 @@ model AIMemory {
 model AIConfiguration {
   id                String         @id @default(uuid()) @db.Uuid
   userId            String         @unique @db.Uuid
-  preferredProvider AIProviderType @default(OPENAI)
-  preferredModel    String         @default("gpt-5-mini")
+  preferredProvider AIProviderType @default(GEMINI)
+  preferredModel    String         @default("gemini-3.1-flash-lite")
   temperature       Float          @default(0.7)
   maxTokens         Int            @default(2048)
   timeoutMs         Int            @default(30000)
@@ -1333,8 +1333,8 @@ model AIConfiguration {
   monthlyBudget     Decimal        @default(100.00) @db.Decimal(18, 2)
   tokenBudget       Int            @default(1000000)
   requestBudget     Int            @default(1000)
-  fallbackEnabled   Boolean        @default(true)
-  fallbackProviders String[]       @default(["ANTHROPIC", "GEMINI", "OLLAMA"])
+  fallbackEnabled   Boolean        @default(false)
+  fallbackProviders String[]       @default([])
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
   user              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
