@@ -12,7 +12,7 @@ export class AgentIdempotencyService {
     private readonly configService: ConfigService,
   ) {}
 
-  async checkAndLock(fingerprint: string, ttlSeconds: number = 60): Promise<{ locked: boolean; existingRunId?: string }> {
+  async checkAndLock(fingerprint: string, ttlSeconds = this.ttlSeconds): Promise<{ locked: boolean; existingRunId?: string }> {
     const lockKey = `ai:agent:run-lock:${fingerprint}`;
     const resultKey = `ai:agent:run-result:${fingerprint}`;
 
@@ -30,7 +30,7 @@ export class AgentIdempotencyService {
     return { locked: true };
   }
 
-  async setResult(fingerprint: string, runId: string, ttlSeconds: number = 86400): Promise<void> {
+  async setResult(fingerprint: string, runId: string, ttlSeconds = this.ttlSeconds): Promise<void> {
     const resultKey = `ai:agent:run-result:${fingerprint}`;
     await this.redisService.setWithTtl(resultKey, runId, ttlSeconds);
     
@@ -40,6 +40,10 @@ export class AgentIdempotencyService {
   async unlock(fingerprint: string): Promise<void> {
     const lockKey = `ai:agent:run-lock:${fingerprint}`;
     await this.redisService.delete(lockKey);
+  }
+
+  private get ttlSeconds(): number {
+    return this.configService.get<number>('AGENT_IDEMPOTENCY_TTL_SECONDS', 60);
   }
 
   calculateFingerprint(params: {

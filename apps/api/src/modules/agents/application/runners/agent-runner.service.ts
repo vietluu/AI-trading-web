@@ -18,6 +18,7 @@ import { AgentError, AgentErrorCode } from '../../domain/errors/agent-errors';
 import { AgentRun, Prisma } from '@prisma/client';
 import type { AIProviderType, ToolCapability } from '@platform/shared';
 import { createHash, randomUUID } from 'node:crypto';
+import { getAgentOutputContract } from '../../domain/agent-output-contracts';
 
 @Injectable()
 export class AgentRunnerService {
@@ -324,7 +325,7 @@ export class AgentRunnerService {
           sessionId: params.sessionId,
           provider: (definition.modelPolicy.preferredProvider as AIProviderType | undefined) || 'OPENAI',
           model: definition.modelPolicy.preferredModel,
-          systemPrompt: renderedPrompt.systemPrompt,
+          systemPrompt: `${renderedPrompt.systemPrompt}\n\n${getAgentOutputContract(definition.type)}`,
           userPrompt: `${renderedPrompt.userPrompt}\n\nValidated tool results:\n${toolContext}`,
           temperature: definition.modelPolicy.defaultTemperature,
           maxTokens: definition.maxOutputTokens,
@@ -347,11 +348,23 @@ export class AgentRunnerService {
 
       runRecord = await this.transitionState(runRecord.id, runRecord.status, AgentRunState.VALIDATING_OUTPUT, 'Validating model response');
 
+      const modelOutput =
+        definition.modelPolicy.requiresStructuredOutput && aiResponse.json
+          ? aiResponse.json
+          : aiResponse.text || {};
+      const normalizedModelOutput =
+        typeof modelOutput === 'object' &&
+        modelOutput !== null &&
+        !Array.isArray(modelOutput)
+          ? {
+              ...modelOutput,
+              ...(definition.includeUsedToolsInOutput ? { usedTools } : {}),
+              generatedAt: new Date().toISOString(),
+            }
+          : modelOutput;
+
       let validation = this.agentOutputValidatorService.validate({
-        rawOutput:
-          definition.modelPolicy.requiresStructuredOutput && aiResponse.json
-            ? aiResponse.json
-            : aiResponse.text || {},
+        rawOutput: normalizedModelOutput,
         outputSchema: definition.outputSchema,
         agentType: definition.type,
         runId: runRecord.id,
@@ -513,10 +526,8 @@ export class AgentRunnerService {
       safeFailureMessage: params.reason,
       completedAt: new Date(),
     });
-    await this.agentIdempotencyService.setResult(
-      params.idempotencyFingerprint,
-      runRecord.id,
-    );
+    // Insufficient/partial outputs must be retried on the next scheduled run.
+    // Caching them would pin a transient provider or market-data failure.
     return runRecord;
   }
 

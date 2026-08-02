@@ -1,11 +1,15 @@
 import { Injectable } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../../../../database/prisma.service";
 import { AIConfigDto, UpdateAIConfigDto } from "@platform/shared";
-import { AIConfiguration } from "@prisma/client";
+import { AIConfiguration, AIProviderType } from "@prisma/client";
 
 @Injectable()
 export class AIConfigService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
 
   public async getOrCreateConfig(userId: string): Promise<AIConfiguration> {
     const existing = await this.prisma.aIConfiguration.findUnique({
@@ -16,8 +20,10 @@ export class AIConfigService {
     return this.prisma.aIConfiguration.create({
       data: {
         userId,
-        preferredProvider: "OPENAI",
-        preferredModel: "gpt-5-mini",
+        preferredProvider:
+          this.config.get<AIProviderType>("DEFAULT_PROVIDER") ?? "OPENAI",
+        preferredModel:
+          this.config.get<string>("DEFAULT_MODEL") ?? "gpt-5-mini",
         temperature: 0.7,
         maxTokens: 2048,
         timeoutMs: 30000,
