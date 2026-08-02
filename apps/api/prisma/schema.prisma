@@ -68,8 +68,155 @@ model User {
   liveOrders             LiveOrder[]
   livePositions          LivePosition[]
   liveAccountSnapshots   LiveAccountSnapshot[]
+  portfolioStrategies    PortfolioStrategy[]
+  portfolioRebalances    PortfolioRebalance[]
+  portfolioRiskEvents    PortfolioRiskEvent[]
 
   @@map("users")
+}
+
+// ============================================================
+// Phase 10: multi-strategy portfolio management
+// ============================================================
+
+enum StrategyType {
+  AI
+  RULE_BASED
+  HYBRID
+}
+
+enum StrategyKind {
+  AI_CORE
+  TREND_FOLLOWING
+  MEAN_REVERSION
+  BREAKOUT
+  NEWS_DRIVEN
+}
+
+enum StrategyStatus {
+  ACTIVE
+  PAUSED
+  DISABLED
+}
+
+model PortfolioStrategy {
+  id             String                @id @default(uuid()) @db.Uuid
+  userId         String                @db.Uuid
+  key            String
+  name           String
+  type           StrategyType
+  kind           StrategyKind
+  symbols        String[]
+  status         StrategyStatus        @default(ACTIVE)
+  disabledReason String?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  user           User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  allocation     StrategyAllocation?
+  performance    StrategyPerformance?
+  positions      StrategyPosition[]
+  riskEvents     PortfolioRiskEvent[]
+  results        StrategyTradeResult[]
+  paperPositions PaperPosition[]
+
+  @@unique([userId, key])
+  @@index([userId, status])
+  @@map("portfolio_strategies")
+}
+
+model StrategyAllocation {
+  id               String            @id @default(uuid()) @db.Uuid
+  strategyId       String            @unique @db.Uuid
+  allocatedCapital Decimal           @default(0) @db.Decimal(24, 8)
+  weight           Float
+  updatedAt        DateTime          @updatedAt
+  strategy         PortfolioStrategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+
+  @@map("strategy_allocations")
+}
+
+model StrategyPerformance {
+  id            String            @id @default(uuid()) @db.Uuid
+  strategyId    String            @unique @db.Uuid
+  totalTrades   Int               @default(0)
+  winningTrades Int               @default(0)
+  winRate       Float             @default(0)
+  returnPct     Float             @default(0)
+  drawdownPct   Float             @default(0)
+  sharpeRatio   Float?
+  realizedPnl   Decimal           @default(0) @db.Decimal(24, 8)
+  updatedAt     DateTime          @updatedAt
+  strategy      PortfolioStrategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+
+  @@map("strategy_performance")
+}
+
+model StrategyPosition {
+  id            String            @id @default(uuid()) @db.Uuid
+  strategyId    String            @db.Uuid
+  symbol        String
+  side          String
+  quantity      Decimal           @db.Decimal(30, 12)
+  entryPrice    Decimal           @db.Decimal(24, 8)
+  markPrice     Decimal           @db.Decimal(24, 8)
+  unrealizedPnl Decimal           @default(0) @db.Decimal(24, 8)
+  openedAt      DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  strategy      PortfolioStrategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+
+  @@unique([strategyId, symbol])
+  @@index([symbol, side])
+  @@map("strategy_positions")
+}
+
+model StrategyTradeResult {
+  id         String            @id @default(uuid()) @db.Uuid
+  strategyId String            @db.Uuid
+  symbol     String
+  pnl        Decimal           @db.Decimal(24, 8)
+  returnPct  Float
+  closedAt   DateTime          @default(now())
+  strategy   PortfolioStrategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+
+  @@index([strategyId, closedAt])
+  @@map("strategy_trade_results")
+}
+
+model PortfolioRiskEvent {
+  id                   String             @id @default(uuid()) @db.Uuid
+  userId               String             @db.Uuid
+  strategyId           String?            @db.Uuid
+  pipelineRunId        String?            @db.Uuid
+  symbol               String
+  side                 String
+  requestedNotional    Decimal            @db.Decimal(24, 8)
+  approvedNotional     Decimal            @default(0) @db.Decimal(24, 8)
+  approved             Boolean
+  reason               String?
+  totalExposurePct     Float
+  strategyExposurePct  Float
+  correlatedStrategies Int                @default(0)
+  createdAt            DateTime           @default(now())
+  user                 User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  strategy             PortfolioStrategy? @relation(fields: [strategyId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([pipelineRunId])
+  @@map("portfolio_risk_events")
+}
+
+model PortfolioRebalance {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @db.Uuid
+  equity       Decimal  @db.Decimal(24, 8)
+  reason       String
+  allocations  Json
+  disabledKeys String[] @default([])
+  createdAt    DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("portfolio_rebalances")
 }
 
 // ============================================================
@@ -94,25 +241,28 @@ model PaperAccount {
 }
 
 model PaperPosition {
-  id            String       @id @default(uuid()) @db.Uuid
-  accountId     String       @db.Uuid
+  id            String             @id @default(uuid()) @db.Uuid
+  accountId     String             @db.Uuid
+  strategyId    String?            @db.Uuid
   symbol        String
   side          String
-  size          Decimal      @db.Decimal(30, 12)
-  entryPrice    Decimal      @db.Decimal(24, 8)
-  markPrice     Decimal      @db.Decimal(24, 8)
+  size          Decimal            @db.Decimal(30, 12)
+  entryPrice    Decimal            @db.Decimal(24, 8)
+  markPrice     Decimal            @db.Decimal(24, 8)
   leverage      Int
-  unrealizedPnL Decimal      @default(0) @db.Decimal(24, 8)
-  realizedPnL   Decimal      @default(0) @db.Decimal(24, 8)
-  entryFee      Decimal      @default(0) @db.Decimal(24, 8)
-  stopLoss      Decimal      @db.Decimal(24, 8)
-  takeProfit    Decimal      @db.Decimal(24, 8)
-  openedAt      DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  account       PaperAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  unrealizedPnL Decimal            @default(0) @db.Decimal(24, 8)
+  realizedPnL   Decimal            @default(0) @db.Decimal(24, 8)
+  entryFee      Decimal            @default(0) @db.Decimal(24, 8)
+  stopLoss      Decimal            @db.Decimal(24, 8)
+  takeProfit    Decimal            @db.Decimal(24, 8)
+  openedAt      DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  account       PaperAccount       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  strategy      PortfolioStrategy? @relation(fields: [strategyId], references: [id], onDelete: SetNull)
 
   @@unique([accountId, symbol])
   @@index([accountId, updatedAt])
+  @@index([strategyId])
   @@map("paper_positions")
 }
 
@@ -328,6 +478,7 @@ model PipelineSchedule {
   userId          String               @db.Uuid
   pipelineId      String
   symbols         String[]
+  strategyIds     String[]             @default(["ai-core"])
   provider        ExchangeProvider
   mode            PipelineScheduleMode
   cron            String?

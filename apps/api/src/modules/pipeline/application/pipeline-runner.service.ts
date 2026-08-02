@@ -16,6 +16,7 @@ import { resolvePipelineDefinition } from "../domain/pipeline.definition";
 import type { PipelineJob } from "../infrastructure/pipeline-queue.service";
 import { PaperTradingService } from "../../paper-trading/application/paper-trading.service";
 import { LiveTradingService } from "../../live-trading/application/live-trading.service";
+import { decisionForStrategy } from "../../portfolio/domain/strategy-decision";
 
 class PipelineCancelledError extends Error {}
 
@@ -102,11 +103,20 @@ export class PipelineRunnerService {
       }
       await this.assertNotCancelled(job.runId);
       await this.startStep(job.runId, "decision");
-      const output = this.decision.decide({
+      const synthesizedOutput = this.decision.decide({
         symbol: job.symbol,
         fusionOutput,
         ...analyses,
       });
+      const strategyKey =
+        typeof job.params?.strategyId === "string"
+          ? job.params.strategyId
+          : "ai-core";
+      const output = decisionForStrategy(
+        strategyKey,
+        synthesizedOutput,
+        analyses,
+      );
       await this.finishStep(job.runId, "decision", output, new Date());
       const filter = this.threshold.evaluate(output);
       const executionDecision = filter.actionable
@@ -119,11 +129,17 @@ export class PipelineRunnerService {
         symbol: job.symbol,
         provider: job.provider,
         decision: executionDecision,
+        ...(typeof job.params?.strategyId === "string"
+          ? { strategyKey: job.params.strategyId }
+          : {}),
         ...(Number.isFinite(volatilityAtr) && volatilityAtr >= 0
           ? { volatilityAtr }
           : {}),
       });
-      const liveExecution = await this.liveTrading.executePipeline(job.userId, job.runId);
+      const liveExecution = await this.liveTrading.executePipeline(
+        job.userId,
+        job.runId,
+      );
       const completedAt = new Date();
       await this.repository.updateRun(job.runId, {
         status: "COMPLETED",

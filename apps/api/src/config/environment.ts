@@ -498,7 +498,7 @@ const environmentSchema = z
     MAX_POSITIONS: z.coerce.number().int().min(1).max(20).default(3),
     MAX_LEVERAGE: z.coerce.number().int().min(1).max(20).default(3),
     MAX_DRAWDOWN: z.coerce.number().positive().max(1).default(0.15),
-    MAX_EXPOSURE: z.coerce.number().positive().max(1).default(0.4),
+    MAX_EXPOSURE: z.coerce.number().positive().max(1).default(0.6),
     RISK_REWARD_RATIO: z.coerce.number().min(1).max(10).default(2),
     HIGH_VOLATILITY_THRESHOLD: z.coerce
       .number()
@@ -515,9 +515,31 @@ const environmentSchema = z
       .min(0.5)
       .max(0.7)
       .default(0.6),
+    // Phase 10: portfolio-wide limits (weights and drawdowns are fractions)
+    MAX_STRATEGIES: z.coerce.number().int().min(1).max(20).default(5),
+    MAX_TOTAL_EXPOSURE: z.coerce.number().min(0.5).max(0.7).default(0.6),
+    MAX_STRATEGY_EXPOSURE: z.coerce.number().min(0.2).max(0.3).default(0.25),
+    MAX_DRAWDOWN_PORTFOLIO: z.coerce.number().positive().max(1).default(0.2),
+    STRATEGY_DISABLE_MIN_TRADES: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(1000)
+      .default(10),
+    STRATEGY_DISABLE_RETURN_PCT: z.coerce.number().min(-1).max(0).default(-0.1),
+    STRATEGY_DISABLE_WIN_RATE: z.coerce.number().min(0).max(1).default(0.35),
+    PORTFOLIO_REBALANCE_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(3_600_000)
+      .max(86_400_000)
+      .default(3_600_000),
   })
   .superRefine((environment, context) => {
-    if (environment.TRADING_MODE === "LIVE" && !environment.LIVE_TRADING_ENABLED) {
+    if (
+      environment.TRADING_MODE === "LIVE" &&
+      !environment.LIVE_TRADING_ENABLED
+    ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: "LIVE_TRADING_ENABLED=true is required when TRADING_MODE=LIVE",

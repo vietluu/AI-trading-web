@@ -22,6 +22,7 @@ import { ReflectionModule } from "./modules/reflection/reflection.module";
 import { PaperTradingModule } from "./modules/paper-trading/paper-trading.module";
 import { RiskModule } from "./modules/risk/risk.module";
 import { LiveTradingModule } from "./modules/live-trading/live-trading.module";
+import { PortfolioModule } from "./modules/portfolio/portfolio.module";
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { LiveTradingModule } from "./modules/live-trading/live-trading.module";
     ReflectionModule,
     PaperTradingModule,
     RiskModule,
+    PortfolioModule,
     LiveTradingModule,
   ],
 })

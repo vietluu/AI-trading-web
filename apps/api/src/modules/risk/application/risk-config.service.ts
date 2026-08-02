@@ -14,7 +14,7 @@ export class RiskConfigService {
       maxPositions: this.config.get<number>("MAX_POSITIONS") ?? 3,
       maxLeverage: this.config.get<number>("MAX_LEVERAGE") ?? 3,
       maxDrawdown: this.config.get<number>("MAX_DRAWDOWN") ?? 0.15,
-      maxExposure: this.config.get<number>("MAX_EXPOSURE") ?? 0.4,
+      maxExposure: this.config.get<number>("MAX_EXPOSURE") ?? 0.6,
       cooldownMs: this.config.get<number>("TRADE_COOLDOWN_MS") ?? 60_000,
       minimumConfidence: this.config.get<number>("MIN_CONFIDENCE") ?? 60,
       stopLossPct: this.config.get<number>("STOP_LOSS_PCT") ?? 0.02,

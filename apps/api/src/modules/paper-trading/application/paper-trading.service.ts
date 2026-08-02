@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import type { DecisionOutput, RiskOutput } from "@platform/shared";
 import type { ExchangeProvider, Prisma } from "@prisma/client";
 import { PrismaService } from "../../../database/prisma.service";
@@ -17,10 +17,15 @@ import {
 } from "../domain/paper-trading";
 import { PaperTradingConfigService } from "./paper-trading-config.service";
 import { RiskManagementService } from "../../risk/application/risk-management.service";
+import { PortfolioService } from "../../portfolio/application/portfolio.service";
 
 type Tx = Prisma.TransactionClient;
 type CloseReason =
-  "SIGNAL_REVERSAL" | "STOP_LOSS" | "TAKE_PROFIT" | "LIQUIDATION";
+  | "SIGNAL_REVERSAL"
+  | "STOP_LOSS"
+  | "TAKE_PROFIT"
+  | "LIQUIDATION"
+  | "PORTFOLIO_FAILSAFE";
 
 export interface ExecuteDecisionInput {
   userId: string;
@@ -30,6 +35,8 @@ export interface ExecuteDecisionInput {
   decision: DecisionOutput;
   /** Latest ATR in quote-currency units; normalized against the execution price. */
   volatilityAtr?: number;
+  /** Portfolio strategy key. Existing callers are assigned to the AI core strategy. */
+  strategyKey?: string;
 }
 
 @Injectable()
@@ -40,6 +47,7 @@ export class PaperTradingService {
     private readonly exchanges: PublicExchangeService,
     private readonly config: PaperTradingConfigService,
     private readonly risk: RiskManagementService,
+    @Optional() private readonly portfolio?: PortfolioService,
   ) {}
 
   async execute(
@@ -47,6 +55,10 @@ export class PaperTradingService {
   ): Promise<{ outcome: string; price: number; risk?: RiskOutput }> {
     const settings = this.config.values;
     if (!settings.enabled) return { outcome: "DISABLED", price: 0 };
+    const strategy = await this.portfolio?.prepareStrategy(
+      input.userId,
+      input.strategyKey ?? "ai-core",
+    );
     const ticker = await this.exchanges.ticker(
       input.provider as DomainExchangeProvider,
       input.symbol,
@@ -138,7 +150,7 @@ export class PaperTradingService {
             orderBy: { createdAt: "desc" },
           }),
         ]);
-        const risk = await this.risk.assess(tx, {
+        let risk = await this.risk.assess(tx, {
           userId: input.userId,
           pipelineRunId: input.pipelineRunId,
           symbol: input.symbol,
@@ -153,11 +165,76 @@ export class PaperTradingService {
           ),
           lastTradeAt: latestOpen?.createdAt,
         });
+        let portfolioFailsafe = false;
+        if (
+          risk.approved &&
+          risk.positionSize &&
+          input.decision.decision !== "WAIT"
+        ) {
+          const portfolioRisk = await this.portfolio?.assessTrade(tx, {
+            userId: input.userId,
+            strategyId: strategy?.id ?? "",
+            pipelineRunId: input.pipelineRunId,
+            symbol: input.symbol,
+            side: input.decision.decision,
+            requestedNotional: risk.positionSize * price,
+            equity: Number(account.equity),
+            peakEquity: Number(account.peakEquity),
+          });
+          portfolioFailsafe = portfolioRisk?.failsafe ?? false;
+          if (portfolioRisk && !portfolioRisk.approved) {
+            risk = {
+              approved: false,
+              reason: portfolioRisk.reason ?? "PORTFOLIO_RISK_REJECTED",
+              riskScore: risk.riskScore,
+            };
+            await tx.riskAssessment.update({
+              where: { pipelineRunId: input.pipelineRunId },
+              data: {
+                approved: false,
+                reason: risk.reason,
+                positionSize: null,
+                leverage: null,
+                stopLoss: null,
+                takeProfit: null,
+              },
+            });
+          } else if (
+            portfolioRisk &&
+            portfolioRisk.approvedNotional < risk.positionSize * price
+          ) {
+            risk = {
+              ...risk,
+              positionSize: round(portfolioRisk.approvedNotional / price, 12),
+            };
+            await tx.riskAssessment.update({
+              where: { pipelineRunId: input.pipelineRunId },
+              data: { positionSize: risk.positionSize },
+            });
+          }
+        }
+        if (portfolioFailsafe && position) {
+          account = await this.close(
+            tx,
+            account.id,
+            position,
+            price,
+            "PORTFOLIO_FAILSAFE",
+            input.pipelineRunId,
+          );
+          position = null;
+          outcome = "PORTFOLIO_FAILSAFE";
+        }
 
         if (
           settings.mode === "PAPER_TRADING" &&
           !["WAIT"].includes(input.decision.decision) &&
-          !["STOP_LOSS", "TAKE_PROFIT", "LIQUIDATION"].includes(outcome)
+          ![
+            "STOP_LOSS",
+            "TAKE_PROFIT",
+            "LIQUIDATION",
+            "PORTFOLIO_FAILSAFE",
+          ].includes(outcome)
         ) {
           const desired = input.decision.decision as PositionSide;
           const requiresExecution = !position || position.side !== desired;
@@ -186,6 +263,7 @@ export class PaperTradingService {
             account = await this.open(
               tx,
               account.id,
+              strategy?.id,
               input.symbol,
               desired,
               price,
@@ -198,10 +276,29 @@ export class PaperTradingService {
                 takeProfit: risk.takeProfit,
               },
             );
+            if (strategy)
+              await this.portfolio?.recordPosition(tx, {
+                strategyId: strategy.id,
+                symbol: input.symbol,
+                side: desired,
+                quantity: risk.positionSize,
+                entryPrice: price,
+                markPrice: price,
+              });
             outcome =
               outcome === "POSITION_REVERSED" ? outcome : "POSITION_OPENED";
-          } else if (position?.side === desired)
+          } else if (position?.side === desired) {
             outcome = "POSITION_MAINTAINED";
+            if (strategy && risk.approved && risk.positionSize)
+              await this.portfolio?.recordPosition(tx, {
+                strategyId: strategy.id,
+                symbol: input.symbol,
+                side: desired,
+                quantity: risk.positionSize,
+                entryPrice: Number(position.entryPrice),
+                markPrice: price,
+              });
+          }
         }
 
         await this.refreshAccount(tx, account.id);
@@ -375,6 +472,7 @@ export class PaperTradingService {
   private async open(
     tx: Tx,
     accountId: string,
+    strategyId: string | undefined,
     symbol: string,
     side: PositionSide,
     referencePrice: number,
@@ -417,6 +515,7 @@ export class PaperTradingService {
     await tx.paperPosition.create({
       data: {
         accountId,
+        strategyId,
         symbol,
         side,
         size: quantity,
@@ -440,6 +539,7 @@ export class PaperTradingService {
     accountId: string,
     position: {
       id: string;
+      strategyId?: string | null;
       symbol: string;
       side: string;
       size: Prisma.Decimal;
@@ -506,6 +606,20 @@ export class PaperTradingService {
         openedAt: position.openedAt,
       },
     });
+    if (position.strategyId)
+      await this.portfolio?.recordTradeResult(
+        tx,
+        position.strategyId,
+        position.symbol,
+        pnl - totalFee,
+        (pnl - totalFee) / (Number(position.entryPrice) * quantity),
+      );
+    if (position.strategyId)
+      await this.portfolio?.closePosition(
+        tx,
+        position.strategyId,
+        position.symbol,
+      );
     await tx.paperPosition.delete({ where: { id: position.id } });
     return tx.paperAccount.update({
       where: { id: accountId },
