@@ -34,7 +34,7 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
 
     switch (job.name) {
       case ExternalDataJobType.POLL_RSS_SOURCES:
-        return this.handlePollRssSources(startTime);
+        return this.handlePollRssSources(startTime, job.data?.sourceId);
 
       case ExternalDataJobType.POLL_BINANCE_ANNOUNCEMENTS:
         return this.handlePollBinanceAnnouncements(startTime);
@@ -54,9 +54,14 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
     }
   }
 
-  private async handlePollRssSources(startTime: number) {
+  private async handlePollRssSources(startTime: number, sourceId?: string) {
     const sources = await this.prisma.externalDataSource.findMany({
-      where: { isEnabled: true },
+      where: {
+        isEnabled: true,
+        provider: 'GENERIC_RSS',
+        sourceType: 'RSS',
+        ...(sourceId ? { sourceId } : {}),
+      },
     });
 
     let totalFetched = 0;
@@ -123,6 +128,12 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
   }
 
   private async handlePollBinanceAnnouncements(startTime: number) {
+    const source = await this.prisma.externalDataSource.findUnique({
+      where: { sourceId: 'binance-announcements' },
+      select: { isEnabled: true },
+    });
+    if (!source?.isEnabled) return { status: 'SKIPPED', reason: 'Source is disabled' };
+
     const announcements = await this.binanceAdapter.fetchLatest();
     let accepted = 0;
 
@@ -170,6 +181,12 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
   }
 
   private async handlePollOkxAnnouncements(startTime: number) {
+    const source = await this.prisma.externalDataSource.findUnique({
+      where: { sourceId: 'okx-announcements' },
+      select: { isEnabled: true },
+    });
+    if (!source?.isEnabled) return { status: 'SKIPPED', reason: 'Source is disabled' };
+
     const announcements = await this.okxAdapter.fetchLatest();
     let accepted = 0;
 

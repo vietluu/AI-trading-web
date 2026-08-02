@@ -33,13 +33,13 @@ export class NewsController {
     const query = queryNewsFilterSchema.parse(rawQuery);
     const { page, limit, symbol, topic, sourceId, language, minImportance, minReliability, status, saved, unread, search, sort } = query;
 
-    const where: Prisma.NewsArticleWhereInput = {};
+    const where: Prisma.NewsArticleWhereInput = await this.trustedArticleScope();
 
     if (sourceId) where.sourceId = sourceId;
     if (language) where.language = language;
     if (minImportance != null) where.importanceScore = { gte: minImportance };
     if (minReliability != null) where.reliabilityScore = { gte: minReliability };
-    if (status) where.status = status as NewsArticleStatus;
+    where.status = status ? (status as NewsArticleStatus) : NewsArticleStatus.ACTIVE;
 
     if (symbol) {
       where.symbols = { some: { symbol: symbol.toUpperCase() } };
@@ -141,9 +141,11 @@ export class NewsController {
   @ApiOperation({ summary: 'Get high-importance news articles (score >= 70)' })
   async getHighImportanceNews(@Query('limit') limitStr?: string) {
     const limit = Math.min(parseInt(limitStr || '10', 10), 50);
+    const trustedScope = await this.trustedArticleScope();
 
     const articles = await this.prisma.newsArticle.findMany({
       where: {
+        AND: [trustedScope],
         importanceScore: { gte: 70 },
         status: 'ACTIVE',
       },
@@ -169,6 +171,7 @@ export class NewsController {
   @ApiOperation({ summary: 'Get all configured news sources' })
   async getNewsSources() {
     return this.prisma.externalDataSource.findMany({
+      where: { isEnabled: true },
       orderBy: { displayName: 'asc' },
     });
   }
@@ -189,8 +192,11 @@ export class NewsController {
   @ApiOperation({ summary: 'Get news articles for a specific trading symbol' })
   async getNewsBySymbol(@Param('symbol') symbol: string) {
     const normSymbol = symbol.toUpperCase();
+    const trustedScope = await this.trustedArticleScope();
     const articles = await this.prisma.newsArticle.findMany({
       where: {
+        AND: [trustedScope],
+        status: NewsArticleStatus.ACTIVE,
         symbols: { some: { symbol: normSymbol } },
       },
       take: 20,
@@ -213,8 +219,9 @@ export class NewsController {
   @Get(':id')
   @ApiOperation({ summary: 'Get detailed news article by ID' })
   async getNewsById(@Param('id') id: string, @CurrentUser() user?: { id: string }) {
-    const article = await this.prisma.newsArticle.findUnique({
-      where: { id },
+    const trustedScope = await this.trustedArticleScope();
+    const article = await this.prisma.newsArticle.findFirst({
+      where: { AND: [{ id }, trustedScope], status: NewsArticleStatus.ACTIVE },
       include: {
         symbols: true,
         topics: true,
@@ -309,5 +316,37 @@ export class NewsController {
     @CurrentUser() user: { id: string },
   ) {
     return this.userNewsStateService.markHidden(user.id, id, isHidden);
+  }
+
+  /**
+   * Only expose articles whose hostname belongs to an enabled configured source.
+   * The sourceId check alone is insufficient because test fixtures can reuse a
+   * production sourceId while pointing canonicalUrl at example.com.
+   */
+  private async trustedArticleScope(): Promise<Prisma.NewsArticleWhereInput> {
+    const sources = await this.prisma.externalDataSource.findMany({
+      where: { isEnabled: true },
+      select: { sourceId: true, baseDomain: true },
+    });
+
+    const sourceScopes: Prisma.NewsArticleWhereInput[] = sources.map((source) => {
+      const domain = source.baseDomain.trim().toLowerCase();
+      const hosts = domain.startsWith('www.') ? [domain] : [domain, `www.${domain}`];
+      const urlScopes = hosts.flatMap((host) => [
+        { canonicalUrl: { startsWith: `https://${host}/`, mode: 'insensitive' as const } },
+        { canonicalUrl: { startsWith: `http://${host}/`, mode: 'insensitive' as const } },
+      ]);
+
+      return {
+        AND: [
+          { sourceId: source.sourceId },
+          { OR: urlScopes },
+        ],
+      };
+    });
+
+    return sourceScopes.length > 0
+      ? { OR: sourceScopes }
+      : { id: '__no_enabled_trusted_news_sources__' };
   }
 }

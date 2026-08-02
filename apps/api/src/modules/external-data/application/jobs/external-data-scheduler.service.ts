@@ -33,6 +33,7 @@ export class ExternalDataSchedulerService implements OnApplicationBootstrap {
         categories: ['news', 'market'],
         reliabilityScore: 85,
         pollIntervalSeconds: 300,
+        isEnabled: true,
       },
       {
         sourceId: 'cointelegraph-rss',
@@ -45,6 +46,7 @@ export class ExternalDataSchedulerService implements OnApplicationBootstrap {
         categories: ['news', 'analysis'],
         reliabilityScore: 80,
         pollIntervalSeconds: 300,
+        isEnabled: true,
       },
       {
         sourceId: 'binance-announcements',
@@ -57,6 +59,7 @@ export class ExternalDataSchedulerService implements OnApplicationBootstrap {
         categories: ['announcement', 'exchange'],
         reliabilityScore: 100,
         pollIntervalSeconds: 300,
+        isEnabled: false,
       },
       {
         sourceId: 'okx-announcements',
@@ -69,6 +72,7 @@ export class ExternalDataSchedulerService implements OnApplicationBootstrap {
         categories: ['announcement', 'exchange'],
         reliabilityScore: 100,
         pollIntervalSeconds: 300,
+        isEnabled: false,
       },
     ];
 
@@ -78,8 +82,15 @@ export class ExternalDataSchedulerService implements OnApplicationBootstrap {
         create: source,
         update: {
           displayName: source.displayName,
+          provider: source.provider,
+          sourceType: source.sourceType,
+          baseDomain: source.baseDomain,
           feedUrl: source.feedUrl,
+          language: source.language,
+          categories: source.categories,
           reliabilityScore: source.reliabilityScore,
+          pollIntervalSeconds: source.pollIntervalSeconds,
+          isEnabled: source.isEnabled,
         },
       });
     }

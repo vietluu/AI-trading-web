@@ -5,12 +5,26 @@ const describeIfDb = process.env.DATABASE_URL ? describe : describe.skip;
 
 describeIfDb('Phase 5 External Data Integration Tests', () => {
   let prisma: PrismaClient;
+  const createdUserIds: string[] = [];
+  const createdArticleIds: string[] = [];
+  const createdSourceIds: string[] = [];
 
   beforeAll(() => {
     prisma = new PrismaClient();
   });
 
   afterAll(async () => {
+    await prisma.userNewsState.deleteMany({
+      where: {
+        OR: [
+          { userId: { in: createdUserIds } },
+          { articleId: { in: createdArticleIds } },
+        ],
+      },
+    });
+    await prisma.newsArticle.deleteMany({ where: { id: { in: createdArticleIds } } });
+    await prisma.externalDataSource.deleteMany({ where: { id: { in: createdSourceIds } } });
+    await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
     await prisma.$disconnect();
   });
 
@@ -28,6 +42,7 @@ describeIfDb('Phase 5 External Data Integration Tests', () => {
         reliabilityScore: 85,
       },
     });
+    createdSourceIds.push(source.id);
     expect(source.id).toBeDefined();
 
     // 2. Create article
@@ -62,6 +77,7 @@ describeIfDb('Phase 5 External Data Integration Tests', () => {
         sourceReferences: true,
       },
     });
+    createdArticleIds.push(article.id);
 
     expect(article.id).toBeDefined();
     expect(article.symbols).toHaveLength(1);
@@ -86,6 +102,7 @@ describeIfDb('Phase 5 External Data Integration Tests', () => {
         passwordHash: 'hash',
       },
     });
+    createdUserIds.push(userA.id, userB.id);
 
     const article = await prisma.newsArticle.create({
       data: {
@@ -100,6 +117,7 @@ describeIfDb('Phase 5 External Data Integration Tests', () => {
         sourceType: 'RSS',
       },
     });
+    createdArticleIds.push(article.id);
 
     // User A saves the article
     await prisma.userNewsState.create({

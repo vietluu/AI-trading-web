@@ -27,6 +27,7 @@ import {
   MarketOrderBookGetTool,
 } from "./infrastructure/tools/market-tools";
 import { MarketToolDataService } from "./infrastructure/tools/market-tool-data.service";
+import { NewsToolDataService } from "./infrastructure/tools/news-tool-data.service";
 
 import {
   NewsArticlesListTool,
@@ -75,6 +76,7 @@ import { MarketDataModule } from "../../market-data/market-data.module";
     ToolLoopRunnerService,
     ToolHealthService,
     MarketToolDataService,
+    NewsToolDataService,
 
     // 18 Safe Tools
     MarketTickerGetTool,

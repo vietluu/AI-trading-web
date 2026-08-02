@@ -2,9 +2,12 @@ import { Injectable } from "@nestjs/common";
 import { z } from "zod";
 import type { ToolDefinition } from "../../domain/contracts/tool-definition.contract";
 import type { ToolExecutionContext } from "../../domain/contracts/tool-context.contract";
+import { NewsToolDataService } from "./news-tool-data.service";
 
 @Injectable()
 export class NewsArticlesListTool implements ToolDefinition<{ symbol?: string; lookbackHours?: number; limit?: number }, Record<string, unknown>> {
+  constructor(private readonly newsData: NewsToolDataService) {}
+
   public readonly name = "news.articles.list";
   public readonly version = 1;
   public readonly displayName = "List News Articles";
@@ -36,21 +39,11 @@ export class NewsArticlesListTool implements ToolDefinition<{ symbol?: string; l
   public readonly schemaHash = "hash-news-articles-list-v1";
 
   public async execute(input: { symbol?: string; lookbackHours?: number; limit?: number }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
-    await Promise.resolve();
     return {
       limit: input.limit || 10,
       symbol: input.symbol,
       lookbackHours: input.lookbackHours || 6,
-      articles: [
-        {
-          id: "news-1",
-          title: "SEC approves Bitcoin ETF options expansion",
-          importance: 85,
-          sentiment: "BULLISH",
-          source: "CoinDesk",
-          publishedAt: new Date().toISOString(),
-        },
-      ],
+      articles: await this.newsData.list(input),
       invocationId: context.invocationId,
     };
   }
@@ -58,6 +51,8 @@ export class NewsArticlesListTool implements ToolDefinition<{ symbol?: string; l
 
 @Injectable()
 export class NewsArticleGetTool implements ToolDefinition<{ articleId: string }, Record<string, unknown>> {
+  constructor(private readonly newsData: NewsToolDataService) {}
+
   public readonly name = "news.article.get";
   public readonly version = 1;
   public readonly displayName = "Get News Article";
@@ -87,15 +82,8 @@ export class NewsArticleGetTool implements ToolDefinition<{ articleId: string },
   public readonly schemaHash = "hash-news-article-get-v1";
 
   public async execute(input: { articleId: string }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
-    await Promise.resolve();
     return {
-      article: {
-        id: input.articleId,
-        title: "Federal Reserve maintains steady rate outlook",
-        content: "Detailed macroeconomic summary report...",
-        importance: 90,
-        publishedAt: new Date().toISOString(),
-      },
+      article: await this.newsData.get(input.articleId),
       invocationId: context.invocationId,
     };
   }
@@ -103,6 +91,8 @@ export class NewsArticleGetTool implements ToolDefinition<{ articleId: string },
 
 @Injectable()
 export class NewsHighImportanceListTool implements ToolDefinition<{ symbol?: string; lookbackHours?: number; limit?: number; minimumImportance?: number }, Record<string, unknown>> {
+  constructor(private readonly newsData: NewsToolDataService) {}
+
   public readonly name = "news.high_importance.list";
   public readonly version = 1;
   public readonly displayName = "List High Importance News";
@@ -135,19 +125,14 @@ export class NewsHighImportanceListTool implements ToolDefinition<{ symbol?: str
   public readonly schemaHash = "hash-news-high-importance-list-v1";
 
   public async execute(input: { symbol?: string; lookbackHours?: number; limit?: number; minimumImportance?: number }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
-    await Promise.resolve();
     return {
       symbol: input.symbol,
       lookbackHours: input.lookbackHours || 6,
       limit: input.limit || 20,
-      articles: [
-        {
-          id: "news-hi-1",
-          title: "Major institutional exchange inflow detected",
-          importance: input.minimumImportance || 70,
-          publishedAt: new Date().toISOString(),
-        },
-      ],
+      articles: await this.newsData.list({
+        ...input,
+        minimumImportance: input.minimumImportance ?? 70,
+      }),
       invocationId: context.invocationId,
     };
   }
