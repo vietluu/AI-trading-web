@@ -23,4 +23,22 @@ export class PortfolioConfigService {
         this.config.get<number>("PORTFOLIO_REBALANCE_INTERVAL_MS") ?? 3_600_000,
     };
   }
+
+  get tradingMode(): "SIGNAL_ONLY" | "PAPER_TRADING" | "DEMO" | "LIVE" {
+    return (
+      this.config.get<"SIGNAL_ONLY" | "PAPER_TRADING" | "DEMO" | "LIVE">(
+        "TRADING_MODE",
+      ) ?? "DEMO"
+    );
+  }
+
+  get liveStaleAfterMs(): number {
+    return (
+      (this.config.get<number>("LIVE_POSITION_SYNC_INTERVAL_MS") ?? 30_000) * 2
+    );
+  }
+
+  get paperInitialBalance(): number {
+    return this.config.get<number>("PAPER_INITIAL_BALANCE") ?? 10_000;
+  }
 }

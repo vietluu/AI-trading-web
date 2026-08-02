@@ -100,24 +100,27 @@ enum StrategyStatus {
 }
 
 model PortfolioStrategy {
-  id             String                @id @default(uuid()) @db.Uuid
-  userId         String                @db.Uuid
-  key            String
-  name           String
-  type           StrategyType
-  kind           StrategyKind
-  symbols        String[]
-  status         StrategyStatus        @default(ACTIVE)
-  disabledReason String?
-  createdAt      DateTime              @default(now())
-  updatedAt      DateTime              @updatedAt
-  user           User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  allocation     StrategyAllocation?
-  performance    StrategyPerformance?
-  positions      StrategyPosition[]
-  riskEvents     PortfolioRiskEvent[]
-  results        StrategyTradeResult[]
-  paperPositions PaperPosition[]
+  id              String                @id @default(uuid()) @db.Uuid
+  userId          String                @db.Uuid
+  key             String
+  name            String
+  type            StrategyType
+  kind            StrategyKind
+  symbols         String[]
+  status          StrategyStatus        @default(ACTIVE)
+  disabledReason  String?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  user            User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  allocation      StrategyAllocation?
+  performance     StrategyPerformance?
+  positions       StrategyPosition[]
+  riskEvents      PortfolioRiskEvent[]
+  results         StrategyTradeResult[]
+  paperPositions  PaperPosition[]
+  riskAssessments RiskAssessment[]
+  liveOrders      LiveOrder[]
+  livePositions   LivePosition[]
 
   @@unique([userId, key])
   @@index([userId, status])
@@ -267,28 +270,31 @@ model PaperPosition {
 }
 
 model RiskAssessment {
-  id             String   @id @default(uuid()) @db.Uuid
-  userId         String   @db.Uuid
-  pipelineRunId  String?  @unique @db.Uuid
+  id             String             @id @default(uuid()) @db.Uuid
+  userId         String             @db.Uuid
+  strategyId     String?            @db.Uuid
+  pipelineRunId  String?            @unique @db.Uuid
   symbol         String
   decision       String
   confidence     Float
   approved       Boolean
   reason         String?
-  positionSize   Decimal? @db.Decimal(30, 12)
+  positionSize   Decimal?           @db.Decimal(30, 12)
   leverage       Int?
-  stopLoss       Decimal? @db.Decimal(24, 8)
-  takeProfit     Decimal? @db.Decimal(24, 8)
+  stopLoss       Decimal?           @db.Decimal(24, 8)
+  takeProfit     Decimal?           @db.Decimal(24, 8)
   riskScore      Float
-  referencePrice Decimal  @db.Decimal(24, 8)
+  referencePrice Decimal            @db.Decimal(24, 8)
   volatility     Float
   exposurePct    Float
   drawdownPct    Float
-  createdAt      DateTime @default(now())
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt      DateTime           @default(now())
+  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  strategy       PortfolioStrategy? @relation(fields: [strategyId], references: [id], onDelete: SetNull)
 
   @@index([userId, createdAt])
   @@index([userId, approved, createdAt])
+  @@index([strategyId, createdAt])
   @@map("risk_assessments")
 }
 
@@ -357,60 +363,67 @@ model PaperSignal {
 // ============================================================
 
 model LiveOrder {
-  id               String   @id @default(uuid()) @db.Uuid
-  userId           String   @db.Uuid
-  connectionId     String   @db.Uuid
-  riskAssessmentId String?  @unique @db.Uuid
+  id               String             @id @default(uuid()) @db.Uuid
+  userId           String             @db.Uuid
+  connectionId     String             @db.Uuid
+  strategyId       String?            @db.Uuid
+  riskAssessmentId String?            @unique @db.Uuid
   exchangeOrderId  String?
   clientOrderId    String
   provider         String
   environment      String
   symbol           String
   side             String
-  type             String   @default("MARKET")
-  quantity         Decimal  @db.Decimal(30, 12)
+  type             String             @default("MARKET")
+  quantity         Decimal            @db.Decimal(30, 12)
   leverage         Int
-  averagePrice     Decimal? @db.Decimal(24, 8)
+  averagePrice     Decimal?           @db.Decimal(24, 8)
   status           String
-  purpose          String   @default("OPEN")
-  reduceOnly       Boolean  @default(false)
-  stopLoss         Decimal? @db.Decimal(24, 8)
-  takeProfit       Decimal? @db.Decimal(24, 8)
+  purpose          String             @default("OPEN")
+  reduceOnly       Boolean            @default(false)
+  stopLoss         Decimal?           @db.Decimal(24, 8)
+  takeProfit       Decimal?           @db.Decimal(24, 8)
   errorCode        String?
   errorMessage     String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  strategy         PortfolioStrategy? @relation(fields: [strategyId], references: [id], onDelete: SetNull)
 
   @@unique([connectionId, clientOrderId])
   @@index([userId, createdAt])
   @@index([connectionId, status])
   @@index([riskAssessmentId])
+  @@index([strategyId, createdAt])
   @@map("live_orders")
 }
 
 model LivePosition {
-  id               String   @id @default(uuid()) @db.Uuid
-  userId           String   @db.Uuid
-  connectionId     String   @db.Uuid
+  id               String             @id @default(uuid()) @db.Uuid
+  userId           String             @db.Uuid
+  connectionId     String             @db.Uuid
+  strategyId       String?            @db.Uuid
   provider         String
   environment      String
   symbol           String
   side             String
-  quantity         Decimal  @db.Decimal(30, 12)
-  entryPrice       Decimal  @db.Decimal(24, 8)
-  markPrice        Decimal? @db.Decimal(24, 8)
-  liquidationPrice Decimal? @db.Decimal(24, 8)
+  quantity         Decimal            @db.Decimal(30, 12)
+  entryPrice       Decimal            @db.Decimal(24, 8)
+  markPrice        Decimal?           @db.Decimal(24, 8)
+  liquidationPrice Decimal?           @db.Decimal(24, 8)
   leverage         Int?
-  unrealizedPnl    Decimal  @default(0) @db.Decimal(24, 8)
-  notional         Decimal? @db.Decimal(24, 8)
+  unrealizedPnl    Decimal            @default(0) @db.Decimal(24, 8)
+  realizedPnl      Decimal?           @db.Decimal(24, 8)
+  notional         Decimal?           @db.Decimal(24, 8)
   syncedAt         DateTime
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  strategy         PortfolioStrategy? @relation(fields: [strategyId], references: [id], onDelete: SetNull)
 
   @@unique([connectionId, symbol, side])
   @@index([userId, syncedAt])
+  @@index([strategyId, syncedAt])
   @@map("live_positions")
 }
 

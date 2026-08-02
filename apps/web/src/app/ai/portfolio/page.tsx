@@ -4,6 +4,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api-client";
 
 interface PortfolioDashboard {
+  source: {
+    mode: string;
+    kind: "EXCHANGE" | "PAPER";
+    environment: string;
+    available: boolean;
+    stale: boolean;
+    syncedAt: string | null;
+    connectionCount: number;
+  };
   config: {
     maxStrategies: number;
     maxTotalExposure: number;
@@ -17,6 +26,7 @@ interface PortfolioDashboard {
     exposurePct: number;
     drawdownPct: number;
     failsafeActive: boolean;
+    pnlKind: string;
   };
   strategies: Array<{
     id: string;
@@ -30,11 +40,13 @@ interface PortfolioDashboard {
     allocation: { weight: number; allocatedCapital: number };
     performance: null | {
       totalTrades: number;
-      winRate: number;
-      returnPct: number;
-      drawdownPct: number;
+      source: string;
+      winRate: number | null;
+      returnPct: number | null;
+      drawdownPct: number | null;
       sharpeRatio: number | null;
       realizedPnl: number;
+      unrealizedPnl: number;
     };
     exposure: number;
   }>;
@@ -56,6 +68,7 @@ interface PortfolioDashboard {
     approvedNotional: number;
     createdAt: string;
   }>;
+  unassignedExposure: number;
 }
 
 const money = new Intl.NumberFormat("en-US", {
@@ -64,6 +77,8 @@ const money = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
 });
 const percent = (value: number): string => `${(value * 100).toFixed(2)}%`;
+const optionalPercent = (value: number | null | undefined): string =>
+  value === null || value === undefined ? "—" : percent(value);
 
 export default function PortfolioPage(): React.JSX.Element {
   const client = useQueryClient();
@@ -96,25 +111,64 @@ export default function PortfolioPage(): React.JSX.Element {
     );
   if (!query.data)
     return <p className="text-muted-foreground">Portfolio unavailable.</p>;
-  const { config, portfolio, strategies, aggregation, riskEvents } = query.data;
+  const {
+    config,
+    source,
+    portfolio,
+    strategies,
+    aggregation,
+    riskEvents,
+    unassignedExposure,
+  } = query.data;
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold">Strategy portfolio</h1>
           <p className="mt-1 text-muted-foreground">
-            Dynamic allocation, global exposure control, and net position
-            aggregation.
+            {source.kind === "EXCHANGE"
+              ? `Exchange-synchronized ${source.environment} portfolio data.`
+              : "Simulated paper-trading portfolio data."}
           </p>
         </div>
-        <button
-          className="rounded-lg border px-4 py-2 text-sm font-semibold disabled:opacity-50"
-          disabled={rebalance.isPending}
-          onClick={() => rebalance.mutate()}
-        >
-          {rebalance.isPending ? "Rebalancing…" : "Rebalance now"}
-        </button>
+        <div className="flex items-center gap-2">
+          <span
+            className={`rounded-full border px-3 py-2 text-xs font-semibold ${source.kind === "EXCHANGE" ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300" : "border-sky-400/30 bg-sky-400/10 text-sky-300"}`}
+          >
+            {source.mode} · {source.kind}
+          </span>
+          <button
+            className="rounded-lg border px-4 py-2 text-sm font-semibold disabled:opacity-50"
+            disabled={rebalance.isPending || !source.available}
+            onClick={() => rebalance.mutate()}
+          >
+            {rebalance.isPending ? "Rebalancing…" : "Rebalance now"}
+          </button>
+        </div>
       </div>
+      {!source.available && source.kind === "EXCHANGE" && (
+        <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
+          No synchronized exchange account snapshot is available. Portfolio
+          values are intentionally not replaced with demo capital. Verify an
+          enabled exchange connection and run Sync.
+        </div>
+      )}
+      {source.stale && source.available && (
+        <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
+          Exchange data is stale. Last synchronized{" "}
+          {source.syncedAt
+            ? new Date(source.syncedAt).toLocaleString()
+            : "unknown"}
+          .
+        </div>
+      )}
+      {unassignedExposure > 0 && (
+        <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
+          {money.format(unassignedExposure)} of real exchange exposure is not
+          attributed to a strategy. Positions opened before this upgrade remain
+          visible but are not assigned retroactively.
+        </div>
+      )}
       {portfolio.failsafeActive && (
         <div className="rounded-lg border border-red-400/30 bg-red-400/10 p-4 text-sm text-red-200">
           Portfolio failsafe is active. New strategy trades are paused.
@@ -123,7 +177,12 @@ export default function PortfolioPage(): React.JSX.Element {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {[
           ["Portfolio equity", money.format(portfolio.equity)],
-          ["Portfolio PnL", money.format(portfolio.pnl)],
+          [
+            portfolio.pnlKind === "EXCHANGE_MARK_TO_MARKET"
+              ? "Exchange PnL"
+              : "Paper PnL",
+            money.format(portfolio.pnl),
+          ],
           [
             "Exposure",
             `${percent(portfolio.exposurePct)} / ${percent(config.maxTotalExposure)}`,
@@ -171,15 +230,15 @@ export default function PortfolioPage(): React.JSX.Element {
                 />
                 <Metric
                   label="Return"
-                  value={percent(strategy.performance?.returnPct ?? 0)}
+                  value={optionalPercent(strategy.performance?.returnPct)}
                 />
                 <Metric
                   label="Drawdown"
-                  value={percent(strategy.performance?.drawdownPct ?? 0)}
+                  value={optionalPercent(strategy.performance?.drawdownPct)}
                 />
                 <Metric
                   label="Win rate"
-                  value={percent(strategy.performance?.winRate ?? 0)}
+                  value={optionalPercent(strategy.performance?.winRate)}
                 />
                 <Metric
                   label="Exposure"

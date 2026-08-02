@@ -10,6 +10,7 @@ type Tx = Prisma.TransactionClient;
 
 export interface AssessRiskInput {
   userId: string;
+  strategyId?: string;
   pipelineRunId: string;
   symbol: string;
   decision: DecisionOutput;
@@ -63,6 +64,7 @@ export class RiskManagementService {
     const row = await tx.riskAssessment.create({
       data: {
         userId: input.userId,
+        strategyId: input.strategyId,
         pipelineRunId: input.pipelineRunId,
         symbol: input.symbol,
         decision: input.decision.decision,

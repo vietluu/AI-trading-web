@@ -131,16 +131,34 @@ export class PortfolioService {
       where: { id: input.strategyId, userId: input.userId },
       include: { allocation: true },
     });
-    const positions = await tx.strategyPosition.findMany({
-      where: { strategy: { userId: input.userId } },
-    });
-    const snapshots: StrategyPositionSnapshot[] = positions.map((position) => ({
-      strategyId: position.strategyId,
-      symbol: position.symbol,
-      side: position.side as PositionSide,
-      quantity: Number(position.quantity),
-      markPrice: Number(position.markPrice),
-    }));
+    const snapshots: StrategyPositionSnapshot[] = this.usesExchangeData()
+      ? (
+          await tx.livePosition.findMany({
+            where: {
+              userId: input.userId,
+              environment: { in: this.exchangeEnvironments() },
+            },
+          })
+        ).map((position) => ({
+          strategyId:
+            position.strategyId ??
+            `unassigned:${position.connectionId}:${position.symbol}:${position.side}`,
+          symbol: position.symbol,
+          side: position.side as PositionSide,
+          quantity: Number(position.quantity),
+          markPrice: Number(position.markPrice ?? position.entryPrice),
+        }))
+      : (
+          await tx.strategyPosition.findMany({
+            where: { strategy: { userId: input.userId } },
+          })
+        ).map((position) => ({
+          strategyId: position.strategyId,
+          symbol: position.symbol,
+          side: position.side as PositionSide,
+          quantity: Number(position.quantity),
+          markPrice: Number(position.markPrice),
+        }));
     const result =
       !strategy || strategy.status !== StrategyStatus.ACTIVE
         ? {
@@ -291,28 +309,53 @@ export class PortfolioService {
 
   async rebalance(userId: string, reason = "MANUAL") {
     await this.ensureDefaults(userId);
-    const account = await this.prisma.paperAccount.findUnique({
-      where: { userId },
-    });
-    const equity = Number(account?.equity ?? 10_000);
+    const account = this.usesExchangeData()
+      ? null
+      : await this.prisma.paperAccount.findUnique({ where: { userId } });
+    const live = this.usesExchangeData() ? await this.liveState(userId) : null;
+    const equity = live
+      ? live.equity
+      : Number(account?.equity ?? this.config.paperInitialBalance);
     const strategies = await this.prisma.portfolioStrategy.findMany({
       where: { userId },
-      include: { performance: true },
+      include: { performance: true, allocation: true },
       orderBy: { createdAt: "asc" },
     });
     const allocations = calculateAllocations(
-      strategies.map((strategy) => ({
-        id: strategy.id,
-        key: strategy.key,
-        status: strategy.status,
-        performance: {
-          totalTrades: strategy.performance?.totalTrades ?? 0,
-          winRate: strategy.performance?.winRate ?? 0,
-          returnPct: strategy.performance?.returnPct ?? 0,
-          drawdownPct: strategy.performance?.drawdownPct ?? 0,
-          sharpeRatio: strategy.performance?.sharpeRatio,
-        },
-      })),
+      strategies.map((strategy) => {
+        const exchangePositions =
+          live?.positions.filter(
+            (position) => position.strategyId === strategy.id,
+          ) ?? [];
+        const pnl = exchangePositions.reduce(
+          (sum, position) =>
+            sum +
+            Number(position.unrealizedPnl) +
+            Number(position.realizedPnl ?? 0),
+          0,
+        );
+        const capital = Number(strategy.allocation?.allocatedCapital ?? 0);
+        return {
+          id: strategy.id,
+          key: strategy.key,
+          status: strategy.status,
+          performance: live
+            ? {
+                totalTrades: 0,
+                winRate: 0.5,
+                returnPct: capital > 0 ? pnl / capital : 0,
+                drawdownPct: 0,
+                sharpeRatio: null,
+              }
+            : {
+                totalTrades: strategy.performance?.totalTrades ?? 0,
+                winRate: strategy.performance?.winRate ?? 0,
+                returnPct: strategy.performance?.returnPct ?? 0,
+                drawdownPct: strategy.performance?.drawdownPct ?? 0,
+                sharpeRatio: strategy.performance?.sharpeRatio,
+              },
+        };
+      }),
       equity,
       this.config.values,
     );
@@ -443,24 +486,38 @@ export class PortfolioService {
 
   async dashboard(userId: string): Promise<Record<string, unknown>> {
     await this.ensureDefaults(userId);
-    const [account, strategies, riskEvents, rebalances] = await Promise.all([
-      this.prisma.paperAccount.findUnique({ where: { userId } }),
-      this.prisma.portfolioStrategy.findMany({
-        where: { userId },
-        include: { allocation: true, performance: true, positions: true },
-        orderBy: { createdAt: "asc" },
-      }),
-      this.prisma.portfolioRiskEvent.findMany({
-        where: { userId },
-        orderBy: { createdAt: "desc" },
-        take: 50,
-      }),
-      this.prisma.portfolioRebalance.findMany({
-        where: { userId },
-        orderBy: { createdAt: "desc" },
-        take: 20,
-      }),
-    ]);
+    const exchangeBacked = this.usesExchangeData();
+    const [account, live, strategies, riskEvents, rebalances, liveOrders] =
+      await Promise.all([
+        exchangeBacked
+          ? Promise.resolve(null)
+          : this.prisma.paperAccount.findUnique({ where: { userId } }),
+        exchangeBacked ? this.liveState(userId) : Promise.resolve(null),
+        this.prisma.portfolioStrategy.findMany({
+          where: { userId },
+          include: { allocation: true, performance: true, positions: true },
+          orderBy: { createdAt: "asc" },
+        }),
+        this.prisma.portfolioRiskEvent.findMany({
+          where: { userId },
+          orderBy: { createdAt: "desc" },
+          take: 50,
+        }),
+        this.prisma.portfolioRebalance.findMany({
+          where: { userId },
+          orderBy: { createdAt: "desc" },
+          take: 20,
+        }),
+        exchangeBacked
+          ? this.prisma.liveOrder.findMany({
+              where: {
+                userId,
+                environment: { in: this.exchangeEnvironments() },
+                status: { not: "FAILED" },
+              },
+            })
+          : Promise.resolve([]),
+      ]);
     if (
       strategies.every(
         (item) => !item.allocation || item.allocation.weight === 0,
@@ -469,65 +526,143 @@ export class PortfolioService {
       await this.rebalance(userId, "INITIAL_ALLOCATION");
       return this.dashboard(userId);
     }
-    const equity = Number(account?.equity ?? 10_000);
-    const peakEquity = Number(account?.peakEquity ?? equity);
-    const positions: StrategyPositionSnapshot[] = strategies.flatMap(
-      (strategy) =>
-        strategy.positions.map((position) => ({
-          strategyId: strategy.id,
+    const equity = live
+      ? live.equity
+      : Number(account?.equity ?? this.config.paperInitialBalance);
+    const peakEquity = live
+      ? live.peakEquity
+      : Number(account?.peakEquity ?? equity);
+    const positions: StrategyPositionSnapshot[] = live
+      ? live.positions.map((position) => ({
+          strategyId:
+            position.strategyId ??
+            `unassigned:${position.connectionId}:${position.symbol}:${position.side}`,
           symbol: position.symbol,
           side: position.side as PositionSide,
           quantity: Number(position.quantity),
-          markPrice: Number(position.markPrice),
-        })),
-    );
+          markPrice: Number(position.markPrice ?? position.entryPrice),
+        }))
+      : strategies.flatMap((strategy) =>
+          strategy.positions.map((position) => ({
+            strategyId: strategy.id,
+            symbol: position.symbol,
+            side: position.side as PositionSide,
+            quantity: Number(position.quantity),
+            markPrice: Number(position.markPrice),
+          })),
+        );
     const grossExposure = positions.reduce(
       (sum, item) => sum + Math.abs(item.quantity * item.markPrice),
       0,
     );
     return {
       config: this.config.values,
+      source: {
+        mode: this.config.tradingMode,
+        kind: exchangeBacked ? "EXCHANGE" : "PAPER",
+        environment: exchangeBacked
+          ? this.exchangeEnvironments().join("/")
+          : "SIMULATED",
+        available: live?.available ?? true,
+        stale: live?.stale ?? false,
+        syncedAt: live?.syncedAt?.toISOString() ?? null,
+        connectionCount: live?.connectionCount ?? 0,
+      },
       portfolio: {
         equity,
         peakEquity,
-        pnl: Number(account?.balance ?? equity) - 10_000,
+        pnl: live
+          ? live.pnl
+          : Number(account?.balance ?? equity) -
+            this.config.paperInitialBalance,
+        pnlKind: live ? "EXCHANGE_MARK_TO_MARKET" : "PAPER_REALIZED",
         grossExposure,
-        exposurePct: equity > 0 ? grossExposure / equity : 1,
+        exposurePct: equity > 0 ? grossExposure / equity : 0,
         drawdownPct:
-          peakEquity > 0 ? Math.max(0, (peakEquity - equity) / peakEquity) : 1,
+          peakEquity > 0 ? Math.max(0, (peakEquity - equity) / peakEquity) : 0,
         failsafeActive: strategies.some(
           (item) => item.disabledReason === "PORTFOLIO_FAILSAFE",
         ),
       },
-      strategies: strategies.map((item) => ({
-        id: item.id,
-        key: item.key,
-        name: item.name,
-        type: item.type,
-        kind: item.kind,
-        symbols: item.symbols,
-        status: item.status,
-        disabledReason: item.disabledReason,
-        allocation: item.allocation
-          ? {
-              weight: item.allocation.weight,
-              allocatedCapital: Number(item.allocation.allocatedCapital),
-            }
-          : { weight: 0, allocatedCapital: 0 },
-        performance: item.performance
-          ? {
-              ...item.performance,
-              realizedPnl: Number(item.performance.realizedPnl),
-              updatedAt: item.performance.updatedAt.toISOString(),
-            }
-          : null,
-        exposure: item.positions.reduce(
+      strategies: strategies.map((item) => {
+        const exchangePositions =
+          live?.positions.filter(
+            (position) => position.strategyId === item.id,
+          ) ?? [];
+        const strategyPnl = exchangePositions.reduce(
           (sum, position) =>
             sum +
-            Math.abs(Number(position.quantity) * Number(position.markPrice)),
+            Number(position.unrealizedPnl) +
+            Number(position.realizedPnl ?? 0),
           0,
-        ),
-      })),
+        );
+        const capital = Number(item.allocation?.allocatedCapital ?? 0);
+        return {
+          id: item.id,
+          key: item.key,
+          name: item.name,
+          type: item.type,
+          kind: item.kind,
+          symbols: item.symbols,
+          status: item.status,
+          disabledReason: item.disabledReason,
+          allocation: item.allocation
+            ? {
+                weight: item.allocation.weight,
+                allocatedCapital: capital,
+              }
+            : { weight: 0, allocatedCapital: 0 },
+          performance: live
+            ? {
+                source: "EXCHANGE_POSITION",
+                totalTrades: liveOrders.filter(
+                  (order) =>
+                    order.strategyId === item.id &&
+                    ["OPEN", "REVERSE"].includes(order.purpose),
+                ).length,
+                winRate: null,
+                returnPct: capital > 0 ? strategyPnl / capital : null,
+                drawdownPct: null,
+                sharpeRatio: null,
+                realizedPnl: exchangePositions.reduce(
+                  (sum, position) => sum + Number(position.realizedPnl ?? 0),
+                  0,
+                ),
+                unrealizedPnl: exchangePositions.reduce(
+                  (sum, position) => sum + Number(position.unrealizedPnl),
+                  0,
+                ),
+                updatedAt: live.syncedAt?.toISOString() ?? null,
+              }
+            : item.performance
+              ? {
+                  ...item.performance,
+                  source: "PAPER_TRADES",
+                  realizedPnl: Number(item.performance.realizedPnl),
+                  unrealizedPnl: item.positions.reduce(
+                    (sum, position) => sum + Number(position.unrealizedPnl),
+                    0,
+                  ),
+                  updatedAt: item.performance.updatedAt.toISOString(),
+                }
+              : null,
+          exposure: live
+            ? this.exchangeExposure(exchangePositions)
+            : item.positions.reduce(
+                (sum, position) =>
+                  sum +
+                  Math.abs(
+                    Number(position.quantity) * Number(position.markPrice),
+                  ),
+                0,
+              ),
+        };
+      }),
+      unassignedExposure: live
+        ? this.exchangeExposure(
+            live.positions.filter((position) => !position.strategyId),
+          )
+        : 0,
       aggregation: aggregatePositions(positions),
       riskEvents: riskEvents.map((item) => ({
         ...item,
@@ -540,6 +675,107 @@ export class PortfolioService {
         equity: Number(item.equity),
         createdAt: item.createdAt.toISOString(),
       })),
+    };
+  }
+
+  private usesExchangeData(): boolean {
+    return ["DEMO", "LIVE"].includes(this.config.tradingMode);
+  }
+
+  private exchangeEnvironments(): string[] {
+    return this.config.tradingMode === "LIVE"
+      ? ["PRODUCTION"]
+      : ["DEMO", "TESTNET"];
+  }
+
+  private exchangeExposure(
+    positions: Array<{
+      notional: Prisma.Decimal | null;
+      quantity: Prisma.Decimal;
+      markPrice: Prisma.Decimal | null;
+      entryPrice: Prisma.Decimal;
+    }>,
+  ): number {
+    return positions.reduce(
+      (sum, position) =>
+        sum +
+        Math.abs(
+          Number(
+            position.notional ??
+              Number(position.quantity) *
+                Number(position.markPrice ?? position.entryPrice),
+          ),
+        ),
+      0,
+    );
+  }
+
+  private async liveState(userId: string) {
+    const environments = this.exchangeEnvironments();
+    const connections = await this.prisma.exchangeConnection.findMany({
+      where: { userId, isEnabled: true, isVerified: true },
+      select: { id: true },
+    });
+    const connectionIds = connections.map((connection) => connection.id);
+    const [positions, snapshots] = await Promise.all([
+      this.prisma.livePosition.findMany({
+        where: {
+          userId,
+          connectionId: { in: connectionIds },
+          environment: { in: environments },
+        },
+      }),
+      this.prisma.liveAccountSnapshot.findMany({
+        where: {
+          userId,
+          connectionId: { in: connectionIds },
+          environment: { in: environments },
+        },
+        orderBy: { syncedAt: "desc" },
+        take: 5_000,
+      }),
+    ]);
+    const latest = [
+      ...new Map(
+        snapshots.map((snapshot) => [snapshot.connectionId, snapshot]),
+      ).values(),
+    ];
+    const peaks = new Map<string, number>();
+    for (const snapshot of snapshots)
+      peaks.set(
+        snapshot.connectionId,
+        Math.max(
+          peaks.get(snapshot.connectionId) ?? 0,
+          Number(snapshot.totalEquity),
+        ),
+      );
+    const syncedAt = latest.reduce<Date | null>(
+      (result, snapshot) =>
+        !result || snapshot.syncedAt > result ? snapshot.syncedAt : result,
+      null,
+    );
+    return {
+      available: latest.length > 0,
+      stale:
+        !syncedAt ||
+        Date.now() - syncedAt.getTime() > this.config.liveStaleAfterMs,
+      syncedAt,
+      connectionCount: latest.length,
+      equity: latest.reduce(
+        (sum, snapshot) => sum + Number(snapshot.totalEquity),
+        0,
+      ),
+      peakEquity: [...peaks.values()].reduce((sum, value) => sum + value, 0),
+      pnl:
+        latest.reduce(
+          (sum, snapshot) => sum + Number(snapshot.unrealizedPnl),
+          0,
+        ) +
+        positions.reduce(
+          (sum, position) => sum + Number(position.realizedPnl ?? 0),
+          0,
+        ),
+      positions,
     };
   }
 }

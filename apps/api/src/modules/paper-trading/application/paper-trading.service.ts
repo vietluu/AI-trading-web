@@ -1,6 +1,6 @@
 import { Injectable, Logger, Optional } from "@nestjs/common";
 import type { DecisionOutput, RiskOutput } from "@platform/shared";
-import type { ExchangeProvider, Prisma } from "@prisma/client";
+import { Prisma, type ExchangeProvider } from "@prisma/client";
 import { PrismaService } from "../../../database/prisma.service";
 import { PublicExchangeService } from "../../../exchange/application/public-exchange.service";
 import { ExchangeProvider as DomainExchangeProvider } from "../../../exchange/domain/exchange.types";
@@ -140,7 +140,7 @@ export class PaperTradingService {
         }
 
         account = await this.refreshAccount(tx, account.id);
-        const [positionsForRisk, latestOpen] = await Promise.all([
+        const [paperPositionsForRisk, paperLatestOpen] = await Promise.all([
           tx.paperPosition.findMany({ where: { accountId: account.id } }),
           tx.simulatedOrder.findFirst({
             where: {
@@ -150,12 +150,80 @@ export class PaperTradingService {
             orderBy: { createdAt: "desc" },
           }),
         ]);
+        let positionsForRisk: Array<{
+          symbol: string;
+          size: Prisma.Decimal;
+          markPrice: Prisma.Decimal;
+        }> = paperPositionsForRisk;
+        let latestOpen: { createdAt: Date } | null = paperLatestOpen;
+        let riskAccount = account;
+        if (["DEMO", "LIVE"].includes(settings.mode)) {
+          const environment =
+            settings.mode === "LIVE"
+              ? "PRODUCTION"
+              : input.provider === "BINANCE_FUTURES"
+                ? "TESTNET"
+                : "DEMO";
+          const connection = await tx.exchangeConnection.findFirst({
+            where: {
+              userId: input.userId,
+              provider: input.provider,
+              environment,
+              isEnabled: true,
+              isVerified: true,
+            },
+          });
+          const [snapshot, peak, exchangePositions, exchangeOrder] = connection
+            ? await Promise.all([
+                tx.liveAccountSnapshot.findFirst({
+                  where: { userId: input.userId, connectionId: connection.id },
+                  orderBy: { syncedAt: "desc" },
+                }),
+                tx.liveAccountSnapshot.aggregate({
+                  where: { userId: input.userId, connectionId: connection.id },
+                  _max: { totalEquity: true },
+                }),
+                tx.livePosition.findMany({
+                  where: { userId: input.userId, connectionId: connection.id },
+                }),
+                tx.liveOrder.findFirst({
+                  where: {
+                    userId: input.userId,
+                    connectionId: connection.id,
+                    purpose: { in: ["OPEN", "REVERSE"] },
+                    status: { not: "FAILED" },
+                  },
+                  orderBy: { createdAt: "desc" },
+                }),
+              ])
+            : [null, { _max: { totalEquity: null } }, [], null];
+          riskAccount = snapshot
+            ? {
+                ...account,
+                balance: snapshot.totalEquity,
+                equity: snapshot.totalEquity,
+                peakEquity: peak._max.totalEquity ?? snapshot.totalEquity,
+              }
+            : {
+                ...account,
+                balance: new Prisma.Decimal(0),
+                equity: new Prisma.Decimal(0),
+                peakEquity: new Prisma.Decimal(0),
+              };
+          positionsForRisk = exchangePositions.map((position) => ({
+            ...position,
+            size: position.quantity,
+            markPrice: position.markPrice ?? position.entryPrice,
+          }));
+          latestOpen = exchangeOrder;
+        }
         let risk = await this.risk.assess(tx, {
           userId: input.userId,
+          strategyId: strategy?.id,
           pipelineRunId: input.pipelineRunId,
           symbol: input.symbol,
           decision: input.decision,
-          account,
+          account: riskAccount,
           positions: positionsForRisk,
           price,
           volatility: this.decisionVolatility(
@@ -178,8 +246,8 @@ export class PaperTradingService {
             symbol: input.symbol,
             side: input.decision.decision,
             requestedNotional: risk.positionSize * price,
-            equity: Number(account.equity),
-            peakEquity: Number(account.peakEquity),
+            equity: Number(riskAccount.equity),
+            peakEquity: Number(riskAccount.peakEquity),
           });
           portfolioFailsafe = portfolioRisk?.failsafe ?? false;
           if (portfolioRisk && !portfolioRisk.approved) {
