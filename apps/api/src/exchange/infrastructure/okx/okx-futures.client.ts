@@ -62,6 +62,14 @@ export class OkxFuturesClient {
     }
   }
 
+  async signedPost(
+    path: string,
+    credentials: ExchangeCredentials,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.signedWrite("POST", path, credentials, body);
+  }
+
   async serverTime(): Promise<number> {
     const response = timeEnvelopeSchema.parse(
       await this.http
@@ -114,6 +122,43 @@ export class OkxFuturesClient {
             : {}),
         },
       },
+    });
+    return this.unwrap(response.data, response.correlationId);
+  }
+
+  private async signedWrite(
+    method: "POST",
+    path: string,
+    credentials: ExchangeCredentials,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    if (credentials.environment === ExchangeEnvironment.TESTNET) {
+      throw ExchangeError.invalidRequest(this.provider, "OKX Futures uses DEMO instead of TESTNET");
+    }
+    const offset = await this.time.offset(
+      this.provider,
+      credentials.environment,
+      () => this.serverTime(),
+    );
+    const timestamp = new Date(Date.now() + offset).toISOString();
+    const serialized = JSON.stringify(body);
+    const response = await this.http.request({
+      provider: this.provider,
+      operation: path,
+      url: `${this.baseUrl}${path}`,
+      init: {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          "OK-ACCESS-KEY": credentials.apiKey,
+          "OK-ACCESS-PASSPHRASE": credentials.passphrase ?? "",
+          "OK-ACCESS-SIGN": this.signatures.sign(timestamp, method, path, serialized, credentials.apiSecret),
+          "OK-ACCESS-TIMESTAMP": timestamp,
+          ...(credentials.environment === ExchangeEnvironment.DEMO ? { "x-simulated-trading": "1" } : {}),
+        },
+        body: serialized,
+      },
+      retryable: false,
     });
     return this.unwrap(response.data, response.correlationId);
   }

@@ -292,6 +292,10 @@ const environmentSchema = z
       .string()
       .url()
       .default("wss://ws.okx.com:8443/ws/v5/public"),
+    OKX_WS_BUSINESS_URL: z
+      .string()
+      .url()
+      .default("wss://ws.okx.com:8443/ws/v5/business"),
     // Phase 6.1: AI Infrastructure
     OPENAI_API_KEY: z.string().optional(),
     ANTHROPIC_API_KEY: z.string().optional(),
@@ -299,8 +303,8 @@ const environmentSchema = z
     OLLAMA_BASE_URL: z.string().url().default("http://localhost:11434"),
     DEFAULT_PROVIDER: z
       .enum(["OPENAI", "ANTHROPIC", "GEMINI", "OLLAMA"])
-      .default("OPENAI"),
-    DEFAULT_MODEL: z.string().default("gpt-5-mini"),
+      .default("GEMINI"),
+    DEFAULT_MODEL: z.string().default("gemini-3.1-flash-lite"),
     DEFAULT_MAX_TOKENS: z.coerce.number().int().default(2048),
     DEFAULT_TEMPERATURE: z.coerce.number().default(0.7),
     DEFAULT_TIMEOUT: z.coerce.number().int().default(30000),
@@ -373,19 +377,19 @@ const environmentSchema = z
       .int()
       .min(1)
       .max(60)
-      .default(5),
+      .default(30),
     AGENT_MAX_RUNS_PER_HOUR: z.coerce
       .number()
       .int()
       .min(1)
       .max(1000)
-      .default(100),
+      .default(500),
     AGENT_MAX_RUNS_PER_DAY: z.coerce
       .number()
       .int()
       .min(1)
       .max(10000)
-      .default(500),
+      .default(5000),
     AGENT_MAX_RETRY_ATTEMPTS: z.coerce.number().int().min(0).max(5).default(2),
     AGENT_IDEMPOTENCY_TTL_SECONDS: z.coerce
       .number()
@@ -446,8 +450,32 @@ const environmentSchema = z
       .default("true")
       .transform((v) => v === "true"),
     TRADING_MODE: z
-      .enum(["SIGNAL_ONLY", "PAPER_TRADING"])
-      .default("SIGNAL_ONLY"),
+      .enum(["SIGNAL_ONLY", "PAPER_TRADING", "DEMO", "LIVE"])
+      .default("DEMO"),
+    GLOBAL_TRADING_ENABLED: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((v) => v === "true"),
+    LIVE_TRADING_ENABLED: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((v) => v === "true"),
+    LIVE_POSITION_SYNC_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((v) => v === "true"),
+    LIVE_POSITION_SYNC_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(5_000)
+      .max(300_000)
+      .default(30_000),
+    LIVE_RISK_APPROVAL_TTL_MS: z.coerce
+      .number()
+      .int()
+      .min(10_000)
+      .max(3_600_000)
+      .default(300_000),
     PAPER_INITIAL_BALANCE: z.coerce
       .number()
       .positive()
@@ -489,6 +517,13 @@ const environmentSchema = z
       .default(0.6),
   })
   .superRefine((environment, context) => {
+    if (environment.TRADING_MODE === "LIVE" && !environment.LIVE_TRADING_ENABLED) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "LIVE_TRADING_ENABLED=true is required when TRADING_MODE=LIVE",
+        path: ["LIVE_TRADING_ENABLED"],
+      });
+    }
     if (environment.SLIPPAGE_MIN > environment.SLIPPAGE_MAX) {
       context.addIssue({
         code: z.ZodIssueCode.custom,

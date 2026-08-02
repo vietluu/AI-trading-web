@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { AIOrchestratorService } from '../../../ai/application/ai-orchestrator.service';
 import { AgentRunRepository } from '../../infrastructure/persistence/agent-run.repository';
 import { AgentContextBuilderService } from '../context/agent-context-builder.service';
@@ -18,6 +19,7 @@ import { AgentError, AgentErrorCode } from '../../domain/errors/agent-errors';
 import { AgentRun, Prisma } from '@prisma/client';
 import type { AIProviderType, ToolCapability } from '@platform/shared';
 import { createHash, randomUUID } from 'node:crypto';
+import { getAgentOutputContract } from '../../domain/agent-output-contracts';
 
 @Injectable()
 export class AgentRunnerService {
@@ -36,6 +38,7 @@ export class AgentRunnerService {
     private readonly agentIdempotencyService: AgentIdempotencyService,
     private readonly agentQuotaService: AgentQuotaService,
     private readonly toolLoopRunnerService: ToolLoopRunnerService,
+    @Optional() private readonly configService?: ConfigService,
   ) {}
 
   public async run(params: {
@@ -181,10 +184,19 @@ export class AgentRunnerService {
 
       runRecord = await this.transitionState(runRecord.id, runRecord.status, AgentRunState.READY, 'Context and prompt prepared');
 
+      // Agent input `provider` identifies the market/exchange data source, not the LLM.
+      const requestedProvider = definition.modelPolicy.preferredProvider as
+        | AIProviderType
+        | undefined;
+      const toolProvider =
+        requestedProvider ??
+        this.configService?.get<AIProviderType>('DEFAULT_PROVIDER') ??
+        'GEMINI';
+
       const resolvedTools = this.agentToolResolverService.resolveTools({
         allowedToolNames: definition.allowedToolNames,
         requiredCapabilities: definition.requiredCapabilities,
-        provider: (definition.modelPolicy.preferredProvider as AIProviderType | undefined) || 'OPENAI',
+        provider: toolProvider,
       });
 
       runRecord = await this.transitionState(runRecord.id, runRecord.status, AgentRunState.RUNNING, 'AI model execution started');
@@ -322,9 +334,9 @@ export class AgentRunnerService {
         aiResponse = await this.aiOrchestratorService.execute({
           userId: userId || '00000000-0000-0000-0000-000000000000',
           sessionId: params.sessionId,
-          provider: (definition.modelPolicy.preferredProvider as AIProviderType | undefined) || 'OPENAI',
+          provider: requestedProvider,
           model: definition.modelPolicy.preferredModel,
-          systemPrompt: renderedPrompt.systemPrompt,
+          systemPrompt: `${renderedPrompt.systemPrompt}\n\n${getAgentOutputContract(definition.type)}`,
           userPrompt: `${renderedPrompt.userPrompt}\n\nValidated tool results:\n${toolContext}`,
           temperature: definition.modelPolicy.defaultTemperature,
           maxTokens: definition.maxOutputTokens,
@@ -347,11 +359,23 @@ export class AgentRunnerService {
 
       runRecord = await this.transitionState(runRecord.id, runRecord.status, AgentRunState.VALIDATING_OUTPUT, 'Validating model response');
 
+      const modelOutput =
+        definition.modelPolicy.requiresStructuredOutput && aiResponse.json
+          ? aiResponse.json
+          : aiResponse.text || {};
+      const normalizedModelOutput =
+        typeof modelOutput === 'object' &&
+        modelOutput !== null &&
+        !Array.isArray(modelOutput)
+          ? {
+              ...modelOutput,
+              ...(definition.includeUsedToolsInOutput ? { usedTools } : {}),
+              generatedAt: new Date().toISOString(),
+            }
+          : modelOutput;
+
       let validation = this.agentOutputValidatorService.validate({
-        rawOutput:
-          definition.modelPolicy.requiresStructuredOutput && aiResponse.json
-            ? aiResponse.json
-            : aiResponse.text || {},
+        rawOutput: normalizedModelOutput,
         outputSchema: definition.outputSchema,
         agentType: definition.type,
         runId: runRecord.id,
@@ -513,10 +537,8 @@ export class AgentRunnerService {
       safeFailureMessage: params.reason,
       completedAt: new Date(),
     });
-    await this.agentIdempotencyService.setResult(
-      params.idempotencyFingerprint,
-      runRecord.id,
-    );
+    // Insufficient/partial outputs must be retried on the next scheduled run.
+    // Caching them would pin a transient provider or market-data failure.
     return runRecord;
   }
 

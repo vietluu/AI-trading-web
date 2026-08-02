@@ -99,17 +99,17 @@ export class ModelRegistryService {
 
     // Google Gemini Models
     this.registerModel({
-      name: "gemini-2.5-pro",
-      displayName: "Gemini 2.5 Pro",
+      name: "gemini-3.1-flash-lite",
+      displayName: "Gemini 3.1 Flash Lite",
       provider: "GEMINI",
-      contextWindow: 1000000,
-      maxOutput: 8192,
+      contextWindow: 1048576,
+      maxOutput: 65536,
       supportsTools: true,
       supportsVision: true,
       supportsStreaming: true,
       supportsJSON: true,
-      inputCostPer1k: 0.00125,
-      outputCostPer1k: 0.005,
+      inputCostPer1k: 0,
+      outputCostPer1k: 0,
     });
 
     this.registerModel({

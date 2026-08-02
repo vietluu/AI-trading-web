@@ -4,7 +4,7 @@ import { Injectable } from "@nestjs/common";
 
 @Injectable()
 export class BinanceSignatureService {
-  query(parameters: Record<string, string | number | undefined>): string {
+  query(parameters: Record<string, string | number | boolean | undefined>): string {
     const query = new URLSearchParams();
     for (const key of Object.keys(parameters).sort()) {
       const value = parameters[key];

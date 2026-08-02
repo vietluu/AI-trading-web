@@ -9,6 +9,7 @@ import { AgentRun } from '@prisma/client';
 import { AgentRunRepository } from '../../infrastructure/persistence/agent-run.repository';
 import { Prisma } from '@prisma/client';
 import { createHash, randomUUID } from 'node:crypto';
+import type { AgentPolicyDecision } from '../../domain/models/agent-policies.model';
 
 export interface ExecuteAgentOptions {
   agentType: AgentType;
@@ -42,8 +43,7 @@ export class AgentExecutionService {
     });
 
     if (policyDecision.status === 'DENY') {
-      const reasonMsgs = policyDecision.reasons.map((r) => r.message).join('; ');
-      throw new AgentError(AgentErrorCode.AGENT_POLICY_DENIED, `Execution denied: ${reasonMsgs}`, false);
+      throw this.toPolicyError(policyDecision);
     }
 
     const definition = this.agentRegistryService.resolve(options.agentType, options.version);
@@ -75,8 +75,7 @@ export class AgentExecutionService {
     });
 
     if (policyDecision.status === 'DENY') {
-      const reasonMsgs = policyDecision.reasons.map((r) => r.message).join('; ');
-      throw new AgentError(AgentErrorCode.AGENT_POLICY_DENIED, `Execution denied: ${reasonMsgs}`, false);
+      throw this.toPolicyError(policyDecision);
     }
 
     const definition = this.agentRegistryService.resolve(options.agentType, options.version);
@@ -137,5 +136,21 @@ export class AgentExecutionService {
     });
 
     return { runId: run.id, status: 'QUEUED' };
+  }
+
+  private toPolicyError(policyDecision: AgentPolicyDecision): AgentError {
+    const reasonMsgs = policyDecision.reasons.map((reason) => reason.message).join('; ');
+    const reasonCodes = new Set(policyDecision.reasons.map((reason) => reason.code));
+    const code = reasonCodes.has('QUOTA_EXCEEDED')
+      ? AgentErrorCode.AGENT_QUOTA_EXCEEDED
+      : reasonCodes.has('BUDGET_EXCEEDED')
+        ? AgentErrorCode.AGENT_BUDGET_EXCEEDED
+        : reasonCodes.has('USER_CONTEXT_REQUIRED')
+          ? AgentErrorCode.AGENT_USER_CONTEXT_REQUIRED
+          : reasonCodes.has('AGENT_NOT_FOUND')
+            ? AgentErrorCode.AGENT_NOT_FOUND
+            : AgentErrorCode.AGENT_POLICY_DENIED;
+
+    return new AgentError(code, `Execution denied: ${reasonMsgs}`, false);
   }
 }

@@ -120,7 +120,8 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
   readonly provider = ExchangeProvider.OKX_FUTURES;
   private readonly logger = new Logger(OkxPublicStreamAdapter.name);
 
-  private ws: WebSocket | null = null;
+  private publicWs: WebSocket | null = null;
+  private businessWs: WebSocket | null = null;
   private state = MarketStreamState.DISCONNECTED;
   private connectedAt?: Date;
   private lastMessageAt?: Date;
@@ -145,9 +146,8 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
   >();
 
   private readonly activeSubscriptions = new Map<string, OkxSubscriptionArg>();
-  private pendingSubscriptions: OkxSubscriptionArg[] = [];
-
   private readonly baseUrl: string;
+  private readonly businessUrl: string;
   private readonly staleAfterMs: number;
   private readonly maxReconnectDelay: number;
   private readonly baseReconnectDelay: number;
@@ -157,6 +157,9 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
     this.baseUrl =
       configService.get<string>("OKX_WS_PUBLIC_URL") ??
       "wss://ws.okx.com:8443/ws/v5/public";
+    this.businessUrl =
+      configService.get<string>("OKX_WS_BUSINESS_URL") ??
+      "wss://ws.okx.com:8443/ws/v5/business";
     this.staleAfterMs =
       (configService.get<number>("MARKET_STALE_AFTER_SECONDS") ?? 30) * 1000;
     this.maxReconnectDelay =
@@ -177,10 +180,17 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
     }
     this.setState(MarketStreamState.CONNECTING);
 
-    this.ws = new WebSocket(this.baseUrl);
+    const publicWs = new WebSocket(this.baseUrl);
+    const businessWs = new WebSocket(this.businessUrl);
+    this.publicWs = publicWs;
+    this.businessWs = businessWs;
 
     return new Promise<void>((resolve, reject) => {
+      let publicOpen = false;
+      let businessOpen = false;
+      let settled = false;
       const timeout = setTimeout(() => {
+        settled = true;
         reject(
           new MarketDataError(
             MarketIncidentCode.PROVIDER_UNAVAILABLE,
@@ -190,18 +200,18 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
         );
       }, 15000);
 
-      this.ws!.on("open", () => {
+      const onOpen = (kind: "public" | "business") => {
+        if (kind === "public") publicOpen = true;
+        else businessOpen = true;
+        if (!publicOpen || !businessOpen || settled) return;
+
+        settled = true;
         clearTimeout(timeout);
         this.connectedAt = new Date();
         this.currentReconnectDelay = this.baseReconnectDelay;
         this.setState(MarketStreamState.CONNECTED);
         this.startStaleDetection();
-
-        // Replay pending subscriptions
-        if (this.pendingSubscriptions.length > 0) {
-          this.sendSubscribe(this.pendingSubscriptions);
-          this.pendingSubscriptions = [];
-        }
+        this.replaySubscriptions();
 
         this.emitEvent({
           type: MarketEventType.STREAM_CONNECTED,
@@ -210,59 +220,81 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
         });
 
         resolve();
-      });
+      };
 
-      this.ws!.on("message", (data: WebSocket.Data) => {
-        this.lastMessageAt = new Date();
-        this.messageCount++;
-        try {
-          this.handleMessage(toWebSocketMessage(data));
-        } catch {
-          this.malformedMessageCount++;
-        }
-      });
+      const attachHandlers = (
+        ws: WebSocket,
+        kind: "public" | "business",
+      ) => {
+        ws.on("open", () => onOpen(kind));
 
-      this.ws!.on("error", (error: Error) => {
-        this.logger.error({
-          event: "ws_error",
-          message: error.message,
-        });
-        this.lastErrorCode = "WS_ERROR";
-        this.lastErrorAt = new Date();
-        this.emitError({
-          provider: this.provider,
-          code: "WS_ERROR",
-          message: error.message,
-          timestamp: new Date(),
-          recoverable: true,
-        });
-      });
-
-      this.ws!.on("close", (code: number, reason: Buffer) => {
-        clearTimeout(timeout);
-        this.stopStaleDetection();
-        const reasonStr = Buffer.isBuffer(reason)
-          ? reason.toString("utf8")
-          : String(reason);
-        this.logger.warn({
-          event: "ws_close",
-          code,
-          reason: reasonStr,
+        ws.on("message", (data: WebSocket.Data) => {
+          this.lastMessageAt = new Date();
+          this.messageCount++;
+          try {
+            this.handleMessage(toWebSocketMessage(data));
+          } catch {
+            this.malformedMessageCount++;
+          }
         });
 
-        this.emitEvent({
-          type: MarketEventType.STREAM_DISCONNECTED,
-          metadata: this.createMetadata("", "connection"),
-          payload: {
+        ws.on("error", (error: Error) => {
+          this.logger.error({
+            event: "ws_error",
+            stream: kind,
+            message: error.message,
+          });
+          this.lastErrorCode = "WS_ERROR";
+          this.lastErrorAt = new Date();
+          this.emitError({
             provider: this.provider,
-            reason: `${code}: ${reasonStr}`,
-          },
+            code: "WS_ERROR",
+            message: `${kind}: ${error.message}`,
+            timestamp: new Date(),
+            recoverable: true,
+          });
         });
 
-        if (this.state !== MarketStreamState.DISCONNECTED) {
-          this.scheduleReconnect();
-        }
-      });
+        ws.on("close", (code: number, reason: Buffer) => {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timeout);
+            reject(
+              new MarketDataError(
+                MarketIncidentCode.PROVIDER_UNAVAILABLE,
+                this.provider,
+                `${kind} stream closed during connection`,
+              ),
+            );
+          }
+          this.stopStaleDetection();
+          const reasonStr = Buffer.isBuffer(reason)
+            ? reason.toString("utf8")
+            : String(reason);
+          this.logger.warn({
+            event: "ws_close",
+            stream: kind,
+            code,
+            reason: reasonStr,
+          });
+
+          this.emitEvent({
+            type: MarketEventType.STREAM_DISCONNECTED,
+            metadata: this.createMetadata("", "connection"),
+            payload: {
+              provider: this.provider,
+              reason: `${kind} ${code}: ${reasonStr}`,
+            },
+          });
+
+          if (this.state !== MarketStreamState.DISCONNECTED) {
+            this.scheduleReconnect();
+          }
+        });
+      };
+
+      attachHandlers(publicWs, "public");
+      attachHandlers(businessWs, "business");
     });
   }
 
@@ -273,16 +305,18 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    if (this.ws) {
-      this.ws.removeAllListeners();
+    for (const ws of [this.publicWs, this.businessWs]) {
+      if (!ws) continue;
+      ws.removeAllListeners();
       if (
-        this.ws.readyState === WebSocket.OPEN ||
-        this.ws.readyState === WebSocket.CONNECTING
+        ws.readyState === WebSocket.OPEN ||
+        ws.readyState === WebSocket.CONNECTING
       ) {
-        this.ws.close(1000, "Client disconnect");
+        ws.close(1000, "Client disconnect");
       }
-      this.ws = null;
     }
+    this.publicWs = null;
+    this.businessWs = null;
     this.activeSubscriptions.clear();
     return Promise.resolve();
   }
@@ -336,14 +370,7 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
       this.activeSubscriptions.delete(`${arg.channel}:${arg.instId}`);
     }
 
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(
-        JSON.stringify({
-          op: "unsubscribe",
-          args,
-        }),
-      );
-    }
+    this.sendByStream("unsubscribe", args);
     return Promise.resolve();
   }
 
@@ -395,20 +422,29 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
     for (const arg of args) {
       this.activeSubscriptions.set(`${arg.channel}:${arg.instId}`, arg);
     }
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.sendSubscribe(args);
-    } else {
-      this.pendingSubscriptions.push(...args);
-    }
+    this.sendByStream("subscribe", args);
   }
 
-  private sendSubscribe(args: OkxSubscriptionArg[]): void {
-    this.ws?.send(
-      JSON.stringify({
-        op: "subscribe",
-        args,
-      }),
-    );
+  private replaySubscriptions(): void {
+    this.sendByStream("subscribe", Array.from(this.activeSubscriptions.values()));
+  }
+
+  private sendByStream(
+    op: "subscribe" | "unsubscribe",
+    args: OkxSubscriptionArg[],
+  ): void {
+    const publicArgs = args.filter((arg) => !arg.channel.startsWith("candle"));
+    const businessArgs = args.filter((arg) => arg.channel.startsWith("candle"));
+
+    if (publicArgs.length > 0 && this.publicWs?.readyState === WebSocket.OPEN) {
+      this.publicWs.send(JSON.stringify({ op, args: publicArgs }));
+    }
+    if (
+      businessArgs.length > 0 &&
+      this.businessWs?.readyState === WebSocket.OPEN
+    ) {
+      this.businessWs.send(JSON.stringify({ op, args: businessArgs }));
+    }
   }
 
   private handleMessage(raw: string): void {
@@ -582,6 +618,12 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
 
   private scheduleReconnect(): void {
     if (
+      this.state === MarketStreamState.RECONNECTING ||
+      this.state === MarketStreamState.DISCONNECTED
+    ) {
+      return;
+    }
+    if (
       this.maxReconnectAttempts > 0 &&
       this.reconnectCount >= this.maxReconnectAttempts
     ) {
@@ -590,6 +632,18 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
     }
 
     this.setState(MarketStreamState.RECONNECTING);
+    for (const ws of [this.publicWs, this.businessWs]) {
+      if (!ws) continue;
+      ws.removeAllListeners();
+      if (
+        ws.readyState === WebSocket.OPEN ||
+        ws.readyState === WebSocket.CONNECTING
+      ) {
+        ws.close(1000, "Reconnect both OKX streams");
+      }
+    }
+    this.publicWs = null;
+    this.businessWs = null;
     this.reconnectCount++;
     this.lastReconnectAt = new Date();
 
@@ -609,8 +663,6 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
     });
 
     this.reconnectTimer = setTimeout(() => {
-      // Re-queue all active subscriptions as pending
-      this.pendingSubscriptions = Array.from(this.activeSubscriptions.values());
       void this.connect().catch((error) => {
         this.logger.error({
           event: "ws_reconnect_failed",
@@ -624,8 +676,10 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
     this.stopStaleDetection();
     this.staleTimer = setInterval(() => {
       // Send ping
-      if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send("ping");
+      for (const ws of [this.publicWs, this.businessWs]) {
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send("ping");
+        }
       }
 
       if (!this.lastMessageAt) return;

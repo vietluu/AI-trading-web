@@ -12,9 +12,9 @@ export class AgentQuotaService {
   ) {}
 
   async checkQuota(userId: string): Promise<{ allowed: boolean; reason?: string }> {
-    const maxRpm = this.configService.get<number>('AGENT_MAX_RUNS_PER_MINUTE', 5);
-    const maxRph = this.configService.get<number>('AGENT_MAX_RUNS_PER_HOUR', 100);
-    const maxRpd = this.configService.get<number>('AGENT_MAX_RUNS_PER_DAY', 500);
+    const maxRpm = this.configService.get<number>('AGENT_MAX_RUNS_PER_MINUTE', 30);
+    const maxRph = this.configService.get<number>('AGENT_MAX_RUNS_PER_HOUR', 500);
+    const maxRpd = this.configService.get<number>('AGENT_MAX_RUNS_PER_DAY', 5000);
 
     const minKey = `ai:agent:quota:user:${userId}:rpm`;
     const hourKey = `ai:agent:quota:user:${userId}:rph`;

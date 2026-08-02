@@ -26,6 +26,8 @@ import {
   type InstrumentQuery,
   type KlineQuery,
   type OpenOrderQuery,
+  type PlaceOrderCommand,
+  type CancelOrderCommand,
   type OrderStatus,
   type OrderType,
   type PositionSide,
@@ -510,6 +512,44 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
       positionMode: positionMode.dualSidePosition ? "HEDGE" : "ONE_WAY",
       canTrade: account.canTrade,
     };
+  }
+
+  async placeOrder(
+    credentials: ExchangeCredentials,
+    command: PlaceOrderCommand,
+  ): Promise<ExchangeOrder> {
+    const symbol = toBinanceSymbol(command.symbol);
+    await this.client.signedPost("/fapi/v1/leverage", credentials, {
+      symbol,
+      leverage: command.leverage,
+    });
+    const value = orderSchema.parse(
+      await this.client.signedPost("/fapi/v1/order", credentials, {
+        symbol,
+        side: command.side,
+        type: "MARKET",
+        quantity: command.quantity,
+        newClientOrderId: command.clientOrderId,
+        reduceOnly: command.reduceOnly,
+        positionSide: command.positionSide,
+        newOrderRespType: "RESULT",
+      }),
+    );
+    return this.order(value);
+  }
+
+  async cancelOrder(
+    credentials: ExchangeCredentials,
+    command: CancelOrderCommand,
+  ): Promise<ExchangeOrder> {
+    const value = orderSchema.parse(
+      await this.client.signedDelete("/fapi/v1/order", credentials, {
+        symbol: toBinanceSymbol(command.symbol),
+        orderId: command.orderId,
+        origClientOrderId: command.clientOrderId,
+      }),
+    );
+    return this.order(value);
   }
 
   private instrument(item: z.infer<typeof symbolSchema>): ExchangeInstrument {

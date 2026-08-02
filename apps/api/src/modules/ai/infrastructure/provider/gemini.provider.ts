@@ -40,7 +40,7 @@ export class GeminiProvider implements LLMProvider {
   public async chat(options: LLMRequestOptions): Promise<LLMResponse> {
     const apiKey = this.getApiKey();
     const startTime = Date.now();
-    const model = options.model || "gemini-2.5-pro";
+    const model = options.model || "gemini-3.1-flash-lite";
 
     if (!apiKey) {
       if (process.env.NODE_ENV === "test" || process.env.MOCK_AI_RESPONSES === "true") {
@@ -173,7 +173,7 @@ export class GeminiProvider implements LLMProvider {
     options: LLMRequestOptions
   ): AsyncIterable<LLMStreamChunk> {
     const apiKey = this.getApiKey();
-    const model = options.model || "gemini-2.5-pro";
+    const model = options.model || "gemini-3.1-flash-lite";
 
     if (!apiKey || process.env.MOCK_AI_RESPONSES === "true") {
       const mockText = `[Gemini Stream Mock Response for: ${options.userPrompt.slice(0, 30)}]`;
@@ -273,7 +273,7 @@ export class GeminiProvider implements LLMProvider {
     options: LLMRequestOptions,
     startTime: number
   ): LLMResponse {
-    const model = options.model || "gemini-2.5-pro";
+    const model = options.model || "gemini-3.1-flash-lite";
     const text = options.responseFormat === "json" || options.jsonSchema
       ? JSON.stringify({ status: "success", mockResult: `Gemini response for: ${options.userPrompt}` })
       : `[Gemini ${model} Mock Response]: Analyzed prompt: "${options.userPrompt.slice(0, 100)}"`;

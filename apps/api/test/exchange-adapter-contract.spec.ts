@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { ExchangeInterval } from "../src/exchange/domain/exchange.types";
+import {
+  ExchangeEnvironment,
+  ExchangeInterval,
+} from "../src/exchange/domain/exchange.types";
 import { BinanceFuturesAdapter } from "../src/exchange/infrastructure/binance/binance-futures.adapter";
 import type { BinanceFuturesClient } from "../src/exchange/infrastructure/binance/binance-futures.client";
 import { OkxFuturesAdapter } from "../src/exchange/infrastructure/okx/okx-futures.adapter";
@@ -124,5 +127,89 @@ describe("exchange adapter normalization contract", () => {
     expect(okxKline?.close).toBe("1.50000000");
     expect(binanceKline?.isClosed).toBe(true);
     expect(okxKline?.isClosed).toBe(true);
+  });
+
+  it("normalizes blank OKX account totals before persistence", async () => {
+    const adapter = new OkxFuturesAdapter({
+      signedGet: vi.fn().mockResolvedValue([
+        {
+          totalEq: "76228.69",
+          availEq: "",
+          upl: "",
+          uTime: "1700000000000",
+          details: [
+            {
+              ccy: "BTC",
+              cashBal: "1",
+              availBal: "1",
+              upl: "0",
+            },
+            {
+              ccy: "USDT",
+              cashBal: "50000",
+              availBal: "48000",
+              upl: "125.50",
+            },
+          ],
+        },
+      ]),
+    } as unknown as OkxFuturesClient);
+
+    const account = await adapter.getAccountSummary({
+      apiKey: "demo-key",
+      apiSecret: "demo-secret",
+      passphrase: "demo-passphrase",
+      environment: ExchangeEnvironment.DEMO,
+    });
+
+    expect(account.availableBalance).toBe("48000");
+    expect(account.totalUnrealizedPnl).toBe("125.50");
+  });
+
+  it("converts base-asset risk size to OKX contract size", async () => {
+    const signedPost = vi
+      .fn()
+      .mockResolvedValueOnce([{ lever: "3" }])
+      .mockResolvedValueOnce([
+        { ordId: "123", clOrdId: "phase9-order", sCode: "0", sMsg: "" },
+      ]);
+    const adapter = new OkxFuturesAdapter({
+      publicGet: vi.fn().mockResolvedValue([
+        {
+          instId: "BTC-USDT-SWAP",
+          instType: "SWAP",
+          state: "live",
+          settleCcy: "USDT",
+          ctVal: "0.01",
+          tickSz: "0.1",
+          lotSz: "1",
+          minSz: "1",
+        },
+      ]),
+      signedPost,
+    } as unknown as OkxFuturesClient);
+
+    await adapter.placeOrder(
+      {
+        apiKey: "demo-key",
+        apiSecret: "demo-secret",
+        passphrase: "demo-passphrase",
+        environment: ExchangeEnvironment.DEMO,
+      },
+      {
+        symbol: "BTC-USDT",
+        side: "BUY",
+        quantity: "0.03",
+        leverage: 3,
+        clientOrderId: "phase9-order",
+      },
+    );
+
+    expect(signedPost).toHaveBeenNthCalledWith(
+      2,
+      "/api/v5/trade/order",
+      expect.anything(),
+      expect.objectContaining({ sz: "3" }),
+    );
   });
 });

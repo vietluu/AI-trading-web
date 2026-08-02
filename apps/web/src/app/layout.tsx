@@ -91,6 +91,12 @@ export default function RootLayout({
                 </Link>
                 <Link
                   className="rounded-lg px-3 py-2 hover:bg-muted"
+                  href="/ai/live-trading"
+                >
+                  Live Trading
+                </Link>
+                <Link
+                  className="rounded-lg px-3 py-2 hover:bg-muted"
                   href="/settings/exchanges"
                 >
                   Exchanges
@@ -108,7 +114,7 @@ export default function RootLayout({
                   Account
                 </Link>
                 <span className="ml-1 rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-xs font-medium text-amber-200">
-                  Live trading disabled
+                  Execution safety gated
                 </span>
               </nav>
             </header>

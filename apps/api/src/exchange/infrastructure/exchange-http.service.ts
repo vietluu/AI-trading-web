@@ -12,6 +12,7 @@ export interface ExchangeHttpRequest {
   url: string;
   init?: RequestInit;
   correlationId?: string;
+  retryable?: boolean;
 }
 
 export interface ExchangeHttpResponse {
@@ -61,7 +62,7 @@ export class ExchangeHttpService {
             correlationId,
             data,
           );
-          if (retryCount < this.maxRetries && error.retryable) {
+          if (request.retryable !== false && retryCount < this.maxRetries && error.retryable) {
             await this.backoff(
               retryCount++,
               response.headers.get("retry-after"),
@@ -98,7 +99,7 @@ export class ExchangeHttpService {
           undefined,
           correlationId,
         );
-        if (retryCount < this.maxRetries) {
+        if (request.retryable !== false && retryCount < this.maxRetries) {
           await this.backoff(retryCount++);
           continue;
         }
