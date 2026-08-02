@@ -329,7 +329,11 @@ export class PortfolioService {
             weight: allocation.weight,
             allocatedCapital: allocation.allocatedCapital,
           },
-          create: allocation,
+          create: {
+            strategyId: allocation.strategyId,
+            weight: allocation.weight,
+            allocatedCapital: allocation.allocatedCapital,
+          },
         });
         if (disabledIds.has(allocation.strategyId)) {
           await tx.portfolioStrategy.update({

@@ -9,6 +9,15 @@ export const STRATEGY_KEYS = [
 ] as const;
 export type StrategyKey = (typeof STRATEGY_KEYS)[number];
 
+/** Portfolio routing parameters must not leak into strict analyst input schemas. */
+export function analysisParams(
+  params: Record<string, unknown>,
+): Record<string, unknown> {
+  const result = { ...params };
+  delete result.strategyId;
+  return result;
+}
+
 /** Converts the shared analysis snapshot into an independent strategy decision. */
 export function decisionForStrategy(
   key: string,

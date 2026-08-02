@@ -16,7 +16,10 @@ import { resolvePipelineDefinition } from "../domain/pipeline.definition";
 import type { PipelineJob } from "../infrastructure/pipeline-queue.service";
 import { PaperTradingService } from "../../paper-trading/application/paper-trading.service";
 import { LiveTradingService } from "../../live-trading/application/live-trading.service";
-import { decisionForStrategy } from "../../portfolio/domain/strategy-decision";
+import {
+  analysisParams,
+  decisionForStrategy,
+} from "../../portfolio/domain/strategy-decision";
 
 class PipelineCancelledError extends Error {}
 
@@ -76,7 +79,7 @@ export class PipelineRunnerService {
           symbol: job.symbol,
           provider: job.provider,
           ...definition.defaultParams,
-          ...job.params,
+          ...analysisParams(job.params),
         });
         const result = await this.withTimeout(
           this.fusion.runDetailed({

@@ -1,6 +1,9 @@
 import type { DecisionOutput, FusionInput } from "@platform/shared";
 import { describe, expect, it } from "vitest";
-import { decisionForStrategy } from "../../src/modules/portfolio/domain/strategy-decision";
+import {
+  analysisParams,
+  decisionForStrategy,
+} from "../../src/modules/portfolio/domain/strategy-decision";
 
 const base = {
   decision: "LONG",
@@ -39,6 +42,12 @@ const analyses = {
 } as FusionInput;
 
 describe("independent strategy decisions", () => {
+  it("removes portfolio routing fields before strict analyst validation", () => {
+    expect(
+      analysisParams({ strategyId: "trend", interval: "15m", maxItems: 50 }),
+    ).toEqual({ interval: "15m", maxItems: 50 });
+  });
+
   it.each([
     ["ai-core", "LONG", 75],
     ["trend", "LONG", 80],
