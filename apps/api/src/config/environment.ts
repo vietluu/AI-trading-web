@@ -377,19 +377,19 @@ const environmentSchema = z
       .int()
       .min(1)
       .max(60)
-      .default(12),
+      .default(30),
     AGENT_MAX_RUNS_PER_HOUR: z.coerce
       .number()
       .int()
       .min(1)
       .max(1000)
-      .default(100),
+      .default(500),
     AGENT_MAX_RUNS_PER_DAY: z.coerce
       .number()
       .int()
       .min(1)
       .max(10000)
-      .default(1000),
+      .default(5000),
     AGENT_MAX_RETRY_ATTEMPTS: z.coerce.number().int().min(0).max(5).default(2),
     AGENT_IDEMPOTENCY_TTL_SECONDS: z.coerce
       .number()

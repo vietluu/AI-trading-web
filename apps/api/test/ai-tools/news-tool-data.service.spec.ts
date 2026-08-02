@@ -69,12 +69,9 @@ describe("NewsToolDataService", () => {
       }),
     );
     expect(JSON.stringify(result)).not.toContain("Synthetic test article");
-    expect(prisma.newsArticle.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          symbols: { some: { symbol: { in: ["BTC", "BTC-USDT"] } } },
-        }),
-      }),
+    expect(prisma.newsArticle.findMany).toHaveBeenCalledOnce();
+    expect(JSON.stringify(prisma.newsArticle.findMany.mock.calls)).toContain(
+      '"symbols":{"some":{"symbol":{"in":["BTC","BTC-USDT"]}}}',
     );
   });
 
