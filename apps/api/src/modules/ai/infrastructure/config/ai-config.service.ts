@@ -23,7 +23,7 @@ export class AIConfigService {
         preferredProvider:
           this.config.get<AIProviderType>("DEFAULT_PROVIDER") ?? "OPENAI",
         preferredModel:
-          this.config.get<string>("DEFAULT_MODEL") ?? "gpt-5-mini",
+          this.config.get<string>("DEFAULT_MODEL") ?? "openai/gpt-oss-20b:free",
         temperature: 0.7,
         maxTokens: 2048,
         timeoutMs: 30000,

@@ -304,7 +304,7 @@ const environmentSchema = z
     DEFAULT_PROVIDER: z
       .enum(["OPENAI", "ANTHROPIC", "GEMINI", "OLLAMA"])
       .default("OPENAI"),
-    DEFAULT_MODEL: z.string().default("gpt-5-mini"),
+    DEFAULT_MODEL: z.string().default("openai/gpt-oss-20b:free"),
     DEFAULT_MAX_TOKENS: z.coerce.number().int().default(2048),
     DEFAULT_TEMPERATURE: z.coerce.number().default(0.7),
     DEFAULT_TIMEOUT: z.coerce.number().int().default(30000),
