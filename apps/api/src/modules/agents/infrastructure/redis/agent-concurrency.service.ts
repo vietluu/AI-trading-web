@@ -64,17 +64,14 @@ export class AgentConcurrencyService {
 
   private async decrementSafe(key: string): Promise<void> {
     try {
-      const val = await this.redisService.get(key);
-      if (val) {
-        const current = parseInt(val, 10);
-        if (current > 1) {
-          await this.redisService.setWithTtl(key, (current - 1).toString(), 120);
-        } else {
-          await this.redisService.delete(key);
-        }
-      }
+      // Use atomic DECR instead of GET+SET to avoid race conditions that cause
+      // the counter to get stuck above the limit and permanently block agents.
+      await this.redisService.decrement(key);
     } catch (error) {
-      this.logger.error(`Error safely decrementing concurrency for key ${key}`, error instanceof Error ? error.stack : String(error));
+      this.logger.error(
+        `Error safely decrementing concurrency for key ${key}`,
+        error instanceof Error ? error.stack : String(error),
+      );
     }
   }
 }

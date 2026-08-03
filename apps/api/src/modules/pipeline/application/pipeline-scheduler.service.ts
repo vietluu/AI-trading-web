@@ -111,44 +111,63 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
               (!schedule.lastTriggeredAt ||
                 now.getTime() - schedule.lastTriggeredAt.getTime() >= 60_000);
         if (!due) continue;
+
+        // Stamp lastTriggeredAt before enqueuing so concurrent ticks don't
+        // double-fire the same window.
         try {
           await this.prisma.pipelineSchedule.update({
             where: { id: schedule.id },
             data: { lastTriggeredAt: now },
           });
-          await Promise.all(
-            schedule.symbols.flatMap((symbol) =>
-              schedule.strategyIds.map((strategyId) =>
-                this.pipeline.trigger(
-                  schedule.userId,
-                  {
-                    pipelineId: schedule.pipelineId,
-                    symbol,
-                    provider: schedule.provider,
-                    params: { strategyId },
-                  },
-                  "SCHEDULE",
-                  {
-                    scheduleId: schedule.id,
-                    maxRunsPerHour: schedule.maxRunsPerHour,
-                  },
-                ),
-              ),
-            ),
-          );
         } catch (error) {
           this.logger.error({
-            event: "pipeline_schedule_trigger_failed",
+            event: "pipeline_schedule_stamp_failed",
             scheduleId: schedule.id,
-            message:
-              error instanceof Error
-                ? error.message
-                : "Unknown scheduler error",
+            message: error instanceof Error ? error.message : "Unknown error",
           });
+          continue; // Skip this schedule if we can't stamp it
+        }
+
+        // Fire each symbol×strategy pair independently so one failure doesn't
+        // block the others. Pipeline execution is handled asynchronously by
+        // BullMQ, so this loop completes quickly.
+        for (const symbol of schedule.symbols) {
+          for (const strategyId of schedule.strategyIds) {
+            this.pipeline
+              .trigger(
+                schedule.userId,
+                {
+                  pipelineId: schedule.pipelineId,
+                  symbol,
+                  provider: schedule.provider,
+                  params: { strategyId },
+                },
+                "SCHEDULE",
+                {
+                  scheduleId: schedule.id,
+                  maxRunsPerHour: schedule.maxRunsPerHour,
+                },
+              )
+              .catch((error: unknown) => {
+                this.logger.error({
+                  event: "pipeline_schedule_trigger_failed",
+                  scheduleId: schedule.id,
+                  symbol,
+                  strategyId,
+                  message:
+                    error instanceof Error
+                      ? error.message
+                      : "Unknown scheduler error",
+                });
+              });
+          }
         }
       }
     } finally {
+      // Release the lock immediately after enqueuing — pipeline execution
+      // runs in BullMQ workers and must not hold up the next tick.
       this.running = false;
     }
   }
+
 }

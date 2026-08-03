@@ -20,7 +20,7 @@ export class PipelineService {
     const id = randomUUID(); const now = new Date(); const traceId = randomUUID(); const correlationId = randomUUID();
     const hourlyLimit = Math.min(options.maxRunsPerHour ?? this.config.maxRunsPerHour, this.config.maxRunsPerHour);
     const [hourlyCount, latest] = await Promise.all([this.repository.countRecent(userId, new Date(Date.now() - 60 * 60_000), { status: { not: 'SKIPPED' } }), this.repository.latestForSymbol(userId, input.symbol, input.provider)]);
-    const skippedReason = pipelineSkipReason({ hourlyCount, hourlyLimit, latestCreatedAt: latest?.createdAt, now, cooldownMs: this.config.cooldownMs, replay: trigger === 'REPLAY' });
+    const skippedReason = pipelineSkipReason({ hourlyCount, hourlyLimit, latestCreatedAt: latest?.createdAt, now, cooldownMs: this.config.cooldownMs, isScheduled: trigger === 'SCHEDULE', replay: trigger === 'REPLAY' });
     const run = await this.repository.createRun({ id, userId, pipelineId: input.pipelineId, symbol: input.symbol, provider: input.provider, trigger, params: input.params, traceId, correlationId, replayOfRunId: options.replayOfRunId, scheduleId: options.scheduleId, storedContext: options.storedContext });
     await this.repository.createSteps(id, definition.steps);
     if (skippedReason) return this.repository.updateRun(id, { status: 'SKIPPED', skippedReason, completedAt: now, durationMs: 0, decision: 'WAIT' });

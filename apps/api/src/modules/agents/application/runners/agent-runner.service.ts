@@ -65,9 +65,20 @@ export class AgentRunnerService {
 
     const inputString = JSON.stringify(input);
     const inputHash = createHash('sha256').update(inputString).digest('hex');
+
+    // Scheduled and event-driven invocations must always run fresh —
+    // returning a cached result from a previous cycle would give stale market
+    // data to the decision engine. Include the correlationId so that each
+    // pipeline run generates a unique fingerprint for its sub-agent calls.
+    const isScheduledInvocation =
+      params.invocationSource === AgentInvocationSource.FUTURE_SCHEDULED ||
+      params.invocationSource === AgentInvocationSource.FUTURE_EVENT_DRIVEN;
+
     const idempotencyFingerprint = createHash('sha256')
       .update(
-        `${userId ?? 'public'}:${definition.type}:${definition.version}:${inputHash}`,
+        isScheduledInvocation
+          ? `${userId ?? 'public'}:${definition.type}:${definition.version}:${inputHash}:${params.correlationId}`
+          : `${userId ?? 'public'}:${definition.type}:${definition.version}:${inputHash}`,
       )
       .digest('hex');
 
@@ -76,6 +87,8 @@ export class AgentRunnerService {
     );
     if (!lockResult.locked) {
       if (
+        // Never reuse a cached result for scheduled runs — they need fresh data.
+        !isScheduledInvocation &&
         lockResult.existingRunId &&
         /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
           lockResult.existingRunId,
