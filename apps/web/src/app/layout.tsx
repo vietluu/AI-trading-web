@@ -4,6 +4,7 @@ import type { PropsWithChildren } from "react";
 
 import { QueryProvider } from "@/components/query-provider";
 import { SessionMonitor } from "@/components/session-monitor";
+import { AppNavigation } from "@/components/app-navigation";
 
 import "./globals.css";
 
@@ -24,8 +25,8 @@ export default function RootLayout({
       <body>
         <QueryProvider>
           <SessionMonitor />
-          <div className="mx-auto flex min-h-screen max-w-7xl flex-col px-5 sm:px-8">
-            <header className="flex min-h-20 flex-wrap items-center justify-between gap-4 border-b border-border py-4">
+          <div className="mx-auto flex min-h-screen max-w-[1440px] flex-col px-4 sm:px-6 lg:px-8">
+            <header className="flex min-h-20 flex-col gap-3 border-b border-border py-4 lg:flex-row lg:items-center lg:justify-between">
               <Link className="flex items-center gap-3" href="/">
                 <div className="grid h-9 w-9 place-items-center rounded-xl bg-primary text-sm font-black text-primary-foreground">
                   AX
@@ -37,94 +38,9 @@ export default function RootLayout({
                   </p>
                 </div>
               </Link>
-              <nav className="flex flex-wrap items-center gap-1 text-sm">
-                <Link className="rounded-lg px-3 py-2 hover:bg-muted" href="/">
-                  Dashboard
-                </Link>
-                <Link
-                  className="rounded-lg px-3 py-2 hover:bg-muted"
-                  href="/market"
-                >
-                  Market
-                </Link>
-                <Link
-                  className="rounded-lg px-3 py-2 hover:bg-muted"
-                  href="/ai/market-analysis"
-                >
-                  AI Analysis
-                </Link>
-                <Link
-                  className="rounded-lg px-3 py-2 hover:bg-muted"
-                  href="/ai/technical-analysis"
-                >
-                  Technical
-                </Link>
-                <Link
-                  className="rounded-lg px-3 py-2 hover:bg-muted"
-                  href="/ai/decision"
-                >
-                  Decision
-                </Link>
-                <Link
-                  className="rounded-lg px-3 py-2 hover:bg-muted"
-                  href="/ai/pipeline"
-                >
-                  Automation
-                </Link>
-                <Link
-                  className="rounded-lg px-3 py-2 hover:bg-muted"
-                  href="/ai/performance"
-                >
-                  Performance
-                </Link>
-                <Link
-                  className="rounded-lg px-3 py-2 hover:bg-muted"
-                  href="/ai/paper-trading"
-                >
-                  Paper Trading
-                </Link>
-                <Link
-                  className="rounded-lg px-3 py-2 hover:bg-muted"
-                  href="/ai/risk"
-                >
-                  Risk
-                </Link>
-                <Link
-                  className="rounded-lg px-3 py-2 hover:bg-muted"
-                  href="/ai/portfolio"
-                >
-                  Portfolio
-                </Link>
-                <Link
-                  className="rounded-lg px-3 py-2 hover:bg-muted"
-                  href="/ai/live-trading"
-                >
-                  Live Trading
-                </Link>
-                <Link
-                  className="rounded-lg px-3 py-2 hover:bg-muted"
-                  href="/settings/exchanges"
-                >
-                  Exchanges
-                </Link>
-                <Link
-                  className="rounded-lg px-3 py-2 hover:bg-muted"
-                  href="/settings"
-                >
-                  Settings
-                </Link>
-                <Link
-                  className="rounded-lg px-3 py-2 hover:bg-muted"
-                  href="/profile"
-                >
-                  Account
-                </Link>
-                <span className="ml-1 rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-xs font-medium text-amber-200">
-                  Execution safety gated
-                </span>
-              </nav>
+              <AppNavigation />
             </header>
-            <main className="flex-1 py-10">{children}</main>
+            <main className="min-w-0 flex-1 py-6 sm:py-8">{children}</main>
             <footer className="border-t border-border py-6 text-xs text-muted-foreground">
               Phase 4 · Realtime market-data research
             </footer>

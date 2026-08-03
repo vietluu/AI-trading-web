@@ -87,7 +87,6 @@ export const ToolCapabilitySchema = z.enum([
   "READ_AI_HISTORY",
   "VIEW_SYSTEM_HEALTH",
   "REQUEST_RISK_EVALUATION",
-  "CREATE_PAPER_ORDER",
   "CREATE_LIVE_ORDER",
   "CANCEL_ORDER",
   "CLOSE_POSITION",
@@ -118,7 +117,14 @@ export const ToolResultDtoSchema = z.object({
   invocationId: z.string(),
   toolName: z.string(),
   toolVersion: z.number(),
-  status: z.enum(["SUCCESS", "PARTIAL", "FAILED", "DENIED", "CANCELLED", "TIMED_OUT"]),
+  status: z.enum([
+    "SUCCESS",
+    "PARTIAL",
+    "FAILED",
+    "DENIED",
+    "CANCELLED",
+    "TIMED_OUT",
+  ]),
   data: z.unknown().optional(),
   error: z
     .object({
@@ -169,4 +175,6 @@ export const ToolInvocationRecordDtoSchema = z.object({
   resultSizeBytes: z.number(),
   estimatedResultTokens: z.number(),
 });
-export type ToolInvocationRecordDto = z.infer<typeof ToolInvocationRecordDtoSchema>;
+export type ToolInvocationRecordDto = z.infer<
+  typeof ToolInvocationRecordDtoSchema
+>;

@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { ExchangeProvider } from "../../../exchange/domain/exchange.types";
 import {
   FusionRunInputSchema,
   type FusionInput,
@@ -14,7 +15,6 @@ import { PipelineThresholdService } from "./pipeline-threshold.service";
 import { PipelineAlertService } from "./pipeline-alert.service";
 import { resolvePipelineDefinition } from "../domain/pipeline.definition";
 import type { PipelineJob } from "../infrastructure/pipeline-queue.service";
-import { PaperTradingService } from "../../paper-trading/application/paper-trading.service";
 import { LiveTradingService } from "../../live-trading/application/live-trading.service";
 import {
   analysisParams,
@@ -32,7 +32,6 @@ export class PipelineRunnerService {
     private readonly cancellation: PipelineCancellationService,
     private readonly threshold: PipelineThresholdService,
     private readonly alerts: PipelineAlertService,
-    private readonly paperTrading: PaperTradingService,
     private readonly liveTrading: LiveTradingService,
   ) {}
 
@@ -126,11 +125,11 @@ export class PipelineRunnerService {
         ? output
         : { ...output, decision: "WAIT" as const };
       const volatilityAtr = Number(analyses.market?.volatility.atr);
-      const paperExecution = await this.paperTrading.execute({
+      const riskAssessment = await this.liveTrading.assessPipelineDecision({
         userId: job.userId,
         pipelineRunId: job.runId,
         symbol: job.symbol,
-        provider: job.provider,
+        provider: job.provider as unknown as ExchangeProvider,
         decision: executionDecision,
         ...(typeof job.params?.strategyId === "string"
           ? { strategyKey: job.params.strategyId }
@@ -157,7 +156,7 @@ export class PipelineRunnerService {
           ...output,
           actionable: filter.actionable,
           skippedReason: filter.reason,
-          paperExecution,
+          riskAssessment,
           liveExecution,
         },
       });

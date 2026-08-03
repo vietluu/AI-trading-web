@@ -23,8 +23,8 @@ export default function DashboardPage(): React.JSX.Element {
         </div>
         <p className="max-w-xl text-sm leading-7 text-muted-foreground lg:pb-1">
           The application shell, typed API boundary, PostgreSQL, and Redis are
-          ready. Market intelligence, agents, and paper trading arrive in their
-          dedicated roadmap phases.
+          ready. Market intelligence, agents, and exchange-backed execution
+          arrive in their dedicated roadmap phases.
         </p>
       </section>
 

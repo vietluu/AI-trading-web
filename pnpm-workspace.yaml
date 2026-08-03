@@ -8,6 +8,6 @@ allowBuilds:
   "@scarf/scarf": false
   argon2: true
   esbuild: true
-  msgpackr-extract: set this to true or false
+  msgpackr-extract: true
   prisma: true
   sharp: true

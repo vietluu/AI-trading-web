@@ -52,10 +52,12 @@ export const PipelineScheduleInputSchema = z
     provider: PipelineProviderSchema,
     mode: z.enum(["CRON", "INTERVAL"]),
     cron: z.string().max(100).optional(),
-    intervalMs: z.number().int().min(15_000).max(86_400_000).optional(),
+    // Scheduled analysis fans out across several agents and external providers.
+    // Five minutes is the hard floor to avoid provider throttling/account spam.
+    intervalMs: z.number().int().min(300_000).max(86_400_000).optional(),
     enabled: z.boolean().default(true),
     timezone: z.string().min(1).max(64).default("UTC"),
-    maxRunsPerHour: z.number().int().min(1).max(1000).default(60),
+    maxRunsPerHour: z.number().int().min(1).max(12).default(12),
   })
   .strict()
   .superRefine((value, ctx) => {

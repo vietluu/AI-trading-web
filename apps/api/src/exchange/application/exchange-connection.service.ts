@@ -410,6 +410,22 @@ export class ExchangeConnectionService {
     );
   }
 
+  orderHistory(
+    userId: string,
+    id: string,
+    context: RequestMetadata,
+    symbols = ["BTC-USDT", "ETH-USDT"],
+  ): Promise<ExchangeOrder[]> {
+    return this.privateCall(
+      userId,
+      id,
+      "ORDER_HISTORY",
+      context,
+      (adapter, credentials) =>
+        adapter.getOrderHistory?.(credentials, symbols) ?? Promise.resolve([]),
+    );
+  }
+
   order(
     userId: string,
     id: string,
@@ -450,8 +466,12 @@ export class ExchangeConnectionService {
     command: PlaceOrderCommand,
     context: RequestMetadata,
   ): Promise<ExchangeOrder> {
-    return this.privateCall(userId, id, "PLACE_ORDER", context, (adapter, credentials) =>
-      adapter.placeOrder(credentials, command),
+    return this.privateCall(
+      userId,
+      id,
+      "PLACE_ORDER",
+      context,
+      (adapter, credentials) => adapter.placeOrder(credentials, command),
     );
   }
 
@@ -461,8 +481,12 @@ export class ExchangeConnectionService {
     command: CancelOrderCommand,
     context: RequestMetadata,
   ): Promise<ExchangeOrder> {
-    return this.privateCall(userId, id, "CANCEL_ORDER", context, (adapter, credentials) =>
-      adapter.cancelOrder(credentials, command),
+    return this.privateCall(
+      userId,
+      id,
+      "CANCEL_ORDER",
+      context,
+      (adapter, credentials) => adapter.cancelOrder(credentials, command),
     );
   }
 

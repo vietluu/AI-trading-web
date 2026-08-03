@@ -444,14 +444,7 @@ const environmentSchema = z
       .min(0)
       .max(100)
       .default(50),
-    // Phase 7: local simulation only; no exchange execution credentials or endpoints
-    PAPER_TRADING_ENABLED: z
-      .enum(["true", "false"])
-      .default("true")
-      .transform((v) => v === "true"),
-    TRADING_MODE: z
-      .enum(["SIGNAL_ONLY", "PAPER_TRADING", "DEMO", "LIVE"])
-      .default("DEMO"),
+    TRADING_MODE: z.enum(["DEMO", "LIVE"]).default("DEMO"),
     GLOBAL_TRADING_ENABLED: z
       .enum(["true", "false"])
       .default("false")
@@ -476,16 +469,8 @@ const environmentSchema = z
       .min(10_000)
       .max(3_600_000)
       .default(300_000),
-    PAPER_INITIAL_BALANCE: z.coerce
-      .number()
-      .positive()
-      .max(1_000_000_000)
-      .default(10_000),
     RISK_PER_TRADE: z.coerce.number().positive().max(1).default(0.02),
     DEFAULT_LEVERAGE: z.coerce.number().int().min(1).max(125).default(3),
-    TAKER_FEE: z.coerce.number().min(0).max(0.01).default(0.0004),
-    SLIPPAGE_MIN: z.coerce.number().min(0).max(0.01).default(0.0002),
-    SLIPPAGE_MAX: z.coerce.number().min(0).max(0.01).default(0.001),
     TRADE_COOLDOWN_MS: z.coerce
       .number()
       .int()
@@ -544,13 +529,6 @@ const environmentSchema = z
         code: z.ZodIssueCode.custom,
         message: "LIVE_TRADING_ENABLED=true is required when TRADING_MODE=LIVE",
         path: ["LIVE_TRADING_ENABLED"],
-      });
-    }
-    if (environment.SLIPPAGE_MIN > environment.SLIPPAGE_MAX) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "SLIPPAGE_MIN must not exceed SLIPPAGE_MAX",
-        path: ["SLIPPAGE_MIN"],
       });
     }
     if (

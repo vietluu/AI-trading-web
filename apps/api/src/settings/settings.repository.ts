@@ -34,11 +34,6 @@ export class SettingsRepository {
         ...(dto.aiDailyBudget === undefined
           ? {}
           : { aiDailyBudget: new Prisma.Decimal(dto.aiDailyBudget) }),
-        ...(dto.paperTradingBalance === undefined
-          ? {}
-          : {
-              paperTradingBalance: new Prisma.Decimal(dto.paperTradingBalance),
-            }),
         ...(dto.defaultLeverage === undefined
           ? {}
           : { defaultLeverage: dto.defaultLeverage }),

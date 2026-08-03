@@ -1,8 +1,11 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import type { DecisionOutput, RiskOutput } from "@platform/shared";
-import type { Prisma } from "@prisma/client";
+import {
+  ExchangeEnvironment as PrismaExchangeEnvironment,
+  type Prisma,
+} from "@prisma/client";
 import { PrismaService } from "../../../database/prisma.service";
-import { round } from "../../paper-trading/domain/paper-trading";
 import { evaluateRisk, type RiskPosition } from "../domain/risk-engine";
 import { RiskConfigService } from "./risk-config.service";
 
@@ -35,6 +38,7 @@ export class RiskManagementService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: RiskConfigService,
+    private readonly environment: ConfigService,
   ) {}
 
   async assess(tx: Tx, input: AssessRiskInput): Promise<RiskOutput> {
@@ -95,37 +99,71 @@ export class RiskManagementService {
 
   async dashboard(userId: string) {
     const limits = this.config.values;
-    const account = await this.prisma.paperAccount.upsert({
-      where: { userId },
-      update: {},
-      create: {
+    const mode =
+      this.environment.get<"DEMO" | "LIVE">("TRADING_MODE") ?? "DEMO";
+    const environments =
+      mode === "LIVE"
+        ? [PrismaExchangeEnvironment.PRODUCTION]
+        : [PrismaExchangeEnvironment.DEMO, PrismaExchangeEnvironment.TESTNET];
+    const connections = await this.prisma.exchangeConnection.findMany({
+      where: {
         userId,
-        balance: limits.initialBalance,
-        equity: limits.initialBalance,
-        peakEquity: limits.initialBalance,
+        isEnabled: true,
+        isVerified: true,
+        environment: { in: environments },
       },
+      select: { id: true },
     });
-    const [positions, assessments] = await Promise.all([
-      this.prisma.paperPosition.findMany({ where: { accountId: account.id } }),
+    const connectionIds = connections.map((item) => item.id);
+    const [positions, snapshots, assessments] = await Promise.all([
+      this.prisma.livePosition.findMany({
+        where: { userId, connectionId: { in: connectionIds } },
+      }),
+      this.prisma.liveAccountSnapshot.findMany({
+        where: { userId, connectionId: { in: connectionIds } },
+        orderBy: { syncedAt: "desc" },
+        take: 5_000,
+      }),
       this.prisma.riskAssessment.findMany({
         where: { userId },
         orderBy: { createdAt: "desc" },
         take: 100,
       }),
     ]);
+    const latest = [
+      ...new Map(snapshots.map((item) => [item.connectionId, item])).values(),
+    ];
+    const peaks = new Map<string, number>();
+    for (const snapshot of snapshots)
+      peaks.set(
+        snapshot.connectionId,
+        Math.max(
+          peaks.get(snapshot.connectionId) ?? 0,
+          Number(snapshot.totalEquity),
+        ),
+      );
     const exposure = positions.reduce(
       (sum, position) =>
-        sum + Math.abs(Number(position.size) * Number(position.markPrice)),
+        sum +
+        Math.abs(
+          Number(
+            position.notional ??
+              Number(position.quantity) *
+                Number(position.markPrice ?? position.entryPrice),
+          ),
+        ),
       0,
     );
-    const equity = Number(account.equity);
+    const equity = latest.reduce(
+      (sum, item) => sum + Number(item.totalEquity),
+      0,
+    );
+    const peakEquity = [...peaks.values()].reduce(
+      (sum, value) => sum + value,
+      0,
+    );
     const drawdown =
-      Number(account.peakEquity) > 0
-        ? Math.max(
-            0,
-            (Number(account.peakEquity) - equity) / Number(account.peakEquity),
-          )
-        : 1;
+      peakEquity > 0 ? Math.max(0, (peakEquity - equity) / peakEquity) : 1;
     return {
       config: {
         riskPerTrade: limits.riskPerTrade,
@@ -136,13 +174,16 @@ export class RiskManagementService {
         cooldownMs: limits.cooldownMs,
       },
       portfolio: {
-        balance: Number(account.balance),
+        source: "EXCHANGE",
+        available: latest.length > 0,
+        syncedAt: latest[0]?.syncedAt.toISOString() ?? null,
+        balance: equity,
         equity,
-        peakEquity: Number(account.peakEquity),
+        peakEquity,
         openPositions: positions.length,
-        exposure: round(exposure),
-        exposurePct: round(equity > 0 ? exposure / equity : 1, 6),
-        drawdownPct: round(drawdown, 6),
+        exposure: rounded(exposure),
+        exposurePct: rounded(equity > 0 ? exposure / equity : 1, 6),
+        drawdownPct: rounded(drawdown, 6),
       },
       assessments: assessments.map((row) => ({
         id: row.id,
@@ -179,4 +220,9 @@ export class RiskManagementService {
       riskScore: row.riskScore,
     };
   }
+}
+
+function rounded(value: number, digits = 8): number {
+  const scale = 10 ** digits;
+  return Math.round((value + Number.EPSILON) * scale) / scale;
 }

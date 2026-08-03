@@ -6,10 +6,8 @@ import type { RiskLimits } from "../domain/risk-engine";
 export class RiskConfigService {
   constructor(private readonly config: ConfigService) {}
 
-  get values(): RiskLimits & { initialBalance: number } {
+  get values(): RiskLimits {
     return {
-      initialBalance:
-        this.config.get<number>("PAPER_INITIAL_BALANCE") ?? 10_000,
       riskPerTrade: this.config.get<number>("RISK_PER_TRADE") ?? 0.02,
       maxPositions: this.config.get<number>("MAX_POSITIONS") ?? 3,
       maxLeverage: this.config.get<number>("MAX_LEVERAGE") ?? 3,

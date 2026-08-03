@@ -36,7 +36,6 @@ export const settingsViewSchema = z.object({
   preferredSymbols: z.array(z.string()),
   preferredTimeframes: z.array(z.string()),
   aiDailyBudget: z.string(),
-  paperTradingBalance: z.string(),
   defaultLeverage: z.number().int(),
   riskPreference: z.enum(["CONSERVATIVE", "MODERATE", "AGGRESSIVE"]),
   updatedAt: z.string().datetime(),

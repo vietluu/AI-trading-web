@@ -1,28 +1,24 @@
 import Link from "next/link";
 
 const links = [
-  ["Market", "/market"],
-  ["News", "/news"],
-  ["Macro", "/macro"],
-  ["Sentiment", "/sentiment"],
-  ["AI News Analysis", "/ai/news-analysis"],
-  ["AI Sentiment Analysis", "/ai/sentiment-analysis"],
+  ["General", "/settings"],
+  ["Exchanges", "/settings/exchanges"],
+  ["Data sources", "/settings/data-sources"],
+  ["AI providers", "/settings/ai"],
+  ["API keys", "/api-keys"],
   ["Profile", "/profile"],
   ["Security", "/security"],
-  ["Settings", "/settings"],
-  ["API keys", "/api-keys"],
-  ["Exchanges", "/settings/exchanges"],
-  ["Data Sources", "/settings/data-sources"],
-  ["Providers", "/system/providers"],
-  ["AI Infrastructure", "/settings/ai"],
 ] as const;
 
 export function AccountNav(): React.JSX.Element {
   return (
-    <nav className="mb-8 flex flex-wrap gap-2">
+    <nav
+      aria-label="Settings navigation"
+      className="mb-8 flex gap-2 overflow-x-auto pb-2"
+    >
       {links.map(([label, href]) => (
         <Link
-          className="rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted"
+          className="whitespace-nowrap rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted"
           href={href}
           key={href}
         >

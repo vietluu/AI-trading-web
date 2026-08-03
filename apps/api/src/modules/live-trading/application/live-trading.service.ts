@@ -6,10 +6,12 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import type { DecisionOutput, RiskOutput } from "@platform/shared";
 import { AuditService } from "../../../audit/audit.service";
 import type { RequestMetadata } from "../../../common/request-context";
 import { PrismaService } from "../../../database/prisma.service";
 import { ExchangeConnectionService } from "../../../exchange/application/exchange-connection.service";
+import { PublicExchangeService } from "../../../exchange/application/public-exchange.service";
 import {
   ExchangeEnvironment,
   ExchangeProvider,
@@ -23,6 +25,8 @@ import type {
   ExecuteApprovedOrderDto,
 } from "./live-trading.dto";
 import { RiskConfigService } from "../../risk/application/risk-config.service";
+import { RiskManagementService } from "../../risk/application/risk-management.service";
+import { PortfolioService } from "../../portfolio/application/portfolio.service";
 
 @Injectable()
 export class LiveTradingService {
@@ -34,7 +38,160 @@ export class LiveTradingService {
     private readonly config: LiveTradingConfigService,
     private readonly audit: AuditService,
     private readonly riskConfig: RiskConfigService,
+    private readonly risk: RiskManagementService,
+    private readonly portfolio: PortfolioService,
+    private readonly publicExchanges: PublicExchangeService,
   ) {}
+
+  /** Build the execution approval exclusively from synchronized exchange data. */
+  async assessPipelineDecision(input: {
+    userId: string;
+    pipelineRunId: string;
+    symbol: string;
+    provider: ExchangeProvider;
+    decision: DecisionOutput;
+    volatilityAtr?: number;
+    strategyKey?: string;
+  }): Promise<{ outcome: string; price: number; risk?: RiskOutput }> {
+    const settings = this.config.values;
+    if (settings.mode !== "DEMO" && settings.mode !== "LIVE") {
+      return { outcome: "EXCHANGE_MODE_REQUIRED", price: 0 };
+    }
+    const targetEnvironment =
+      settings.mode === "LIVE"
+        ? ExchangeEnvironment.PRODUCTION
+        : input.provider === ExchangeProvider.BINANCE_FUTURES
+          ? ExchangeEnvironment.TESTNET
+          : ExchangeEnvironment.DEMO;
+    const connection = (await this.connections.list(input.userId)).find(
+      (item) =>
+        item.provider === input.provider &&
+        item.environment === targetEnvironment &&
+        item.isEnabled &&
+        item.isVerified,
+    );
+    if (!connection)
+      return { outcome: "NO_ELIGIBLE_EXCHANGE_CONNECTION", price: 0 };
+
+    await this.sync(input.userId, connection.id, {});
+    const ticker = await this.publicExchanges.ticker(
+      input.provider,
+      input.symbol,
+    );
+    const price = Number(ticker.markPrice ?? ticker.lastPrice);
+    if (!Number.isFinite(price) || price <= 0)
+      throw new Error("INVALID_EXCHANGE_MARK_PRICE");
+    const strategy = await this.portfolio.prepareStrategy(
+      input.userId,
+      input.strategyKey ?? "ai-core",
+    );
+
+    const result = await this.prisma.$transaction(
+      async (tx) => {
+        const [snapshot, peak, positions, latestOrder] = await Promise.all([
+          tx.liveAccountSnapshot.findFirst({
+            where: { userId: input.userId, connectionId: connection.id },
+            orderBy: { syncedAt: "desc" },
+          }),
+          tx.liveAccountSnapshot.aggregate({
+            where: { userId: input.userId, connectionId: connection.id },
+            _max: { totalEquity: true },
+          }),
+          tx.livePosition.findMany({
+            where: { userId: input.userId, connectionId: connection.id },
+          }),
+          tx.liveOrder.findFirst({
+            where: {
+              userId: input.userId,
+              connectionId: connection.id,
+              purpose: { in: ["OPEN", "REVERSE"] },
+              status: { not: "FAILED" },
+            },
+            orderBy: { createdAt: "desc" },
+          }),
+        ]);
+        if (!snapshot) throw new Error("EXCHANGE_ACCOUNT_SNAPSHOT_UNAVAILABLE");
+        let risk = await this.risk.assess(tx, {
+          userId: input.userId,
+          strategyId: strategy.id,
+          pipelineRunId: input.pipelineRunId,
+          symbol: input.symbol,
+          decision: input.decision,
+          account: {
+            balance: snapshot.totalEquity,
+            equity: snapshot.totalEquity,
+            peakEquity: peak._max.totalEquity ?? snapshot.totalEquity,
+          },
+          positions: positions.map((position) => ({
+            symbol: position.symbol,
+            size: position.quantity,
+            markPrice: position.markPrice ?? position.entryPrice,
+          })),
+          price,
+          volatility: Math.max(
+            0,
+            Number.isFinite(input.volatilityAtr)
+              ? (input.volatilityAtr ?? 0) / price
+              : 0,
+          ),
+          lastTradeAt: latestOrder?.createdAt,
+        });
+        if (
+          risk.approved &&
+          risk.positionSize &&
+          input.decision.decision !== "WAIT"
+        ) {
+          const portfolioRisk = await this.portfolio.assessTrade(tx, {
+            userId: input.userId,
+            strategyId: strategy.id,
+            pipelineRunId: input.pipelineRunId,
+            symbol: input.symbol,
+            side: input.decision.decision,
+            requestedNotional: risk.positionSize * price,
+            equity: Number(snapshot.totalEquity),
+            peakEquity: Number(peak._max.totalEquity ?? snapshot.totalEquity),
+          });
+          if (!portfolioRisk.approved) {
+            risk = {
+              approved: false,
+              reason: portfolioRisk.reason ?? "PORTFOLIO_RISK_REJECTED",
+              riskScore: risk.riskScore,
+            };
+            await tx.riskAssessment.update({
+              where: { pipelineRunId: input.pipelineRunId },
+              data: {
+                approved: false,
+                reason: risk.reason,
+                positionSize: null,
+                leverage: null,
+                stopLoss: null,
+                takeProfit: null,
+              },
+            });
+          } else if (
+            portfolioRisk.approvedNotional <
+            risk.positionSize * price
+          ) {
+            const positionSize =
+              Math.round((portfolioRisk.approvedNotional / price) * 1e12) /
+              1e12;
+            risk = { ...risk, positionSize };
+            await tx.riskAssessment.update({
+              where: { pipelineRunId: input.pipelineRunId },
+              data: { positionSize },
+            });
+          }
+        }
+        return risk;
+      },
+      { isolationLevel: "Serializable" },
+    );
+    return {
+      outcome: result.approved ? "RISK_APPROVED" : "RISK_REJECTED",
+      price,
+      risk: result,
+    };
+  }
 
   async execute(
     userId: string,
@@ -177,9 +334,13 @@ export class LiveTradingService {
     if (!settings.runtimeEnabled) return { outcome: "KILL_SWITCH_ACTIVE" };
     if (settings.mode !== "DEMO" && settings.mode !== "LIVE")
       return { outcome: "EXECUTION_MODE_INACTIVE" };
-    const assessment = await this.prisma.riskAssessment.findUnique({
-      where: { pipelineRunId },
-    });
+    const [assessment, run] = await Promise.all([
+      this.prisma.riskAssessment.findUnique({ where: { pipelineRunId } }),
+      this.prisma.pipelineRun.findUnique({
+        where: { id: pipelineRunId },
+        select: { provider: true },
+      }),
+    ]);
     if (!assessment || assessment.userId !== userId)
       return { outcome: "RISK_ASSESSMENT_MISSING" };
     if (!assessment.approved)
@@ -193,6 +354,7 @@ export class LiveTradingService {
       (item) =>
         item.isEnabled &&
         item.isVerified &&
+        item.provider === run?.provider &&
         item.environment ===
           (settings.mode === "LIVE"
             ? ExchangeEnvironment.PRODUCTION
@@ -318,10 +480,21 @@ export class LiveTradingService {
 
   async sync(userId: string, connectionId: string, context: RequestMetadata) {
     const connection = await this.connections.get(userId, connectionId);
-    const [account, positions, openOrders] = await Promise.all([
+    const previousSnapshot = await this.prisma.liveAccountSnapshot.findFirst({
+      where: { userId, connectionId },
+      orderBy: { syncedAt: "desc" },
+      select: { syncedAt: true },
+    });
+    const historyDue =
+      !previousSnapshot ||
+      Date.now() - previousSnapshot.syncedAt.getTime() >= 300_000;
+    const [account, positions, openOrders, orderHistory] = await Promise.all([
       this.connections.account(userId, connectionId, context),
       this.connections.positions(userId, connectionId, context),
       this.connections.openOrders(userId, connectionId, context),
+      historyDue
+        ? this.connections.orderHistory(userId, connectionId, context)
+        : Promise.resolve([]),
     ]);
     const syncedAt = new Date();
     const [previousPositions, ownershipOrders] = await Promise.all([
@@ -389,6 +562,45 @@ export class LiveTradingService {
           data: { status: order.status, averagePrice: order.averagePrice },
         });
       }
+      for (const order of orderHistory) {
+        const clientOrderId =
+          order.clientOrderId || `external-${order.exchangeOrderId}`;
+        const matched = await tx.liveOrder.updateMany({
+          where: {
+            connectionId,
+            OR: [{ exchangeOrderId: order.exchangeOrderId }, { clientOrderId }],
+          },
+          data: {
+            exchangeOrderId: order.exchangeOrderId,
+            status: order.status,
+            averagePrice: order.averagePrice,
+            updatedAt: order.updatedAt ?? syncedAt,
+          },
+        });
+        if (matched.count === 0) {
+          await tx.liveOrder.create({
+            data: {
+              userId,
+              connectionId,
+              clientOrderId,
+              exchangeOrderId: order.exchangeOrderId,
+              provider: connection.provider,
+              environment: connection.environment,
+              symbol: order.symbol,
+              side: order.side,
+              type: order.type,
+              quantity: order.originalQuantity,
+              leverage: 1,
+              averagePrice: order.averagePrice,
+              status: order.status,
+              purpose: "IMPORTED",
+              reduceOnly: order.reduceOnly ?? false,
+              createdAt: order.createdAt ?? syncedAt,
+              updatedAt: order.updatedAt ?? syncedAt,
+            },
+          });
+        }
+      }
     });
     await this.monitorProtection(userId, connection, positions, context);
     this.logger.log({
@@ -402,13 +614,31 @@ export class LiveTradingService {
       syncedAt: syncedAt.toISOString(),
       positions: positions.length,
       openOrders: openOrders.length,
+      importedOrders: orderHistory.length,
     };
   }
 
   async dashboard(userId: string, connectionId?: string) {
     const where = { userId, ...(connectionId ? { connectionId } : {}) };
-    const [connections, positions, orders, snapshots] = await Promise.all([
-      this.connections.list(userId),
+    const connections = await this.connections.list(userId);
+    const eligible = connections.filter(
+      (item) =>
+        item.isEnabled &&
+        item.isVerified &&
+        (!connectionId || item.id === connectionId),
+    );
+    await Promise.all(
+      eligible.map((item) =>
+        this.sync(userId, item.id, {}).catch((error: unknown) =>
+          this.logger.warn({
+            event: "dashboard_exchange_sync_failed",
+            connectionId: item.id,
+            error: this.safeError(error),
+          }),
+        ),
+      ),
+    );
+    const [positions, orders, snapshots] = await Promise.all([
       this.prisma.livePosition.findMany({
         where,
         orderBy: { updatedAt: "desc" },
