@@ -7,8 +7,7 @@ export const metadata = {
 };
 
 export default function MarketPage() {
-  const apiBaseUrl =
-    process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3001";
+  const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
   return (
     <div className="rounded-3xl bg-[#0B0E14] p-3 sm:p-5">

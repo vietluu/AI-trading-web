@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { ConfigModule, ConfigService } from "@nestjs/config";
 import { BullModule } from "@nestjs/bullmq";
 import { AgentsModule } from "../agents/agents.module";
 import { DatabaseModule } from "../../database/database.module";
@@ -22,13 +23,20 @@ import {
   PIPELINE_RUN_QUEUE_NAME,
 } from "./infrastructure/pipeline-queue.constants";
 import { LiveTradingModule } from "../live-trading/live-trading.module";
+import { createBullRootConfig } from "./infrastructure/bull-config";
 
 @Module({
   imports: [
+    ConfigModule,
     DatabaseModule,
     SessionModule,
     AgentsModule,
     LiveTradingModule,
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: (config: ConfigService) => createBullRootConfig(config),
+      inject: [ConfigService],
+    }),
     BullModule.registerQueue(
       { name: PIPELINE_RUN_QUEUE_NAME },
       { name: PIPELINE_RETRY_QUEUE_NAME },

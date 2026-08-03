@@ -4,6 +4,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import type { ToolDefinitionDto, ToolHealthDto, ToolInvocationRecordDto, ToolResultDto } from "@platform/shared";
 import Link from "next/link";
+import { apiRequest } from "@/lib/api-client";
 
 export default function AIToolsSettingsPage() {
   const [selectedTool, setSelectedTool] = useState<string>("market.ticker.get");
@@ -13,47 +14,30 @@ export default function AIToolsSettingsPage() {
   // Fetch registered tools
   const { data: tools, isLoading: isLoadingTools } = useQuery<ToolDefinitionDto[]>({
     queryKey: ["ai-tools-list"],
-    queryFn: async () => {
-      const res = await fetch("/api/ai/tools", { headers: { Accept: "application/json" } });
-      if (!res.ok) throw new Error("Failed to fetch AI tools");
-      return (res.json() as Promise<ToolDefinitionDto[]>);
-    },
+    queryFn: () => apiRequest<ToolDefinitionDto[]>("/ai/tools", { headers: { Accept: "application/json" } }),
   });
 
   // Fetch tools health
   const { data: health } = useQuery<ToolHealthDto[]>({
     queryKey: ["ai-tools-health"],
-    queryFn: async () => {
-      const res = await fetch("/api/ai/tools/health", { headers: { Accept: "application/json" } });
-      if (!res.ok) throw new Error("Failed to fetch tool health");
-      return (res.json() as Promise<ToolHealthDto[]>);
-    },
+    queryFn: () => apiRequest<ToolHealthDto[]>("/ai/tools/health", { headers: { Accept: "application/json" } }),
     refetchInterval: 10000,
   });
 
   // Fetch invocation history
   const { data: history, refetch: refetchHistory } = useQuery<ToolInvocationRecordDto[]>({
     queryKey: ["ai-tools-history"],
-    queryFn: async () => {
-      const res = await fetch("/api/ai/tools/history?limit=30", { headers: { Accept: "application/json" } });
-      if (!res.ok) throw new Error("Failed to fetch tool history");
-      return (res.json() as Promise<ToolInvocationRecordDto[]>);
-    },
+    queryFn: () => apiRequest<ToolInvocationRecordDto[]>("/ai/tools/history?limit=30", { headers: { Accept: "application/json" } }),
   });
 
   // Execute manual tool test
   const testMutation = useMutation({
     mutationFn: async ({ name, args }: { name: string; args: Record<string, unknown> }) => {
-      const res = await fetch(`/api/ai/tools/${name}/test`, {
+      return apiRequest<ToolResultDto>(`/ai/tools/${name}/test`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(args),
       });
-      if (!res.ok) {
-        const errJson = (await res.json()) as { message?: string };
-        throw new Error(errJson.message || "Execution failed");
-      }
-      return (res.json() as Promise<ToolResultDto>);
     },
     onSuccess: (data: ToolResultDto) => {
       setExecutionOutput(data);

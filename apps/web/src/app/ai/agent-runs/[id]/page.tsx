@@ -3,6 +3,7 @@
 import { use } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import Link from "next/link";
+import { apiRequest } from "@/lib/api-client";
 
 interface AgentRunDetail {
   id: string;
@@ -41,31 +42,22 @@ export default function AgentRunDetailPage({ params }: { params: Promise<{ id: s
 
   const { data: run, isLoading } = useQuery<AgentRunDetail>({
     queryKey: ["agent-run-detail", runId],
-    queryFn: async (): Promise<AgentRunDetail> => {
-      const res = await fetch(`/api/agent-runs/${runId}`);
-      if (!res.ok) throw new Error("Failed to fetch run details");
-      const payload = (await res.json()) as AgentRunDetail;
-      return payload;
-    },
+    queryFn: () => apiRequest<AgentRunDetail>(`/agent-runs/${runId}`),
   });
 
   const { data: transitions = [] } = useQuery<Transition[]>({
     queryKey: ["agent-run-transitions", runId],
     queryFn: async (): Promise<Transition[]> => {
-      const res = await fetch(`/api/agent-runs/${runId}/transitions`);
-      if (!res.ok) return [];
-      const payload = (await res.json()) as Transition[];
-      return payload;
+      try {
+        return await apiRequest<Transition[]>(`/agent-runs/${runId}/transitions`);
+      } catch {
+        return [];
+      }
     },
   });
 
   const cancelMutation = useMutation<unknown, Error, void>({
-    mutationFn: async (): Promise<unknown> => {
-      const res = await fetch(`/api/agent-runs/${runId}/cancel`, { method: "POST" });
-      if (!res.ok) throw new Error("Failed to cancel run");
-      const payload = (await res.json()) as unknown;
-      return payload;
-    },
+    mutationFn: () => apiRequest(`/agent-runs/${runId}/cancel`, { method: "POST" }),
   });
 
   if (isLoading) {
