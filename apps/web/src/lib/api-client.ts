@@ -23,6 +23,14 @@ export async function apiRequestValidated<T>(
   return schema.parse(await apiRequest<unknown>(path, init));
 }
 
+export function resolveApiUrl(path: string): string {
+  const baseUrl = publicEnvironment.NEXT_PUBLIC_API_BASE_URL.trim();
+  const normalizedPath = path.startsWith("/api")
+    ? path
+    : `/api${path.startsWith("/") ? path : `/${path}`}`;
+  return baseUrl ? `${baseUrl.replace(/\/$/, "")}${normalizedPath}` : normalizedPath;
+}
+
 export async function apiRequest<T>(
   path: string,
   init?: RequestInit,
@@ -39,14 +47,11 @@ export async function apiRequest<T>(
     const csrfToken = readCookie("csrf_token");
     if (csrfToken) headers.set("X-CSRF-Token", csrfToken);
   }
-  const response = await fetch(
-    `${publicEnvironment.NEXT_PUBLIC_API_BASE_URL}/api${path}`,
-    {
-      ...init,
-      credentials: "include",
-      headers,
-    },
-  );
+  const response = await fetch(resolveApiUrl(path), {
+    ...init,
+    credentials: "include",
+    headers,
+  });
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as ApiErrorBody;
     const message = Array.isArray(body.message)

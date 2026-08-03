@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { apiRequest } from "@/lib/api-client";
 
 interface AgentRun {
   id: string;
@@ -37,10 +38,7 @@ export default function AgentRunHistoryPage() {
       if (statusFilter) params.append("status", statusFilter);
       if (typeFilter) params.append("agentType", typeFilter);
 
-      const res = await fetch(`/api/agent-runs?${params.toString()}`);
-      if (!res.ok) throw new Error("Failed to fetch agent runs");
-      const payload = (await res.json()) as RunListResponse;
-      return payload;
+      return apiRequest<RunListResponse>(`/agent-runs?${params.toString()}`);
     },
   });
 

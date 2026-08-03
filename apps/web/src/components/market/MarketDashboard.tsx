@@ -95,6 +95,13 @@ function toChartCandle(candle: RawCandle): CandlestickData {
   };
 }
 
+function resolveMarketUrl(apiBaseUrl: string, path: string): string {
+  const normalizedBase = apiBaseUrl.trim();
+  return normalizedBase
+    ? `${normalizedBase.replace(/\/$/, "")}${path}`
+    : path;
+}
+
 async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, { signal });
   if (!response.ok) {
@@ -151,13 +158,19 @@ export function MarketDashboard({
     const loadHistory = async (): Promise<void> => {
       try {
         const candles = await fetchJson<RawCandle[]>(
-          `${apiBaseUrl}/api/market/candles/${provider}/${symbol}?interval=${interval}&limit=500`,
+          resolveMarketUrl(
+            apiBaseUrl,
+            `/api/market/candles/${provider}/${symbol}?interval=${interval}&limit=500`,
+          ),
           controller.signal,
         );
         setHistoricalData(candles.map(toChartCandle));
 
         const snapshot = await fetchJson<IndicatorSnapshot>(
-          `${apiBaseUrl}/api/market/indicators/${provider}/${symbol}?interval=${interval}`,
+          resolveMarketUrl(
+            apiBaseUrl,
+            `/api/market/indicators/${provider}/${symbol}?interval=${interval}`,
+          ),
           controller.signal,
         ).catch(() => null);
         setIndicators(snapshot);
@@ -179,7 +192,7 @@ export function MarketDashboard({
   }, [apiBaseUrl, interval, provider, symbol]);
 
   useEffect(() => {
-    const socket = io(`${apiBaseUrl}/market`, {
+    const socket = io(resolveMarketUrl(apiBaseUrl, "/market"), {
       path: "/socket.io/",
       reconnection: true,
       reconnectionAttempts: 5,
@@ -235,17 +248,29 @@ export function MarketDashboard({
     const refreshLiveData = async (): Promise<void> => {
       const [latestCandles, latestTicker] = await Promise.all([
         fetchJson<RawCandle[]>(
-          `${apiBaseUrl}/api/exchanges/${provider}/klines/${symbol}?interval=${interval}&limit=2`,
+          resolveMarketUrl(
+            apiBaseUrl,
+            `/api/exchanges/${provider}/klines/${symbol}?interval=${interval}&limit=2`,
+          ),
         ).catch(() =>
           fetchJson<RawCandle[]>(
-            `${apiBaseUrl}/api/market/candles/${provider}/${symbol}?interval=${interval}&limit=2`,
+            resolveMarketUrl(
+              apiBaseUrl,
+              `/api/market/candles/${provider}/${symbol}?interval=${interval}&limit=2`,
+            ),
           ).catch(() => []),
         ),
         fetchJson<TickerData>(
-          `${apiBaseUrl}/api/exchanges/${provider}/ticker/${symbol}`,
+          resolveMarketUrl(
+            apiBaseUrl,
+            `/api/exchanges/${provider}/ticker/${symbol}`,
+          ),
         ).catch(() =>
           fetchJson<TickerData>(
-            `${apiBaseUrl}/api/market/tickers/${provider}/${symbol}`,
+            resolveMarketUrl(
+              apiBaseUrl,
+              `/api/market/tickers/${provider}/${symbol}`,
+            ),
           ).catch(() => null),
         ),
       ]);
@@ -272,16 +297,25 @@ export function MarketDashboard({
     const refreshMetadata = async (): Promise<void> => {
       const [status, fundingRate, interest, snapshot] = await Promise.all([
         fetchJson<StreamStatus>(
-          `${apiBaseUrl}/api/market/status/${provider}`,
+          resolveMarketUrl(apiBaseUrl, `/api/market/status/${provider}`),
         ).catch(() => null),
         fetchJson<FundingRate>(
-          `${apiBaseUrl}/api/exchanges/${provider}/funding-rate/${symbol}`,
+          resolveMarketUrl(
+            apiBaseUrl,
+            `/api/exchanges/${provider}/funding-rate/${symbol}`,
+          ),
         ).catch(() => null),
         fetchJson<OpenInterest>(
-          `${apiBaseUrl}/api/exchanges/${provider}/open-interest/${symbol}`,
+          resolveMarketUrl(
+            apiBaseUrl,
+            `/api/exchanges/${provider}/open-interest/${symbol}`,
+          ),
         ).catch(() => null),
         fetchJson<IndicatorSnapshot>(
-          `${apiBaseUrl}/api/market/indicators/${provider}/${symbol}?interval=${interval}`,
+          resolveMarketUrl(
+            apiBaseUrl,
+            `/api/market/indicators/${provider}/${symbol}?interval=${interval}`,
+          ),
         ).catch(() => null),
       ]);
       if (!active) return;

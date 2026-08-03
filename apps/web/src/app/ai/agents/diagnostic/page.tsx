@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/api-client";
 
 interface DiagnosticResult {
   id: string;
@@ -24,21 +25,12 @@ export default function SystemDiagnosticPage() {
   const [provider, setProvider] = useState("OPENAI");
 
   const runMutation = useMutation<DiagnosticResult, Error, void>({
-    mutationFn: async (): Promise<DiagnosticResult> => {
-      const res = await fetch("/api/agents/system-diagnostic/run", {
+    mutationFn: () =>
+      apiRequest<DiagnosticResult>("/agents/system-diagnostic/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ symbol, provider }),
-      });
-
-      if (!res.ok) {
-        const errorBody = (await res.json()) as { message?: string };
-        throw new Error(errorBody.message || "Diagnostic run failed");
-      }
-
-      const payload = (await res.json()) as DiagnosticResult;
-      return payload;
-    },
+      }),
   });
 
   const errorMessage = runMutation.error instanceof Error ? runMutation.error.message : "Diagnostic run failed";

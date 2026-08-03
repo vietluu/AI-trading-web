@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/api-client";
 
 interface AgentDefinition {
   type: string;
@@ -30,22 +31,12 @@ interface AgentHealth {
 export default function AgentRegistryPage() {
   const { data: agents = [], isLoading: loadingAgents } = useQuery<AgentDefinition[]>({
     queryKey: ["agents"],
-    queryFn: async (): Promise<AgentDefinition[]> => {
-      const res = await fetch("/api/agents");
-      if (!res.ok) throw new Error("Failed to fetch agents");
-      const payload = (await res.json()) as AgentDefinition[];
-      return payload;
-    },
+    queryFn: () => apiRequest<AgentDefinition[]>("/agents"),
   });
 
   const { data: healthList = [], isLoading: loadingHealth, refetch: refetchHealth } = useQuery<AgentHealth[]>({
     queryKey: ["agents-health"],
-    queryFn: async (): Promise<AgentHealth[]> => {
-      const res = await fetch("/api/agents/health");
-      if (!res.ok) throw new Error("Failed to fetch health status");
-      const payload = (await res.json()) as AgentHealth[];
-      return payload;
-    },
+    queryFn: () => apiRequest<AgentHealth[]>("/agents/health"),
   });
 
   const getHealthForAgent = (type: string) => {

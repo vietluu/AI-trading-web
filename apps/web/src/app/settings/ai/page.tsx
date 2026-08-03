@@ -11,7 +11,7 @@ import type {
   AIUsageDto,
 } from "@platform/shared";
 import { AccountNav } from "@/components/account-nav";
-import { apiRequest } from "@/lib/api-client";
+import { apiRequest, resolveApiUrl } from "@/lib/api-client";
 
 export default function AISettingsPage(): React.JSX.Element {
   const queryClient = useQueryClient();
@@ -89,7 +89,7 @@ export default function AISettingsPage(): React.JSX.Element {
     setTestResult(null);
 
     try {
-      const res = await fetch("/api/ai/chat/stream", {
+      const res = await fetch(resolveApiUrl("/ai/chat/stream"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
