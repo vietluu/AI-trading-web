@@ -75,4 +75,46 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     expect(pipeline.trigger).toHaveBeenCalledTimes(1);
     expect(prisma.pipelineSchedule.update).not.toHaveBeenCalled();
   });
+
+  it('marks a schedule as triggered when at least one dispatch succeeds', async () => {
+    let lastTriggeredAt: Date | undefined;
+    const prisma = {
+      pipelineSchedule: {
+        findMany: vi.fn().mockImplementation(() => [
+          {
+            id: 'schedule-1',
+            userId: 'user-1',
+            pipelineId: 'FULL_ANALYSIS_DECISION',
+            symbols: ['BTC-USDT', 'ETH-USDT'],
+            strategyIds: ['ai-core', 'trend'],
+            provider: 'BINANCE_FUTURES',
+            mode: 'INTERVAL',
+            intervalMs: 300_000,
+            lastTriggeredAt,
+            timezone: 'UTC',
+            maxRunsPerHour: 12,
+          },
+        ]),
+        update: vi.fn().mockImplementation(({ data }: { data: { lastTriggeredAt: Date } }) => {
+          lastTriggeredAt = data.lastTriggeredAt;
+          return {};
+        }),
+      },
+    };
+    const triggerMock = vi.fn().mockImplementation(() => {
+      const callCount = triggerMock.mock.calls.length;
+      if (callCount === 3) return Promise.resolve({});
+      return Promise.reject(new Error('queue down'));
+    });
+    const pipeline = {
+      trigger: triggerMock,
+    };
+    const service = new PipelineSchedulerService(prisma as never, pipeline as never, { enabled: true } as never);
+
+    await service.tick(new Date('2026-08-03T09:30:00Z'));
+    await service.tick(new Date('2026-08-03T09:30:05Z'));
+
+    expect(pipeline.trigger).toHaveBeenCalledTimes(4);
+    expect(prisma.pipelineSchedule.update).toHaveBeenCalledTimes(1);
+  });
 });

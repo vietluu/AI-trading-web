@@ -164,7 +164,7 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
         }
 
         const results = await Promise.all(triggerPromises);
-        if (results.every(Boolean)) {
+        if (results.some(Boolean)) {
           try {
             await this.prisma.pipelineSchedule.update({
               where: { id: schedule.id },
