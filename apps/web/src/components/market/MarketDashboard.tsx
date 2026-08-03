@@ -81,7 +81,19 @@ const PROVIDERS: Array<{ value: MarketProvider; label: string }> = [
   { value: "BINANCE_FUTURES", label: "Binance Futures" },
   { value: "OKX_FUTURES", label: "OKX Futures" },
 ];
-const SYMBOLS = ["BTC-USDT", "ETH-USDT"] as const;
+const SYMBOLS = [
+  "BTC-USDT",
+  "ETH-USDT",
+  "SOL-USDT",
+  "BNB-USDT",
+  "XRP-USDT",
+  "DOGE-USDT",
+  "ADA-USDT",
+  "AVAX-USDT",
+  "LINK-USDT",
+  "NEAR-USDT",
+  "SUI-USDT",
+] as const;
 const INTERVALS = ["1m", "5m", "15m", "1h", "4h", "1d"] as const;
 const STALE_AFTER_MS = 35_000;
 
@@ -105,6 +117,11 @@ function resolveMarketUrl(apiBaseUrl: string, path: string): string {
 async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, { signal });
   if (!response.ok) {
+    if (response.status === 451) {
+      throw new Error(
+        "Binance API (HTTP 451): Binance is geo-restricted in your current location or IP range. Switch to OKX Futures or use a VPN/Proxy.",
+      );
+    }
     throw new Error(`Request failed (${response.status})`);
   }
   return (await response.json()) as T;
@@ -448,8 +465,20 @@ export function MarketDashboard({
       )}
 
       {error && (
-        <div className="rounded-xl border border-rose-400/30 bg-rose-400/10 p-4 text-sm text-rose-200">
-          {error}
+        <div className="flex flex-col gap-3 rounded-xl border border-rose-400/30 bg-rose-400/10 p-4 text-sm text-rose-200 sm:flex-row sm:items-center sm:justify-between">
+          <span>{error}</span>
+          {error.includes("451") || error.includes("Binance") ? (
+            <button
+              className="shrink-0 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-black hover:bg-emerald-400"
+              onClick={() => {
+                setProvider("OKX_FUTURES");
+                setError(null);
+              }}
+              type="button"
+            >
+              Switch to OKX Futures
+            </button>
+          ) : null}
         </div>
       )}
 

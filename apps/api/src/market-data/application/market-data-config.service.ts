@@ -44,7 +44,7 @@ export class MarketDataConfigService {
     );
     const rawSymbols = readList(
       configService.get<unknown>('MARKET_DATA_SYMBOLS'),
-      ['BTC-USDT', 'ETH-USDT'],
+      ['BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT', 'XRP-USDT', 'DOGE-USDT', 'ADA-USDT', 'AVAX-USDT', 'LINK-USDT', 'NEAR-USDT', 'SUI-USDT'],
     );
     const rawIntervals = readList(
       configService.get<unknown>('MARKET_DATA_INTERVALS'),

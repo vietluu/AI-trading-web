@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState, useRef, useEffect } from "react";
+import { ChevronDown, Menu, X } from "lucide-react";
 
 const primary = [
   ["Overview", "/"],
@@ -23,45 +25,131 @@ const more = [
 
 export function AppNavigation(): React.JSX.Element {
   const pathname = usePathname();
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
   const active = (href: string) =>
     href === "/" ? pathname === href : pathname.startsWith(href);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
+      ) {
+        setDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Close menus on route change
+  useEffect(() => {
+    setDropdownOpen(false);
+    setMobileMenuOpen(false);
+  }, [pathname]);
+
   return (
-    <nav
-      aria-label="Main navigation"
-      className="flex w-full items-center gap-1 overflow-x-auto pb-1 text-sm lg:w-auto lg:overflow-visible lg:pb-0"
-    >
-      {primary.map(([label, href]) => (
-        <Link
-          className={`whitespace-nowrap rounded-lg px-3 py-2 transition-colors ${active(href) ? "bg-primary/15 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
-          href={href}
-          key={href}
-        >
-          {label}
-        </Link>
-      ))}
-      <details className="group relative shrink-0">
-        <summary className="cursor-pointer list-none rounded-lg px-3 py-2 text-muted-foreground hover:bg-muted hover:text-foreground">
-          Insights
-        </summary>
-        <div className="absolute right-0 z-50 mt-2 grid w-52 gap-1 rounded-xl border bg-card p-2 shadow-2xl">
-          {more.map(([label, href]) => (
-            <Link
-              className={`rounded-lg px-3 py-2 ${active(href) ? "bg-primary/15 text-primary" : "hover:bg-muted"}`}
-              href={href}
-              key={href}
-            >
-              {label}
-            </Link>
-          ))}
-        </div>
-      </details>
-      <Link
-        aria-label="Settings"
-        className={`whitespace-nowrap rounded-lg px-3 py-2 ${pathname.startsWith("/settings") || pathname === "/profile" || pathname === "/security" || pathname === "/api-keys" ? "bg-primary/15 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
-        href="/settings"
+    <div className="relative">
+      {/* Mobile menu button */}
+      <button
+        aria-label="Toggle Navigation"
+        className="flex items-center justify-center rounded-lg border border-border p-2 text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
+        onClick={() => setMobileMenuOpen((prev) => !prev)}
+        type="button"
       >
-        Settings
-      </Link>
-    </nav>
+        {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+      </button>
+
+      {/* Navigation container */}
+      <nav
+        aria-label="Main navigation"
+        className={`${
+          mobileMenuOpen
+            ? "absolute left-0 right-0 top-full z-50 mt-2 flex flex-col gap-1 rounded-2xl border border-border bg-background p-4 shadow-2xl lg:static lg:z-auto lg:mt-0 lg:flex-row lg:items-center lg:border-none lg:bg-transparent lg:p-0 lg:shadow-none"
+            : "hidden lg:flex lg:items-center lg:gap-1"
+        }`}
+      >
+        {primary.map(([label, href]) => (
+          <Link
+            className={`whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+              active(href)
+                ? "bg-primary/15 text-primary"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground"
+            }`}
+            href={href}
+            key={href}
+            onClick={() => {
+              setDropdownOpen(false);
+              setMobileMenuOpen(false);
+            }}
+          >
+            {label}
+          </Link>
+        ))}
+
+        {/* Stateful Insights Dropdown */}
+        <div className="relative" ref={dropdownRef}>
+          <button
+            aria-expanded={dropdownOpen}
+            className="flex items-center gap-1 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            onClick={() => setDropdownOpen((prev) => !prev)}
+            type="button"
+          >
+            <span>Insights</span>
+            <ChevronDown
+              className={`h-4 w-4 transition-transform duration-200 ${
+                dropdownOpen ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+
+          {dropdownOpen && (
+            <div className="z-50 mt-1 grid w-52 gap-1 rounded-xl border border-border bg-card p-2 shadow-2xl lg:absolute lg:right-0 lg:mt-2">
+              {more.map(([label, href]) => (
+                <Link
+                  className={`rounded-lg px-3 py-2 text-sm transition-colors ${
+                    active(href)
+                      ? "bg-primary/15 text-primary font-medium"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                  href={href}
+                  key={href}
+                  onClick={() => {
+                    setDropdownOpen(false);
+                    setMobileMenuOpen(false);
+                  }}
+                >
+                  {label}
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <Link
+          aria-label="Settings"
+          className={`whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+            pathname.startsWith("/settings") ||
+            pathname === "/profile" ||
+            pathname === "/security" ||
+            pathname === "/api-keys"
+              ? "bg-primary/15 text-primary"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+          }`}
+          href="/settings"
+          onClick={() => {
+            setDropdownOpen(false);
+            setMobileMenuOpen(false);
+          }}
+        >
+          Settings
+        </Link>
+      </nav>
+    </div>
   );
 }
+

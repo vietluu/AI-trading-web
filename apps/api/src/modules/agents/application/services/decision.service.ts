@@ -131,34 +131,33 @@ export class DecisionService {
           ? bearishWeight
           : Math.max(bullishWeight, bearishWeight, neutralWeight);
     const baseScore = activeWeight ? (alignedWeight / activeWeight) * 100 : 0;
-    const agreementFactor = this.agreementFactor(candidate, alignedCount, active.length);
     const dataQuality = this.dataQuality(input, active);
-    const { factor: volatilityFactor, adjustment: volatilityAdjustment, extreme } =
-      this.volatilityFilter(input);
+    const { adjustment: volatilityAdjustment, extreme } = this.volatilityFilter(input);
     if (volatilityAdjustment < 0) {
       overrides.push(`High volatility reduced confidence by ${Math.abs(volatilityAdjustment)}%.`);
     }
     if (extreme) overrides.push('Extreme volatility forced WAIT.');
 
-    const conflictFactor = conflictLevel === 'MEDIUM' ? 0.85 : 1;
     if (conflictLevel === 'MEDIUM') {
-      overrides.push('Medium signal conflict reduced calibrated confidence by 15%.');
+      overrides.push('Medium signal conflict reduced calibrated confidence by 10%.');
     }
     if (conflictLevel === 'HIGH') overrides.push('Strong signal conflict forced WAIT.');
 
-    const confidence = Math.round(
-      this.clamp(
-        baseScore *
-          agreementFactor *
-          QUALITY_FACTOR[dataQuality] *
-          volatilityFactor *
-          REGIME_FACTOR[regime.type] *
-          conflictFactor *
-          (active.length / names.length),
-        0,
-        100,
-      ),
-    );
+    // Check core analyst alignment (Market + Technical)
+    const marketBias = votes.get('market');
+    const techBias = votes.get('technical');
+    const coreAgree = candidate !== 'WAIT' && marketBias === candidate && techBias === candidate;
+    if (coreAgree) overrides.push('Market and Technical trend alignment boosted confidence by +10%.');
+
+    // Calibrated confidence calculation using weighted adjustments
+    const qualityDeduction = dataQuality === 'PARTIAL' ? 5 : dataQuality === 'INSUFFICIENT' ? 40 : 0;
+    const conflictDeduction = conflictLevel === 'MEDIUM' ? 10 : conflictLevel === 'HIGH' ? 35 : 0;
+    const volDeduction = Math.abs(volatilityAdjustment);
+    const coreBonus = coreAgree ? 10 : 0;
+
+    const rawConfidence = baseScore + coreBonus - qualityDeduction - conflictDeduction - volDeduction;
+    const confidence = candidate === 'WAIT' ? 0 : Math.round(this.clamp(rawConfidence, 0, 100));
+
     const decision: DecisionOutput['decision'] =
       dataQuality === 'INSUFFICIENT' ||
       conflictLevel === 'HIGH' ||
@@ -166,7 +165,7 @@ export class DecisionService {
       confidence < 60
         ? 'WAIT'
         : candidate;
-    if (confidence < 60) overrides.push('Calibrated confidence below 60 forced WAIT.');
+    if (confidence < 60 && candidate !== 'WAIT') overrides.push('Calibrated confidence below 60 forced WAIT.');
     if (dataQuality === 'INSUFFICIENT') overrides.push('Insufficient data forced WAIT.');
 
     const signals = this.signals(input, votes, weighting);
