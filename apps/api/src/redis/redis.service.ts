@@ -67,11 +67,27 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return (await this.client.expire(key, ttlSeconds)) === 1;
   }
 
-   async incrementWithTtl(key: string, ttlSeconds: number): Promise<number> {
+  async incrementWithTtl(key: string, ttlSeconds: number): Promise<number> {
     const count = await this.client.incr(key);
     if (count === 1) {
+      // Only set TTL when the key is brand new (count === 1).
+      // This avoids the sliding-window bug where every INCR resets the expiry,
+      // causing the counter to never expire and accumulate indefinitely.
       await this.client.expire(key, ttlSeconds);
     }
     return count;
+  }
+
+  /**
+   * Atomically decrements a counter. If the resulting value is <= 0 the key
+   * is deleted so it does not stay at a negative value after a crash.
+   */
+  async decrement(key: string): Promise<number> {
+    const val = await this.client.decr(key);
+    if (val <= 0) {
+      await this.client.del(key);
+      return 0;
+    }
+    return val;
   }
 }
