@@ -696,6 +696,15 @@ export class LiveTradingService {
     return { globalTradingEnabled: false };
   }
 
+  async enable(userId: string, context: RequestMetadata) {
+    this.config.enable();
+    await this.audit.record("GLOBAL_TRADING_KILL_SWITCH", userId, context, {
+      status: "ENABLED",
+    });
+    this.logger.log({ event: "global_trading_enabled", userId });
+    return { globalTradingEnabled: true };
+  }
+
   private async submit(
     userId: string,
     connection: Awaited<ReturnType<ExchangeConnectionService["get"]>>,
