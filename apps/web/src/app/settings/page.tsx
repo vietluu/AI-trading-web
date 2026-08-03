@@ -52,9 +52,6 @@ export default function SettingsPage(): React.JSX.Element {
           aiDailyBudget: formString(form, "aiDailyBudget")
             ? Number(formString(form, "aiDailyBudget"))
             : undefined,
-          paperTradingBalance: formString(form, "paperTradingBalance")
-            ? Number(formString(form, "paperTradingBalance"))
-            : undefined,
           defaultLeverage: formString(form, "defaultLeverage")
             ? Number(formString(form, "defaultLeverage"))
             : undefined,
@@ -117,14 +114,6 @@ export default function SettingsPage(): React.JSX.Element {
             min="0"
             name="aiDailyBudget"
             step="0.01"
-            type="number"
-          />
-          <Field
-            defaultValue={settings.data.paperTradingBalance}
-            label="Paper balance"
-            min="0"
-            name="paperTradingBalance"
-            step="0.00000001"
             type="number"
           />
           <Field

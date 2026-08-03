@@ -19,7 +19,6 @@ import { PipelineModule } from "./modules/pipeline/pipeline.module";
 import { SessionModule } from "./session/session.module";
 import { SettingsModule } from "./settings/settings.module";
 import { ReflectionModule } from "./modules/reflection/reflection.module";
-import { PaperTradingModule } from "./modules/paper-trading/paper-trading.module";
 import { RiskModule } from "./modules/risk/risk.module";
 import { LiveTradingModule } from "./modules/live-trading/live-trading.module";
 import { PortfolioModule } from "./modules/portfolio/portfolio.module";
@@ -51,7 +50,6 @@ import { PortfolioModule } from "./modules/portfolio/portfolio.module";
     AgentsModule,
     PipelineModule,
     ReflectionModule,
-    PaperTradingModule,
     RiskModule,
     PortfolioModule,
     LiveTradingModule,

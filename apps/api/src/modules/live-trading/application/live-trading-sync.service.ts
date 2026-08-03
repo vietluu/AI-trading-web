@@ -1,10 +1,17 @@
-import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from "@nestjs/common";
+import {
+  Injectable,
+  Logger,
+  OnApplicationBootstrap,
+  OnApplicationShutdown,
+} from "@nestjs/common";
 import { PrismaService } from "../../../database/prisma.service";
 import { LiveTradingConfigService } from "./live-trading-config.service";
 import { LiveTradingService } from "./live-trading.service";
 
 @Injectable()
-export class LiveTradingSyncService implements OnApplicationBootstrap, OnApplicationShutdown {
+export class LiveTradingSyncService
+  implements OnApplicationBootstrap, OnApplicationShutdown
+{
   private readonly logger = new Logger(LiveTradingSyncService.name);
   private timer?: NodeJS.Timeout;
   private running = false;
@@ -17,7 +24,11 @@ export class LiveTradingSyncService implements OnApplicationBootstrap, OnApplica
 
   onApplicationBootstrap(): void {
     if (!this.config.values.syncEnabled) return;
-    this.timer = setInterval(() => void this.syncAll(), this.config.values.syncIntervalMs);
+    void this.syncAll();
+    this.timer = setInterval(
+      () => void this.syncAll(),
+      this.config.values.syncIntervalMs,
+    );
     this.timer.unref();
   }
 
@@ -34,13 +45,18 @@ export class LiveTradingSyncService implements OnApplicationBootstrap, OnApplica
         select: { id: true, userId: true },
       });
       for (const connection of connections) {
-        await this.trading.sync(connection.userId, connection.id, {}).catch((error: unknown) =>
-          this.logger.error({
-            event: "live_state_sync_failed",
-            connectionId: connection.id,
-            error: error instanceof Error ? error.message.slice(0, 200) : "Unknown sync failure",
-          }),
-        );
+        await this.trading
+          .sync(connection.userId, connection.id, {})
+          .catch((error: unknown) =>
+            this.logger.error({
+              event: "live_state_sync_failed",
+              connectionId: connection.id,
+              error:
+                error instanceof Error
+                  ? error.message.slice(0, 200)
+                  : "Unknown sync failure",
+            }),
+          );
       }
     } finally {
       this.running = false;

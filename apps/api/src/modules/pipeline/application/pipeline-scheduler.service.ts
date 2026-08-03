@@ -77,6 +77,13 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
       data: { enabled },
     });
   }
+  async cancel(userId: string, id: string) {
+    const result = await this.prisma.pipelineSchedule.deleteMany({
+      where: { id, userId },
+    });
+    if (result.count === 0) throw new ConflictException("Schedule not found");
+    return { cancelled: true, id };
+  }
   status() {
     return {
       enabled: this.config.enabled,

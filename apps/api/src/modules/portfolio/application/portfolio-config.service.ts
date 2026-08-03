@@ -24,21 +24,13 @@ export class PortfolioConfigService {
     };
   }
 
-  get tradingMode(): "SIGNAL_ONLY" | "PAPER_TRADING" | "DEMO" | "LIVE" {
-    return (
-      this.config.get<"SIGNAL_ONLY" | "PAPER_TRADING" | "DEMO" | "LIVE">(
-        "TRADING_MODE",
-      ) ?? "DEMO"
-    );
+  get tradingMode(): "DEMO" | "LIVE" {
+    return this.config.get<"DEMO" | "LIVE">("TRADING_MODE") ?? "DEMO";
   }
 
   get liveStaleAfterMs(): number {
     return (
       (this.config.get<number>("LIVE_POSITION_SYNC_INTERVAL_MS") ?? 30_000) * 2
     );
-  }
-
-  get paperInitialBalance(): number {
-    return this.config.get<number>("PAPER_INITIAL_BALANCE") ?? 10_000;
   }
 }

@@ -54,13 +54,6 @@ export class UpdateSettingsDto {
   @Max(100000)
   aiDailyBudget?: number;
 
-  @ApiPropertyOptional({ minimum: 0 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 8 })
-  @Min(0)
-  paperTradingBalance?: number;
-
   @ApiPropertyOptional({ minimum: 1, maximum: 125 })
   @IsOptional()
   @Type(() => Number)

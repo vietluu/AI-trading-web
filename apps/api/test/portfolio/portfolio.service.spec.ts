@@ -16,8 +16,21 @@ describe("PortfolioService persistence", () => {
       portfolioRebalance: { create: vi.fn().mockResolvedValue({}) },
     };
     const prisma = {
-      paperAccount: {
-        findUnique: vi.fn().mockResolvedValue({ equity: 10_000 }),
+      exchangeConnection: {
+        findMany: vi.fn().mockResolvedValue([{ id: "connection-1" }]),
+      },
+      livePosition: { findMany: vi.fn().mockResolvedValue([]) },
+      liveAccountSnapshot: {
+        findMany: vi
+          .fn()
+          .mockResolvedValue([
+            {
+              connectionId: "connection-1",
+              totalEquity: new Prisma.Decimal(10_000),
+              unrealizedPnl: new Prisma.Decimal(0),
+              syncedAt: new Date(),
+            },
+          ]),
       },
       portfolioStrategy: {
         findMany: vi.fn().mockResolvedValue([
@@ -43,6 +56,8 @@ describe("PortfolioService persistence", () => {
       ),
     };
     const config = {
+      tradingMode: "DEMO",
+      liveStaleAfterMs: 60_000,
       values: {
         maxStrategies: 5,
         maxTotalExposure: 0.6,

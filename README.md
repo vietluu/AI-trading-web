@@ -1,7 +1,7 @@
 # AI Multi-Agent Cryptocurrency Futures Platform
 
 A production-oriented research and trading platform that combines real-time
-market data, specialized AI agents, deterministic risk controls, paper trading,
+market data, specialized AI agents, deterministic risk controls, exchange-backed trading,
 and optional live execution. AI remains advisory: it never sends exchange
 orders, and every future order must pass the deterministic Risk Engine.
 
@@ -48,7 +48,7 @@ The current foundation includes:
 - isolated user-specific news bookmarks and read states;
 - interactive frontend UI pages for `/news`, `/news/:id`, `/macro`, `/sentiment`, `/settings/data-sources`, and `/system/providers`.
 
-Trading signals, Decision Agent, Judge Agent, Risk Engine, paper trading, and live execution remain intentionally reserved for later roadmap phases.
+Trading signals, Decision Agent, Judge Agent, Risk Engine, and exchange-backed execution remain intentionally safety gated.
 There are no roles, organizations, teams, subscriptions, or payments. Phase 3
 contains no provider trading mutation, and production connections are disabled
 by default.

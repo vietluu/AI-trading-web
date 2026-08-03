@@ -131,34 +131,22 @@ export class PortfolioService {
       where: { id: input.strategyId, userId: input.userId },
       include: { allocation: true },
     });
-    const snapshots: StrategyPositionSnapshot[] = this.usesExchangeData()
-      ? (
-          await tx.livePosition.findMany({
-            where: {
-              userId: input.userId,
-              environment: { in: this.exchangeEnvironments() },
-            },
-          })
-        ).map((position) => ({
-          strategyId:
-            position.strategyId ??
-            `unassigned:${position.connectionId}:${position.symbol}:${position.side}`,
-          symbol: position.symbol,
-          side: position.side as PositionSide,
-          quantity: Number(position.quantity),
-          markPrice: Number(position.markPrice ?? position.entryPrice),
-        }))
-      : (
-          await tx.strategyPosition.findMany({
-            where: { strategy: { userId: input.userId } },
-          })
-        ).map((position) => ({
-          strategyId: position.strategyId,
-          symbol: position.symbol,
-          side: position.side as PositionSide,
-          quantity: Number(position.quantity),
-          markPrice: Number(position.markPrice),
-        }));
+    const snapshots: StrategyPositionSnapshot[] = (
+      await tx.livePosition.findMany({
+        where: {
+          userId: input.userId,
+          environment: { in: this.exchangeEnvironments() },
+        },
+      })
+    ).map((position) => ({
+      strategyId:
+        position.strategyId ??
+        `unassigned:${position.connectionId}:${position.symbol}:${position.side}`,
+      symbol: position.symbol,
+      side: position.side as PositionSide,
+      quantity: Number(position.quantity),
+      markPrice: Number(position.markPrice ?? position.entryPrice),
+    }));
     const result =
       !strategy || strategy.status !== StrategyStatus.ACTIVE
         ? {
@@ -309,13 +297,8 @@ export class PortfolioService {
 
   async rebalance(userId: string, reason = "MANUAL") {
     await this.ensureDefaults(userId);
-    const account = this.usesExchangeData()
-      ? null
-      : await this.prisma.paperAccount.findUnique({ where: { userId } });
-    const live = this.usesExchangeData() ? await this.liveState(userId) : null;
-    const equity = live
-      ? live.equity
-      : Number(account?.equity ?? this.config.paperInitialBalance);
+    const live = await this.liveState(userId);
+    const equity = live.equity;
     const strategies = await this.prisma.portfolioStrategy.findMany({
       where: { userId },
       include: { performance: true, allocation: true },
@@ -339,21 +322,13 @@ export class PortfolioService {
           id: strategy.id,
           key: strategy.key,
           status: strategy.status,
-          performance: live
-            ? {
-                totalTrades: 0,
-                winRate: 0.5,
-                returnPct: capital > 0 ? pnl / capital : 0,
-                drawdownPct: 0,
-                sharpeRatio: null,
-              }
-            : {
-                totalTrades: strategy.performance?.totalTrades ?? 0,
-                winRate: strategy.performance?.winRate ?? 0,
-                returnPct: strategy.performance?.returnPct ?? 0,
-                drawdownPct: strategy.performance?.drawdownPct ?? 0,
-                sharpeRatio: strategy.performance?.sharpeRatio,
-              },
+          performance: {
+            totalTrades: 0,
+            winRate: 0.5,
+            returnPct: capital > 0 ? pnl / capital : 0,
+            drawdownPct: 0,
+            sharpeRatio: null,
+          },
         };
       }),
       equity,
@@ -486,13 +461,9 @@ export class PortfolioService {
 
   async dashboard(userId: string): Promise<Record<string, unknown>> {
     await this.ensureDefaults(userId);
-    const exchangeBacked = this.usesExchangeData();
-    const [account, live, strategies, riskEvents, rebalances, liveOrders] =
+    const [live, strategies, riskEvents, rebalances, liveOrders] =
       await Promise.all([
-        exchangeBacked
-          ? Promise.resolve(null)
-          : this.prisma.paperAccount.findUnique({ where: { userId } }),
-        exchangeBacked ? this.liveState(userId) : Promise.resolve(null),
+        this.liveState(userId),
         this.prisma.portfolioStrategy.findMany({
           where: { userId },
           include: { allocation: true, performance: true, positions: true },
@@ -508,15 +479,13 @@ export class PortfolioService {
           orderBy: { createdAt: "desc" },
           take: 20,
         }),
-        exchangeBacked
-          ? this.prisma.liveOrder.findMany({
-              where: {
-                userId,
-                environment: { in: this.exchangeEnvironments() },
-                status: { not: "FAILED" },
-              },
-            })
-          : Promise.resolve([]),
+        this.prisma.liveOrder.findMany({
+          where: {
+            userId,
+            environment: { in: this.exchangeEnvironments() },
+            status: { not: "FAILED" },
+          },
+        }),
       ]);
     if (
       strategies.every(
@@ -526,31 +495,19 @@ export class PortfolioService {
       await this.rebalance(userId, "INITIAL_ALLOCATION");
       return this.dashboard(userId);
     }
-    const equity = live
-      ? live.equity
-      : Number(account?.equity ?? this.config.paperInitialBalance);
-    const peakEquity = live
-      ? live.peakEquity
-      : Number(account?.peakEquity ?? equity);
-    const positions: StrategyPositionSnapshot[] = live
-      ? live.positions.map((position) => ({
-          strategyId:
-            position.strategyId ??
-            `unassigned:${position.connectionId}:${position.symbol}:${position.side}`,
-          symbol: position.symbol,
-          side: position.side as PositionSide,
-          quantity: Number(position.quantity),
-          markPrice: Number(position.markPrice ?? position.entryPrice),
-        }))
-      : strategies.flatMap((strategy) =>
-          strategy.positions.map((position) => ({
-            strategyId: strategy.id,
-            symbol: position.symbol,
-            side: position.side as PositionSide,
-            quantity: Number(position.quantity),
-            markPrice: Number(position.markPrice),
-          })),
-        );
+    const equity = live.equity;
+    const peakEquity = live.peakEquity;
+    const positions: StrategyPositionSnapshot[] = live.positions.map(
+      (position) => ({
+        strategyId:
+          position.strategyId ??
+          `unassigned:${position.connectionId}:${position.symbol}:${position.side}`,
+        symbol: position.symbol,
+        side: position.side as PositionSide,
+        quantity: Number(position.quantity),
+        markPrice: Number(position.markPrice ?? position.entryPrice),
+      }),
+    );
     const grossExposure = positions.reduce(
       (sum, item) => sum + Math.abs(item.quantity * item.markPrice),
       0,
@@ -559,23 +516,18 @@ export class PortfolioService {
       config: this.config.values,
       source: {
         mode: this.config.tradingMode,
-        kind: exchangeBacked ? "EXCHANGE" : "PAPER",
-        environment: exchangeBacked
-          ? this.exchangeEnvironments().join("/")
-          : "SIMULATED",
-        available: live?.available ?? true,
-        stale: live?.stale ?? false,
-        syncedAt: live?.syncedAt?.toISOString() ?? null,
-        connectionCount: live?.connectionCount ?? 0,
+        kind: "EXCHANGE",
+        environment: this.exchangeEnvironments().join("/"),
+        available: live.available,
+        stale: live.stale,
+        syncedAt: live.syncedAt?.toISOString() ?? null,
+        connectionCount: live.connectionCount,
       },
       portfolio: {
         equity,
         peakEquity,
-        pnl: live
-          ? live.pnl
-          : Number(account?.balance ?? equity) -
-            this.config.paperInitialBalance,
-        pnlKind: live ? "EXCHANGE_MARK_TO_MARKET" : "PAPER_REALIZED",
+        pnl: live.pnl,
+        pnlKind: "EXCHANGE_MARK_TO_MARKET",
         grossExposure,
         exposurePct: equity > 0 ? grossExposure / equity : 0,
         drawdownPct:
@@ -612,57 +564,33 @@ export class PortfolioService {
                 allocatedCapital: capital,
               }
             : { weight: 0, allocatedCapital: 0 },
-          performance: live
-            ? {
-                source: "EXCHANGE_POSITION",
-                totalTrades: liveOrders.filter(
-                  (order) =>
-                    order.strategyId === item.id &&
-                    ["OPEN", "REVERSE"].includes(order.purpose),
-                ).length,
-                winRate: null,
-                returnPct: capital > 0 ? strategyPnl / capital : null,
-                drawdownPct: null,
-                sharpeRatio: null,
-                realizedPnl: exchangePositions.reduce(
-                  (sum, position) => sum + Number(position.realizedPnl ?? 0),
-                  0,
-                ),
-                unrealizedPnl: exchangePositions.reduce(
-                  (sum, position) => sum + Number(position.unrealizedPnl),
-                  0,
-                ),
-                updatedAt: live.syncedAt?.toISOString() ?? null,
-              }
-            : item.performance
-              ? {
-                  ...item.performance,
-                  source: "PAPER_TRADES",
-                  realizedPnl: Number(item.performance.realizedPnl),
-                  unrealizedPnl: item.positions.reduce(
-                    (sum, position) => sum + Number(position.unrealizedPnl),
-                    0,
-                  ),
-                  updatedAt: item.performance.updatedAt.toISOString(),
-                }
-              : null,
-          exposure: live
-            ? this.exchangeExposure(exchangePositions)
-            : item.positions.reduce(
-                (sum, position) =>
-                  sum +
-                  Math.abs(
-                    Number(position.quantity) * Number(position.markPrice),
-                  ),
-                0,
-              ),
+          performance: {
+            source: "EXCHANGE_POSITION",
+            totalTrades: liveOrders.filter(
+              (order) =>
+                order.strategyId === item.id &&
+                ["OPEN", "REVERSE"].includes(order.purpose),
+            ).length,
+            winRate: null,
+            returnPct: capital > 0 ? strategyPnl / capital : null,
+            drawdownPct: null,
+            sharpeRatio: null,
+            realizedPnl: exchangePositions.reduce(
+              (sum, position) => sum + Number(position.realizedPnl ?? 0),
+              0,
+            ),
+            unrealizedPnl: exchangePositions.reduce(
+              (sum, position) => sum + Number(position.unrealizedPnl),
+              0,
+            ),
+            updatedAt: live.syncedAt?.toISOString() ?? null,
+          },
+          exposure: this.exchangeExposure(exchangePositions),
         };
       }),
-      unassignedExposure: live
-        ? this.exchangeExposure(
-            live.positions.filter((position) => !position.strategyId),
-          )
-        : 0,
+      unassignedExposure: this.exchangeExposure(
+        live.positions.filter((position) => !position.strategyId),
+      ),
       aggregation: aggregatePositions(positions),
       riskEvents: riskEvents.map((item) => ({
         ...item,
@@ -676,10 +604,6 @@ export class PortfolioService {
         createdAt: item.createdAt.toISOString(),
       })),
     };
-  }
-
-  private usesExchangeData(): boolean {
-    return ["DEMO", "LIVE"].includes(this.config.tradingMode);
   }
 
   private exchangeEnvironments(): string[] {

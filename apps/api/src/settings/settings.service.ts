@@ -38,7 +38,6 @@ export class SettingsService {
       preferredSymbols: setting.preferredSymbols,
       preferredTimeframes: setting.preferredTimeframes,
       aiDailyBudget: setting.aiDailyBudget.toString(),
-      paperTradingBalance: setting.paperTradingBalance.toString(),
       defaultLeverage: setting.defaultLeverage,
       riskPreference: setting.riskPreference,
       updatedAt: setting.updatedAt,

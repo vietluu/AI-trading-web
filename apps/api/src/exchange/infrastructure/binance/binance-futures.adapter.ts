@@ -394,7 +394,9 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
     );
     return {
       provider: this.provider,
-      totalEquity: value.totalWalletBalance,
+      // Binance margin balance includes unrealized PnL and is the actual
+      // mark-to-market equity used by risk and portfolio calculations.
+      totalEquity: value.totalMarginBalance,
       availableBalance: value.availableBalance,
       totalUnrealizedPnl: value.totalUnrealizedProfit,
       totalMarginBalance: value.totalMarginBalance,
@@ -480,6 +482,28 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
       }),
     );
     return values.map((order) => this.order(order));
+  }
+
+  async getOrderHistory(
+    credentials: ExchangeCredentials,
+    symbols = ["BTC-USDT", "ETH-USDT"],
+  ): Promise<ExchangeOrder[]> {
+    const pages = await Promise.all(
+      symbols.map((symbol) =>
+        this.client
+          .signedGet("/fapi/v1/allOrders", credentials, {
+            symbol: toBinanceSymbol(symbol),
+            limit: 100,
+          })
+          .then((value) => z.array(orderSchema).parse(value)),
+      ),
+    );
+    return pages
+      .flat()
+      .map((order) => this.order(order))
+      .sort(
+        (a, b) => (b.updatedAt?.getTime() ?? 0) - (a.updatedAt?.getTime() ?? 0),
+      );
   }
 
   async getOrder(

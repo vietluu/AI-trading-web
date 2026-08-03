@@ -236,10 +236,18 @@ export function MarketDashboard({
       const [latestCandles, latestTicker] = await Promise.all([
         fetchJson<RawCandle[]>(
           `${apiBaseUrl}/api/exchanges/${provider}/klines/${symbol}?interval=${interval}&limit=2`,
-        ).catch(() => []),
+        ).catch(() =>
+          fetchJson<RawCandle[]>(
+            `${apiBaseUrl}/api/market/candles/${provider}/${symbol}?interval=${interval}&limit=2`,
+          ).catch(() => []),
+        ),
         fetchJson<TickerData>(
           `${apiBaseUrl}/api/exchanges/${provider}/ticker/${symbol}`,
-        ).catch(() => null),
+        ).catch(() =>
+          fetchJson<TickerData>(
+            `${apiBaseUrl}/api/market/tickers/${provider}/${symbol}`,
+          ).catch(() => null),
+        ),
       ]);
       if (!active) return;
       const latest = latestCandles.at(-1);

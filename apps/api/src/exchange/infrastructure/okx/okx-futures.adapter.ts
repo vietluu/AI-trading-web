@@ -410,8 +410,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         await this.client.signedGet("/api/v5/account/balance", credentials),
       )[0]!;
     const settlement =
-      value.details.find((detail) => detail.ccy === "USDT") ??
-      value.details[0];
+      value.details.find((detail) => detail.ccy === "USDT") ?? value.details[0];
     const available = this.nonEmptyDecimal(value.availEq, settlement?.availBal);
     const upl = this.nonEmptyDecimal(value.upl, settlement?.upl);
     return {
@@ -509,6 +508,18 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     return values.map((item) => this.order(item));
   }
 
+  async getOrderHistory(
+    credentials: ExchangeCredentials,
+  ): Promise<ExchangeOrder[]> {
+    const values = z.array(orderSchema).parse(
+      await this.client.signedGet("/api/v5/trade/orders-history", credentials, {
+        instType: "SWAP",
+        limit: 100,
+      }),
+    );
+    return values.map((item) => this.order(item));
+  }
+
   async getOrder(
     credentials: ExchangeCredentials,
     query: GetOrderQuery,
@@ -575,17 +586,28 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       sz: contractQuantity,
       clOrdId: command.clientOrderId,
       reduceOnly: command.reduceOnly ?? false,
-      ...(command.positionSide ? { posSide: command.positionSide.toLowerCase() } : {}),
+      ...(command.positionSide
+        ? { posSide: command.positionSide.toLowerCase() }
+        : {}),
     };
     if (command.stopLoss || command.takeProfit) {
-      body.attachAlgoOrds = [{
-        ...(command.takeProfit ? { tpTriggerPx: command.takeProfit, tpOrdPx: "-1" } : {}),
-        ...(command.stopLoss ? { slTriggerPx: command.stopLoss, slOrdPx: "-1" } : {}),
-      }];
+      body.attachAlgoOrds = [
+        {
+          ...(command.takeProfit
+            ? { tpTriggerPx: command.takeProfit, tpOrdPx: "-1" }
+            : {}),
+          ...(command.stopLoss
+            ? { slTriggerPx: command.stopLoss, slOrdPx: "-1" }
+            : {}),
+        },
+      ];
     }
-    const ack = z.array(orderAckSchema).min(1).parse(
-      await this.client.signedPost("/api/v5/trade/order", credentials, body),
-    )[0]!;
+    const ack = z
+      .array(orderAckSchema)
+      .min(1)
+      .parse(
+        await this.client.signedPost("/api/v5/trade/order", credentials, body),
+      )[0]!;
     if (ack.sCode !== "0") {
       throw new ExchangeError(
         ExchangeErrorCode.INVALID_REQUEST,
@@ -617,15 +639,31 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     credentials: ExchangeCredentials,
     command: CancelOrderCommand,
   ): Promise<ExchangeOrder> {
-    const ack = z.array(orderAckSchema).min(1).parse(
-      await this.client.signedPost("/api/v5/trade/cancel-order", credentials, {
-        instId: toOkxSymbol(command.symbol),
-        ...(command.orderId ? { ordId: command.orderId } : {}),
-        ...(command.clientOrderId ? { clOrdId: command.clientOrderId } : {}),
-      }),
-    )[0]!;
+    const ack = z
+      .array(orderAckSchema)
+      .min(1)
+      .parse(
+        await this.client.signedPost(
+          "/api/v5/trade/cancel-order",
+          credentials,
+          {
+            instId: toOkxSymbol(command.symbol),
+            ...(command.orderId ? { ordId: command.orderId } : {}),
+            ...(command.clientOrderId
+              ? { clOrdId: command.clientOrderId }
+              : {}),
+          },
+        ),
+      )[0]!;
     if (ack.sCode !== "0") {
-      throw new ExchangeError(ExchangeErrorCode.INVALID_REQUEST, this.provider, false, 400, ack.sMsg || "OKX rejected cancellation", ack.sCode);
+      throw new ExchangeError(
+        ExchangeErrorCode.INVALID_REQUEST,
+        this.provider,
+        false,
+        400,
+        ack.sMsg || "OKX rejected cancellation",
+        ack.sCode,
+      );
     }
     return {
       provider: this.provider,
@@ -677,7 +715,9 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
   }
 
   private nonEmptyDecimal(...values: Array<string | undefined>): string {
-    return values.find((value) => value !== undefined && value.trim() !== "") ?? "0";
+    return (
+      values.find((value) => value !== undefined && value.trim() !== "") ?? "0"
+    );
   }
 
   private baseQuantity(contracts: string, contractSize?: string): string {
@@ -695,8 +735,16 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
   ): string {
     const raw = Number(baseQuantity) / Number(contractSize);
     const lot = Number(lotSize);
-    if (!Number.isFinite(raw) || !Number.isFinite(lot) || raw <= 0 || lot <= 0) {
-      throw ExchangeError.invalidRequest(this.provider, "Invalid OKX order quantity");
+    if (
+      !Number.isFinite(raw) ||
+      !Number.isFinite(lot) ||
+      raw <= 0 ||
+      lot <= 0
+    ) {
+      throw ExchangeError.invalidRequest(
+        this.provider,
+        "Invalid OKX order quantity",
+      );
     }
     const lots = Math.floor((raw + Number.EPSILON) / lot);
     const quantity = lots * lot;

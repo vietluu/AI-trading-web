@@ -6,7 +6,7 @@ import { apiRequest } from "@/lib/api-client";
 interface PortfolioDashboard {
   source: {
     mode: string;
-    kind: "EXCHANGE" | "PAPER";
+    kind: "EXCHANGE";
     environment: string;
     available: boolean;
     stale: boolean;
@@ -126,9 +126,7 @@ export default function PortfolioPage(): React.JSX.Element {
         <div>
           <h1 className="text-3xl font-bold">Strategy portfolio</h1>
           <p className="mt-1 text-muted-foreground">
-            {source.kind === "EXCHANGE"
-              ? `Exchange-synchronized ${source.environment} portfolio data.`
-              : "Simulated paper-trading portfolio data."}
+            Exchange-synchronized {source.environment} portfolio data.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -180,7 +178,7 @@ export default function PortfolioPage(): React.JSX.Element {
           [
             portfolio.pnlKind === "EXCHANGE_MARK_TO_MARKET"
               ? "Exchange PnL"
-              : "Paper PnL",
+              : "Realized PnL",
             money.format(portfolio.pnl),
           ],
           [
