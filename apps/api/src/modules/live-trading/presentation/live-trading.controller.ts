@@ -48,4 +48,9 @@ export class LiveTradingController {
   kill(@Req() request: AuthenticatedRequest) {
     return this.trading.kill(request.auth.userId, requestMetadata(request));
   }
+
+  @Post("kill-switch/enable")
+  enable(@Req() request: AuthenticatedRequest) {
+    return this.trading.enable(request.auth.userId, requestMetadata(request));
+  }
 }

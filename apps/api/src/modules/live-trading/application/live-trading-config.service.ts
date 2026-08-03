@@ -58,4 +58,8 @@ export class LiveTradingConfigService {
   kill(): void {
     this.runtimeEnabled = false;
   }
+
+  enable(): void {
+    this.runtimeEnabled = true;
+  }
 }

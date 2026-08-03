@@ -28,9 +28,12 @@ describe("Phase 9 execution safety gates", () => {
     expect(() => enabled.assertExecutionAllowed(ExchangeEnvironment.DEMO)).toThrow(ForbiddenException);
   });
 
-  it("cannot be re-enabled after the runtime kill switch is activated", () => {
+  it("can be re-enabled after the runtime kill switch is activated", () => {
     const config = service({ TRADING_MODE: "DEMO", GLOBAL_TRADING_ENABLED: true });
     config.kill();
     expect(() => config.assertExecutionAllowed(ExchangeEnvironment.DEMO)).toThrow(ServiceUnavailableException);
+
+    config.enable();
+    expect(() => config.assertExecutionAllowed(ExchangeEnvironment.DEMO)).not.toThrow();
   });
 });
