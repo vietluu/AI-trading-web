@@ -1,5 +1,6 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import type { ConfigService } from "@nestjs/config";
+import { RedisService } from "../../src/redis/redis.service";
 import { ModelRegistryService } from "../../src/modules/ai/infrastructure/registry/model-registry.service";
 import { OpenAIProvider } from "../../src/modules/ai/infrastructure/provider/openai.provider";
 import { AnthropicProvider } from "../../src/modules/ai/infrastructure/provider/anthropic.provider";
@@ -31,6 +32,7 @@ describe("AI Orchestrator & Fallback Integration", () => {
   let mockConfigService: AIConfigService;
   let mockBudgetManager: BudgetManagerService;
   let mockHistoryService: AIHistoryService;
+  let mockRedisService: Pick<RedisService, "get" | "setWithTtl">;
 
   beforeEach(() => {
     process.env.MOCK_AI_RESPONSES = "true";
@@ -63,6 +65,11 @@ describe("AI Orchestrator & Fallback Integration", () => {
       logExecution: () => Promise.resolve(),
     } as unknown as AIHistoryService;
 
+    mockRedisService = {
+      get: vi.fn().mockResolvedValue(null),
+      setWithTtl: vi.fn().mockResolvedValue(undefined),
+    };
+
     const mockEnvConfig = { get: () => undefined } as unknown as ConfigService;
     modelRegistry = new ModelRegistryService();
     openAIProvider = new OpenAIProvider(mockEnvConfig, modelRegistry);
@@ -93,7 +100,8 @@ describe("AI Orchestrator & Fallback Integration", () => {
       promptEngine,
       factory,
       mockHistoryService,
-      costEstimator
+      costEstimator,
+      mockRedisService as unknown as RedisService
     );
   });
 
@@ -138,6 +146,106 @@ describe("AI Orchestrator & Fallback Integration", () => {
         provider: "OPENAI",
       })
     ).rejects.toThrow("Invalid API key (401)");
+  });
+
+  it("should not retry the same provider request multiple times", async () => {
+    const provider = {
+      providerType: "OPENAI",
+      chat: vi.fn().mockRejectedValue(Object.assign(new Error("Rate limit exceeded 429"), { status: 429 })),
+      stream: async function* () {
+        yield { deltaToken: "", isComplete: true };
+      },
+      embedding: vi.fn(),
+      countTokens: vi.fn(),
+      health: vi.fn(),
+      listModels: vi.fn(),
+    };
+
+    const factoryWithStub = {
+      getProvider: () => provider,
+    } as unknown as LLMProviderFactory;
+
+    const baseConfig = await (mockConfigService.getOrCreateConfig?.() ?? Promise.resolve({}));
+    const noRetryConfig = {
+      ...mockConfigService,
+      getOrCreateConfig: () => Promise.resolve({
+        ...baseConfig,
+        fallbackEnabled: false,
+        fallbackProviders: [],
+      }),
+    } as unknown as AIConfigService;
+
+    const orchestratorNoRetry = new AIOrchestratorService(
+      noRetryConfig,
+      mockBudgetManager,
+      contextBuilder,
+      promptEngine,
+      factoryWithStub,
+      mockHistoryService,
+      new CostEstimatorService(modelRegistry),
+      mockRedisService as unknown as RedisService
+    );
+
+    await expect(orchestratorNoRetry.execute({
+      userId: "user-123",
+      userPrompt: "Should not retry",
+      provider: "OPENAI",
+    })).rejects.toThrow("AI Request failed");
+
+    expect(provider.chat).toHaveBeenCalledTimes(1);
+  });
+
+  it("should reuse a cached response for the same prompt", async () => {
+    const provider = {
+      providerType: "OPENAI",
+      chat: vi.fn().mockResolvedValue({
+        text: "cached analysis",
+        json: null,
+        finishReason: "stop",
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, estimatedCost: 0.01 },
+        latencyMs: 100,
+        provider: "OPENAI" as const,
+        model: "gpt-5-mini",
+      }),
+      stream: async function* () {
+        yield { deltaToken: "", isComplete: true };
+      },
+      embedding: vi.fn(),
+      countTokens: vi.fn(),
+      health: vi.fn(),
+      listModels: vi.fn(),
+    };
+
+    const factoryWithStub = {
+      getProvider: () => provider,
+    } as unknown as LLMProviderFactory;
+
+    const cachedOrchestrator = new AIOrchestratorService(
+      mockConfigService,
+      mockBudgetManager,
+      contextBuilder,
+      promptEngine,
+      factoryWithStub,
+      mockHistoryService,
+      new CostEstimatorService(modelRegistry),
+      mockRedisService as unknown as RedisService
+    );
+
+    const first = await cachedOrchestrator.execute({
+      userId: "user-123",
+      userPrompt: "Analyze BTC trend",
+      provider: "OPENAI",
+    });
+
+    const second = await cachedOrchestrator.execute({
+      userId: "user-123",
+      userPrompt: "Analyze BTC trend",
+      provider: "OPENAI",
+    });
+
+    expect(first.text).toBe("cached analysis");
+    expect(second.text).toBe("cached analysis");
+    expect(provider.chat).toHaveBeenCalledTimes(1);
   });
 
   it("should stream tokens chunk by chunk", async () => {

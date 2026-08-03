@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { cronMatches, validateCron } from '../../src/modules/pipeline/domain/cron';
 import { pipelineSkipReason } from '../../src/modules/pipeline/domain/rate-limit';
 import { FULL_ANALYSIS_DECISION } from '../../src/modules/pipeline/domain/pipeline.definition';
 import { PipelineThresholdService } from '../../src/modules/pipeline/application/pipeline-threshold.service';
+import { PipelineSchedulerService } from '../../src/modules/pipeline/application/pipeline-scheduler.service';
 import { PIPELINE_DEAD_LETTER_QUEUE_NAME, PIPELINE_RETRY_QUEUE_NAME, PIPELINE_RUN_QUEUE_NAME } from '../../src/modules/pipeline/infrastructure/pipeline-queue.constants';
 
 describe('Phase 6.6 pipeline runtime policies', () => {
@@ -41,5 +42,37 @@ describe('Phase 6.6 pipeline runtime policies', () => {
       'pipeline-dead-letter',
     ]);
     expect([PIPELINE_RUN_QUEUE_NAME, PIPELINE_RETRY_QUEUE_NAME, PIPELINE_DEAD_LETTER_QUEUE_NAME].every((name) => !name.includes(':'))).toBe(true);
+  });
+
+  it('does not stamp a schedule as triggered when every enqueue attempt fails', async () => {
+    const prisma = {
+      pipelineSchedule: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: 'schedule-1',
+            userId: 'user-1',
+            pipelineId: 'FULL_ANALYSIS_DECISION',
+            symbols: ['BTC-USDT'],
+            strategyIds: ['ai-core'],
+            provider: 'BINANCE_FUTURES',
+            mode: 'INTERVAL',
+            intervalMs: 300_000,
+            lastTriggeredAt: undefined,
+            timezone: 'UTC',
+            maxRunsPerHour: 12,
+          },
+        ]),
+        update: vi.fn().mockResolvedValue({}),
+      },
+    };
+    const pipeline = {
+      trigger: vi.fn().mockRejectedValue(new Error('queue down')),
+    };
+    const service = new PipelineSchedulerService(prisma as never, pipeline as never, { enabled: true } as never);
+
+    await service.tick(new Date('2026-08-03T09:30:00Z'));
+
+    expect(pipeline.trigger).toHaveBeenCalledTimes(1);
+    expect(prisma.pipelineSchedule.update).not.toHaveBeenCalled();
   });
 });
