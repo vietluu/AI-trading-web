@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import type { ConfigService } from "@nestjs/config";
-import { RedisService } from "../../src/redis/redis.service";
+import { type RedisService } from "../../src/redis/redis.service";
 import { ModelRegistryService } from "../../src/modules/ai/infrastructure/registry/model-registry.service";
 import { OpenAIProvider } from "../../src/modules/ai/infrastructure/provider/openai.provider";
 import { AnthropicProvider } from "../../src/modules/ai/infrastructure/provider/anthropic.provider";
@@ -17,6 +17,7 @@ import { AIOrchestratorService } from "../../src/modules/ai/application/ai-orche
 import type { AIConfigService } from "../../src/modules/ai/infrastructure/config/ai-config.service";
 import type { BudgetManagerService } from "../../src/modules/ai/infrastructure/budget/budget-manager.service";
 import type { AIHistoryService } from "../../src/modules/ai/infrastructure/history/ai-history.service";
+import type { LLMProvider } from "../../src/modules/ai/domain/interfaces/llm-provider.interface";
 import type { Prisma } from "@prisma/client";
 
 describe("AI Orchestrator & Fallback Integration", () => {
@@ -32,7 +33,7 @@ describe("AI Orchestrator & Fallback Integration", () => {
   let mockConfigService: AIConfigService;
   let mockBudgetManager: BudgetManagerService;
   let mockHistoryService: AIHistoryService;
-  let mockRedisService: Pick<RedisService, "get" | "setWithTtl">;
+  let mockRedisService: RedisService;
 
   beforeEach(() => {
     process.env.MOCK_AI_RESPONSES = "true";
@@ -68,7 +69,8 @@ describe("AI Orchestrator & Fallback Integration", () => {
     mockRedisService = {
       get: vi.fn().mockResolvedValue(null),
       setWithTtl: vi.fn().mockResolvedValue(undefined),
-    };
+      delete: vi.fn().mockResolvedValue(undefined),
+    } as unknown as RedisService;
 
     const mockEnvConfig = { get: () => undefined } as unknown as ConfigService;
     modelRegistry = new ModelRegistryService();
@@ -101,7 +103,7 @@ describe("AI Orchestrator & Fallback Integration", () => {
       factory,
       mockHistoryService,
       costEstimator,
-      mockRedisService as unknown as RedisService
+      mockRedisService
     );
   });
 
@@ -149,23 +151,25 @@ describe("AI Orchestrator & Fallback Integration", () => {
   });
 
   it("should not retry the same provider request multiple times", async () => {
+    const chatMock = vi.fn().mockRejectedValue(Object.assign(new Error("Rate limit exceeded 429"), { status: 429 }));
     const provider = {
       providerType: "OPENAI",
-      chat: vi.fn().mockRejectedValue(Object.assign(new Error("Rate limit exceeded 429"), { status: 429 })),
-      stream: async function* () {
+      chat: chatMock as LLMProvider["chat"],
+      stream: (async function* () {
+        await Promise.resolve();
         yield { deltaToken: "", isComplete: true };
-      },
+      }) as LLMProvider["stream"],
       embedding: vi.fn(),
       countTokens: vi.fn(),
       health: vi.fn(),
       listModels: vi.fn(),
-    };
+    } as unknown as LLMProvider;
 
     const factoryWithStub = {
       getProvider: () => provider,
     } as unknown as LLMProviderFactory;
 
-    const baseConfig = await (mockConfigService.getOrCreateConfig?.() ?? Promise.resolve({}));
+    const baseConfig = await (mockConfigService.getOrCreateConfig?.("user-123") ?? Promise.resolve({}));
     const noRetryConfig = {
       ...mockConfigService,
       getOrCreateConfig: () => Promise.resolve({
@@ -183,7 +187,7 @@ describe("AI Orchestrator & Fallback Integration", () => {
       factoryWithStub,
       mockHistoryService,
       new CostEstimatorService(modelRegistry),
-      mockRedisService as unknown as RedisService
+      mockRedisService
     );
 
     await expect(orchestratorNoRetry.execute({
@@ -192,29 +196,31 @@ describe("AI Orchestrator & Fallback Integration", () => {
       provider: "OPENAI",
     })).rejects.toThrow("AI Request failed");
 
-    expect(provider.chat).toHaveBeenCalledTimes(1);
+    expect(chatMock).toHaveBeenCalledTimes(1);
   });
 
   it("should reuse a cached response for the same prompt", async () => {
+    const chatMock = vi.fn().mockResolvedValue({
+      text: "cached analysis",
+      json: null,
+      finishReason: "stop",
+      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, estimatedCost: 0.01 },
+      latencyMs: 100,
+      provider: "OPENAI" as const,
+      model: "gpt-5-mini",
+    });
     const provider = {
       providerType: "OPENAI",
-      chat: vi.fn().mockResolvedValue({
-        text: "cached analysis",
-        json: null,
-        finishReason: "stop",
-        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, estimatedCost: 0.01 },
-        latencyMs: 100,
-        provider: "OPENAI" as const,
-        model: "gpt-5-mini",
-      }),
-      stream: async function* () {
+      chat: chatMock as LLMProvider["chat"],
+      stream: (async function* () {
+        await Promise.resolve();
         yield { deltaToken: "", isComplete: true };
-      },
+      }) as LLMProvider["stream"],
       embedding: vi.fn(),
       countTokens: vi.fn(),
       health: vi.fn(),
       listModels: vi.fn(),
-    };
+    } as unknown as LLMProvider;
 
     const factoryWithStub = {
       getProvider: () => provider,
@@ -228,7 +234,7 @@ describe("AI Orchestrator & Fallback Integration", () => {
       factoryWithStub,
       mockHistoryService,
       new CostEstimatorService(modelRegistry),
-      mockRedisService as unknown as RedisService
+      mockRedisService
     );
 
     const first = await cachedOrchestrator.execute({
@@ -245,7 +251,7 @@ describe("AI Orchestrator & Fallback Integration", () => {
 
     expect(first.text).toBe("cached analysis");
     expect(second.text).toBe("cached analysis");
-    expect(provider.chat).toHaveBeenCalledTimes(1);
+    expect(chatMock).toHaveBeenCalledTimes(1);
   });
 
   it("should stream tokens chunk by chunk", async () => {
