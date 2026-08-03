@@ -17,17 +17,31 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
   private timer?: NodeJS.Timeout;
   private running = false;
   private lastTickAt?: Date;
+  private destroyed = false;
   constructor(
     private readonly prisma: PrismaService,
     private readonly pipeline: PipelineService,
     private readonly config: PipelineConfigService,
   ) {}
   onModuleInit() {
-    if (this.config.enabled)
-      this.timer = setInterval(() => void this.tick(), 5_000);
+    if (this.config.enabled) this.scheduleNextTick();
   }
   onModuleDestroy() {
-    if (this.timer) clearInterval(this.timer);
+    this.destroyed = true;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = undefined;
+    }
+  }
+
+  private scheduleNextTick() {
+    if (this.destroyed || !this.config.enabled) return;
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      void this.tick().finally(() => {
+        if (!this.destroyed && this.config.enabled) this.scheduleNextTick();
+      });
+    }, 5_000);
   }
 
   async create(userId: string, raw: unknown) {
@@ -112,60 +126,60 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
                 now.getTime() - schedule.lastTriggeredAt.getTime() >= 60_000);
         if (!due) continue;
 
-        // Stamp lastTriggeredAt before enqueuing so concurrent ticks don't
-        // double-fire the same window.
-        try {
-          await this.prisma.pipelineSchedule.update({
-            where: { id: schedule.id },
-            data: { lastTriggeredAt: now },
-          });
-        } catch (error) {
-          this.logger.error({
-            event: "pipeline_schedule_stamp_failed",
-            scheduleId: schedule.id,
-            message: error instanceof Error ? error.message : "Unknown error",
-          });
-          continue; // Skip this schedule if we can't stamp it
-        }
-
-        // Fire each symbol×strategy pair independently so one failure doesn't
-        // block the others. Pipeline execution is handled asynchronously by
-        // BullMQ, so this loop completes quickly.
+        const triggerPromises: Promise<boolean>[] = [];
         for (const symbol of schedule.symbols) {
           for (const strategyId of schedule.strategyIds) {
-            this.pipeline
-              .trigger(
-                schedule.userId,
-                {
-                  pipelineId: schedule.pipelineId,
-                  symbol,
-                  provider: schedule.provider,
-                  params: { strategyId },
-                },
-                "SCHEDULE",
-                {
-                  scheduleId: schedule.id,
-                  maxRunsPerHour: schedule.maxRunsPerHour,
-                },
-              )
-              .catch((error: unknown) => {
-                this.logger.error({
-                  event: "pipeline_schedule_trigger_failed",
-                  scheduleId: schedule.id,
-                  symbol,
-                  strategyId,
-                  message:
-                    error instanceof Error
-                      ? error.message
-                      : "Unknown scheduler error",
-                });
-              });
+            triggerPromises.push(
+              this.pipeline
+                .trigger(
+                  schedule.userId,
+                  {
+                    pipelineId: schedule.pipelineId,
+                    symbol,
+                    provider: schedule.provider,
+                    params: { strategyId },
+                  },
+                  "SCHEDULE",
+                  {
+                    scheduleId: schedule.id,
+                    maxRunsPerHour: schedule.maxRunsPerHour,
+                  },
+                )
+                .then(() => true)
+                .catch((error: unknown) => {
+                  this.logger.error({
+                    event: "pipeline_schedule_trigger_failed",
+                    scheduleId: schedule.id,
+                    symbol,
+                    strategyId,
+                    message:
+                      error instanceof Error
+                        ? error.message
+                        : "Unknown scheduler error",
+                  });
+                  return false;
+                }),
+            );
+          }
+        }
+
+        const results = await Promise.all(triggerPromises);
+        if (results.every(Boolean)) {
+          try {
+            await this.prisma.pipelineSchedule.update({
+              where: { id: schedule.id },
+              data: { lastTriggeredAt: now },
+            });
+          } catch (error) {
+            this.logger.error({
+              event: "pipeline_schedule_stamp_failed",
+              scheduleId: schedule.id,
+              message: error instanceof Error ? error.message : "Unknown error",
+            });
           }
         }
       }
     } finally {
-      // Release the lock immediately after enqueuing — pipeline execution
-      // runs in BullMQ workers and must not hold up the next tick.
       this.running = false;
     }
   }
