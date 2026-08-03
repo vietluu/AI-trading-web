@@ -70,7 +70,7 @@ export function decisionForStrategy(
       reasoning: `Unknown strategy '${key}'.`,
     };
 
-  if (analyses.market.volatility.level === "HIGH") confidence *= 0.8;
+  if (analyses.market.volatility.level === "HIGH") confidence -= 10;
   if (base.dataQuality === "INSUFFICIENT") {
     decision = "WAIT";
     confidence = 0;

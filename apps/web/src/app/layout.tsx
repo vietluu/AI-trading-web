@@ -22,18 +22,18 @@ export default function RootLayout({
 }: PropsWithChildren): React.JSX.Element {
   return (
     <html lang="en">
-      <body>
+      <body className="overflow-x-hidden antialiased">
         <QueryProvider>
           <SessionMonitor />
           <div className="mx-auto flex min-h-screen max-w-[1440px] flex-col px-4 sm:px-6 lg:px-8">
-            <header className="flex min-h-20 flex-col gap-3 border-b border-border py-4 lg:flex-row lg:items-center lg:justify-between">
-              <Link className="flex items-center gap-3" href="/">
+            <header className="relative flex min-h-16 items-center justify-between border-b border-border py-4">
+              <Link className="flex items-center gap-3 shrink-0" href="/">
                 <div className="grid h-9 w-9 place-items-center rounded-xl bg-primary text-sm font-black text-primary-foreground">
                   AX
                 </div>
                 <div>
-                  <p className="text-sm font-semibold">AI Trading Research</p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-sm font-semibold leading-none">AI Trading Research</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
                     Multi-agent futures intelligence
                   </p>
                 </div>

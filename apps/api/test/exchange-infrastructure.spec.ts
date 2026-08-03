@@ -110,7 +110,7 @@ describe("exchange infrastructure", () => {
       .mockResolvedValueOnce(2)
       .mockResolvedValueOnce(3);
     const expire = vi.fn().mockResolvedValue(true);
-    const redis = new RedisService(new ConfigService({}));
+    const redis = new RedisService(new ConfigService({ REDIS_URL: "redis://localhost:6379" }));
     (redis as unknown as { client: { incr: typeof incr; expire: typeof expire } }).client = {
       incr,
       expire,

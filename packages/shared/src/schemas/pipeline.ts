@@ -20,8 +20,20 @@ export const PipelineRunStatusSchema = z.enum([
   "TIMEOUT",
   "SKIPPED",
 ]);
-// The analyst contracts currently support these normalized perpetual symbols.
-export const PipelineSymbolSchema = z.enum(["BTC-USDT", "ETH-USDT"]);
+export const PipelineSymbolSchema = z.enum([
+  "BTC-USDT",
+  "ETH-USDT",
+  "SOL-USDT",
+  "BNB-USDT",
+  "XRP-USDT",
+  "DOGE-USDT",
+  "ADA-USDT",
+  "AVAX-USDT",
+  "LINK-USDT",
+  "NEAR-USDT",
+  "SUI-USDT",
+]);
+export type PipelineSymbol = z.infer<typeof PipelineSymbolSchema>;
 export const PortfolioStrategyKeySchema = z.enum([
   "ai-core",
   "trend",
@@ -57,7 +69,7 @@ export const PipelineScheduleInputSchema = z
     intervalMs: z.number().int().min(300_000).max(86_400_000).optional(),
     enabled: z.boolean().default(true),
     timezone: z.string().min(1).max(64).default("UTC"),
-    maxRunsPerHour: z.number().int().min(1).max(12).default(12),
+    maxRunsPerHour: z.number().int().min(1).max(120).default(60),
   })
   .strict()
   .superRefine((value, ctx) => {

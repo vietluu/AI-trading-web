@@ -124,7 +124,21 @@ export class PublicExchangeService {
     return this.cache.remember(
       this.cache.tickerKey(provider, normalized),
       this.cache.tickerTtl,
-      () => this.factory.get(provider).getTicker(normalized),
+      () =>
+        this.factory
+          .get(provider)
+          .getTicker(normalized)
+          .catch((caught: unknown) => {
+            if (
+              provider === ExchangeProvider.BINANCE_FUTURES &&
+              this.isGeoBlockedError(caught)
+            ) {
+              return this.factory
+                .get(ExchangeProvider.OKX_FUTURES)
+                .getTicker(normalized);
+            }
+            throw caught;
+          }),
     );
   }
 
@@ -136,7 +150,18 @@ export class PublicExchangeService {
     await this.limit(provider);
     return this.factory
       .get(provider)
-      .getOrderBook(normalizeSymbol(symbol), depth);
+      .getOrderBook(normalizeSymbol(symbol), depth)
+      .catch((caught: unknown) => {
+        if (
+          provider === ExchangeProvider.BINANCE_FUTURES &&
+          this.isGeoBlockedError(caught)
+        ) {
+          return this.factory
+            .get(ExchangeProvider.OKX_FUTURES)
+            .getOrderBook(normalizeSymbol(symbol), depth);
+        }
+        throw caught;
+      });
   }
 
   async trades(
@@ -147,7 +172,18 @@ export class PublicExchangeService {
     await this.limit(provider);
     return this.factory
       .get(provider)
-      .getRecentTrades(normalizeSymbol(symbol), limit);
+      .getRecentTrades(normalizeSymbol(symbol), limit)
+      .catch((caught: unknown) => {
+        if (
+          provider === ExchangeProvider.BINANCE_FUTURES &&
+          this.isGeoBlockedError(caught)
+        ) {
+          return this.factory
+            .get(ExchangeProvider.OKX_FUTURES)
+            .getRecentTrades(normalizeSymbol(symbol), limit);
+        }
+        throw caught;
+      });
   }
 
   async klines(
@@ -155,10 +191,21 @@ export class PublicExchangeService {
     query: KlineQuery,
   ): Promise<ExchangeKline[]> {
     await this.limit(provider);
-    return this.factory.get(provider).getKlines({
-      ...query,
-      symbol: normalizeSymbol(query.symbol),
-    });
+    const normalized = normalizeSymbol(query.symbol);
+    return this.factory
+      .get(provider)
+      .getKlines({ ...query, symbol: normalized })
+      .catch((caught: unknown) => {
+        if (
+          provider === ExchangeProvider.BINANCE_FUTURES &&
+          this.isGeoBlockedError(caught)
+        ) {
+          return this.factory
+            .get(ExchangeProvider.OKX_FUTURES)
+            .getKlines({ ...query, symbol: normalized });
+        }
+        throw caught;
+      });
   }
 
   async funding(
@@ -170,7 +217,21 @@ export class PublicExchangeService {
     return this.cache.remember(
       this.cache.fundingKey(provider, normalized),
       this.cache.tickerTtl,
-      () => this.factory.get(provider).getFundingRate(normalized),
+      () =>
+        this.factory
+          .get(provider)
+          .getFundingRate(normalized)
+          .catch((caught: unknown) => {
+            if (
+              provider === ExchangeProvider.BINANCE_FUTURES &&
+              this.isGeoBlockedError(caught)
+            ) {
+              return this.factory
+                .get(ExchangeProvider.OKX_FUTURES)
+                .getFundingRate(normalized);
+            }
+            throw caught;
+          }),
     );
   }
 
@@ -183,7 +244,33 @@ export class PublicExchangeService {
     return this.cache.remember(
       this.cache.openInterestKey(provider, normalized),
       this.cache.tickerTtl,
-      () => this.factory.get(provider).getOpenInterest(normalized),
+      () =>
+        this.factory
+          .get(provider)
+          .getOpenInterest(normalized)
+          .catch((caught: unknown) => {
+            if (
+              provider === ExchangeProvider.BINANCE_FUTURES &&
+              this.isGeoBlockedError(caught)
+            ) {
+              return this.factory
+                .get(ExchangeProvider.OKX_FUTURES)
+                .getOpenInterest(normalized);
+            }
+            throw caught;
+          }),
+    );
+  }
+
+  private isGeoBlockedError(caught: unknown): boolean {
+    if (!caught || typeof caught !== "object") return false;
+    const statusCode = "statusCode" in caught ? caught.statusCode : undefined;
+    const message = "message" in caught ? String(caught.message) : "";
+    return (
+      statusCode === 451 ||
+      statusCode === 403 ||
+      message.includes("451") ||
+      message.includes("Unavailable For Legal Reasons")
     );
   }
 
