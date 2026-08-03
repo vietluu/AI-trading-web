@@ -114,7 +114,7 @@ describe("exchange infrastructure", () => {
     (redis as unknown as { client: { incr: typeof incr; expire: typeof expire } }).client = {
       incr,
       expire,
-    } as never;
+    };
 
     await expect(redis.incrementWithTtl("exchange:rate:test", 60)).resolves.toBe(1);
     await expect(redis.incrementWithTtl("exchange:rate:test", 60)).resolves.toBe(2);
