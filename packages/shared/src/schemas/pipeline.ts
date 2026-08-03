@@ -33,6 +33,7 @@ export const PipelineSymbolSchema = z.enum([
   "NEAR-USDT",
   "SUI-USDT",
 ]);
+export type PipelineSymbol = z.infer<typeof PipelineSymbolSchema>;
 export const PortfolioStrategyKeySchema = z.enum([
   "ai-core",
   "trend",

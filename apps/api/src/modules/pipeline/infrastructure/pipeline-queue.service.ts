@@ -2,10 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import type { ExchangeProvider, PipelineTrigger } from '@prisma/client';
+import type { PipelineSymbol } from '@platform/shared';
 import { FULL_ANALYSIS_DECISION } from '../domain/pipeline.definition';
 import { PIPELINE_RUN_QUEUE_NAME } from './pipeline-queue.constants';
 
-export interface PipelineJob { runId: string; pipelineId: string; symbol: 'BTC-USDT' | 'ETH-USDT'; provider: ExchangeProvider; userId: string; params: Record<string, unknown>; trigger: PipelineTrigger; createdAt: string; useStoredContext?: boolean; }
+export interface PipelineJob { runId: string; pipelineId: string; symbol: PipelineSymbol; provider: ExchangeProvider; userId: string; params: Record<string, unknown>; trigger: PipelineTrigger; createdAt: string; useStoredContext?: boolean; }
 
 @Injectable()
 export class PipelineQueueService {

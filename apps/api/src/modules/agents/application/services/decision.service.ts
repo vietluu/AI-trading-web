@@ -146,7 +146,8 @@ export class DecisionService {
     // Check core analyst alignment (Market + Technical)
     const marketBias = votes.get('market');
     const techBias = votes.get('technical');
-    const coreAgree = candidate !== 'WAIT' && marketBias === candidate && techBias === candidate;
+    const targetBias: Bias = candidate === 'LONG' ? 'BULLISH' : candidate === 'SHORT' ? 'BEARISH' : 'NEUTRAL';
+    const coreAgree = candidate !== 'WAIT' && marketBias === targetBias && techBias === targetBias;
     if (coreAgree) overrides.push('Market and Technical trend alignment boosted confidence by +10%.');
 
     // Calibrated confidence calculation using weighted adjustments
@@ -199,11 +200,12 @@ export class DecisionService {
       conflictLevel,
       confidenceCalculation: {
         baseScore: Math.round(baseScore * 100) / 100,
-        agreementFactor,
+        coreBonus,
+        qualityDeduction,
+        conflictDeduction,
+        volDeduction,
         dataQualityFactor: QUALITY_FACTOR[dataQuality],
-        volatilityFactor,
         regimeFactor: REGIME_FACTOR[regime.type],
-        conflictFactor,
         activeAgentFactor: active.length / names.length,
         finalConfidence: confidence,
       },
