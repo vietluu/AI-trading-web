@@ -26,7 +26,8 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     const output = { confidence: 75, dataQuality: 'GOOD', conflictLevel: 'LOW' };
     expect(service.evaluate(output as never)).toEqual({ actionable: true });
     expect(service.evaluate({ ...output, confidence: 59 } as never)).toEqual({ actionable: false, reason: 'CONFIDENCE_BELOW_THRESHOLD' });
-    expect(service.evaluate({ ...output, dataQuality: 'PARTIAL' } as never)).toEqual({ actionable: false, reason: 'DATA_QUALITY_NOT_GOOD' });
+    expect(service.evaluate({ ...output, dataQuality: 'PARTIAL' } as never)).toEqual({ actionable: true });
+    expect(service.evaluate({ ...output, dataQuality: 'INSUFFICIENT' } as never)).toEqual({ actionable: false, reason: 'DATA_QUALITY_INSUFFICIENT' });
     expect(service.evaluate({ ...output, conflictLevel: 'HIGH' } as never)).toEqual({ actionable: false, reason: 'HIGH_CONFLICT' });
   });
 

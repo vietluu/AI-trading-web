@@ -25,6 +25,6 @@ describe("PipelineScheduleInputSchema", () => {
       intervalMs: 300_000,
     });
     expect(result.intervalMs).toBe(300_000);
-    expect(result.maxRunsPerHour).toBe(12);
+    expect(result.maxRunsPerHour).toBe(60);
   });
 });
