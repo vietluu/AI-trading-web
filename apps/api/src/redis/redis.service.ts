@@ -67,11 +67,11 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return (await this.client.expire(key, ttlSeconds)) === 1;
   }
 
-  async incrementWithTtl(key: string, ttlSeconds: number): Promise<number> {
-    const transaction = this.client.multi().incr(key).expire(key, ttlSeconds);
-    const results = await transaction.exec();
-    const count = results?.[0]?.[1];
-    if (typeof count !== "number") throw new Error("Redis counter failed");
+   async incrementWithTtl(key: string, ttlSeconds: number): Promise<number> {
+    const count = await this.client.incr(key);
+    if (count === 1) {
+      await this.client.expire(key, ttlSeconds);
+    }
     return count;
   }
 }

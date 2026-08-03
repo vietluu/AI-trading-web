@@ -24,7 +24,8 @@ import {
 } from "../src/exchange/infrastructure/exchange-symbol";
 import { ExchangeTimeService } from "../src/exchange/infrastructure/exchange-time.service";
 import { OkxSignatureService } from "../src/exchange/infrastructure/okx/okx-signature.service";
-import type { RedisService } from "../src/redis/redis.service";
+import { RedisService } from "../src/redis/redis.service";
+import type { RedisService as RedisServiceType } from "../src/redis/redis.service";
 
 describe("exchange infrastructure", () => {
   it("builds and signs a deterministic Binance query", () => {
@@ -102,12 +103,34 @@ describe("exchange infrastructure", () => {
     ).toBe("exchange:rate:private:OKX_FUTURES:DEMO:user-a:connection-b");
   });
 
+  it("only sets TTL on the first increment for a rate-limit counter", async () => {
+    const incr = vi
+      .fn()
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(2)
+      .mockResolvedValueOnce(3);
+    const expire = vi.fn().mockResolvedValue(true);
+    const redis = new RedisService(new ConfigService({}));
+    (redis as unknown as { client: { incr: typeof incr; expire: typeof expire } }).client = {
+      incr,
+      expire,
+    } as never;
+
+    await expect(redis.incrementWithTtl("exchange:rate:test", 60)).resolves.toBe(1);
+    await expect(redis.incrementWithTtl("exchange:rate:test", 60)).resolves.toBe(2);
+    await expect(redis.incrementWithTtl("exchange:rate:test", 60)).resolves.toBe(3);
+
+    expect(incr).toHaveBeenCalledTimes(3);
+    expect(expire).toHaveBeenCalledTimes(1);
+    expect(expire).toHaveBeenCalledWith("exchange:rate:test", 60);
+  });
+
   it("calculates and caches server time offset", async () => {
     const setWithTtl = vi.fn().mockResolvedValue(undefined);
     const redis = {
       get: vi.fn().mockResolvedValue(null),
       setWithTtl,
-    } as unknown as RedisService;
+    } as unknown as RedisServiceType;
     const time = new ExchangeTimeService(redis, new ConfigService({}));
     const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
     await expect(
