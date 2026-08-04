@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import type { PipelineTrigger } from '@prisma/client';
-import { PipelineRunRequestSchema } from '@platform/shared';
+import type { ExchangeProvider, PipelineTrigger } from '@prisma/client';
+import { PipelineRunRequestSchema, PipelineSymbolSchema, type PipelineRunRequest, type PipelineSymbol } from '@platform/shared';
 import { PipelineRepository } from '../infrastructure/pipeline.repository';
 import { PipelineQueueService } from '../infrastructure/pipeline-queue.service';
 import { PipelineConfigService } from './pipeline-config.service';
@@ -20,13 +20,13 @@ export class PipelineService {
     const symbols = this.extractSymbols(raw, input.symbol);
     if (symbols.length > 1) {
       const createdRuns = [] as Array<Awaited<ReturnType<PipelineRepository['createRun']>>>;
-      const batches = [] as string[][];
+      const batches = [] as PipelineSymbol[][];
       for (let index = 0; index < symbols.length; index += 3) {
         batches.push(symbols.slice(index, index + 3));
       }
       for (const batch of batches) {
         const batchRuns = await Promise.all(
-          batch.map((symbol) =>
+          batch.map((symbol: PipelineSymbol) =>
             this.createRun(
               userId,
               input,
@@ -34,12 +34,13 @@ export class PipelineService {
               symbol,
               trigger,
               options,
+              input.provider,
               (run) =>
                 this.queue.enqueue({
                   runId: run.id,
                   userId,
                   pipelineId: input.pipelineId,
-                  symbol,
+                  symbol: symbol,
                   provider: input.provider,
                   params: input.params,
                   trigger,
@@ -60,12 +61,13 @@ export class PipelineService {
       input.symbol,
       trigger,
       options,
+      input.provider,
       ({ id, symbol }) =>
         this.queue.enqueue({
           runId: id,
           userId,
           pipelineId: input.pipelineId,
-          symbol,
+          symbol: symbol,
           provider: input.provider,
           params: input.params,
           trigger,
@@ -75,7 +77,7 @@ export class PipelineService {
     );
   }
 
-  private extractSymbols(raw: unknown, fallbackSymbol: string): string[] {
+  private extractSymbols(raw: unknown, fallbackSymbol: PipelineSymbol): PipelineSymbol[] {
     const candidate = raw as { symbols?: unknown; params?: { symbols?: unknown } } | undefined;
     const fromParams = candidate?.params?.symbols;
     const fromRoot = candidate?.symbols;
@@ -84,26 +86,30 @@ export class PipelineService {
       : Array.isArray(fromRoot)
         ? fromRoot
         : [];
-    return values.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).length > 0
-      ? values.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-      : [fallbackSymbol];
+    const parsedValues = values.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+    const parsedSymbols = parsedValues.flatMap((item) => {
+      const parsed = PipelineSymbolSchema.safeParse(item);
+      return parsed.success ? [parsed.data] : [];
+    });
+    return parsedSymbols.length > 0 ? parsedSymbols : [fallbackSymbol];
   }
 
   private async createRun(
     userId: string,
-    input: { pipelineId: string; symbol: string; provider: unknown; params: Record<string, unknown> },
-    definition: ReturnType<typeof resolvePipelineDefinition>,
-    symbol: string,
+    input: Pick<PipelineRunRequest, 'pipelineId' | 'symbol' | 'provider' | 'params'>,
+    definition: NonNullable<ReturnType<typeof resolvePipelineDefinition>>,
+    symbol: PipelineSymbol,
     trigger: PipelineTrigger,
     options: { replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; useStoredContext?: boolean; maxRunsPerHour?: number },
-    enqueue: (run: Awaited<ReturnType<PipelineRepository['createRun']>> & { symbol: string }) => Promise<unknown>,
+    provider: ExchangeProvider,
+    enqueue: (run: Awaited<ReturnType<PipelineRepository['createRun']>> & { symbol: PipelineSymbol }) => Promise<unknown>,
   ) {
     const id = randomUUID(); const now = new Date(); const traceId = randomUUID(); const correlationId = randomUUID();
     const rawLimit = options.maxRunsPerHour ?? this.config.maxRunsPerHour;
     const hourlyLimit = trigger === 'SCHEDULE' ? Math.max(rawLimit, this.config.maxRunsPerHour) : Math.min(rawLimit, this.config.maxRunsPerHour);
-    const [hourlyCount, latest] = await Promise.all([this.repository.countRecent(userId, new Date(Date.now() - 60 * 60_000), { status: { not: 'SKIPPED' } }), this.repository.latestForSymbol(userId, symbol, input.provider)]);
+    const [hourlyCount, latest] = await Promise.all([this.repository.countRecent(userId, new Date(Date.now() - 60 * 60_000), { status: { not: 'SKIPPED' } }), this.repository.latestForSymbol(userId, symbol, provider)]);
     const skippedReason = pipelineSkipReason({ hourlyCount, hourlyLimit, latestCreatedAt: latest?.createdAt, now, cooldownMs: this.config.cooldownMs, isScheduled: trigger === 'SCHEDULE', replay: trigger === 'REPLAY' });
-    const run = await this.repository.createRun({ id, userId, pipelineId: input.pipelineId, symbol, provider: input.provider, trigger, params: input.params, traceId, correlationId, replayOfRunId: options.replayOfRunId, scheduleId: options.scheduleId, storedContext: options.storedContext });
+    const run = await this.repository.createRun({ id, userId, pipelineId: input.pipelineId, symbol, provider, trigger, params: input.params, traceId, correlationId, replayOfRunId: options.replayOfRunId, scheduleId: options.scheduleId, storedContext: options.storedContext });
     await this.repository.createSteps(id, definition.steps);
     if (skippedReason) {
       await this.repository.updateRun(id, { status: 'SKIPPED', skippedReason, completedAt: now, durationMs: 0, decision: 'WAIT' });
