@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
 import { ChevronDown, Menu, X } from "lucide-react";
+import { apiRequest } from "@/lib/api-client";
 
 const primary = [
   ["Overview", "/"],
@@ -28,7 +29,15 @@ export function AppNavigation(): React.JSX.Element {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
-
+  const router = useRouter();
+ async function logout(): Promise<void> {
+    try {
+      await apiRequest("/auth/logout", { method: "POST" });
+      router.push("/login");
+    } catch (caught) {
+      console.error(caught instanceof Error ? caught.message : "Logout failed");
+    }
+  }
   const active = (href: string) =>
     href === "/" ? pathname === href : pathname.startsWith(href);
 
@@ -53,7 +62,7 @@ export function AppNavigation(): React.JSX.Element {
   }, [pathname]);
 
   return (
-    <div className="relative">
+    <div className="relative w-full flex justify-end">
       {/* Mobile menu button */}
       <button
         aria-label="Toggle Navigation"
@@ -67,13 +76,13 @@ export function AppNavigation(): React.JSX.Element {
       {/* Navigation container */}
       <nav
         aria-label="Main navigation"
-        className={`${
+        className={` ${
           mobileMenuOpen
             ? "absolute left-0 right-0 top-full z-50 mt-2 flex flex-col gap-1 rounded-2xl border border-border bg-background p-4 shadow-2xl lg:static lg:z-auto lg:mt-0 lg:flex-row lg:items-center lg:border-none lg:bg-transparent lg:p-0 lg:shadow-none"
             : "hidden lg:flex lg:items-center lg:gap-1"
         }`}
       >
-        {primary.map(([label, href]) => (
+         {primary.map(([label, href]) => (
           <Link
             className={`whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
               active(href)
@@ -92,7 +101,7 @@ export function AppNavigation(): React.JSX.Element {
         ))}
 
         {/* Stateful Insights Dropdown */}
-        <div className="relative" ref={dropdownRef}>
+        <div className="relative w-fit" ref={dropdownRef}>
           <button
             aria-expanded={dropdownOpen}
             className="flex items-center gap-1 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -108,7 +117,7 @@ export function AppNavigation(): React.JSX.Element {
           </button>
 
           {dropdownOpen && (
-            <div className="z-50 mt-1 grid w-52 gap-1 rounded-xl border border-border bg-card p-2 shadow-2xl lg:absolute lg:right-0 lg:mt-2">
+            <div className="z-50 w-fit mt-1 grid w-52 gap-1 rounded-xl border border-border bg-card p-2 shadow-2xl lg:absolute lg:right-0 lg:mt-2">
               {more.map(([label, href]) => (
                 <Link
                   className={`rounded-lg px-3 py-2 text-sm transition-colors ${
@@ -148,6 +157,9 @@ export function AppNavigation(): React.JSX.Element {
         >
           Settings
         </Link>
+        <span onClick={logout} className="cursor-pointer">
+          Log out
+        </span>
       </nav>
     </div>
   );

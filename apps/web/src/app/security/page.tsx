@@ -132,7 +132,7 @@ export default function SecurityPage(): React.JSX.Element {
       <h1 className="text-3xl font-semibold">Security</h1>
       <div className="mt-6 grid gap-6 lg:grid-cols-2 w-full">
         <form
-          className="grid content-start gap-4 rounded-xl border border-border bg-card p-6 w-full"
+          className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6 w-full"
           onSubmit={(event) => void changePassword(event)}
         >
           <h2 className="font-semibold">Change password</h2>
