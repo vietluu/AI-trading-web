@@ -82,17 +82,7 @@ const tradeSchema = z.object({
   side: z.string(),
   ts: z.string().regex(/^\d+$/),
 });
-const candleSchema = z.tuple([
-  z.string(),
-  decimal,
-  decimal,
-  decimal,
-  decimal,
-  decimal,
-  decimal,
-  decimal,
-  z.string(),
-]);
+const candleSchema = z.array(z.string()).min(6);
 const fundingSchema = z.object({
   instId: z.string(),
   fundingRate: decimal,
@@ -351,13 +341,13 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         closeTime: new Date(
           Number(item[0]) + this.intervalMilliseconds(query.interval) - 1,
         ),
-        open: item[1],
-        high: item[2],
-        low: item[3],
-        close: item[4],
-        volume: item[5],
-        quoteVolume: item[7],
-        isClosed: item[8] === "1",
+        open: item[1] ?? "0",
+        high: item[2] ?? "0",
+        low: item[3] ?? "0",
+        close: item[4] ?? "0",
+        volume: item[5] ?? "0",
+        quoteVolume: item[6] ?? item[5] ?? "0",
+        isClosed: item[8] !== undefined ? item[8] === "1" : true,
       }))
       .reverse();
   }
