@@ -6,8 +6,8 @@ import { PrismaService } from '../../../database/prisma.service';
 export class ReflectionRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  records(userId: string, horizon?: EvaluationHorizon, take = 500) {
-    return this.prisma.performanceRecord.findMany({ where: { userId, ...(horizon ? { horizon } : {}) }, orderBy: { evaluatedAt: 'desc' }, take });
+  records(userId: string, horizon?: EvaluationHorizon, take = 500, symbol?: string) {
+    return this.prisma.performanceRecord.findMany({ where: { userId, ...(horizon ? { horizon } : {}), ...(symbol ? { symbol } : {}) }, orderBy: { evaluatedAt: 'desc' }, take });
   }
   allRecords(take = 5000) { return this.prisma.performanceRecord.findMany({ orderBy: { evaluatedAt: 'desc' }, take }); }
   completedRuns(cutoff: Date) {
