@@ -159,24 +159,36 @@ export class DecisionService {
     const rawConfidence = baseScore + coreBonus - qualityDeduction - conflictDeduction - volDeduction;
     const confidence = candidate === 'WAIT' ? 0 : Math.round(this.clamp(rawConfidence, 0, 100));
 
-    const decision: DecisionOutput['decision'] =
-      dataQuality === 'INSUFFICIENT' ||
-      conflictLevel === 'HIGH' ||
-      extreme ||
-      confidence < 60
-        ? 'WAIT'
-        : candidate;
     if (confidence < 60 && candidate !== 'WAIT') overrides.push('Calibrated confidence below 60 forced WAIT.');
     if (dataQuality === 'INSUFFICIENT') overrides.push('Insufficient data forced WAIT.');
 
     const signals = this.signals(input, votes, weighting);
     const risks = this.risks(input, votes, dataQuality, conflictLevel);
+    const opportunityScore = this.calculateOpportunityScore(input, regime, votes, weighting, dataQuality);
+    const { adaptiveThreshold, calibrationAdjustment } = this.calculateAdaptiveThresholds(input, regime, confidence, opportunityScore, conflictLevel);
+    const calibratedConfidence = this.clamp(confidence + calibrationAdjustment, 0, 100);
+    const expectedWinProbability = this.clamp((calibratedConfidence / 100) * 0.75 + opportunityScore / 100 * 0.2, 0, 1);
+    const expectedReward = this.clamp((opportunityScore / 100) * 3 + 0.5, 0.2, 5);
+    const expectedLoss = this.clamp((100 - opportunityScore) / 100 * 1.4 + 0.4, 0.2, 3);
+    const expectedValue = this.clamp(expectedWinProbability * expectedReward - (1 - expectedWinProbability) * expectedLoss, -3, 3);
+    const profitFactorEstimate = this.clamp(expectedReward / Math.max(expectedLoss, 0.05), 0.1, 10);
+    const riskScore = this.clamp(50 + (volatilityAdjustment * -0.4) + (conflictLevel === 'HIGH' ? 15 : conflictLevel === 'MEDIUM' ? 8 : 0) + Math.max(0, 100 - opportunityScore) * 0.2, 0, 100);
+    const executionCost = this.estimateExecutionCost(input, opportunityScore, regime.type);
+    const finalDecision: DecisionOutput['decision'] =
+      dataQuality === 'INSUFFICIENT' ||
+      conflictLevel === 'HIGH' ||
+      extreme ||
+      calibratedConfidence < adaptiveThreshold ||
+      expectedValue <= 0 ||
+      opportunityScore < Math.max(55, adaptiveThreshold - 5)
+        ? 'WAIT'
+        : candidate;
     const weightedBias =
       directionalBias > 0 ? 'bullish' : directionalBias < 0 ? 'bearish' : 'neutral';
     const output = DecisionOutputSchema.parse({
-      decision,
-      confidence,
-      reasoning: `${active.length} of 6 analysts supplied usable data. The ${regime.type.toLowerCase().replace('_', ' ')} regime produced a normalized ${weightedBias} bias of ${Math.round(directionalBias)}, ${agreementScore}% analyst agreement, and ${Math.round(baseScore)}% weighted alignment. Calibrated confidence is ${confidence}% with ${dataQuality} data and ${conflictLevel} conflict.`,
+      decision: finalDecision,
+      confidence: Math.round(calibratedConfidence),
+      reasoning: `${active.length} of 6 analysts supplied usable data. The ${regime.type.toLowerCase().replace('_', ' ')} regime produced a normalized ${weightedBias} bias of ${Math.round(directionalBias)}, ${agreementScore}% analyst agreement, and ${Math.round(baseScore)}% weighted alignment. Calibrated confidence is ${Math.round(calibratedConfidence)}% with ${dataQuality} data and ${conflictLevel} conflict.`,
       signals,
       risks,
       agreementScore,
@@ -186,6 +198,16 @@ export class DecisionService {
       overrides: [...new Set(overrides)],
       volatilityAdjustment,
       conflictLevel,
+      opportunityScore: Math.round(opportunityScore),
+      expectedWinProbability: Number(expectedWinProbability.toFixed(3)),
+      expectedReward: Number(expectedReward.toFixed(3)),
+      expectedLoss: Number(expectedLoss.toFixed(3)),
+      expectedValue: Number(expectedValue.toFixed(3)),
+      profitFactorEstimate: Number(profitFactorEstimate.toFixed(3)),
+      riskScore: Math.round(riskScore),
+      adaptiveThreshold: Math.round(adaptiveThreshold),
+      calibrationAdjustment: Number(calibrationAdjustment.toFixed(2)),
+      executionCost: Number(executionCost.toFixed(3)),
       generatedAt: new Date().toISOString(),
     });
 
@@ -324,6 +346,81 @@ export class DecisionService {
       active.every((name) => input[name]?.dataQuality === 'GOOD')
     ) return 'GOOD';
     return 'PARTIAL';
+  }
+
+  private calculateOpportunityScore(
+    input: DecisionInput,
+    regime: MarketRegime,
+    votes: Map<AnalystName, Bias>,
+    weighting: Weighting,
+    quality: AgentDataQuality,
+  ): number {
+    const trendStrength = input.market?.trend.strength === 'STRONG' ? 1 : input.technical?.trend.strength === 'STRONG' ? 0.9 : 0.65;
+    const momentum = input.technical?.momentum.rsiState === 'OVERSOLD' || input.technical?.momentum.rsiState === 'OVERBOUGHT' ? 0.75 : 0.85;
+    const volume = input.market?.liquidity?.volumeProfile === true ? 0.8 : 0.7;
+    const liquidity = input.market?.liquidity?.spread !== undefined ? 0.8 : 0.65;
+    const atr = input.market?.volatility.level === 'LOW' ? 0.7 : input.market?.volatility.level === 'HIGH' ? 0.55 : 0.75;
+    const funding = input.market?.derivatives?.fundingRate ? 0.75 : 0.7;
+    const openInterest = input.market?.derivatives?.openInterest ? 0.8 : 0.7;
+    const structure = input.technical?.structure.marketStructure === 'HH_HL' || input.technical?.structure.marketStructure === 'LL_LH' ? 0.85 : 0.7;
+    const higherTimeframe = regime.type === 'TRENDING' ? 0.9 : regime.type === 'HIGH_VOLATILITY' ? 0.6 : 0.75;
+    const newsImpact = input.news?.impact.level === 'HIGH' ? 0.7 : input.news?.impact.level === 'MEDIUM' ? 0.8 : 0.65;
+    const sentiment = input.sentiment?.sentiment.overall === 'BULLISH' ? 0.8 : input.sentiment?.sentiment.overall === 'BEARISH' ? 0.7 : 0.6;
+    const macro = input.macro?.macroTrend === 'RISK_ON' ? 0.8 : input.macro?.macroTrend === 'RISK_OFF' ? 0.6 : 0.7;
+    const patternSimilarity = Math.max(0.55, 0.7 + (votes.size / 10) * 0.05);
+    const historicalWinRate = quality === 'GOOD' ? 0.8 : quality === 'PARTIAL' ? 0.65 : 0.5;
+    const riskReward = input.market?.volatility.level === 'LOW' ? 0.8 : 0.7;
+    const executionCost = 0.72;
+    const confidence = this.clamp((this.voteWeight(votes, weighting) / 100) * 0.95 + 0.05, 0, 1);
+    const score = (
+      trendStrength * 12 +
+      momentum * 10 +
+      volume * 8 +
+      liquidity * 8 +
+      atr * 8 +
+      funding * 7 +
+      openInterest * 7 +
+      structure * 8 +
+      higherTimeframe * 8 +
+      newsImpact * 7 +
+      sentiment * 6 +
+      macro * 6 +
+      patternSimilarity * 7 +
+      historicalWinRate * 8 +
+      riskReward * 8 +
+      executionCost * 6 +
+      confidence * 10
+    );
+    return this.clamp(score, 0, 100);
+  }
+
+  private calculateAdaptiveThresholds(
+    input: DecisionInput,
+    regime: MarketRegime,
+    confidence: number,
+    opportunityScore: number,
+    conflictLevel: DecisionOutput['conflictLevel'],
+  ): { adaptiveThreshold: number; calibrationAdjustment: number } {
+    const base = regime.type === 'TRENDING' ? 62 : regime.type === 'HIGH_VOLATILITY' ? 78 : 72;
+    const volatilityAdjustment = input.market?.volatility.level === 'HIGH' ? 8 : input.market?.volatility.level === 'LOW' ? -3 : 0;
+    const liquidityAdjustment = input.market?.liquidity?.spread !== undefined ? 4 : 0;
+    const opportunityAdjustment = opportunityScore < 65 ? 9 : opportunityScore > 80 ? -4 : 0;
+    const conflictAdjustment = conflictLevel === 'HIGH' ? 7 : conflictLevel === 'MEDIUM' ? 3 : 0;
+    const threshold = this.clamp(base + volatilityAdjustment + liquidityAdjustment + opportunityAdjustment + conflictAdjustment, 55, 90);
+    const calibrationAdjustment = confidence > threshold ? 4 : confidence < threshold - 8 ? -6 : 0;
+    return { adaptiveThreshold: threshold, calibrationAdjustment };
+  }
+
+  private estimateExecutionCost(input: DecisionInput, opportunityScore: number, regime: MarketRegime['type']): number {
+    const spreadPenalty = input.market?.liquidity?.spread !== undefined ? Math.min(0.25, Number(input.market.liquidity.spread) / 1000) : 0.05;
+    const volatilityPenalty = regime === 'HIGH_VOLATILITY' ? 0.1 : 0.04;
+    const slippage = Math.max(0.01, spreadPenalty + volatilityPenalty + (100 - opportunityScore) / 1000);
+    return Number(slippage.toFixed(3));
+  }
+
+  private voteWeight(votes: Map<AnalystName, Bias>, weighting: Weighting): number {
+    const total = [...votes.values()].reduce((sum, vote) => sum + (vote === 'BULLISH' ? weighting.market : vote === 'BEARISH' ? weighting.news : 0), 0);
+    return this.clamp(total, 0, 100);
   }
 
   private bias(name: AnalystName, output: FusionInput[AnalystName]): Bias {

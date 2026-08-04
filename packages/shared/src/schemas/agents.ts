@@ -194,6 +194,8 @@ export const MarketAgentOutputSchema = z
         depthImbalance: z
           .enum(['BUY_HEAVY', 'SELL_HEAVY', 'BALANCED'])
           .optional(),
+        volumeProfile: z.boolean().optional(),
+        spread: z.string().optional(),
       })
       .strict(),
     derivatives: z
@@ -271,7 +273,7 @@ export const TechnicalAgentOutputSchema = z
       .strict(),
     structure: z
       .object({
-        marketStructure: z.enum(['HH_HL', 'LH_LL', 'RANGE']),
+        marketStructure: z.enum(['HH_HL', 'LH_LL', 'LL_LH', 'RANGE']),
         breakout: z.boolean().optional(),
       })
       .strict(),
@@ -521,6 +523,16 @@ export const DecisionOutputSchema = z
     overrides: z.array(z.string()),
     volatilityAdjustment: z.number().min(-100).max(0),
     conflictLevel: z.enum(['LOW', 'MEDIUM', 'HIGH']),
+    opportunityScore: z.number().min(0).max(100),
+    expectedWinProbability: z.number().min(0).max(1),
+    expectedReward: z.number().min(0),
+    expectedLoss: z.number().min(0),
+    expectedValue: z.number(),
+    profitFactorEstimate: z.number().min(0),
+    riskScore: z.number().min(0).max(100),
+    adaptiveThreshold: z.number().min(0).max(100),
+    calibrationAdjustment: z.number(),
+    executionCost: z.number().min(0),
     generatedAt: z.string().datetime(),
   })
   .strict();

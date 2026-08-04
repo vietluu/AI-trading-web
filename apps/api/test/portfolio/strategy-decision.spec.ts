@@ -13,7 +13,7 @@ const base = {
   risks: [],
   agreementScore: 75,
   dataQuality: "GOOD",
-  regime: { type: "TRENDING", confidence: 80 },
+  regime: { type: "TRENDING" },
   weighting: {
     market: 20,
     technical: 30,
@@ -25,6 +25,16 @@ const base = {
   overrides: [],
   volatilityAdjustment: 0,
   conflictLevel: "LOW",
+  opportunityScore: 70,
+  expectedWinProbability: 0.7,
+  expectedReward: 1.5,
+  expectedLoss: 0.8,
+  expectedValue: 0.6,
+  profitFactorEstimate: 1.9,
+  riskScore: 35,
+  adaptiveThreshold: 60,
+  calibrationAdjustment: 0,
+  executionCost: 0.04,
   generatedAt: new Date().toISOString(),
 } as DecisionOutput;
 
