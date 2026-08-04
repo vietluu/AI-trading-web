@@ -142,7 +142,7 @@ export default function DataSourcesSettingsPage() {
             {sources.map((src) => (
               <div key={src.id} className="flex flex-wrap items-center justify-between gap-4 p-4 text-xs">
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 ">
                     <span className="font-semibold text-sm text-foreground">{src.displayName}</span>
                     <span className="font-mono text-muted-foreground">({src.sourceId})</span>
                     <span className="rounded bg-muted px-1.5 py-0.5 text-[10px]">{src.provider}</span>

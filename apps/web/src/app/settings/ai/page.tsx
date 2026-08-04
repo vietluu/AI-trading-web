@@ -133,7 +133,7 @@ export default function AISettingsPage(): React.JSX.Element {
   };
 
   return (
-    <div className="container mx-auto max-w-6xl p-6">
+    <div className="container mx-auto max-w-6xl">
       <AccountNav />
 
       {/* Header */}

@@ -94,7 +94,7 @@ export default function NewsPage() {
   });
 
   return (
-    <div className="container mx-auto max-w-6xl p-6">
+    <div className="container mx-auto max-w-6xl">
       <AccountNav />
 
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
