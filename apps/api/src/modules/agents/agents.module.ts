@@ -37,6 +37,7 @@ import { AgentContextBuilderService } from './application/context/agent-context-
 import { AgentPolicyEngine } from './application/policies/agent-policy.engine';
 import { FusionService } from './application/services/fusion.service';
 import { DecisionService } from './application/services/decision.service';
+import { UnifiedAnalystService } from './application/services/unified-analyst.service';
 
 // Shared Infra Modules
 import { DatabaseModule } from '../../database/database.module';
@@ -94,6 +95,7 @@ import { DecisionController } from './presentation/controllers/decision.controll
     AgentPolicyEngine,
     FusionService,
     DecisionService,
+    UnifiedAnalystService,
   ],
   exports: [
     AgentRegistryService,
@@ -102,6 +104,7 @@ import { DecisionController } from './presentation/controllers/decision.controll
     AgentHealthService,
     FusionService,
     DecisionService,
+    UnifiedAnalystService,
   ],
 })
 export class AgentsModule implements OnModuleInit {

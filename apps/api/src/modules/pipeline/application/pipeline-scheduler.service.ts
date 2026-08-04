@@ -106,6 +106,8 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  private readonly activeSchedules = new Set<string>();
+
   async tick(now = new Date()) {
     if (this.running || !this.config.enabled) return;
     this.running = true;
@@ -115,6 +117,7 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
         where: { enabled: true },
       });
       for (const schedule of schedules) {
+        if (this.activeSchedules.has(schedule.id)) continue;
         const due =
           schedule.mode === "INTERVAL"
             ? !schedule.lastTriggeredAt ||
@@ -126,57 +129,63 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
                 now.getTime() - schedule.lastTriggeredAt.getTime() >= 60_000);
         if (!due) continue;
 
+        this.activeSchedules.add(schedule.id);
         try {
-          await this.prisma.pipelineSchedule.update({
-            where: { id: schedule.id },
-            data: { lastTriggeredAt: now },
-          });
-        } catch (error) {
-          this.logger.error({
-            event: "pipeline_schedule_stamp_failed",
-            scheduleId: schedule.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-
-        const triggerPromises: Promise<boolean>[] = [];
-        for (const symbol of schedule.symbols) {
-          for (const strategyId of schedule.strategyIds) {
-            triggerPromises.push(
-              this.pipeline
-                .trigger(
-                  schedule.userId,
-                  {
-                    pipelineId: schedule.pipelineId,
-                    symbol,
-                    provider: schedule.provider,
-                    params: { strategyId },
-                  },
-                  "SCHEDULE",
-                  {
-                    scheduleId: schedule.id,
-                    maxRunsPerHour: schedule.maxRunsPerHour,
-                  },
-                )
-                .then(() => true)
-                .catch((error: unknown) => {
-                  this.logger.error({
-                    event: "pipeline_schedule_trigger_failed",
-                    scheduleId: schedule.id,
-                    symbol,
-                    strategyId,
-                    message:
-                      error instanceof Error
-                        ? error.message
-                        : "Unknown scheduler error",
-                  });
-                  return false;
-                }),
-            );
+          const triggerPromises: Promise<boolean>[] = [];
+          for (const symbol of schedule.symbols) {
+            for (const strategyId of schedule.strategyIds) {
+              triggerPromises.push(
+                this.pipeline
+                  .trigger(
+                    schedule.userId,
+                    {
+                      pipelineId: schedule.pipelineId,
+                      symbol,
+                      provider: schedule.provider,
+                      params: { strategyId },
+                    },
+                    "SCHEDULE",
+                    {
+                      scheduleId: schedule.id,
+                      maxRunsPerHour: schedule.maxRunsPerHour,
+                    },
+                  )
+                  .then(() => true)
+                  .catch((error: unknown) => {
+                    this.logger.error({
+                      event: "pipeline_schedule_trigger_failed",
+                      scheduleId: schedule.id,
+                      symbol,
+                      strategyId,
+                      message:
+                        error instanceof Error
+                          ? error.message
+                          : "Unknown scheduler error",
+                    });
+                    return false;
+                  }),
+              );
+            }
           }
-        }
 
-        await Promise.all(triggerPromises);
+          const results = await Promise.all(triggerPromises);
+          if (results.some(Boolean)) {
+            try {
+              await this.prisma.pipelineSchedule.update({
+                where: { id: schedule.id },
+                data: { lastTriggeredAt: now },
+              });
+            } catch (error) {
+              this.logger.error({
+                event: "pipeline_schedule_stamp_failed",
+                scheduleId: schedule.id,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+        } finally {
+          this.activeSchedules.delete(schedule.id);
+        }
       }
     } finally {
       this.running = false;

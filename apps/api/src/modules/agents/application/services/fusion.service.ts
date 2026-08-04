@@ -41,9 +41,15 @@ export function deriveAssetSymbol(symbol: string): string {
   return baseAsset || 'BTC';
 }
 
+import { Optional } from '@nestjs/common';
+import { UnifiedAnalystService } from './unified-analyst.service';
+
 @Injectable()
 export class FusionService {
-  constructor(private readonly agentExecutionService: AgentExecutionService) {}
+  constructor(
+    private readonly agentExecutionService: AgentExecutionService,
+    @Optional() private readonly unifiedAnalystService?: UnifiedAnalystService,
+  ) {}
 
   public async run(options: RunFusionOptions): Promise<FusionOutput> {
     return (await this.runDetailed(options)).fusionOutput;
@@ -52,6 +58,13 @@ export class FusionService {
   public async runDetailed(
     options: RunFusionOptions,
   ): Promise<FusionAnalysisResult> {
+    if (this.unifiedAnalystService) {
+      try {
+        return await this.unifiedAnalystService.analyze(options);
+      } catch {
+        // Fallback to legacy individual agent loop
+      }
+    }
     const input = FusionRunInputSchema.parse(options.input);
     const correlationId = options.correlationId ?? randomUUID();
     const assetSymbol = deriveAssetSymbol(input.symbol);
