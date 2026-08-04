@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { z } from "zod";
 
 import type { ExchangeAdapter } from "../../domain/exchange.adapter";
@@ -34,7 +34,7 @@ import {
   type TimeInForce,
 } from "../../domain/exchange.types";
 import { toBinanceInterval } from "../exchange-interval";
-import { fromAssets, toBinanceSymbol } from "../exchange-symbol";
+import { fromAssets, mapSymbol, toBinanceSymbol } from "../exchange-symbol";
 import { BinanceFuturesClient } from "./binance-futures.client";
 
 const decimal = z.string();
@@ -168,6 +168,7 @@ const orderSchema = z.object({
 @Injectable()
 export class BinanceFuturesAdapter implements ExchangeAdapter {
   readonly provider = ExchangeProvider.BINANCE_FUTURES;
+  private readonly logger = new Logger(BinanceFuturesAdapter.name);
 
   constructor(private readonly client: BinanceFuturesClient) {}
 
@@ -542,24 +543,37 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
     credentials: ExchangeCredentials,
     command: PlaceOrderCommand,
   ): Promise<ExchangeOrder> {
-    const symbol = toBinanceSymbol(command.symbol);
+    const normalizedSymbol = mapSymbol(command.symbol, this.provider);
+    const symbol = normalizedSymbol;
     await this.client.signedPost("/fapi/v1/leverage", credentials, {
       symbol,
       leverage: command.leverage,
     });
-    const value = orderSchema.parse(
-      await this.client.signedPost("/fapi/v1/order", credentials, {
-        symbol,
-        side: command.side,
-        type: "MARKET",
-        quantity: command.quantity,
-        newClientOrderId: command.clientOrderId,
-        reduceOnly: command.reduceOnly,
-        positionSide: command.positionSide,
-        newOrderRespType: "RESULT",
-      }),
-    );
-    return this.order(value);
+    try {
+      const value = orderSchema.parse(
+        await this.client.signedPost("/fapi/v1/order", credentials, {
+          symbol,
+          side: command.side,
+          type: "MARKET",
+          quantity: command.quantity,
+          newClientOrderId: command.clientOrderId,
+          reduceOnly: command.reduceOnly,
+          positionSide: command.positionSide,
+          newOrderRespType: "RESULT",
+        }),
+      );
+      return this.order(value);
+    } catch (caught) {
+      const error = this.exchangeError(caught);
+      this.logger.warn({
+        event: "exchange_order_failed",
+        exchange: this.provider,
+        originalSymbol: command.symbol,
+        normalizedSymbol: symbol,
+        response: error,
+      });
+      throw error;
+    }
   }
 
   async cancelOrder(

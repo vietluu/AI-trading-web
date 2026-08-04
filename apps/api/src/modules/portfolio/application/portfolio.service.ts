@@ -19,6 +19,7 @@ import {
   type StrategyPositionSnapshot,
 } from "../domain/portfolio-engine";
 import { PortfolioConfigService } from "./portfolio-config.service";
+import { resolveDefaultSymbols } from "../../../exchange/infrastructure/exchange-symbol";
 
 type Tx = Prisma.TransactionClient;
 
@@ -68,7 +69,7 @@ export class PortfolioService {
   ) {}
 
   async ensureDefaults(userId: string): Promise<void> {
-    const symbols = ["BTC-USDT", "ETH-USDT"];
+    const symbols = resolveDefaultSymbols();
     for (const definition of defaults.slice(
       0,
       this.config.values.maxStrategies,

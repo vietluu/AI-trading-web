@@ -8,5 +8,5 @@ export class PipelineConfigService {
   get maxConcurrency() { return this.config.get<number>('PIPELINE_MAX_CONCURRENCY', 5); }
   get cooldownMs() { return this.config.get<number>('PIPELINE_COOLDOWN_MS', 60_000); }
   get maxRunsPerHour() { return this.config.get<number>('PIPELINE_MAX_RUNS_PER_HOUR', 120); }
-  get minConfidence() { return this.config.get<number>('MIN_CONFIDENCE', 60); }
+  get minConfidence() { return this.config.get<number>('MIN_CONFIDENCE', 70); }
 }

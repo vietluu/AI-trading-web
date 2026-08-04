@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { z } from "zod";
 
 import type { ExchangeAdapter } from "../../domain/exchange.adapter";
@@ -34,7 +34,7 @@ import {
   type PositionSide,
 } from "../../domain/exchange.types";
 import { toOkxInterval } from "../exchange-interval";
-import { fromOkxSymbol, toOkxSymbol } from "../exchange-symbol";
+import { fromOkxSymbol, mapSymbol, toOkxSymbol } from "../exchange-symbol";
 import { OkxFuturesClient } from "./okx-futures.client";
 
 const decimal = z.string();
@@ -166,6 +166,7 @@ const orderAckSchema = z.object({
 @Injectable()
 export class OkxFuturesAdapter implements ExchangeAdapter {
   readonly provider = ExchangeProvider.OKX_FUTURES;
+  private readonly logger = new Logger(OkxFuturesAdapter.name);
 
   constructor(private readonly client: OkxFuturesClient) {}
 
@@ -557,7 +558,8 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     credentials: ExchangeCredentials,
     command: PlaceOrderCommand,
   ): Promise<ExchangeOrder> {
-    const instId = toOkxSymbol(command.symbol);
+    const normalizedSymbol = mapSymbol(command.symbol, this.provider);
+    const instId = normalizedSymbol;
     const instrument = (await this.getInstruments()).find(
       (candidate) => candidate.symbol === command.symbol,
     );
@@ -609,6 +611,13 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         await this.client.signedPost("/api/v5/trade/order", credentials, body),
       )[0]!;
     if (ack.sCode !== "0") {
+      this.logger.warn({
+        event: "exchange_order_rejected",
+        exchange: this.provider,
+        originalSymbol: command.symbol,
+        normalizedSymbol,
+        response: ack,
+      });
       throw new ExchangeError(
         ExchangeErrorCode.INVALID_REQUEST,
         this.provider,

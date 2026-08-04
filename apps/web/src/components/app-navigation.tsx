@@ -157,9 +157,19 @@ export function AppNavigation(): React.JSX.Element {
         >
           Settings
         </Link>
-        <span onClick={logout} className="cursor-pointer">
+        <button
+          className="whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          key="logout"
+          onClick={(event) => {
+            event.preventDefault();
+            setDropdownOpen(false);
+            setMobileMenuOpen(false);
+            void logout();
+          }}
+          type="button"
+        >
           Log out
-        </span>
+        </button>
       </nav>
     </div>
   );

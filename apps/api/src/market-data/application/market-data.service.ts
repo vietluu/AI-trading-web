@@ -56,13 +56,24 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
     const stored = await this.repository.getCandles(query);
     if (stored.length >= query.limit) return stored;
 
-    const candles = await this.exchanges.klines(query.provider, {
-      symbol: query.symbol,
-      interval: query.interval,
-      limit: query.limit,
-      ...(query.startTime ? { startTime: query.startTime } : {}),
-      ...(query.endTime ? { endTime: query.endTime } : {}),
-    });
+    let candles: NormalizedCandle[] = [];
+    try {
+      candles = await this.exchanges.klines(query.provider, {
+        symbol: query.symbol,
+        interval: query.interval,
+        limit: query.limit,
+        ...(query.startTime ? { startTime: query.startTime } : {}),
+        ...(query.endTime ? { endTime: query.endTime } : {}),
+      });
+    } catch (error) {
+      this.logger.warn({
+        event: "market_data_fetch_failed",
+        provider: query.provider,
+        symbol: query.symbol,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
 
     if (candles.length > 0) {
       await this.repository.upsertCandleBatch(candles);

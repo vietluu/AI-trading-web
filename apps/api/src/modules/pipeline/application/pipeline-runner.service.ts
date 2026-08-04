@@ -1,6 +1,6 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { ExchangeProvider } from "../../../exchange/domain/exchange.types";
+import { ExchangeInterval, ExchangeProvider } from "../../../exchange/domain/exchange.types";
 import {
   FusionRunInputSchema,
   type FusionInput,
@@ -12,6 +12,7 @@ import { DecisionService } from "../../agents/application/services/decision.serv
 import { PipelineRepository } from "../infrastructure/pipeline.repository";
 import { PipelineCancellationService } from "../infrastructure/pipeline-cancellation.service";
 import { PipelineThresholdService } from "./pipeline-threshold.service";
+import { SignalFilterService } from "./signal-filter.service";
 import { PipelineAlertService } from "./pipeline-alert.service";
 import { resolvePipelineDefinition } from "../domain/pipeline.definition";
 import type { PipelineJob } from "../infrastructure/pipeline-queue.service";
@@ -20,17 +21,22 @@ import {
   analysisParams,
   decisionForStrategy,
 } from "../../portfolio/domain/strategy-decision";
+import { MarketDataService } from "../../../market-data/application/market-data.service";
 
 class PipelineCancelledError extends Error {}
 
 @Injectable()
 export class PipelineRunnerService {
+  private readonly logger = new Logger(PipelineRunnerService.name);
+
   constructor(
     private readonly fusion: FusionService,
     private readonly decision: DecisionService,
     private readonly repository: PipelineRepository,
     private readonly cancellation: PipelineCancellationService,
     private readonly threshold: PipelineThresholdService,
+    private readonly signalFilter: SignalFilterService,
+    private readonly marketData: MarketDataService,
     private readonly alerts: PipelineAlertService,
     private readonly liveTrading: LiveTradingService,
   ) {}
@@ -39,16 +45,53 @@ export class PipelineRunnerService {
     const definition = resolvePipelineDefinition(job.pipelineId);
     if (!definition?.enabled) throw new Error("PIPELINE_NOT_FOUND_OR_DISABLED");
     const startedAt = new Date();
-    await this.repository.updateRun(job.runId, {
+    const symbol = String(job.symbol);
+    const runId = String(job.runId);
+    await this.repository.updateRun(runId, {
       status: "RUNNING",
       startedAt,
     });
-    await this.assertNotCancelled(job.runId);
+    await this.assertNotCancelled(runId);
     try {
       let analyses: FusionInput;
       let fusionOutput: FusionOutput;
+      const interval = (job.params?.interval as string | undefined) ?? definition.defaultParams.interval;
+      const indicatorSnapshot = await this.marketData.getIndicatorSnapshot(
+        job.provider as unknown as ExchangeProvider,
+        symbol,
+        (interval as ExchangeInterval) ?? ExchangeInterval.ONE_HOUR,
+      );
+      const signalFilter = this.signalFilter.evaluate({
+        rsi: Number(indicatorSnapshot?.values.rsi14),
+        atr: Number(indicatorSnapshot?.values.atr14),
+        volumeChangePercent: Number(indicatorSnapshot?.values.volumeChangePercent),
+      });
+      if (!signalFilter.allowed) {
+        this.logger.log({
+          event: "pipeline_signal_filter_skip",
+          runId,
+          symbol,
+          reason: signalFilter.reason,
+        });
+        await this.repository.updateRun(runId, {
+          status: "COMPLETED",
+          completedAt: new Date(),
+          durationMs: new Date().getTime() - startedAt.getTime(),
+          decision: "WAIT",
+          confidence: 0,
+          dataQuality: "INSUFFICIENT",
+          skippedReason: signalFilter.reason,
+          result: {
+          decision: "WAIT",
+          reason: signalFilter.reason,
+          actionable: false,
+          signalFilter: { allowed: signalFilter.allowed, reason: signalFilter.reason },
+        },
+        });
+        return;
+      }
       const existing = job.useStoredContext
-        ? await this.repository.findRun(job.runId)
+        ? await this.repository.findRun(runId)
         : undefined;
       const stored = existing?.storedContext as {
         analyses?: FusionInput;
@@ -61,7 +104,7 @@ export class PipelineRunnerService {
           (item) => item.type !== "DECISION",
         ))
           await this.completeStep(
-            job.runId,
+            runId,
             step.id,
             step.type,
             step.id === "fusion"
@@ -72,10 +115,10 @@ export class PipelineRunnerService {
         for (const step of definition.steps.filter(
           (item) => item.type === "AGENT",
         ))
-          await this.startStep(job.runId, step.id);
-        await this.startStep(job.runId, "fusion");
+          await this.startStep(runId, step.id);
+        await this.startStep(runId, "fusion");
         const pipelineInput = FusionRunInputSchema.parse({
-          symbol: job.symbol,
+          symbol,
           provider: job.provider,
           ...definition.defaultParams,
           ...analysisParams(job.params),
@@ -85,7 +128,7 @@ export class PipelineRunnerService {
             input: pipelineInput,
             userId: job.userId,
             invocationSource: this.source(job.trigger),
-            correlationId: job.runId,
+            correlationId: runId,
           }),
           definition.timeoutMs,
         );
@@ -96,17 +139,17 @@ export class PipelineRunnerService {
           (item) => item.type === "AGENT",
         ))
           await this.finishStep(
-            job.runId,
+            runId,
             step.id,
             analyses[step.id as keyof FusionInput],
             completedAt,
           );
-        await this.finishStep(job.runId, "fusion", fusionOutput, completedAt);
+        await this.finishStep(runId, "fusion", fusionOutput, completedAt);
       }
-      await this.assertNotCancelled(job.runId);
-      await this.startStep(job.runId, "decision");
+      await this.assertNotCancelled(runId);
+      await this.startStep(runId, "decision");
       const synthesizedOutput = this.decision.decide({
-        symbol: job.symbol,
+        symbol,
         fusionOutput,
         ...analyses,
       });
@@ -119,7 +162,7 @@ export class PipelineRunnerService {
         synthesizedOutput,
         analyses,
       );
-      await this.finishStep(job.runId, "decision", output, new Date());
+      await this.finishStep(runId, "decision", output, new Date());
       const filter = this.threshold.evaluate(output);
       const executionDecision = filter.actionable
         ? output
@@ -127,8 +170,8 @@ export class PipelineRunnerService {
       const volatilityAtr = Number(analyses.market?.volatility.atr);
       const riskAssessment = await this.liveTrading.assessPipelineDecision({
         userId: job.userId,
-        pipelineRunId: job.runId,
-        symbol: job.symbol,
+        pipelineRunId: runId,
+        symbol,
         provider: job.provider as unknown as ExchangeProvider,
         decision: executionDecision,
         ...(typeof job.params?.strategyId === "string"
@@ -140,10 +183,10 @@ export class PipelineRunnerService {
       });
       const liveExecution = await this.liveTrading.executePipeline(
         job.userId,
-        job.runId,
+        runId,
       );
       const completedAt = new Date();
-      await this.repository.updateRun(job.runId, {
+      await this.repository.updateRun(runId, {
         status: "COMPLETED",
         completedAt,
         durationMs: completedAt.getTime() - startedAt.getTime(),
@@ -160,15 +203,15 @@ export class PipelineRunnerService {
           liveExecution,
         },
       });
-      await this.alerts.contextual(job.runId, job.symbol, analyses);
+      await this.alerts.contextual(runId, symbol, analyses);
       if (filter.actionable)
-        await this.alerts.decision(job.runId, job.symbol, output);
+        await this.alerts.decision(runId, symbol, output);
     } catch (error) {
       const completedAt = new Date();
       const cancelled = error instanceof PipelineCancelledError;
       const timedOut =
         error instanceof Error && error.message === "PIPELINE_TIMEOUT";
-      await this.repository.updateRun(job.runId, {
+      await this.repository.updateRun(runId, {
         status: cancelled ? "CANCELLED" : timedOut ? "TIMEOUT" : "FAILED",
         completedAt,
         durationMs: completedAt.getTime() - startedAt.getTime(),
@@ -183,7 +226,7 @@ export class PipelineRunnerService {
             : "Pipeline execution failed",
       });
       if (cancelled) return;
-      await this.alerts.repeatedFailure(job.runId, job.symbol);
+      await this.alerts.repeatedFailure(runId, symbol);
       throw error;
     }
   }

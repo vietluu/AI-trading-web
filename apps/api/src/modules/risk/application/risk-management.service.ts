@@ -94,6 +94,14 @@ export class RiskManagementService {
       reason: evaluation.reason,
       riskScore: evaluation.riskScore,
     });
+    if (!evaluation.approved) {
+      this.logger.warn({
+        event: "trade_risk_rejected",
+        runId: input.pipelineRunId,
+        symbol: input.symbol,
+        reason: evaluation.reason,
+      });
+    }
     return this.output(row);
   }
 
