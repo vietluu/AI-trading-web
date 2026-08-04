@@ -32,10 +32,37 @@ export class ResearchController {
       interval: ExchangeInterval;
       lookbackCandles: number;
       initialBalance: number;
-      trainWindow: number;
-      validationWindow: number;
+      trainWindow?: number;
+      validationWindow?: number;
     };
-    return this.researchService.runValidation(input);
+    return this.researchService.runFullQuantValidation(input);
+  }
+
+  @Post('validate-full')
+  async validateFull(@Body() body: unknown) {
+    const input = body as {
+      provider: ExchangeProvider;
+      symbol: string;
+      interval: ExchangeInterval;
+      lookbackCandles: number;
+      initialBalance: number;
+      trainWindow?: number;
+      validationWindow?: number;
+    };
+    return this.researchService.runFullQuantValidation(input);
+  }
+
+  @Post('sensitivity')
+  async sensitivity(@Body() body: unknown) {
+    const input = body as {
+      provider: ExchangeProvider;
+      symbol: string;
+      interval: ExchangeInterval;
+      lookbackCandles: number;
+      parameterName: 'confidenceFloor' | 'riskRewardRatio' | 'atrMultiplier' | 'rsiPeriod';
+      gridValues?: number[];
+    };
+    return this.researchService.runSensitivityAnalysis(input);
   }
 
   @Post('benchmark')

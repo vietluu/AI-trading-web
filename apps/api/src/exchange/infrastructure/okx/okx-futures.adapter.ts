@@ -560,8 +560,12 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
   ): Promise<ExchangeOrder> {
     const normalizedSymbol = mapSymbol(command.symbol, this.provider);
     const instId = normalizedSymbol;
+    const searchSymbol = command.symbol.toUpperCase().replace("/", "-");
     const instrument = (await this.getInstruments()).find(
-      (candidate) => candidate.symbol === command.symbol,
+      (candidate) =>
+        candidate.symbol === searchSymbol ||
+        candidate.symbol === command.symbol ||
+        mapSymbol(candidate.symbol, this.provider) === instId,
     );
     if (!instrument?.contractSize) {
       throw ExchangeError.invalidRequest(
@@ -579,6 +583,9 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       instId,
       lever: String(command.leverage),
       mgnMode: "cross",
+      ...(command.positionSide
+        ? { posSide: command.positionSide.toLowerCase() }
+        : {}),
     });
     const body: Record<string, unknown> = {
       instId,
@@ -596,10 +603,10 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       body.attachAlgoOrds = [
         {
           ...(command.takeProfit
-            ? { tpTriggerPx: command.takeProfit, tpOrdPx: "-1" }
+            ? { tpTriggerPx: command.takeProfit, tpOrdPx: "-1", tpTriggerPxType: "last" }
             : {}),
           ...(command.stopLoss
-            ? { slTriggerPx: command.stopLoss, slOrdPx: "-1" }
+            ? { slTriggerPx: command.stopLoss, slOrdPx: "-1", slTriggerPxType: "last" }
             : {}),
         },
       ];
@@ -755,7 +762,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         "Invalid OKX order quantity",
       );
     }
-    const lots = Math.floor((raw + Number.EPSILON) / lot);
+    const lots = Math.max(1, Math.round((raw + Number.EPSILON) / lot));
     const quantity = lots * lot;
     if (quantity <= 0) {
       throw ExchangeError.invalidRequest(

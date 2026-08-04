@@ -67,6 +67,9 @@ export class PipelineRunnerService {
         rsi: Number(indicatorSnapshot?.values.rsi14),
         atr: Number(indicatorSnapshot?.values.atr14),
         volumeChangePercent: Number(indicatorSnapshot?.values.volumeChangePercent),
+        ema20: Number(indicatorSnapshot?.values.ema20),
+        ema50: Number(indicatorSnapshot?.values.ema50),
+        ema200: Number(indicatorSnapshot?.values.ema200),
       });
       if (!signalFilter.allowed) {
         this.logger.log({
