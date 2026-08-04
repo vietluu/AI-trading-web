@@ -14,6 +14,7 @@ import { PipelineRunnerService } from "./application/pipeline-runner.service";
 import { PipelineService } from "./application/pipeline.service";
 import { PipelineSchedulerService } from "./application/pipeline-scheduler.service";
 import { PipelineHealthService } from "./application/pipeline-health.service";
+import { PipelineAnalyticsService } from "./application/pipeline-analytics.service";
 import { PipelineRepository } from "./infrastructure/pipeline.repository";
 import { PipelineQueueService } from "./infrastructure/pipeline-queue.service";
 import { PipelineCancellationService } from "./infrastructure/pipeline-cancellation.service";
@@ -56,6 +57,7 @@ import { createBullRootConfig } from "./infrastructure/bull-config";
     PipelineService,
     PipelineSchedulerService,
     PipelineHealthService,
+    PipelineAnalyticsService,
     PipelineRepository,
     PipelineQueueService,
     PipelineCancellationService,

@@ -84,6 +84,9 @@ describe('DecisionService', () => {
     expect(Object.values(output.weighting).reduce((sum, weight) => sum + weight, 0)).toBe(100);
     expect(output.agreementScore).toBe(83);
     expect(output.confidence).toBeGreaterThanOrEqual(60);
+    expect(output.opportunityScore).toBeGreaterThan(50);
+    expect(output.expectedValue).toBeDefined();
+    expect(output.adaptiveThreshold).toBeGreaterThan(0);
     expect(output.signals.bullishFactors).toEqual(expect.arrayContaining([
       expect.stringContaining('Market (20%)'),
       expect.stringContaining('Technical (30%)'),

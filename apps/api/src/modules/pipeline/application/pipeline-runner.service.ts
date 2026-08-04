@@ -14,6 +14,7 @@ import { PipelineCancellationService } from "../infrastructure/pipeline-cancella
 import { PipelineThresholdService } from "./pipeline-threshold.service";
 import { SignalFilterService } from "./signal-filter.service";
 import { PipelineAlertService } from "./pipeline-alert.service";
+import { PipelineAnalyticsService } from "./pipeline-analytics.service";
 import { resolvePipelineDefinition } from "../domain/pipeline.definition";
 import type { PipelineJob } from "../infrastructure/pipeline-queue.service";
 import { LiveTradingService } from "../../live-trading/application/live-trading.service";
@@ -38,6 +39,7 @@ export class PipelineRunnerService {
     private readonly signalFilter: SignalFilterService,
     private readonly marketData: MarketDataService,
     private readonly alerts: PipelineAlertService,
+    private readonly analytics: PipelineAnalyticsService,
     private readonly liveTrading: LiveTradingService,
   ) {}
 
@@ -73,10 +75,31 @@ export class PipelineRunnerService {
           symbol,
           reason: signalFilter.reason,
         });
+        const completedAt = new Date();
+        this.analytics.recordStageTelemetry({
+          pipelineId: job.pipelineId,
+          runId,
+          symbol,
+          exchange: String(job.provider),
+          timeframe: String(job.params?.interval ?? definition.defaultParams.interval),
+          stageName: 'signal-filter',
+          inputSummary: `rsi=${Number(indicatorSnapshot?.values.rsi14)}, atr=${Number(indicatorSnapshot?.values.atr14)}`,
+          outputSummary: signalFilter.reason ?? 'signal-filter rejected',
+          confidence: 0,
+          opportunityScore: 0,
+          riskScore: 0,
+          decision: 'WAIT',
+          rejectReason: signalFilter.reason,
+          executionResult: 'REJECTED',
+          durationMs: completedAt.getTime() - startedAt.getTime(),
+          tokenUsage: 0,
+          apiCost: 0,
+          createdAt: completedAt.toISOString(),
+        });
         await this.repository.updateRun(runId, {
           status: "COMPLETED",
-          completedAt: new Date(),
-          durationMs: new Date().getTime() - startedAt.getTime(),
+          completedAt,
+          durationMs: completedAt.getTime() - startedAt.getTime(),
           decision: "WAIT",
           confidence: 0,
           dataQuality: "INSUFFICIENT",
@@ -162,8 +185,29 @@ export class PipelineRunnerService {
         synthesizedOutput,
         analyses,
       );
-      await this.finishStep(runId, "decision", output, new Date());
+      const decisionCompletedAt = new Date();
       const filter = this.threshold.evaluate(output);
+      await this.finishStep(runId, "decision", output, decisionCompletedAt);
+      this.analytics.recordStageTelemetry({
+        pipelineId: job.pipelineId,
+        runId,
+        symbol,
+        exchange: String(job.provider),
+        timeframe: String(job.params?.interval ?? definition.defaultParams.interval),
+        stageName: 'decision',
+        inputSummary: `regime=${output.regime.type}; conflict=${output.conflictLevel}`,
+        outputSummary: `${output.decision}; confidence=${output.confidence}; ev=${output.expectedValue}`,
+        confidence: output.confidence,
+        opportunityScore: output.opportunityScore,
+        riskScore: output.riskScore,
+        decision: output.decision,
+        rejectReason: filter.reason,
+        executionResult: filter.actionable ? 'EXECUTED' : 'REJECTED',
+        durationMs: decisionCompletedAt.getTime() - startedAt.getTime(),
+        tokenUsage: 0,
+        apiCost: 0,
+        createdAt: decisionCompletedAt.toISOString(),
+      });
       const executionDecision = filter.actionable
         ? output
         : { ...output, decision: "WAIT" as const };
@@ -186,6 +230,28 @@ export class PipelineRunnerService {
         runId,
       );
       const completedAt = new Date();
+      const risk = riskAssessment.risk;
+      const executionApproved = Boolean(risk?.approved);
+      this.analytics.recordStageTelemetry({
+        pipelineId: job.pipelineId,
+        runId,
+        symbol,
+        exchange: String(job.provider),
+        timeframe: String(job.params?.interval ?? definition.defaultParams.interval),
+        stageName: 'execution',
+        inputSummary: `decision=${executionDecision.decision}; confidence=${output.confidence}`,
+        outputSummary: `risk=${risk?.reason ?? 'approved'}; live=${liveExecution?.outcome ?? 'unknown'}`,
+        confidence: output.confidence,
+        opportunityScore: output.opportunityScore,
+        riskScore: risk?.riskScore ?? 0,
+        decision: executionDecision.decision,
+        rejectReason: executionApproved ? undefined : risk?.reason,
+        executionResult: executionApproved ? 'EXECUTED' : 'REJECTED',
+        durationMs: completedAt.getTime() - startedAt.getTime(),
+        tokenUsage: 0,
+        apiCost: 0,
+        createdAt: completedAt.toISOString(),
+      });
       await this.repository.updateRun(runId, {
         status: "COMPLETED",
         completedAt,

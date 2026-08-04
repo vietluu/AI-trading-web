@@ -21,12 +21,22 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     expect(pipelineSkipReason({ hourlyCount: 1, hourlyLimit: 60, latestCreatedAt, now, cooldownMs: 60_000, replay: true })).toBeUndefined();
   });
 
-  it('gates decisions on confidence, quality and conflict', () => {
+  it('gates decisions on adaptive thresholds, EV and opportunity quality', () => {
     const service = new PipelineThresholdService({ minConfidence: 70 } as never);
-    const output = { confidence: 75, dataQuality: 'GOOD', conflictLevel: 'LOW' };
+    const output = {
+      decision: 'LONG',
+      confidence: 60,
+      dataQuality: 'GOOD',
+      conflictLevel: 'LOW',
+      opportunityScore: 74,
+      expectedValue: 0.12,
+      riskScore: 45,
+      adaptiveThreshold: 62,
+    };
     expect(service.evaluate(output as never)).toEqual({ actionable: true });
-    expect(service.evaluate({ ...output, confidence: 69 } as never)).toEqual({ actionable: false, reason: 'CONFIDENCE_BELOW_THRESHOLD' });
-    expect(service.evaluate({ ...output, dataQuality: 'PARTIAL' } as never)).toEqual({ actionable: true });
+    expect(service.evaluate({ ...output, confidence: 55 } as never)).toEqual({ actionable: false, reason: 'CONFIDENCE_BELOW_THRESHOLD' });
+    expect(service.evaluate({ ...output, expectedValue: -0.05 } as never)).toEqual({ actionable: false, reason: 'EXPECTED_VALUE_NEGATIVE' });
+    expect(service.evaluate({ ...output, opportunityScore: 58 } as never)).toEqual({ actionable: false, reason: 'OPPORTUNITY_BELOW_THRESHOLD' });
     expect(service.evaluate({ ...output, dataQuality: 'INSUFFICIENT' } as never)).toEqual({ actionable: false, reason: 'DATA_QUALITY_INSUFFICIENT' });
     expect(service.evaluate({ ...output, conflictLevel: 'HIGH' } as never)).toEqual({ actionable: false, reason: 'HIGH_CONFLICT' });
   });
