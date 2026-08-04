@@ -67,8 +67,8 @@ export class SignalFilterService {
     }
 
     const hasTrend =
-      (Number.isFinite(ema20) && Number.isFinite(ema50) && ema20 > ema50) ||
-      (Number.isFinite(ema20) && Number.isFinite(ema200) && ema20 > ema200) ||
+      (Number.isFinite(ema20) && Number.isFinite(ema50) && Math.abs(ema20 - ema50) > 0.0001) ||
+      (Number.isFinite(ema20) && Number.isFinite(ema200) && Math.abs(ema20 - ema200) > 0.0001) ||
       input.breakout === true;
 
     if (!hasTrend) {
