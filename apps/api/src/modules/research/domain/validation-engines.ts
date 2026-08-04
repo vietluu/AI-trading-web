@@ -135,8 +135,8 @@ export function runMonteCarloEngine(req: MonteCarloRequest): MonteCarloEngineRes
   const initial = req.initialBalance;
   const trades = req.trades.length > 0 ? req.trades : generateDefaultTradeSet();
 
-  const finalBalances: number[] = new Array(simCount);
-  const maxDrawdowns: number[] = new Array(simCount);
+  const finalBalances: number[] = new Array<number>(simCount);
+  const maxDrawdowns: number[] = new Array<number>(simCount);
   let profitCount = 0;
   let ruinCount = 0;
 

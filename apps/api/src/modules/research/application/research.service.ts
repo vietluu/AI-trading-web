@@ -1,5 +1,10 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
+
+function toInputJson(val: unknown): Prisma.InputJsonValue {
+  return JSON.parse(JSON.stringify(val)) as Prisma.InputJsonValue;
+}
 import { ExchangeInterval, ExchangeProvider } from '../../../exchange/domain/exchange.types';
 import { MarketDataService } from '../../../market-data/application/market-data.service';
 import { runHistoricalBacktest } from '../domain/backtest-engine';
@@ -165,7 +170,7 @@ export class ResearchService {
             regimeStabilityScore: regimeStability.overallRegimeStabilityScore,
             crossSymbolRank: 1,
             outOfSampleSharpe: oos.outOfSampleSharpe,
-            metricsJson: JSON.parse(JSON.stringify(result)),
+            metricsJson: toInputJson(result),
           },
         });
       } catch (err) {
@@ -213,8 +218,8 @@ export class ResearchService {
             userId: input.userId,
             symbol: input.symbol,
             parameterName: input.parameterName,
-            gridValues: JSON.parse(JSON.stringify(sensitivity.heatmap.map((h) => h.paramValue))),
-            metricsSurface: JSON.parse(JSON.stringify(sensitivity.heatmap)),
+            gridValues: toInputJson(sensitivity.heatmap.map((h) => h.paramValue)),
+            metricsSurface: toInputJson(sensitivity.heatmap),
             optimalValue: sensitivity.optimalValue,
           },
         });
@@ -275,8 +280,8 @@ export class ResearchService {
             interval: input.interval,
             strategyCount: suite.benchmarks.length,
             topStrategyName: leaderboard[0]?.strategyName ?? 'BUY_AND_HOLD',
-            leaderboardJson: JSON.parse(JSON.stringify(leaderboard)),
-            recommendations: JSON.parse(JSON.stringify(recommendations)),
+            leaderboardJson: toInputJson(leaderboard),
+            recommendations: toInputJson(recommendations),
           },
         });
       } catch (err) {
