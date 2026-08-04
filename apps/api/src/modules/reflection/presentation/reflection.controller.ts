@@ -12,15 +12,15 @@ export class ReflectionController {
   constructor(private readonly performance: PerformanceService, private readonly reflection: ReflectionService, private readonly repository: ReflectionRepository) {}
 
   @Get('performance')
-  records(@CurrentUser() user: { id: string }, @Query('horizon') raw?: string) {
-    return this.performance.list(user.id, raw ? EvaluationHorizonSchema.parse(raw) : undefined);
+  records(@CurrentUser() user: { id: string }, @Query('horizon') raw?: string, @Query('symbol') symbol?: string) {
+    return this.performance.list(user.id, raw ? EvaluationHorizonSchema.parse(raw) : undefined, symbol);
   }
   @Get('performance/metrics')
-  metrics(@CurrentUser() user: { id: string }, @Query('horizon') raw?: string) {
-    return this.performance.metrics(user.id, raw ? EvaluationHorizonSchema.parse(raw) : undefined);
+  metrics(@CurrentUser() user: { id: string }, @Query('horizon') raw?: string, @Query('symbol') symbol?: string) {
+    return this.performance.metrics(user.id, raw ? EvaluationHorizonSchema.parse(raw) : undefined, symbol);
   }
   @Get('performance/alerts')
-  alerts(@CurrentUser() user: { id: string }) { return this.performance.alerts(user.id); }
+  alerts(@CurrentUser() user: { id: string }, @Query('symbol') symbol?: string) { return this.performance.alerts(user.id, symbol); }
   @Post('performance/evaluate')
   evaluate() { return this.performance.evaluateDue(); }
 

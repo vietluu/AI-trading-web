@@ -47,10 +47,10 @@ export class PerformanceService {
     return { evaluated, skippedForMissingMarketData };
   }
 
-  async list(userId: string, horizon?: EvaluationHorizon) { return (await this.repository.records(userId, horizon)).map(toDto); }
-  async metrics(userId: string, horizon?: EvaluationHorizon) { return calculatePerformanceMetrics(await this.list(userId, horizon)); }
-  async alerts(userId: string) {
-    const records = await this.list(userId);
+  async list(userId: string, horizon?: EvaluationHorizon, symbol?: string) { return (await this.repository.records(userId, horizon, 500, symbol)).map(toDto); }
+  async metrics(userId: string, horizon?: EvaluationHorizon, symbol?: string) { return calculatePerformanceMetrics(await this.list(userId, horizon, symbol)); }
+  async alerts(userId: string, symbol?: string) {
+    const records = await this.list(userId, undefined, symbol);
     const metrics = calculatePerformanceMetrics(records);
     const threshold = this.config.get<number>('REFLECTION_ACCURACY_ALERT_THRESHOLD', 50);
     const alerts: Array<{ kind: string; severity: 'MEDIUM' | 'HIGH'; message: string }> = [];

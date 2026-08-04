@@ -432,9 +432,11 @@ export const FusionInputSchema = z
   .strict();
 export type FusionInput = z.infer<typeof FusionInputSchema>;
 
+const supportedSymbolPattern = /^[A-Z0-9]{2,12}-[A-Z0-9]{2,12}$/;
+
 export const FusionRunInputSchema = z
   .object({
-    symbol: z.enum(['BTC-USDT', 'ETH-USDT']),
+    symbol: z.string().min(1).max(32).regex(supportedSymbolPattern),
     provider: MarketAgentProviderSchema,
     interval: MarketAgentIntervalSchema,
     lookbackCandles: z.number().int().min(1).max(500).default(150),

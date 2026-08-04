@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { FusionRunInputSchema } from "../src/schemas/agents.js";
 import { PipelineScheduleInputSchema } from "../src/schemas/pipeline.js";
 
 const schedule = {
@@ -10,6 +11,19 @@ const schedule = {
   enabled: true,
   timezone: "Asia/Ho_Chi_Minh",
 };
+
+describe("FusionRunInputSchema", () => {
+  it("accepts additional supported symbols beyond BTC and ETH", () => {
+    expect(FusionRunInputSchema.safeParse({
+      symbol: "SOL-USDT",
+      provider: "BINANCE_FUTURES",
+      interval: "15m",
+      lookbackCandles: 150,
+      lookbackHours: 6,
+      maxItems: 20,
+    }).success).toBe(true);
+  });
+});
 
 describe("PipelineScheduleInputSchema", () => {
   it("rejects schedules faster than five minutes", () => {

@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { ExchangeProvider, PipelineTrigger } from '@prisma/client';
 import { PipelineRunRequestSchema, PipelineSymbolSchema, type PipelineRunRequest, type PipelineSymbol } from '@platform/shared';
@@ -7,10 +7,16 @@ import { PipelineQueueService } from '../infrastructure/pipeline-queue.service';
 import { PipelineConfigService } from './pipeline-config.service';
 import { resolvePipelineDefinition } from '../domain/pipeline.definition';
 import { pipelineSkipReason } from '../domain/rate-limit';
+import { PipelineRunnerService } from './pipeline-runner.service';
 
 @Injectable()
 export class PipelineService {
-  constructor(private readonly repository: PipelineRepository, private readonly queue: PipelineQueueService, private readonly config: PipelineConfigService) {}
+  constructor(
+    private readonly repository: PipelineRepository,
+    private readonly queue: PipelineQueueService,
+    private readonly config: PipelineConfigService,
+    @Optional() @Inject(PipelineRunnerService) private readonly runner?: PipelineRunnerService,
+  ) {}
 
   async trigger(userId: string, raw: unknown, trigger: PipelineTrigger = 'MANUAL', options: { replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; useStoredContext?: boolean; maxRunsPerHour?: number } = {}) {
     if (!this.config.enabled) throw new ConflictException('Pipeline automation is disabled');
@@ -36,17 +42,17 @@ export class PipelineService {
               options,
               input.provider,
               (run) =>
-                this.queue.enqueue({
+                this.dispatchRun({
                   runId: run.id,
                   userId,
                   pipelineId: input.pipelineId,
-                  symbol: symbol,
+                  symbol,
                   provider: input.provider,
                   params: input.params,
                   trigger,
                   createdAt: new Date().toISOString(),
                   useStoredContext: options.useStoredContext,
-                }),
+                }, trigger),
             ),
           ),
         );
@@ -62,18 +68,22 @@ export class PipelineService {
       trigger,
       options,
       input.provider,
-      ({ id, symbol }) =>
-        this.queue.enqueue({
-          runId: id,
-          userId,
-          pipelineId: input.pipelineId,
-          symbol: symbol,
-          provider: input.provider,
-          params: input.params,
+      async ({ id, symbol }) => {
+        await this.dispatchRun(
+          {
+            runId: id,
+            userId,
+            pipelineId: input.pipelineId,
+            symbol,
+            provider: input.provider,
+            params: input.params,
+            trigger,
+            createdAt: new Date().toISOString(),
+            useStoredContext: options.useStoredContext,
+          },
           trigger,
-          createdAt: new Date().toISOString(),
-          useStoredContext: options.useStoredContext,
-        }),
+        );
+      },
     );
   }
 
@@ -92,6 +102,19 @@ export class PipelineService {
       return parsed.success ? [parsed.data] : [];
     });
     return parsedSymbols.length > 0 ? parsedSymbols : [fallbackSymbol];
+  }
+
+  private async dispatchRun(payload: Parameters<PipelineQueueService['enqueue']>[0], trigger: PipelineTrigger) {
+    if (trigger === 'MANUAL' && this.runner) {
+      await this.runner.run(payload);
+      return;
+    }
+    try {
+      await this.queue.enqueue(payload);
+    } catch (error) {
+      if (trigger !== 'MANUAL' || !this.runner) throw error;
+      await this.runner.run(payload);
+    }
   }
 
   private async createRun(

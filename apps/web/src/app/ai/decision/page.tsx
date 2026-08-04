@@ -10,6 +10,7 @@ const fieldClassName =
 
 export default function DecisionPage(): React.JSX.Element {
   const [symbol, setSymbol] = useState<FusionRunInput["symbol"]>("BTC-USDT");
+  const [symbols] = useState<string[]>(["BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT", "XRP-USDT", "DOGE-USDT", "ADA-USDT", "AVAX-USDT", "LINK-USDT", "NEAR-USDT", "SUI-USDT"]);
   const [provider, setProvider] =
     useState<FusionRunInput["provider"]>("BINANCE_FUTURES");
   const [interval, setInterval] = useState<FusionRunInput["interval"]>("15m");
@@ -51,9 +52,8 @@ export default function DecisionPage(): React.JSX.Element {
       <section className="grid gap-4 rounded-lg border bg-card p-6 md:grid-cols-3">
         <label className="space-y-1 text-xs font-semibold text-muted-foreground">
           Symbol
-          <select className={fieldClassName} value={symbol} onChange={(event) => setSymbol(event.target.value as FusionRunInput["symbol"])}>
-            <option value="BTC-USDT">BTC-USDT</option>
-            <option value="ETH-USDT">ETH-USDT</option>
+          <select className={fieldClassName} value={symbol} onChange={(event) => setSymbol(event.target.value)}>
+            {symbols.map((value) => <option key={value} value={value}>{value}</option>)}
           </select>
         </label>
         <label className="space-y-1 text-xs font-semibold text-muted-foreground">
