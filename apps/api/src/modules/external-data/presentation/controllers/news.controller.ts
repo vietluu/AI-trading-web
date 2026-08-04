@@ -326,21 +326,24 @@ export class NewsController {
   private async trustedArticleScope(): Promise<Prisma.NewsArticleWhereInput> {
     const sources = await this.prisma.externalDataSource.findMany({
       where: { isEnabled: true },
-      select: { sourceId: true, baseDomain: true },
+      select: { sourceId: true, baseDomain: true, isCustom: true },
     });
 
     const sourceScopes: Prisma.NewsArticleWhereInput[] = sources.map((source) => {
+      if (source.isCustom) {
+        return { sourceId: source.sourceId };
+      }
       const domain = source.baseDomain.trim().toLowerCase();
-      const hosts = domain.startsWith('www.') ? [domain] : [domain, `www.${domain}`];
-      const urlScopes = hosts.flatMap((host) => [
-        { canonicalUrl: { startsWith: `https://${host}/`, mode: 'insensitive' as const } },
-        { canonicalUrl: { startsWith: `http://${host}/`, mode: 'insensitive' as const } },
-      ]);
-
+      const rootDomain = domain.split('.').slice(-2).join('.');
       return {
         AND: [
           { sourceId: source.sourceId },
-          { OR: urlScopes },
+          {
+            OR: [
+              { canonicalUrl: { contains: domain, mode: 'insensitive' as const } },
+              { canonicalUrl: { contains: rootDomain, mode: 'insensitive' as const } },
+            ],
+          },
         ],
       };
     });

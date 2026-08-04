@@ -190,7 +190,7 @@ export class NewsToolDataService {
 
   private trustedSources(): Promise<TrustedSource[]> {
     return this.prisma.externalDataSource.findMany({
-      where: { isEnabled: true, isCustom: false },
+      where: { isEnabled: true },
       select: { sourceId: true, displayName: true, baseDomain: true },
     });
   }

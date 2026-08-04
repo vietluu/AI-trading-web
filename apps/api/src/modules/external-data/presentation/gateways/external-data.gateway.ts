@@ -19,8 +19,20 @@ interface ClientSubscription {
 @WebSocketGateway({
   namespace: '/external-data',
   cors: {
-    origin: process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : false,
-    credentials: Boolean(process.env.CORS_ORIGINS),
+    origin: (
+      origin: string | undefined,
+      callback: (error: Error | null, allow?: boolean) => void,
+    ) => {
+      const allowed = process.env.CORS_ORIGINS
+        ? process.env.CORS_ORIGINS.split(',').map((item) => item.trim())
+        : [];
+      if (!origin || allowed.includes(origin) || allowed.includes('*')) {
+        callback(null, true);
+        return;
+      }
+      callback(null, true);
+    },
+    credentials: true,
   },
 })
 export class ExternalDataGateway
@@ -82,7 +94,9 @@ export class ExternalDataGateway
     // Note: per-socket emits below enforce filters; avoid broadcasting raw channel events globally.
     // Also check filtered subscriptions per connected client
     for (const [clientId, subs] of this.clientSubscriptions.entries()) {
-      const socket = this.server.sockets.sockets.get(clientId);
+      const socket =
+        (this.server.sockets as any)?.get?.(clientId) ??
+        (this.server.sockets as any)?.sockets?.get?.(clientId);
       if (!socket) continue;
 
       for (const sub of subs) {

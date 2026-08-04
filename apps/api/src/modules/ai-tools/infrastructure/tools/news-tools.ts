@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { z } from "zod";
 import type { ToolDefinition } from "../../domain/contracts/tool-definition.contract";
 import type { ToolExecutionContext } from "../../domain/contracts/tool-context.contract";
+import { PrismaService } from "../../../../database/prisma.service";
 import { NewsToolDataService } from "./news-tool-data.service";
 
 @Injectable()
@@ -140,6 +141,8 @@ export class NewsHighImportanceListTool implements ToolDefinition<{ symbol?: str
 
 @Injectable()
 export class SentimentMarketGetTool implements ToolDefinition<{ symbol?: string; lookbackHours?: number }, Record<string, unknown>> {
+  constructor(private readonly prisma: PrismaService) {}
+
   public readonly name = "sentiment.market.get";
   public readonly version = 1;
   public readonly displayName = "Get Market Sentiment";
@@ -172,10 +175,26 @@ export class SentimentMarketGetTool implements ToolDefinition<{ symbol?: string;
   public readonly schemaHash = "hash-sentiment-market-get-v1";
 
   public async execute(input: { symbol?: string; lookbackHours?: number }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
-    await Promise.resolve();
+    const latest = await this.prisma.marketSentimentObservation.findFirst({
+      orderBy: { observedAt: "desc" },
+    });
+
+    if (latest) {
+      return {
+        score: latest.value,
+        classification: latest.classification,
+        timestamp: latest.observedAt.toISOString(),
+        provider: latest.provider,
+        indexType: latest.indexType,
+        symbol: input.symbol,
+        lookbackHours: input.lookbackHours || 6,
+        invocationId: context.invocationId,
+      };
+    }
+
     return {
-      score: 68,
-      classification: "Greed",
+      score: 50,
+      classification: "Neutral",
       timestamp: new Date().toISOString(),
       symbol: input.symbol,
       lookbackHours: input.lookbackHours || 6,
@@ -223,10 +242,10 @@ export class MacroEventsListTool implements ToolDefinition<{ lookbackHours?: num
       events: [
         {
           id: "macro-1",
-          eventName: "US CPI Release",
-          country: "US",
-          importance: "HIGH",
-          actual: "2.8%",
+          title: "US CPI Core YoY",
+          category: "CPI",
+          importanceScore: 85,
+          actual: "3.1%",
           forecast: "2.9%",
           previous: "3.0%",
           eventDate: new Date().toISOString(),
@@ -239,6 +258,8 @@ export class MacroEventsListTool implements ToolDefinition<{ lookbackHours?: num
 
 @Injectable()
 export class SocialPostsListTool implements ToolDefinition<{ symbol?: string; lookbackHours?: number; limit?: number }, Record<string, unknown>> {
+  constructor(private readonly prisma: PrismaService) {}
+
   public readonly name = "social.posts.list";
   public readonly version = 1;
   public readonly displayName = "List Social Posts";
@@ -270,21 +291,40 @@ export class SocialPostsListTool implements ToolDefinition<{ symbol?: string; lo
   public readonly schemaHash = "hash-social-posts-list-v1";
 
   public async execute(input: { symbol?: string; lookbackHours?: number; limit?: number }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
-    await Promise.resolve();
+    const limit = input.limit || 10;
+    const lookbackHours = input.lookbackHours || 6;
+    const publishedAfter = new Date(Date.now() - lookbackHours * 60 * 60 * 1000);
+
+    let posts = await this.prisma.socialPost.findMany({
+      where: {
+        publishedAt: { gte: publishedAfter },
+        ...(input.symbol ? { relatedSymbols: { has: input.symbol.toUpperCase() } } : {}),
+      },
+      take: limit,
+      orderBy: { publishedAt: "desc" },
+    });
+
+    if (posts.length === 0) {
+      posts = await this.prisma.socialPost.findMany({
+        where: input.symbol ? { relatedSymbols: { has: input.symbol.toUpperCase() } } : {},
+        take: limit,
+        orderBy: { publishedAt: "desc" },
+      });
+    }
+
     return {
       symbol: input.symbol || "BTC",
-      lookbackHours: input.lookbackHours || 6,
-      posts: [
-        {
-          id: "post-1",
-          platform: "Reddit",
-          subreddit: "r/Bitcoin",
-          title: "BTC holding strong above key support",
-          sentimentScore: 0.75,
-          authorHash: "a1b2c3d4",
-          createdAt: new Date().toISOString(),
-        },
-      ],
+      lookbackHours,
+      posts: posts.map((p) => ({
+        id: p.id,
+        platform: p.provider,
+        community: p.community,
+        title: p.title,
+        textExcerpt: p.textExcerpt,
+        canonicalUrl: p.canonicalUrl,
+        engagementScore: p.engagementScore,
+        publishedAt: p.publishedAt.toISOString(),
+      })),
       invocationId: context.invocationId,
     };
   }

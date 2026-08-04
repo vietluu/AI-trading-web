@@ -10,11 +10,12 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { Prisma } from '@prisma/client';
+import { ExternalDataProvider, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../../database/prisma.service';
 import { SessionGuard } from '../../../../session/session.guard';
 import { ExternalHttpClient } from '../../infrastructure/http/external-http-client';
 import { GenericRssAdapter } from '../../infrastructure/providers/rss/generic-rss.adapter';
+import { ExternalDataSchedulerService } from '../../application/jobs/external-data-scheduler.service';
 import { createExternalDataSourceSchema, updateExternalDataSourceSchema } from '@platform/shared';
 
 @ApiTags('External Data - Source Management')
@@ -24,6 +25,7 @@ export class SourcesController {
     private readonly prisma: PrismaService,
     private readonly httpClient: ExternalHttpClient,
     private readonly rssAdapter: GenericRssAdapter,
+    private readonly schedulerService: ExternalDataSchedulerService,
   ) {}
 
   @Get()
@@ -44,19 +46,27 @@ export class SourcesController {
     const parsedUrl = new URL(validated.feedUrl);
     await this.httpClient.validateSsrfTarget(parsedUrl.hostname);
 
-    return this.prisma.externalDataSource.create({
+    const baseDomain = this.extractRootDomain(parsedUrl.hostname);
+
+    const created = await this.prisma.externalDataSource.create({
       data: {
         sourceId: validated.sourceId,
         displayName: validated.displayName,
         feedUrl: validated.feedUrl,
-        baseDomain: parsedUrl.hostname,
+        baseDomain,
         language: validated.language,
         categories: validated.categories,
         reliabilityScore: validated.reliabilityScore,
         pollIntervalSeconds: validated.pollIntervalSeconds,
         isCustom: true,
+        provider: ExternalDataProvider.GENERIC_RSS,
       },
     });
+
+    // Trigger immediate manual ingestion run for newly added feed
+    void this.schedulerService.triggerManualRun(ExternalDataProvider.GENERIC_RSS, created.sourceId).catch(() => {});
+
+    return created;
   }
 
   @Patch(':id')
@@ -114,5 +124,13 @@ export class SourcesController {
       samplePublishedAt: fetchResult.items[0]?.publishedAt || null,
       status: 'SUCCESS',
     };
+  }
+
+  private extractRootDomain(hostname: string): string {
+    const parts = hostname.toLowerCase().split('.');
+    if (parts.length > 2) {
+      return parts.slice(-2).join('.');
+    }
+    return hostname;
   }
 }
