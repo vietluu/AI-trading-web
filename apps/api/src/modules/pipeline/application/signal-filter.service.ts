@@ -8,6 +8,7 @@ export interface SignalFilterInput {
   ema50?: number;
   ema200?: number;
   breakout?: boolean;
+  price?: number;
 }
 
 export interface SignalFilterResult {
@@ -17,12 +18,14 @@ export interface SignalFilterResult {
 
 @Injectable()
 export class SignalFilterService {
-  private readonly minAtr = 25;
+  private readonly minAtrAbsolute = 25;
+  private readonly minAtrPercent = 0.1; // 0.1% min relative volatility
   private readonly minVolumeChangePercent = 1.2;
 
   evaluate(input: SignalFilterInput): SignalFilterResult {
     const rsi = input.rsi === undefined ? NaN : Number(input.rsi);
     const atr = input.atr === undefined ? NaN : Number(input.atr);
+    const explicitPrice = input.price !== undefined && input.price > 0 ? Number(input.price) : undefined;
     const volumeChange =
       input.volumeChangePercent === undefined
         ? NaN
@@ -40,17 +43,22 @@ export class SignalFilterService {
       input.ema200,
     ].some((value) => value !== undefined && Number.isFinite(Number(value)));
 
+    const effectiveMinAtr = explicitPrice !== undefined
+      ? (explicitPrice >= 1000 ? this.minAtrAbsolute : explicitPrice * 0.002)
+      : this.minAtrAbsolute;
+
+    const isLowAtr = Number.isFinite(atr) && atr < effectiveMinAtr;
+
     const hasRsiNeutralZone = Number.isFinite(rsi) && rsi >= 45 && rsi <= 55;
-    const lowVol = Number.isFinite(atr) && atr < this.minAtr;
     const lowVolume =
       Number.isFinite(volumeChange) &&
       volumeChange < this.minVolumeChangePercent;
 
-    if (hasAnyIndicatorData && hasRsiNeutralZone && lowVol && lowVolume) {
+    if (hasAnyIndicatorData && hasRsiNeutralZone && isLowAtr && lowVolume) {
       return { allowed: false, reason: "NO_TRADE_ZONE" };
     }
 
-    if (Number.isFinite(atr) && atr < this.minAtr) {
+    if (isLowAtr) {
       return { allowed: false, reason: "LOW_ATR" };
     }
 

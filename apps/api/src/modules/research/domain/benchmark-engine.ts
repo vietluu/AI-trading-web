@@ -15,7 +15,14 @@ export type BenchmarkStrategyName =
   | 'TURTLE_STRATEGY'
   | 'VWAP_STRATEGY'
   | 'GRID_TRADING'
-  | 'MOMENTUM_STRATEGY';
+  | 'MOMENTUM_STRATEGY'
+  | 'BREAKOUT_STRATEGY'
+  | 'STATISTICAL_MEAN_REVERSION'
+  | 'HYBRID_QUANT'
+  | 'PREVIOUS_AI_VERSION'
+  | 'PREVIOUS_STABLE_RELEASE'
+  | 'RANDOM_ENTRY'
+  | 'NO_TRADE';
 
 export interface BenchmarkMetricSet {
   totalReturn: number;
@@ -93,6 +100,13 @@ export function runBenchmarkSuite(input: {
     'VWAP_STRATEGY',
     'GRID_TRADING',
     'MOMENTUM_STRATEGY',
+    'BREAKOUT_STRATEGY',
+    'STATISTICAL_MEAN_REVERSION',
+    'HYBRID_QUANT',
+    'PREVIOUS_AI_VERSION',
+    'PREVIOUS_STABLE_RELEASE',
+    'RANDOM_ENTRY',
+    'NO_TRADE',
   ];
 
   const benchmarks = strategies.map((strategyName) => {

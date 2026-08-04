@@ -71,6 +71,9 @@ model User {
   portfolioStrategies    PortfolioStrategy[]
   portfolioRebalances    PortfolioRebalance[]
   portfolioRiskEvents    PortfolioRiskEvent[]
+  researchValidations    ResearchValidationRun[]
+  benchmarkSuites        BenchmarkSuiteRun[]
+  sensitivityHeatmaps    SensitivityHeatmap[]
 
   @@map("users")
 }
@@ -1797,3 +1800,72 @@ model AgentQuotaUsage {
   @@index([userId, windowKey])
   @@map("agent_quota_usages")
 }
+
+// ============================================================
+// Phase 10.3A: Research & Validation Models
+// ============================================================
+
+model ResearchValidationRun {
+  id                    String   @id @default(uuid()) @db.Uuid
+  userId                String?  @db.Uuid
+  symbol                String
+  provider              String
+  interval              String
+  lookbackCandles       Int
+  monteCarloSimulations Int      @default(10000)
+  probabilityOfProfit   Float
+  probabilityOfRuin     Float
+  expectedDrawdown      Float
+  worstDrawdown         Float
+  walkForwardStable     Boolean
+  walkForwardAvgReturn  Float
+  bootstrapSharpe95     Float[]
+  confidenceBrierScore  Float
+  regimeStabilityScore  Float
+  crossSymbolRank       Int      @default(1)
+  outOfSampleSharpe     Float
+  metricsJson           Json
+  createdAt             DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([symbol, provider])
+  @@map("research_validation_runs")
+}
+
+model BenchmarkSuiteRun {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String?  @db.Uuid
+  symbol           String
+  provider         String
+  interval         String
+  strategyCount    Int      @default(20)
+  topStrategyName  String
+  leaderboardJson  Json
+  recommendations  Json
+  createdAt        DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([symbol, provider])
+  @@map("benchmark_suite_runs")
+}
+
+model SensitivityHeatmap {
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String?  @db.Uuid
+  symbol          String
+  parameterName   String
+  gridValues      Json
+  metricsSurface  Json
+  optimalValue    Float
+  createdAt       DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, parameterName])
+  @@map("sensitivity_heatmaps")
+}
+

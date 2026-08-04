@@ -180,7 +180,7 @@ const environmentSchema = z
       ),
     MARKET_DATA_SYMBOLS: z
       .string()
-      .default("BTC-USDT,ETH-USDT")
+      .default("BTC-USDT,ETH-USDT,SOL-USDT,BNB-USDT,XRP-USDT,DOGE-USDT,ADA-USDT,AVAX-USDT,LINK-USDT,NEAR-USDT,SUI-USDT")
       .transform((value) =>
         value
           .split(",")

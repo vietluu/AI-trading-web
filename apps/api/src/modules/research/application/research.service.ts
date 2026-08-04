@@ -1,11 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { PrismaService } from '../../../database/prisma.service';
 import { ExchangeInterval, ExchangeProvider } from '../../../exchange/domain/exchange.types';
 import { MarketDataService } from '../../../market-data/application/market-data.service';
-import {
-  runHistoricalBacktest,
-  runMonteCarloSimulation,
-  runWalkForwardValidation,
-} from '../domain/backtest-engine';
+import { runHistoricalBacktest } from '../domain/backtest-engine';
 import {
   buildBenchmarkLeaderboard,
   detectMarketRegime,
@@ -13,12 +10,26 @@ import {
   recommendStrategy,
   runBenchmarkSuite,
 } from '../domain/benchmark-engine';
+import {
+  runBootstrapEngine,
+  runConfidenceCalibrationEngine,
+  runCrossSymbolRobustnessEngine,
+  runMonteCarloEngine,
+  runOutOfSampleEngine,
+  runProbabilityOfRuinEngine,
+  runRegimeStabilityAnalyzer,
+  runSensitivityEngine,
+  runWalkForwardEngine,
+} from '../domain/validation-engines';
 
 @Injectable()
 export class ResearchService {
   private readonly logger = new Logger(ResearchService.name);
 
-  constructor(private readonly marketData: MarketDataService) {}
+  constructor(
+    private readonly marketData: MarketDataService,
+    @Optional() private readonly prisma?: PrismaService,
+  ) {}
 
   async runBacktest(input: {
     provider: ExchangeProvider;
@@ -60,14 +71,15 @@ export class ResearchService {
     return summary;
   }
 
-  async runValidation(input: {
+  async runFullQuantValidation(input: {
+    userId?: string;
     provider: ExchangeProvider;
     symbol: string;
     interval: ExchangeInterval;
     lookbackCandles: number;
     initialBalance: number;
-    trainWindow: number;
-    validationWindow: number;
+    trainWindow?: number;
+    validationWindow?: number;
   }) {
     const candles = await this.marketData.getHistoricalCandles({
       provider: input.provider,
@@ -87,27 +99,135 @@ export class ResearchService {
       riskRewardRatio: 2,
     });
 
-    const monteCarlo = runMonteCarloSimulation({
+    const walkForward = runWalkForwardEngine({
+      candles,
+      trainWindow: input.trainWindow ?? 100,
+      validationWindow: input.validationWindow ?? 30,
+      initialBalance: input.initialBalance,
+    });
+
+    const monteCarlo = runMonteCarloEngine({
       trades: backtest.trades,
       initialBalance: input.initialBalance,
-      simulations: 100,
+      simulations: 10000,
     });
 
-    const walkForward = runWalkForwardValidation({
-      candles,
-      trainWindow: input.trainWindow,
-      validationWindow: input.validationWindow,
-      initialBalance: input.initialBalance,
+    const bootstrap = runBootstrapEngine({
+      trades: backtest.trades,
+      resamples: 2000,
     });
 
-    return {
-      backtest,
-      monteCarlo,
+    const calibration = runConfidenceCalibrationEngine([]);
+
+    const regimeStability = runRegimeStabilityAnalyzer(candles);
+
+    const robustness = runCrossSymbolRobustnessEngine();
+
+    const oos = runOutOfSampleEngine(candles);
+
+    const ruin = runProbabilityOfRuinEngine({
+      winRate: backtest.metrics.winRate / 100 || 0.55,
+      riskRewardRatio: 2.0,
+      riskPerTradeFraction: 0.02,
+      capital: input.initialBalance,
+    });
+
+    const result = {
+      backtestSummary: backtest.metrics,
       walkForward,
+      monteCarlo,
+      bootstrap,
+      calibration,
+      regimeStability,
+      crossSymbolRobustness: robustness,
+      outOfSample: oos,
+      probabilityOfRuin: ruin,
     };
+
+    if (this.prisma) {
+      try {
+        await this.prisma.researchValidationRun.create({
+          data: {
+            userId: input.userId,
+            symbol: input.symbol,
+            provider: input.provider,
+            interval: input.interval,
+            lookbackCandles: input.lookbackCandles,
+            monteCarloSimulations: monteCarlo.simulationsCount,
+            probabilityOfProfit: monteCarlo.probabilityOfProfit,
+            probabilityOfRuin: ruin.probabilityOfRuinPct,
+            expectedDrawdown: monteCarlo.expectedDrawdown,
+            worstDrawdown: monteCarlo.worstDrawdown,
+            walkForwardStable: walkForward.stable,
+            walkForwardAvgReturn: walkForward.averageReturn,
+            bootstrapSharpe95: bootstrap.sharpeRatioCI95,
+            confidenceBrierScore: calibration.brierScore,
+            regimeStabilityScore: regimeStability.overallRegimeStabilityScore,
+            crossSymbolRank: 1,
+            outOfSampleSharpe: oos.outOfSampleSharpe,
+            metricsJson: JSON.parse(JSON.stringify(result)),
+          },
+        });
+      } catch (err) {
+        this.logger.warn(`Failed to persist ResearchValidationRun to DB: ${(err as Error).message}`);
+      }
+    }
+
+    this.logger.log({
+      event: 'full_quant_validation_completed',
+      symbol: input.symbol,
+      mcProfitPct: monteCarlo.probabilityOfProfit,
+      wfStable: walkForward.stable,
+      ruinPct: ruin.probabilityOfRuinPct,
+    });
+
+    return result;
+  }
+
+  async runSensitivityAnalysis(input: {
+    userId?: string;
+    provider: ExchangeProvider;
+    symbol: string;
+    interval: ExchangeInterval;
+    lookbackCandles: number;
+    parameterName: 'confidenceFloor' | 'riskRewardRatio' | 'atrMultiplier' | 'rsiPeriod';
+    gridValues?: number[];
+  }) {
+    const candles = await this.marketData.getHistoricalCandles({
+      provider: input.provider,
+      symbol: input.symbol,
+      interval: input.interval,
+      limit: input.lookbackCandles,
+    });
+
+    const sensitivity = runSensitivityEngine({
+      candles,
+      parameterName: input.parameterName,
+      gridValues: input.gridValues,
+    });
+
+    if (this.prisma) {
+      try {
+        await this.prisma.sensitivityHeatmap.create({
+          data: {
+            userId: input.userId,
+            symbol: input.symbol,
+            parameterName: input.parameterName,
+            gridValues: JSON.parse(JSON.stringify(sensitivity.heatmap.map((h) => h.paramValue))),
+            metricsSurface: JSON.parse(JSON.stringify(sensitivity.heatmap)),
+            optimalValue: sensitivity.optimalValue,
+          },
+        });
+      } catch (err) {
+        this.logger.warn(`Failed to persist SensitivityHeatmap to DB: ${(err as Error).message}`);
+      }
+    }
+
+    return sensitivity;
   }
 
   async runBenchmarkAnalysis(input: {
+    userId?: string;
     provider: ExchangeProvider;
     symbol: string;
     interval: ExchangeInterval;
@@ -143,13 +263,34 @@ export class ResearchService {
       liquidity: 0.7,
     });
     const recommendations = generateOptimizationRecommendations(suite.benchmarks, regime);
+    const leaderboard = buildBenchmarkLeaderboard(suite.benchmarks);
+
+    if (this.prisma) {
+      try {
+        await this.prisma.benchmarkSuiteRun.create({
+          data: {
+            userId: input.userId,
+            symbol: input.symbol,
+            provider: input.provider,
+            interval: input.interval,
+            strategyCount: suite.benchmarks.length,
+            topStrategyName: leaderboard[0]?.strategyName ?? 'BUY_AND_HOLD',
+            leaderboardJson: JSON.parse(JSON.stringify(leaderboard)),
+            recommendations: JSON.parse(JSON.stringify(recommendations)),
+          },
+        });
+      } catch (err) {
+        this.logger.warn(`Failed to persist BenchmarkSuiteRun to DB: ${(err as Error).message}`);
+      }
+    }
 
     return {
       suite,
-      leaderboard: buildBenchmarkLeaderboard(suite.benchmarks),
+      leaderboard,
       regime,
       recommendedStrategy: strategy,
       recommendations,
     };
   }
 }
+
