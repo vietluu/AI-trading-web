@@ -6,6 +6,13 @@ import {
   runMonteCarloSimulation,
   runWalkForwardValidation,
 } from '../domain/backtest-engine';
+import {
+  buildBenchmarkLeaderboard,
+  detectMarketRegime,
+  generateOptimizationRecommendations,
+  recommendStrategy,
+  runBenchmarkSuite,
+} from '../domain/benchmark-engine';
 
 @Injectable()
 export class ResearchService {
@@ -97,6 +104,52 @@ export class ResearchService {
       backtest,
       monteCarlo,
       walkForward,
+    };
+  }
+
+  async runBenchmarkAnalysis(input: {
+    provider: ExchangeProvider;
+    symbol: string;
+    interval: ExchangeInterval;
+    lookbackCandles: number;
+    initialBalance: number;
+    leverage: number;
+    riskPerTrade: number;
+    riskRewardRatio: number;
+  }) {
+    const candles = await this.marketData.getHistoricalCandles({
+      provider: input.provider,
+      symbol: input.symbol,
+      interval: input.interval,
+      limit: input.lookbackCandles,
+    });
+
+    const suite = runBenchmarkSuite({
+      candles,
+      provider: input.provider,
+      symbol: input.symbol,
+      interval: input.interval,
+      initialBalance: input.initialBalance,
+      leverage: input.leverage,
+      riskPerTrade: input.riskPerTrade,
+      riskRewardRatio: input.riskRewardRatio,
+    });
+
+    const regime = detectMarketRegime(candles);
+    const strategy = recommendStrategy({
+      regime,
+      symbol: input.symbol,
+      volatility: 0.02,
+      liquidity: 0.7,
+    });
+    const recommendations = generateOptimizationRecommendations(suite.benchmarks, regime);
+
+    return {
+      suite,
+      leaderboard: buildBenchmarkLeaderboard(suite.benchmarks),
+      regime,
+      recommendedStrategy: strategy,
+      recommendations,
     };
   }
 }

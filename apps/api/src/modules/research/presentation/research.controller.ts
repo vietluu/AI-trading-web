@@ -38,6 +38,21 @@ export class ResearchController {
     return this.researchService.runValidation(input);
   }
 
+  @Post('benchmark')
+  async benchmark(@Body() body: unknown) {
+    const input = body as {
+      provider: ExchangeProvider;
+      symbol: string;
+      interval: ExchangeInterval;
+      lookbackCandles: number;
+      initialBalance: number;
+      leverage: number;
+      riskPerTrade: number;
+      riskRewardRatio: number;
+    };
+    return this.researchService.runBenchmarkAnalysis(input);
+  }
+
   @Get('health')
   health() {
     return { status: 'ok', module: 'research' };
