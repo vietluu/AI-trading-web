@@ -10,6 +10,7 @@ export class PipelineThresholdService {
     if (output.confidence < this.config.minConfidence) return { actionable: false, reason: 'CONFIDENCE_BELOW_THRESHOLD' };
     if (output.dataQuality === 'INSUFFICIENT') return { actionable: false, reason: 'DATA_QUALITY_INSUFFICIENT' };
     if (output.conflictLevel === 'HIGH') return { actionable: false, reason: 'HIGH_CONFLICT' };
+    if (output.confidence < 75) return { actionable: false, reason: 'CONFIDENCE_BELOW_THRESHOLD' };
     return { actionable: true };
   }
 }

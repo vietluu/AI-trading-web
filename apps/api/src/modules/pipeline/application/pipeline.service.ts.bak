@@ -25,54 +25,12 @@ export class PipelineService {
         batches.push(symbols.slice(index, index + 3));
       }
       for (const batch of batches) {
-        const batchRuns = await Promise.all(
-          batch.map((symbol) =>
-            this.createRun(
-              userId,
-              input,
-              definition,
-              symbol,
-              trigger,
-              options,
-              (run) =>
-                this.queue.enqueue({
-                  runId: run.id,
-                  userId,
-                  pipelineId: input.pipelineId,
-                  symbol,
-                  provider: input.provider,
-                  params: input.params,
-                  trigger,
-                  createdAt: new Date().toISOString(),
-                  useStoredContext: options.useStoredContext,
-                }),
-            ),
-          ),
-        );
+        const batchRuns = await Promise.all(batch.map((symbol) => this.createRun(userId, input, definition, symbol, trigger, options, now => this.queue.enqueue({ runId: now.id, userId, pipelineId: input.pipelineId, symbol, provider: input.provider, params: input.params, trigger, createdAt: new Date().toISOString(), useStoredContext: options.useStoredContext })))));
         createdRuns.push(...batchRuns);
       }
       return createdRuns;
     }
-    return this.createRun(
-      userId,
-      input,
-      definition,
-      input.symbol,
-      trigger,
-      options,
-      ({ id, symbol }) =>
-        this.queue.enqueue({
-          runId: id,
-          userId,
-          pipelineId: input.pipelineId,
-          symbol,
-          provider: input.provider,
-          params: input.params,
-          trigger,
-          createdAt: new Date().toISOString(),
-          useStoredContext: options.useStoredContext,
-        }),
-    );
+    return this.createRun(userId, input, definition, input.symbol, trigger, options, ({ id, symbol, ...rest }) => this.queue.enqueue({ runId: id, userId, pipelineId: input.pipelineId, symbol, provider: input.provider, params: input.params, trigger, createdAt: new Date().toISOString(), useStoredContext: options.useStoredContext }));
   }
 
   private extractSymbols(raw: unknown, fallbackSymbol: string): string[] {

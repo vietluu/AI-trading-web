@@ -18,6 +18,7 @@ import {
 import { ExchangeRateLimitService } from "../src/exchange/infrastructure/exchange-rate-limit.service";
 import {
   fromOkxSymbol,
+  mapSymbol,
   normalizeSymbol,
   toBinanceSymbol,
   toOkxSymbol,
@@ -60,6 +61,27 @@ describe("exchange infrastructure", () => {
     expect(toOkxSymbol("BTC-USDT")).toBe("BTC-USDT-SWAP");
     expect(fromOkxSymbol("BTC-USDT-SWAP")).toBe("BTC-USDT");
     expect(() => normalizeSymbol("BTCUSDT")).toThrow("BASE-QUOTE");
+  });
+
+  it("maps execution symbols for OKX and Binance safely", () => {
+    expect(mapSymbol("BTC-USDT", ExchangeProvider.OKX_FUTURES)).toBe(
+      "BTC-USDT-SWAP",
+    );
+    expect(mapSymbol("BTC-USDT", ExchangeProvider.BINANCE_FUTURES)).toBe(
+      "BTCUSDT",
+    );
+    expect(mapSymbol("BNB-USDT", ExchangeProvider.OKX_FUTURES)).toBe(
+      "BNB-USDT-SWAP",
+    );
+    expect(mapSymbol("BNB-USDT", ExchangeProvider.BINANCE_FUTURES)).toBe(
+      "BNBUSDT",
+    );
+    expect(() => mapSymbol("BTCUSDT", ExchangeProvider.BINANCE_FUTURES)).toThrow(
+      "BASE-QUOTE",
+    );
+    expect(() => mapSymbol("", ExchangeProvider.OKX_FUTURES)).toThrow(
+      "Symbol must not be empty",
+    );
   });
 
   it("maps supported intervals and rejects unsupported OKX intervals", () => {

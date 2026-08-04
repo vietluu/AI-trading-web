@@ -16,6 +16,7 @@ import {
 } from '@platform/shared';
 import { randomUUID } from 'node:crypto';
 import { AgentInvocationSource, AgentType } from '../../domain/enums';
+import { canonicalSymbol } from '../../../../exchange/infrastructure/exchange-symbol';
 import { AgentExecutionService } from './agent-execution.service';
 
 type AnalysisName = keyof FusionInput;
@@ -34,6 +35,12 @@ export interface FusionAnalysisResult {
   fusionOutput: FusionOutput;
 }
 
+export function deriveAssetSymbol(symbol: string): string {
+  const canonical = canonicalSymbol(symbol);
+  const [baseAsset] = canonical.split('-');
+  return baseAsset || 'BTC';
+}
+
 @Injectable()
 export class FusionService {
   constructor(private readonly agentExecutionService: AgentExecutionService) {}
@@ -47,7 +54,7 @@ export class FusionService {
   ): Promise<FusionAnalysisResult> {
     const input = FusionRunInputSchema.parse(options.input);
     const correlationId = options.correlationId ?? randomUUID();
-    const assetSymbol = input.symbol.startsWith('ETH') ? 'ETH' : 'BTC';
+    const assetSymbol = deriveAssetSymbol(input.symbol);
     const common = {
       userId: options.userId,
       sessionId: options.sessionId,

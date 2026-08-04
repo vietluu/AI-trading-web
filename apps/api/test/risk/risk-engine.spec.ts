@@ -16,9 +16,9 @@ const limits: RiskLimits = {
   maxDrawdown: 0.15,
   maxExposure: 0.4,
   cooldownMs: 60_000,
-  minimumConfidence: 60,
+  minimumConfidence: 70,
   stopLossPct: 0.02,
-  riskRewardRatio: 2,
+  riskRewardRatio: 2.5,
   highVolatility: 0.04,
   abnormalVolatility: 0.15,
   highVolatilitySizeFactor: 0.6,
@@ -73,7 +73,7 @@ describe("risk engine", () => {
     expect(result.positionSize).toBe(0.08); // $4,000 = 40% of equity
     expect(result.leverage).toBe(3);
     expect(result.stopLoss).toBe(49_000);
-    expect(result.takeProfit).toBe(52_000);
+    expect(result.takeProfit).toBe(52_500);
   });
 
   it("reduces leverage and raw size in high volatility", () => {
@@ -98,6 +98,32 @@ describe("risk engine", () => {
         limits,
       ),
     ).toMatchObject({ approved: false, reason: "MAX_DRAWDOWN_EXCEEDED" });
+  });
+
+  it("blocks repeated entries in the same symbol and direction within the cooldown window", () => {
+    const result = evaluateRisk(
+      input({
+        lastTrades: [
+          { symbol: "BTC-USDT", direction: "LONG", createdAt: new Date("2026-08-02T00:09:30Z") },
+        ],
+      }),
+      limits,
+    );
+
+    expect(result.approved).toBe(false);
+    expect(result.reason).toBe("TRADE_COOLDOWN_ACTIVE");
+  });
+
+  it("rejects pyramiding when the existing position is not yet profitable", () => {
+    const result = evaluateRisk(
+      input({
+        currentPositions: [{ symbol: "BTC-USDT", size: 0.05, markPrice: 51_000 }],
+      }),
+      limits,
+    );
+
+    expect(result.approved).toBe(false);
+    expect(result.reason).toBe("PYRAMIDING_NOT_ALLOWED");
   });
 
   it.each([

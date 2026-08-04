@@ -12,6 +12,12 @@ export interface RiskPosition {
   markPrice: number;
 }
 
+export interface LastTradeRecord {
+  symbol: string;
+  direction: "LONG" | "SHORT";
+  createdAt: Date;
+}
+
 export interface RiskInput {
   symbol: string;
   decision: DecisionOutput;
@@ -19,6 +25,7 @@ export interface RiskInput {
   currentPositions: RiskPosition[];
   marketData: { price: number; volatility: number };
   lastTradeAt?: Date;
+  lastTrades?: LastTradeRecord[];
   now?: Date;
 }
 
@@ -144,9 +151,24 @@ export function evaluateRisk(
   if (decision.confidence < limits.minimumConfidence)
     return reject("CONFIDENCE_BELOW_THRESHOLD");
   if (decision.conflictLevel === "HIGH") return reject("HIGH_SIGNAL_CONFLICT");
+  if (decision.confidence < 75) return reject("CONFIDENCE_BELOW_THRESHOLD");
   if (marketData.volatility >= limits.abnormalVolatility)
     return reject("ABNORMAL_VOLATILITY");
   if (drawdownPct >= limits.maxDrawdown) return reject("MAX_DRAWDOWN_EXCEEDED");
+
+  const sameSymbolPosition = input.currentPositions.find(
+    (position) => position.symbol === input.symbol,
+  );
+  if (sameSymbolPosition) {
+    const existingDirection = sameSymbolPosition.size >= 0 ? "LONG" : "SHORT";
+    const isSameDirection = existingDirection === decision.decision;
+    if (isSameDirection) {
+      const hasProfit =
+        (decision.decision === "LONG" && marketData.price > sameSymbolPosition.markPrice) ||
+        (decision.decision === "SHORT" && marketData.price < sameSymbolPosition.markPrice);
+      if (!hasProfit) return reject("PYRAMIDING_NOT_ALLOWED");
+    }
+  }
 
   // A reversal replaces the position in the same symbol, so it must not consume an
   // additional slot or be counted twice in projected exposure.
@@ -155,20 +177,28 @@ export function evaluateRisk(
   );
   if (retainedPositions.length >= limits.maxPositions)
     return reject("MAX_OPEN_POSITIONS_EXCEEDED");
+  const cooldownWindow = input.lastTrades?.find(
+    (trade) =>
+      trade.symbol === input.symbol && trade.direction === decision.decision &&
+      (input.now ?? new Date()).getTime() - trade.createdAt.getTime() <
+        limits.cooldownMs,
+  );
   if (
-    input.lastTradeAt &&
-    (input.now ?? new Date()).getTime() - input.lastTradeAt.getTime() <
-      limits.cooldownMs
+    (input.lastTradeAt &&
+      (input.now ?? new Date()).getTime() - input.lastTradeAt.getTime() <
+        limits.cooldownMs) ||
+    cooldownWindow
   )
     return reject("TRADE_COOLDOWN_ACTIVE");
 
-  const side = decision.decision;
   const { stopLoss, takeProfit } = calculateProtectivePrices(
-    side,
+    decision.decision,
     marketData.price,
     limits.stopLossPct,
     limits.riskRewardRatio,
   );
+  const rewardToRisk = Math.abs(takeProfit - marketData.price) / Math.abs(marketData.price - stopLoss);
+  if (rewardToRisk < 2.5) return reject("RISK_REWARD_NOT_MET");
   let positionSize = calculatePositionSize(
     account.balance,
     limits.riskPerTrade,

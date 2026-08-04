@@ -8,6 +8,7 @@ import { PipelineController } from "./presentation/pipeline.controller";
 import { PipelineSystemController } from "./presentation/pipeline-system.controller";
 import { PipelineConfigService } from "./application/pipeline-config.service";
 import { PipelineThresholdService } from "./application/pipeline-threshold.service";
+import { SignalFilterService } from "./application/signal-filter.service";
 import { PipelineAlertService } from "./application/pipeline-alert.service";
 import { PipelineRunnerService } from "./application/pipeline-runner.service";
 import { PipelineService } from "./application/pipeline.service";
@@ -23,6 +24,7 @@ import {
   PIPELINE_RUN_QUEUE_NAME,
 } from "./infrastructure/pipeline-queue.constants";
 import { LiveTradingModule } from "../live-trading/live-trading.module";
+import { MarketDataModule } from "../../market-data/market-data.module";
 import { createBullRootConfig } from "./infrastructure/bull-config";
 
 @Module({
@@ -32,6 +34,7 @@ import { createBullRootConfig } from "./infrastructure/bull-config";
     SessionModule,
     AgentsModule,
     LiveTradingModule,
+    MarketDataModule,
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => createBullRootConfig(config),
@@ -47,6 +50,7 @@ import { createBullRootConfig } from "./infrastructure/bull-config";
   providers: [
     PipelineConfigService,
     PipelineThresholdService,
+    SignalFilterService,
     PipelineAlertService,
     PipelineRunnerService,
     PipelineService,
