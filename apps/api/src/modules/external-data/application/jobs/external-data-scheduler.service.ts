@@ -90,7 +90,6 @@ export class ExternalDataSchedulerService implements OnApplicationBootstrap {
           categories: source.categories,
           reliabilityScore: source.reliabilityScore,
           pollIntervalSeconds: source.pollIntervalSeconds,
-          isEnabled: source.isEnabled,
         },
       });
     }

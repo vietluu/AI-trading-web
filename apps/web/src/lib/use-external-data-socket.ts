@@ -36,7 +36,16 @@ export function useExternalDataSocket(
     }
     channelsSignatureRef.current = channelsSerialized;
 
-    const socket = io(`${publicEnvironment.NEXT_PUBLIC_API_BASE_URL}/external-data`, {
+    const rawApiUrl = publicEnvironment.NEXT_PUBLIC_API_BASE_URL.trim();
+    const baseUrl = rawApiUrl
+      ? rawApiUrl.replace(/\/$/, "")
+      : typeof window !== "undefined"
+      ? (window.location.port === "3000"
+          ? `${window.location.protocol}//${window.location.hostname}:3001`
+          : window.location.origin)
+      : "";
+
+    const socket = io(`${baseUrl}/external-data`, {
       withCredentials: true,
       transports: ["websocket", "polling"],
       autoConnect: true,

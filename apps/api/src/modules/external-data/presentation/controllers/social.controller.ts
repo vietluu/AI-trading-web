@@ -4,11 +4,15 @@ import { Prisma, SocialProvider } from '@prisma/client';
 import { PrismaService } from '../../../../database/prisma.service';
 import { SessionGuard } from '../../../../session/session.guard';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
+import { RedditAdapter } from '../../infrastructure/providers/reddit/reddit.adapter';
 
 @ApiTags('External Data - Social')
 @Controller('external-data/social')
 export class SocialController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redditAdapter: RedditAdapter,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'Get ingested social posts' })
@@ -27,7 +31,50 @@ export class SocialController {
     if (community) where.community = community;
     if (symbol) where.relatedSymbols = { has: symbol.toUpperCase() };
 
-    const total = await this.prisma.socialPost.count({ where });
+    let total = await this.prisma.socialPost.count({ where });
+
+    if (total === 0) {
+      try {
+        const fetchedPosts = await this.redditAdapter.fetchPosts({
+          community: community || 'cryptocurrency',
+          limit: 25,
+        });
+
+        for (const post of fetchedPosts) {
+          await this.prisma.socialPost.upsert({
+            where: {
+              provider_externalId: {
+                provider: SocialProvider.REDDIT,
+                externalId: post.externalId,
+              },
+            },
+            create: {
+              provider: SocialProvider.REDDIT,
+              externalId: post.externalId,
+              community: post.community,
+              title: post.title,
+              textExcerpt: post.textExcerpt,
+              authorHash: post.authorHash,
+              canonicalUrl: post.canonicalUrl,
+              publishedAt: post.publishedAt,
+              engagementScore: post.engagement?.score || 0,
+              commentsCount: post.engagement?.comments || 0,
+              upvoteRatio: post.engagement?.upvoteRatio,
+              relatedSymbols: symbol ? [symbol.toUpperCase()] : ['BTC', 'ETH'],
+            },
+            update: {
+              title: post.title,
+              textExcerpt: post.textExcerpt,
+              engagementScore: post.engagement?.score || 0,
+              commentsCount: post.engagement?.comments || 0,
+            },
+          });
+        }
+        total = await this.prisma.socialPost.count({ where });
+      } catch {
+        // Continue with current total if network fetch fails
+      }
+    }
     const items = await this.prisma.socialPost.findMany({
       where,
       skip: (page - 1) * limit,
