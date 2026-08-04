@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { ExchangeProvider, PipelineTrigger } from '@prisma/client';
 import { PipelineRunRequestSchema, PipelineSymbolSchema, type PipelineRunRequest, type PipelineSymbol } from '@platform/shared';
@@ -7,7 +7,7 @@ import { PipelineQueueService } from '../infrastructure/pipeline-queue.service';
 import { PipelineConfigService } from './pipeline-config.service';
 import { resolvePipelineDefinition } from '../domain/pipeline.definition';
 import { pipelineSkipReason } from '../domain/rate-limit';
-import type { PipelineRunnerService } from './pipeline-runner.service';
+import { PipelineRunnerService } from './pipeline-runner.service';
 
 @Injectable()
 export class PipelineService {
@@ -15,7 +15,7 @@ export class PipelineService {
     private readonly repository: PipelineRepository,
     private readonly queue: PipelineQueueService,
     private readonly config: PipelineConfigService,
-    private readonly runner?: PipelineRunnerService,
+    @Optional() @Inject(PipelineRunnerService) private readonly runner?: PipelineRunnerService,
   ) {}
 
   async trigger(userId: string, raw: unknown, trigger: PipelineTrigger = 'MANUAL', options: { replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; useStoredContext?: boolean; maxRunsPerHour?: number } = {}) {
