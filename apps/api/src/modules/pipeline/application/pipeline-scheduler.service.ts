@@ -126,6 +126,19 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
                 now.getTime() - schedule.lastTriggeredAt.getTime() >= 60_000);
         if (!due) continue;
 
+        try {
+          await this.prisma.pipelineSchedule.update({
+            where: { id: schedule.id },
+            data: { lastTriggeredAt: now },
+          });
+        } catch (error) {
+          this.logger.error({
+            event: "pipeline_schedule_stamp_failed",
+            scheduleId: schedule.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+
         const triggerPromises: Promise<boolean>[] = [];
         for (const symbol of schedule.symbols) {
           for (const strategyId of schedule.strategyIds) {
@@ -163,21 +176,7 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
           }
         }
 
-        const results = await Promise.all(triggerPromises);
-        if (results.some(Boolean)) {
-          try {
-            await this.prisma.pipelineSchedule.update({
-              where: { id: schedule.id },
-              data: { lastTriggeredAt: now },
-            });
-          } catch (error) {
-            this.logger.error({
-              event: "pipeline_schedule_stamp_failed",
-              scheduleId: schedule.id,
-              message: error instanceof Error ? error.message : "Unknown error",
-            });
-          }
-        }
+        await Promise.all(triggerPromises);
       }
     } finally {
       this.running = false;
