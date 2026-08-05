@@ -58,12 +58,23 @@ export class PipelineRunnerService {
       let analyses: FusionInput;
       let fusionOutput: FusionOutput;
       const interval = (job.params?.interval as string | undefined) ?? definition.defaultParams.interval;
-      const indicatorSnapshot = await this.marketData.getIndicatorSnapshot(
-        job.provider as unknown as ExchangeProvider,
-        symbol,
-        (interval as ExchangeInterval) ?? ExchangeInterval.ONE_HOUR,
-      );
+      const [indicatorSnapshot, recentCandles] = await Promise.all([
+        this.marketData.getIndicatorSnapshot(
+          job.provider as unknown as ExchangeProvider,
+          symbol,
+          (interval as ExchangeInterval) ?? ExchangeInterval.ONE_HOUR,
+        ),
+        this.marketData.getHistoricalCandles({
+          provider: job.provider as unknown as ExchangeProvider,
+          symbol,
+          interval: (interval as ExchangeInterval) ?? ExchangeInterval.ONE_HOUR,
+          limit: 1,
+        }),
+      ]);
+      const lastPrice = recentCandles[0] ? Number(recentCandles[0].close) : undefined;
+
       const signalFilter = this.signalFilter.evaluate({
+        price: lastPrice,
         rsi: Number(indicatorSnapshot?.values.rsi14),
         atr: Number(indicatorSnapshot?.values.atr14),
         volumeChangePercent: Number(indicatorSnapshot?.values.volumeChangePercent),

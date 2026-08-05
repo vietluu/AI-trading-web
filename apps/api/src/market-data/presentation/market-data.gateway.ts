@@ -19,6 +19,7 @@ import type { NormalizedMarketEvent } from "../domain/market-data.types";
     credentials: true,
   },
   namespace: "/market",
+  path: "/api/socket.io/",
 })
 export class MarketDataGateway
   implements OnGatewayConnection, OnGatewayDisconnect
