@@ -1,10 +1,11 @@
-import { ServiceUnavailableException, Injectable } from "@nestjs/common";
+import { ServiceUnavailableException, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 
 type AuthEmailType = "VERIFY_EMAIL" | "RESET_PASSWORD";
 
 @Injectable()
 export class EmailDeliveryService {
+  private readonly logger = new Logger(EmailDeliveryService.name);
   private readonly webhookUrl: string | undefined;
   private readonly webhookSecret: string | undefined;
   private readonly webAppUrl: string;
@@ -17,15 +18,19 @@ export class EmailDeliveryService {
   }
 
   async send(type: AuthEmailType, to: string, token: string): Promise<void> {
+    const path = type === "VERIFY_EMAIL" ? "/verify-email" : "/reset-password";
+    const actionUrl = `${this.webAppUrl}${path}?token=${encodeURIComponent(token)}`;
+
     if (!this.webhookUrl || !this.webhookSecret) {
-      if (type === "VERIFY_EMAIL") {
-        throw new ServiceUnavailableException(
-          "Email delivery is not configured",
-        );
-      }
+      this.logger.warn({
+        event: "email_delivery_fallback_log",
+        type,
+        to,
+        actionUrl,
+        message: "AUTH_EMAIL_WEBHOOK_URL unconfigured; logged actionUrl for development/testing",
+      });
       return;
     }
-    const path = type === "VERIFY_EMAIL" ? "/verify-email" : "/reset-password";
     let response: Response;
     try {
       response = await fetch(this.webhookUrl, {

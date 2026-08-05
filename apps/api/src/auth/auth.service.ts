@@ -44,6 +44,7 @@ export interface AuthenticationResult {
   user: PublicUser;
   session?: SessionCredentials;
   requiresEmailVerification: boolean;
+  requiresTotp?: boolean;
 }
 
 @Injectable()
@@ -128,6 +129,21 @@ export class AuthService {
     if (this.emailVerificationEnabled && !user.emailVerifiedAt) {
       throw new ForbiddenException("Verify your email before signing in");
     }
+
+    if (user.totpEnabledAt && user.totpSecret) {
+      if (!dto.code) {
+        return {
+          user: this.publicUser(user),
+          requiresEmailVerification: false,
+          requiresTotp: true,
+        };
+      }
+      const decryptedSecret = this.totp.decrypt(user.totpSecret, user.id);
+      if (!this.totp.verify(decryptedSecret, dto.code)) {
+        throw new UnauthorizedException("Invalid 2FA code");
+      }
+    }
+
     await this.users.clearFailedLogins(user.id);
     await this.redis.delete(rateLimitKey);
     const rememberMe = Boolean(dto.rememberMe);

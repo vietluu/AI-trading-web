@@ -34,4 +34,13 @@ export const en: Dictionary = {
     success: 'Success',
     toggleLanguage: 'English',
   },
+  auth: {
+    enter2faCode: 'Two-factor authentication required. Enter your 6-digit code.',
+    totpCodeLabel: '6-digit 2FA code',
+    verifyEmailVerified: 'Email verified',
+    verifyEmailNotVerified: 'Email not verified',
+    resendVerificationEmail: 'Resend verification email',
+    verificationEmailRequested: 'Verification email requested',
+    scanQrCode: 'Scan QR code with Google Authenticator or Authy',
+  },
 };

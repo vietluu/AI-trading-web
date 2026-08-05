@@ -34,4 +34,13 @@ export const vi: Dictionary = {
     success: 'Thành công',
     toggleLanguage: 'Tiếng Việt',
   },
+  auth: {
+    enter2faCode: 'Tài khoản yêu cầu xác thực 2 lớp. Nhập mã 6 chữ số.',
+    totpCodeLabel: 'Mã 2FA (6 chữ số)',
+    verifyEmailVerified: 'Email đã xác minh',
+    verifyEmailNotVerified: 'Email chưa xác minh',
+    resendVerificationEmail: 'Gửi lại email xác minh',
+    verificationEmailRequested: 'Đã yêu cầu gửi lại email xác minh',
+    scanQrCode: 'Quét mã QR bằng ứng dụng Google Authenticator hoặc Authy',
+  },
 };

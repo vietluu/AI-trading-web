@@ -34,6 +34,15 @@ export interface Dictionary {
     success: string;
     toggleLanguage: string;
   };
+  auth: {
+    enter2faCode: string;
+    totpCodeLabel: string;
+    verifyEmailVerified: string;
+    verifyEmailNotVerified: string;
+    resendVerificationEmail: string;
+    verificationEmailRequested: string;
+    scanQrCode: string;
+  };
 }
 
 export interface I18nContextType {
