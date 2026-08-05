@@ -39,11 +39,9 @@ describe("HealthStatus", () => {
       </QueryClientProvider>,
     );
 
-    expect(
-      screen.getByText("Checking API, PostgreSQL, and Redis…"),
-    ).toBeInTheDocument();
-    expect(await screen.findByText("Platform operational")).toBeInTheDocument();
-    expect(screen.getByText("PostgreSQL")).toBeInTheDocument();
-    expect(screen.getByText("Redis")).toBeInTheDocument();
+    expect(screen.getByText("Loading...")).toBeInTheDocument();
+    expect(await screen.findByText("System Health Status")).toBeInTheDocument();
+    expect(screen.getByText("PostgreSQL Database")).toBeInTheDocument();
+    expect(screen.getByText("Redis Cache & Queue")).toBeInTheDocument();
   });
 });
