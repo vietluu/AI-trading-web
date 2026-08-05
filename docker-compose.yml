@@ -61,7 +61,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: sh -c "pnpm --filter @platform/api db:push && pnpm --filter @platform/api start"
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       API_PORT: 3001
@@ -159,7 +158,7 @@ services:
       [
         "sh",
         "-c",
-        "pnpm --filter @platform/api db:migrate && pnpm --filter @platform/api start",
+        "pnpm --filter @platform/api db:push && pnpm --filter @platform/api start",
       ]
     healthcheck:
       test:
