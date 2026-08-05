@@ -1,0 +1,37 @@
+import type { Dictionary } from '../i18n.types';
+
+export const en: Dictionary = {
+  nav: {
+    overview: 'Overview',
+    market: 'Market',
+    decision: 'Decision',
+    automation: 'Automation',
+    trading: 'Trading',
+    insights: 'Insights',
+    news: 'News',
+    macro: 'Macro',
+    sentiment: 'Sentiment',
+    agentRuns: 'Agent runs',
+    performance: 'Performance',
+    risk: 'Risk',
+    portfolio: 'Portfolio',
+    settings: 'Settings',
+    logout: 'Log out',
+    quantIntelligence: 'Quant Intelligence',
+    research: 'Quant Research',
+    factors: 'Factor Discovery',
+    strategyLab: 'Strategy Lab',
+    portfolioIntelligence: 'Portfolio Intelligence',
+    recommendations: 'Recommendations',
+    knowledge: 'Knowledge Base',
+  },
+  common: {
+    loading: 'Loading...',
+    error: 'An error occurred',
+    save: 'Save',
+    cancel: 'Cancel',
+    confirm: 'Confirm',
+    success: 'Success',
+    toggleLanguage: 'English',
+  },
+};

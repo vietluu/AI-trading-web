@@ -1,0 +1,37 @@
+import type { Dictionary } from '../i18n.types';
+
+export const vi: Dictionary = {
+  nav: {
+    overview: 'Tổng quan',
+    market: 'Thị trường',
+    decision: 'Quyết định AI',
+    automation: 'Tự động hóa',
+    trading: 'Giao dịch',
+    insights: 'Phân tích sâu',
+    news: 'Tin tức',
+    macro: 'Vĩ mô',
+    sentiment: 'Tâm lý',
+    agentRuns: 'Lịch sử Agent',
+    performance: 'Hiệu suất',
+    risk: 'Quản trị rủi ro',
+    portfolio: 'Danh mục',
+    settings: 'Cài đặt',
+    logout: 'Đăng xuất',
+    quantIntelligence: 'Trí tuệ Định lượng',
+    research: 'Nghiên cứu Quant',
+    factors: 'Phát hiện Yếu tố',
+    strategyLab: 'Phòng Chiến lược',
+    portfolioIntelligence: 'Phân bổ Vốn & Rủi ro',
+    recommendations: 'Trung tâm Khuyên dùng',
+    knowledge: 'Kho Tri thức',
+  },
+  common: {
+    loading: 'Đang tải...',
+    error: 'Đã xảy ra lỗi',
+    save: 'Lưu',
+    cancel: 'Hủy',
+    confirm: 'Xác nhận',
+    success: 'Thành công',
+    toggleLanguage: 'Tiếng Việt',
+  },
+};

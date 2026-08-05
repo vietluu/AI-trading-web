@@ -3,26 +3,10 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
-import { ChevronDown, Menu, X } from "lucide-react";
+import { ChevronDown, Globe, Menu, X } from "lucide-react";
 import { apiRequest } from "@/lib/api-client";
-
-const primary = [
-  ["Overview", "/"],
-  ["Market", "/market"],
-  ["Decision", "/ai/decision"],
-  ["Automation", "/ai/pipeline"],
-  ["Trading", "/ai/live-trading"],
-] as const;
-
-const more = [
-  ["News", "/news"],
-  ["Macro", "/macro"],
-  ["Sentiment", "/sentiment"],
-  ["Agent runs", "/ai/agent-runs"],
-  ["Performance", "/ai/performance"],
-  ["Risk", "/ai/risk"],
-  ["Portfolio", "/ai/portfolio"],
-] as const;
+import { useTranslation } from "@/lib/i18n/i18n-context";
+import { MORE_NAV_ITEMS, PRIMARY_NAV_ITEMS } from "@/constants/navigation.constants";
 
 export function AppNavigation(): React.JSX.Element {
   const pathname = usePathname();
@@ -30,7 +14,9 @@ export function AppNavigation(): React.JSX.Element {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
- async function logout(): Promise<void> {
+  const { language, setLanguage, t } = useTranslation();
+
+  async function logout(): Promise<void> {
     try {
       await apiRequest("/auth/logout", { method: "POST" });
       router.push("/login");
@@ -38,6 +24,7 @@ export function AppNavigation(): React.JSX.Element {
       console.error(caught instanceof Error ? caught.message : "Logout failed");
     }
   }
+
   const active = (href: string) =>
     href === "/" ? pathname === href : pathname.startsWith(href);
 
@@ -61,6 +48,10 @@ export function AppNavigation(): React.JSX.Element {
     setMobileMenuOpen(false);
   }, [pathname]);
 
+  const toggleLanguage = () => {
+    setLanguage(language === 'en' ? 'vi' : 'en');
+  };
+
   return (
     <div className="relative w-full flex justify-end">
       {/* Mobile menu button */}
@@ -82,21 +73,21 @@ export function AppNavigation(): React.JSX.Element {
             : "hidden lg:flex lg:items-center lg:gap-1"
         }`}
       >
-         {primary.map(([label, href]) => (
+        {PRIMARY_NAV_ITEMS.map((item) => (
           <Link
             className={`whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-              active(href)
+              active(item.href)
                 ? "bg-primary/15 text-primary"
                 : "text-muted-foreground hover:bg-muted hover:text-foreground"
             }`}
-            href={href}
-            key={href}
+            href={item.href}
+            key={item.href}
             onClick={() => {
               setDropdownOpen(false);
               setMobileMenuOpen(false);
             }}
           >
-            {label}
+            {t.nav[item.key]}
           </Link>
         ))}
 
@@ -108,7 +99,7 @@ export function AppNavigation(): React.JSX.Element {
             onClick={() => setDropdownOpen((prev) => !prev)}
             type="button"
           >
-            <span>Insights</span>
+            <span>{t.nav.insights}</span>
             <ChevronDown
               className={`h-4 w-4 transition-transform duration-200 ${
                 dropdownOpen ? "rotate-180" : ""
@@ -118,21 +109,21 @@ export function AppNavigation(): React.JSX.Element {
 
           {dropdownOpen && (
             <div className="z-50 w-fit mt-1 grid w-52 gap-1 rounded-xl border border-border bg-card p-2 shadow-2xl lg:absolute lg:right-0 lg:mt-2">
-              {more.map(([label, href]) => (
+              {MORE_NAV_ITEMS.map((item) => (
                 <Link
                   className={`rounded-lg px-3 py-2 text-sm transition-colors ${
-                    active(href)
+                    active(item.href)
                       ? "bg-primary/15 text-primary font-medium"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground"
                   }`}
-                  href={href}
-                  key={href}
+                  href={item.href}
+                  key={item.href}
                   onClick={() => {
                     setDropdownOpen(false);
                     setMobileMenuOpen(false);
                   }}
                 >
-                  {label}
+                  {t.nav[item.key]}
                 </Link>
               ))}
             </div>
@@ -140,7 +131,7 @@ export function AppNavigation(): React.JSX.Element {
         </div>
 
         <Link
-          aria-label="Settings"
+          aria-label={t.nav.settings}
           className={`whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
             pathname.startsWith("/settings") ||
             pathname === "/profile" ||
@@ -155,8 +146,21 @@ export function AppNavigation(): React.JSX.Element {
             setMobileMenuOpen(false);
           }}
         >
-          Settings
+          {t.nav.settings}
         </Link>
+
+        {/* Language Switcher */}
+        <button
+          aria-label="Toggle language"
+          className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-border px-2.5 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          onClick={toggleLanguage}
+          title={language === 'en' ? 'Chuyển sang Tiếng Việt' : 'Switch to English'}
+          type="button"
+        >
+          <Globe className="h-3.5 w-3.5" />
+          <span>{language === 'en' ? 'EN' : 'VI'}</span>
+        </button>
+
         <button
           className="whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           key="logout"
@@ -168,10 +172,9 @@ export function AppNavigation(): React.JSX.Element {
           }}
           type="button"
         >
-          Log out
+          {t.nav.logout}
         </button>
       </nav>
     </div>
   );
 }
-
