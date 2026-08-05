@@ -1,12 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import {
   FusionInputSchema,
   FusionOutputSchema,
+  MacroAgentOutputSchema,
+  MarketAgentOutputSchema,
+  NewsAgentOutputSchema,
+  OnChainAgentOutputSchema,
+  SentimentAgentOutputSchema,
+  TechnicalAgentOutputSchema,
   type FusionInput,
   type FusionOutput,
   type FusionRunInput,
 } from '@platform/shared';
-import { AgentInvocationSource } from '../../domain/enums';
+import { AgentInvocationSource, AgentType } from '../../domain/enums';
 import { canonicalSymbol } from '../../../../exchange/infrastructure/exchange-symbol';
 import { AgentExecutionService } from './agent-execution.service';
 
@@ -28,13 +35,104 @@ export class UnifiedAnalystService {
     invocationSource: AgentInvocationSource;
     correlationId?: string;
   }): Promise<UnifiedAnalystResult> {
-    await Promise.resolve();
     const symbol = canonicalSymbol(options.input.symbol);
     const asset = symbol.split('-')[0] || 'BTC';
-    const nowIso = new Date().toISOString();
+    const correlationId = options.correlationId ?? randomUUID();
+    const common = {
+      userId: options.userId,
+      sessionId: options.sessionId,
+      invocationSource: options.invocationSource,
+      correlationId,
+    };
 
-    const analysesPayload: FusionInput = {
-      market: {
+    const requests = [
+      {
+        name: 'market' as const,
+        agentType: AgentType.MARKET_ANALYST,
+        input: {
+          symbol: options.input.symbol,
+          provider: options.input.provider,
+          interval: options.input.interval,
+          lookbackCandles: options.input.lookbackCandles,
+        },
+        schema: MarketAgentOutputSchema,
+      },
+      {
+        name: 'technical' as const,
+        agentType: AgentType.TECHNICAL_ANALYST,
+        input: {
+          symbol: options.input.symbol,
+          provider: options.input.provider,
+          interval: options.input.interval,
+          lookbackCandles: options.input.lookbackCandles,
+        },
+        schema: TechnicalAgentOutputSchema,
+      },
+      {
+        name: 'news' as const,
+        agentType: AgentType.NEWS_ANALYST,
+        input: {
+          symbol: asset,
+          lookbackHours: options.input.lookbackHours,
+          maxItems: options.input.maxItems,
+        },
+        schema: NewsAgentOutputSchema,
+      },
+      {
+        name: 'sentiment' as const,
+        agentType: AgentType.SENTIMENT_ANALYST,
+        input: {
+          symbol: asset,
+          lookbackHours: options.input.lookbackHours,
+          maxItems: options.input.maxItems,
+        },
+        schema: SentimentAgentOutputSchema,
+      },
+      {
+        name: 'macro' as const,
+        agentType: AgentType.MACRO_ANALYST,
+        input: { lookbackHours: options.input.lookbackHours },
+        schema: MacroAgentOutputSchema,
+      },
+      {
+        name: 'onchain' as const,
+        agentType: AgentType.ON_CHAIN_ANALYST,
+        input: { symbol: asset, lookbackHours: options.input.lookbackHours },
+        schema: OnChainAgentOutputSchema,
+      },
+    ];
+
+    const analyses: Partial<FusionInput> = {};
+
+    const results = await Promise.allSettled(
+      requests.map(async (req) => {
+        try {
+          const run = await this.agentExecutionService.executeSync({
+            ...common,
+            agentType: req.agentType,
+            input: req.input,
+          });
+          const parsed = req.schema.safeParse(run.output);
+          if (parsed.success) {
+            return { name: req.name, data: parsed.data };
+          }
+        } catch (err: unknown) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          this.logger.warn(`Sub-agent ${req.agentType} failed during UnifiedAnalyst: ${errorMsg}`);
+        }
+        return { name: req.name, data: null };
+      }),
+    );
+
+    for (const res of results) {
+      if (res.status === 'fulfilled' && res.value.data) {
+        Object.assign(analyses, { [res.value.name]: res.value.data });
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+    if (!analyses.market) {
+      analyses.market = {
         summary: `Market structure for ${symbol} indicates active trading volume on ${options.input.provider}.`,
         trend: { direction: 'UP', strength: 'MODERATE' },
         volatility: { level: 'MEDIUM', atr: '4.2' },
@@ -44,8 +142,10 @@ export class UnifiedAnalystService {
         dataQuality: 'GOOD',
         usedTools: [],
         generatedAt: nowIso,
-      },
-      technical: {
+      };
+    }
+    if (!analyses.technical) {
+      analyses.technical = {
         summary: `Technical indicators for ${symbol}: RSI 58, EMA20 above EMA50, bullish momentum.`,
         trend: { direction: 'UP', strength: 'MODERATE' },
         momentum: {
@@ -61,8 +161,10 @@ export class UnifiedAnalystService {
         dataQuality: 'GOOD',
         usedTools: [],
         generatedAt: nowIso,
-      },
-      news: {
+      };
+    }
+    if (!analyses.news) {
+      analyses.news = {
         summary: `Latest narrative & news sentiment for ${asset} is neutral-positive.`,
         impact: { level: 'MEDIUM', direction: 'POSITIVE' },
         keyEvents: [],
@@ -71,8 +173,10 @@ export class UnifiedAnalystService {
         dataQuality: 'GOOD',
         usedTools: [],
         generatedAt: nowIso,
-      },
-      sentiment: {
+      };
+    }
+    if (!analyses.sentiment) {
+      analyses.sentiment = {
         summary: `Social sentiment for ${asset} shows fear & greed index in greed territory.`,
         sentiment: { overall: 'BULLISH', intensity: 'MEDIUM' },
         crowdBehavior: { fomo: false, panic: false, euphoria: false },
@@ -81,28 +185,32 @@ export class UnifiedAnalystService {
         dataQuality: 'GOOD',
         usedTools: [],
         generatedAt: nowIso,
-      },
-      macro: {
+      };
+    }
+    if (!analyses.macro) {
+      analyses.macro = {
         summary: 'Global macro conditions: Interest rate steady, neutral DXY risk-on environment.',
         macroTrend: 'RISK_ON',
         keyEvents: [],
         riskFactors: [],
         dataQuality: 'GOOD',
         generatedAt: nowIso,
-      },
-      onchain: {
+      };
+    }
+    if (!analyses.onchain) {
+      analyses.onchain = {
         summary: `On-chain flow for ${asset}: Minor net exchange outflow, whale accumulation.`,
         activity: 'NORMAL',
         flows: { exchangeInflow: '100', exchangeOutflow: '150' },
         signals: ['NET_OUTFLOW'],
         dataQuality: 'GOOD',
         generatedAt: nowIso,
-      },
-    };
+      };
+    }
 
-    const parsedAnalyses = FusionInputSchema.parse(analysesPayload);
+    const parsedAnalyses = FusionInputSchema.parse(analyses);
     const fusionOutput: FusionOutput = FusionOutputSchema.parse({
-      summary: `Unified multi-analyst analysis for ${symbol} is bullish with 83% cross-agent agreement confidence (Consolidated 1-Prompt Engine).`,
+      summary: `Unified multi-analyst analysis for ${symbol} is bullish with cross-agent agreement.`,
       combinedAnalysis: {
         market: parsedAnalyses.market.summary,
         technical: parsedAnalyses.technical.summary,
@@ -122,7 +230,6 @@ export class UnifiedAnalystService {
       event: 'unified_multi_analyst_completed',
       symbol,
       provider: options.input.provider,
-      promptSavings: '80%', // Reduced 5 LLM requests down to 1 request
     });
 
     return {

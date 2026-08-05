@@ -25,7 +25,6 @@ export class SignalFilterService {
   evaluate(input: SignalFilterInput): SignalFilterResult {
     const rsi = input.rsi === undefined ? NaN : Number(input.rsi);
     const atr = input.atr === undefined ? NaN : Number(input.atr);
-    const explicitPrice = input.price !== undefined && input.price > 0 ? Number(input.price) : undefined;
     const volumeChange =
       input.volumeChangePercent === undefined
         ? NaN
@@ -43,9 +42,15 @@ export class SignalFilterService {
       input.ema200,
     ].some((value) => value !== undefined && Number.isFinite(Number(value)));
 
-    const effectiveMinAtr = explicitPrice !== undefined
-      ? (explicitPrice >= 1000 ? this.minAtrAbsolute : explicitPrice * 0.002)
-      : this.minAtrAbsolute;
+    const explicitPrice =
+      input.price !== undefined && input.price > 0
+        ? Number(input.price)
+        : undefined;
+
+    const effectiveMinAtr =
+      explicitPrice !== undefined
+        ? Math.min(this.minAtrAbsolute, Math.max(0.1, explicitPrice * 0.005))
+        : this.minAtrAbsolute;
 
     const isLowAtr = Number.isFinite(atr) && atr < effectiveMinAtr;
 

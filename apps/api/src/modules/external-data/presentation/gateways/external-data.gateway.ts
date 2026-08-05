@@ -18,6 +18,7 @@ interface ClientSubscription {
 
 @WebSocketGateway({
   namespace: '/external-data',
+  path: '/api/socket.io/',
   cors: {
     origin: (
       origin: string | undefined,
