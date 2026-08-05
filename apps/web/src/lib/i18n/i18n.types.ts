@@ -34,6 +34,28 @@ export interface Dictionary {
     success: string;
     toggleLanguage: string;
   };
+  dashboard: {
+    badge: string;
+    heroTitle: string;
+    heroDesc: string;
+    openMarket: string;
+    openMarketDesc: string;
+    agentPipelineTitle: string;
+    agentPipelineDesc: string;
+    riskTitle: string;
+    riskDesc: string;
+    footerNotice: string;
+  };
+  health: {
+    title: string;
+    subtitle: string;
+    systemConnections: string;
+    allHealthy: string;
+    degraded: string;
+    postgres: string;
+    redis: string;
+    api: string;
+  };
   auth: {
     enter2faCode: string;
     totpCodeLabel: string;

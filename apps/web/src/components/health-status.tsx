@@ -5,6 +5,7 @@ import { Activity, Database, RefreshCw, Server } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { fetchHealth } from "@/lib/health-client";
+import { useTranslation } from "@/lib/i18n/i18n-context";
 
 function StatusDot({ isUp }: { isUp: boolean }): React.JSX.Element {
   return (
@@ -18,6 +19,7 @@ function StatusDot({ isUp }: { isUp: boolean }): React.JSX.Element {
 }
 
 export function HealthStatus(): React.JSX.Element {
+  const { t } = useTranslation();
   const healthQuery = useQuery({
     queryKey: ["platform-health"],
     queryFn: ({ signal }) => fetchHealth(signal),
@@ -29,7 +31,7 @@ export function HealthStatus(): React.JSX.Element {
       <Card aria-live="polite">
         <CardContent className="flex items-center gap-3 py-6 text-sm text-muted-foreground">
           <Activity className="h-4 w-4 animate-pulse-soft" />
-          Checking API, PostgreSQL, and Redis…
+          {t.common.loading}
         </CardContent>
       </Card>
     );
@@ -40,7 +42,7 @@ export function HealthStatus(): React.JSX.Element {
       <Card className="border-rose-500/30" role="alert">
         <CardHeader>
           <CardTitle className="text-rose-300">
-            Platform health unavailable
+            {t.health.title} ({t.health.degraded})
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -53,7 +55,7 @@ export function HealthStatus(): React.JSX.Element {
             type="button"
           >
             <RefreshCw className="h-4 w-4" />
-            Retry health check
+            Retry
           </button>
         </CardContent>
       </Card>
@@ -62,8 +64,8 @@ export function HealthStatus(): React.JSX.Element {
 
   const { services, timestamp } = healthQuery.data;
   const serviceRows = [
-    { label: "PostgreSQL", icon: Database, health: services.database },
-    { label: "Redis", icon: Server, health: services.redis },
+    { label: t.health.postgres, icon: Database, health: services.database },
+    { label: t.health.redis, icon: Server, health: services.redis },
   ];
 
   return (
@@ -71,13 +73,13 @@ export function HealthStatus(): React.JSX.Element {
       <CardHeader className="flex-row items-center justify-between">
         <div>
           <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-            Foundation services
+            {t.health.systemConnections}
           </p>
-          <CardTitle className="mt-2 text-xl">Platform operational</CardTitle>
+          <CardTitle className="mt-2 text-xl">{t.health.title}</CardTitle>
         </div>
         <span className="inline-flex items-center gap-2 rounded-full bg-emerald-400/10 px-3 py-1 text-xs font-semibold text-emerald-300">
           <StatusDot isUp />
-          Healthy
+          {t.health.allHealthy}
         </span>
       </CardHeader>
       <CardContent>
