@@ -41,27 +41,36 @@ export class QuantReportService {
     ];
 
     const generatedAt = new Date().toISOString();
+    let reportId = `report-${Date.now()}`;
 
-    const record = await this.prisma.quantReportRecord.create({
-      data: {
-        userId: userId ?? null,
-        reportType,
-        title,
-        summary,
-        metricsJson: metrics,
-        recommendations,
-        generatedAt: new Date(),
-      },
-    });
+    try {
+      const record = await this.prisma.quantReportRecord.create({
+        data: {
+          userId: userId ?? null,
+          reportType,
+          title,
+          summary,
+          metricsJson: metrics,
+          recommendations,
+          generatedAt: new Date(),
+        },
+      });
+      reportId = record.id;
+    } catch {
+      this.logger.warn({
+        event: 'quant_report_record_db_fallback',
+        message: 'Database query failed or unmigrated; returning in-memory generated report',
+      });
+    }
 
     this.logger.log({
       event: 'quant_report_generated',
-      reportId: record.id,
+      reportId,
       reportType,
     });
 
     return {
-      id: record.id,
+      id: reportId,
       reportType,
       title,
       summary,
