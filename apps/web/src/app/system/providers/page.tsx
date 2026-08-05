@@ -2,6 +2,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AccountNav } from "@/components/account-nav";
+import { LoadingButton } from "@/components/loading-button";
 import { apiRequest } from "@/lib/api-client";
 
 interface ProviderHealth {
@@ -41,7 +42,7 @@ export default function SystemProvidersPage() {
   });
 
   return (
-    <div className="container mx-auto max-w-5xl p-6">
+    <div className="container mx-auto max-w-5xl">
       <AccountNav />
 
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
@@ -111,13 +112,14 @@ export default function SystemProvidersPage() {
                       {p.lastAttemptAt ? new Date(p.lastAttemptAt).toLocaleTimeString() : "-"}
                     </td>
                     <td className="p-3">
-                      <button
-                        disabled={p.status === "NOT_CONFIGURED" || triggerRunMutation.isPending}
+                      <LoadingButton
+                        disabled={p.status === "NOT_CONFIGURED"}
+                        loading={triggerRunMutation.isPending}
                         onClick={() => { triggerRunMutation.mutate(p.provider); }}
                         className="rounded border border-border px-2.5 py-1 text-[11px] font-medium hover:bg-muted disabled:opacity-40"
                       >
                         Trigger Run
-                      </button>
+                      </LoadingButton>
                     </td>
                   </tr>
                 ))}

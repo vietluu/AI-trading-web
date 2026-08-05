@@ -4,6 +4,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import type { ToolDefinitionDto, ToolHealthDto, ToolInvocationRecordDto, ToolResultDto } from "@platform/shared";
 import Link from "next/link";
+import { LoadingButton } from "@/components/loading-button";
 import { apiRequest } from "@/lib/api-client";
 
 export default function AIToolsSettingsPage() {
@@ -158,13 +159,13 @@ export default function AIToolsSettingsPage() {
               />
             </div>
 
-            <button
+            <LoadingButton
               onClick={handleRunTest}
-              disabled={testMutation.isPending}
+              loading={testMutation.isPending}
               className="w-full py-2 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
             >
               {testMutation.isPending ? "Executing Tool..." : "Run Tool Invocation"}
-            </button>
+            </LoadingButton>
           </div>
 
           {executionOutput && (

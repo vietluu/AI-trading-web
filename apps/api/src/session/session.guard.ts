@@ -3,6 +3,7 @@ import {
   ExecutionContext,
   ForbiddenException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from "@nestjs/common";
 import type { Request } from "express";
@@ -15,6 +16,8 @@ import { SessionService } from "./session.service";
 
 @Injectable()
 export class SessionGuard implements CanActivate {
+  private readonly logger = new Logger(SessionGuard.name);
+
   constructor(
     private readonly sessions: SessionService,
     private readonly config?: ConfigService,
@@ -49,6 +52,25 @@ export class SessionGuard implements CanActivate {
         unsafe ? csrfHeader : undefined,
       );
     } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      this.logger.warn({
+        event: "session_guard_failed",
+        reason: message,
+        path: request.originalUrl,
+        method: request.method,
+        hasSidCookie: Boolean(this.readCookie(request.headers.cookie, SessionService.cookieName)),
+        hasCsrfCookie: Boolean(this.readCookie(request.headers.cookie, SessionService.csrfCookieName)),
+      });
+      if (error instanceof UnauthorizedException) {
+        const normalized = message.toLowerCase();
+        if (
+          normalized.includes("fingerprint") ||
+          normalized.includes("csrf") ||
+          normalized.includes("device")
+        ) {
+          throw error;
+        }
+      }
       const response = context.switchToHttp().getResponse<Response>();
       this.clearResponseCookies(response);
       throw error;

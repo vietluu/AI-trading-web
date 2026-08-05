@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AccountNav } from "@/components/account-nav";
+import { LoadingButton } from "@/components/loading-button";
 import { apiRequest } from "@/lib/api-client";
 
 interface ExternalSource {
@@ -87,7 +88,16 @@ export default function DataSourcesSettingsPage() {
       setTestResult(res);
     },
   });
-
+  const deleteSourceMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return apiRequest<unknown>(`/external-data/sources/${id}`, {
+        method: "DELETE",
+      });
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["sources"] });
+    },
+  });
   const toggleSourceMutation = useMutation({
     mutationFn: async ({ id, isEnabled }: { id: string; isEnabled: boolean }) => {
       return apiRequest<unknown>(`/external-data/sources/${id}`, {
@@ -101,7 +111,7 @@ export default function DataSourcesSettingsPage() {
   });
 
   return (
-    <div className="container mx-auto max-w-5xl p-6">
+    <div className="container mx-auto max-w-5xl">
       <AccountNav />
 
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
@@ -142,7 +152,7 @@ export default function DataSourcesSettingsPage() {
             {sources.map((src) => (
               <div key={src.id} className="flex flex-wrap items-center justify-between gap-4 p-4 text-xs">
                 <div>
-                  <div className="flex items-center gap-2 ">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-semibold text-sm text-foreground">{src.displayName}</span>
                     <span className="font-mono text-muted-foreground">({src.sourceId})</span>
                     <span className="rounded bg-muted px-1.5 py-0.5 text-[10px]">{src.provider}</span>
@@ -150,26 +160,33 @@ export default function DataSourcesSettingsPage() {
                   <p className="mt-0.5 font-mono text-muted-foreground text-[11px] truncate max-w-md">{src.feedUrl}</p>
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap">
                   <span className="text-muted-foreground">
                     Reliability: <strong className="text-foreground">{src.reliabilityScore}</strong>/100
                   </span>
 
-                  <button
+                  <LoadingButton
+                    loading={testSourceMutation.isPending}
                     onClick={() => { testSourceMutation.mutate(src.id); }}
                     className="rounded border border-border px-2.5 py-1 font-medium hover:bg-muted"
                   >
                     Test Fetch
-                  </button>
+                  </LoadingButton>
 
-                  <button
+                  <LoadingButton
+                    loading={toggleSourceMutation.isPending}
                     onClick={() => { toggleSourceMutation.mutate({ id: src.id, isEnabled: !src.isEnabled }); }}
                     className={`rounded px-3 py-1 font-semibold ${
                       src.isEnabled ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "bg-zinc-800 text-zinc-400"
                     }`}
                   >
                     {src.isEnabled ? "Enabled" : "Disabled"}
-                  </button>
+                  </LoadingButton>
+                  <LoadingButton
+                    loading={deleteSourceMutation.isPending}
+                    onClick={() => { deleteSourceMutation.mutate(src.id); }}
+                    className="rounded border border-red-500/20 px-2.5 py-1 font-medium text-red-600 hover:bg-red-500/10"
+                  >Delete</LoadingButton>
                 </div>
               </div>
             ))}
@@ -260,18 +277,24 @@ export default function DataSourcesSettingsPage() {
 
             <div className="mt-6 flex justify-end gap-3">
               <button
-                onClick={() => setIsAddModalOpen(false)}
+                onClick={() => {
+                  setIsAddModalOpen(false)
+                  setSourceId("");
+                  setDisplayName("");
+                  setFeedUrl("");
+                }}
                 className="rounded-md border border-border px-4 py-2 text-xs font-medium hover:bg-muted"
               >
                 Cancel
               </button>
-              <button
+              <LoadingButton
                 disabled={!sourceId || !displayName || !feedUrl || addSourceMutation.isPending}
+                loading={addSourceMutation.isPending}
                 onClick={() => { addSourceMutation.mutate(); }}
                 className="rounded-md bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               >
                 {addSourceMutation.isPending ? "Validating..." : "Add Source"}
-              </button>
+              </LoadingButton>
             </div>
           </div>
         </div>

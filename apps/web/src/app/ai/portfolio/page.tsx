@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { LoadingButton } from "@/components/loading-button";
 import { apiRequest } from "@/lib/api-client";
 
 interface PortfolioDashboard {
@@ -135,13 +136,14 @@ export default function PortfolioPage(): React.JSX.Element {
           >
             {source.mode} · {source.kind}
           </span>
-          <button
+          <LoadingButton
             className="rounded-lg border px-4 py-2 text-sm font-semibold disabled:opacity-50"
-            disabled={rebalance.isPending || !source.available}
+            disabled={!source.available}
+            loading={rebalance.isPending}
             onClick={() => rebalance.mutate()}
           >
             {rebalance.isPending ? "Rebalancing…" : "Rebalance now"}
-          </button>
+          </LoadingButton>
         </div>
       </div>
       {!source.available && source.kind === "EXCHANGE" && (
@@ -243,9 +245,10 @@ export default function PortfolioPage(): React.JSX.Element {
                   value={money.format(strategy.exposure)}
                 />
               </div>
-              <button
+              <LoadingButton
                 className="mt-4 w-full rounded-md border px-3 py-2 text-sm disabled:opacity-50"
-                disabled={status.isPending || strategy.status === "DISABLED"}
+                disabled={strategy.status === "DISABLED"}
+                loading={status.isPending}
                 onClick={() =>
                   status.mutate({
                     key: strategy.key,
@@ -254,7 +257,7 @@ export default function PortfolioPage(): React.JSX.Element {
                 }
               >
                 {strategy.status === "ACTIVE" ? "Pause" : "Activate"}
-              </button>
+              </LoadingButton>
             </article>
           ))}
         </div>

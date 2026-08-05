@@ -75,4 +75,33 @@ describe("SessionGuard", () => {
       ForbiddenException,
     );
   });
+
+  it("does not clear cookies for fingerprint mismatches", async () => {
+    const clearCookie = vi.fn();
+    const token = "a".repeat(43);
+    const request = {
+      headers: { cookie: `sid=${token}` },
+      method: "GET",
+      get: () => undefined,
+    };
+    const context = {
+      switchToHttp: () => ({
+        getRequest: () => request,
+        getResponse: () => ({ clearCookie }),
+      }),
+    } as unknown as ExecutionContext;
+    const sessions = {
+      resolve: vi
+        .fn()
+        .mockRejectedValue(
+          new UnauthorizedException("Session device fingerprint changed"),
+        ),
+    };
+    const guard = new SessionGuard(sessions as unknown as SessionService);
+
+    await expect(guard.canActivate(context)).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+    expect(clearCookie).not.toHaveBeenCalled();
+  });
 });
