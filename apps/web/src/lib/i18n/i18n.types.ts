@@ -76,8 +76,12 @@ export interface Dictionary {
     estimatedRisk: string;
     approveRecommendation: string;
     rejectRecommendation: string;
+    noRecommendations: string;
+    noRecommendationsDesc: string;
     knowledgeTitle: string;
     knowledgeSubtitle: string;
+    noKnowledge: string;
+    noKnowledgeDesc: string;
   };
   profile: {
     title: string;

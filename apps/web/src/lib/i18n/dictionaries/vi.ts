@@ -76,8 +76,12 @@ export const vi: Dictionary = {
     estimatedRisk: 'Rủi ro Ước tính & Kế hoạch Rollback',
     approveRecommendation: 'Con người Phê duyệt & Ký duyệt',
     rejectRecommendation: 'Từ chối Khuyên dùng',
+    noRecommendations: 'Chưa có khuyến nghị nào',
+    noRecommendationsDesc: 'Hiện chưa có khuyến nghị quản trị nào đang chờ duyệt.',
     knowledgeTitle: 'Kho Tri thức Nghiên cứu (Module 17)',
     knowledgeSubtitle: 'Kho lưu trữ có thể kiểm toán về kết quả Walk-Forward, mô phỏng Monte Carlo và lịch sử ý tưởng.',
+    noKnowledge: 'Chưa có tri thức nghiên cứu nào',
+    noKnowledgeDesc: 'Các mục lưu trữ sẽ xuất hiện tại đây khi hoàn thành các thử nghiệm.',
   },
   profile: {
     title: 'Hồ sơ Cá nhân',

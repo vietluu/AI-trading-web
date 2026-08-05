@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service';
-import { Prisma, type QuantRecommendation, type ReportType } from '@prisma/client';
+import { type QuantRecommendation, type ReportType } from '@prisma/client';
 import { generateQuantHypothesis, type HypothesisInput } from '../domain/quant-research.engine';
 import { discoverStrategies } from '../domain/strategy-discovery.engine';
 import { evaluateFactors } from '../domain/factor-discovery.engine';
@@ -71,44 +71,14 @@ export class QuantIntelligenceService {
         where: userId ? { userId } : undefined,
         orderBy: { createdAt: 'desc' },
       });
-
-      if (dbRecs.length > 0) {
-        return dbRecs;
-      }
-
-      // Seed default recommendations if DB table is available
-      const defaults = generateDefaultRecommendations();
-      const created: QuantRecommendation[] = [];
-      for (const d of defaults) {
-        try {
-          const rec = await this.prisma.quantRecommendation.create({
-            data: {
-              userId: userId ?? null,
-              title: d.title,
-              moduleSource: d.moduleSource,
-              problemStatement: d.problemStatement,
-              evidenceText: d.evidenceText,
-              historicalResult: d.historicalResult as Prisma.InputJsonValue,
-              expectedBenefit: d.expectedBenefit,
-              estimatedRisk: d.estimatedRisk,
-              priority: d.priority,
-              implementationCost: d.implementationCost,
-              rollbackPlan: d.rollbackPlan,
-              status: 'PENDING_APPROVAL',
-            },
-          });
-          created.push(rec);
-        } catch {
-          // Fallback if seeding individual record fails
-        }
-      }
-      return created.length > 0 ? created : (defaults as unknown as QuantRecommendation[]);
-    } catch {
+      return dbRecs;
+    } catch (error) {
       this.logger.warn({
-        event: 'quant_recommendations_fallback',
-        message: 'Database query failed or unmigrated; returning in-memory default recommendations',
+        event: 'quant_recommendations_db_error',
+        message: 'Database query failed or unmigrated; returning empty list',
+        error: error instanceof Error ? error.message : String(error),
       });
-      return generateDefaultRecommendations() as unknown as QuantRecommendation[];
+      return [];
     }
   }
 

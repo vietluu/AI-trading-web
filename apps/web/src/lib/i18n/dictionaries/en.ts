@@ -76,8 +76,12 @@ export const en: Dictionary = {
     estimatedRisk: 'Estimated Risk & Rollback Plan',
     approveRecommendation: 'Human Sign-off & Approve',
     rejectRecommendation: 'Reject Recommendation',
+    noRecommendations: 'No active recommendations',
+    noRecommendationsDesc: 'There are currently no active governance recommendations awaiting approval.',
     knowledgeTitle: 'Research Knowledge Base (Module 17)',
     knowledgeSubtitle: 'Auditable archive of walk-forward results, Monte Carlo simulations, accepted/rejected ideas, and decision history.',
+    noKnowledge: 'No research knowledge recorded',
+    noKnowledgeDesc: 'Archive entries will appear here as walk-forward and Monte Carlo experiments complete.',
   },
   profile: {
     title: 'Profile',

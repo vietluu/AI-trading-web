@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api-client";
 import { useTranslation } from "@/lib/i18n/i18n-context";
-import { BookOpen, Lock } from "lucide-react";
+import { BookOpen, Lock, Inbox } from "lucide-react";
 
 interface ArchiveItem {
   id: string;
@@ -25,32 +25,7 @@ export default function KnowledgePage() {
         const data = await apiRequest<ArchiveItem[]>("/quant-intelligence/knowledge");
         setArchives(data);
       } catch {
-        setArchives([
-          {
-            id: "k-1",
-            title: "Walk-Forward Multi-Regime Robustness Analysis (2024-2026)",
-            category: "WALK_FORWARD",
-            summary: "12-period walk-forward optimization demonstrated stable out-of-sample Sharpe ratio of 2.35.",
-            reproducibleHash: "8fea39646e9cf992224287f55a6aa246124d1dfc03ed8b2fa33a371295eacf7e",
-            createdAt: new Date().toISOString(),
-          },
-          {
-            id: "k-2",
-            title: "10,000-Iteration Monte Carlo Survival Simulation",
-            category: "MONTE_CARLO",
-            summary: "Zero risk of ruin (<0.01%) under extreme leverage stress testing up to 10x.",
-            reproducibleHash: "3f7a19284e9cf992224287f55a6aa246124d1dfc03ed8b2fa33a371295eacf12",
-            createdAt: new Date().toISOString(),
-          },
-          {
-            id: "k-3",
-            title: "Rejected Idea: Pure RSI Divergence Without Trend Filter",
-            category: "REJECTED_IDEA",
-            summary: "Rejected due to high false-positive rate (42.5%) during parabolic trend regimes.",
-            reproducibleHash: "a1c239646e9cf992224287f55a6aa246124d1dfc03ed8b2fa33a371295eacf99",
-            createdAt: new Date().toISOString(),
-          },
-        ]);
+        setArchives([]);
       } finally {
         setLoading(false);
       }
@@ -73,20 +48,28 @@ export default function KnowledgePage() {
         </div>
       </div>
 
-      <div className="space-y-4">
-        {archives.map((item) => (
-          <div key={item.id} className="rounded-2xl border border-border bg-card p-5 shadow-sm space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold px-2 py-0.5 rounded bg-primary/10 text-primary">{item.category}</span>
-              <span className="text-xs text-muted-foreground font-mono flex items-center gap-1">
-                <Lock className="h-3 w-3" /> Hash: {item.reproducibleHash.slice(0, 16)}...
-              </span>
+      {archives.length === 0 ? (
+        <div className="rounded-2xl border border-border bg-card p-12 text-center text-muted-foreground space-y-3">
+          <Inbox className="h-10 w-10 mx-auto text-muted-foreground/50" />
+          <h3 className="font-semibold text-lg text-foreground">{t.quant.noKnowledge}</h3>
+          <p className="text-sm max-w-md mx-auto">{t.quant.noKnowledgeDesc}</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {archives.map((item) => (
+            <div key={item.id} className="rounded-2xl border border-border bg-card p-5 shadow-sm space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold px-2 py-0.5 rounded bg-primary/10 text-primary">{item.category}</span>
+                <span className="text-xs text-muted-foreground font-mono flex items-center gap-1">
+                  <Lock className="h-3 w-3" /> Hash: {item.reproducibleHash.slice(0, 16)}...
+                </span>
+              </div>
+              <h3 className="text-base font-bold">{item.title}</h3>
+              <p className="text-sm text-muted-foreground">{item.summary}</p>
             </div>
-            <h3 className="text-base font-bold">{item.title}</h3>
-            <p className="text-sm text-muted-foreground">{item.summary}</p>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
