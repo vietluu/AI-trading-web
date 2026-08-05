@@ -87,6 +87,11 @@ export class SessionService {
     }
 
     if (!parsed) {
+      if (session.rotatedAt) {
+        await this.destroyFamily(session.tokenFamily);
+        throw new UnauthorizedException("Session is invalid or expired");
+      }
+
       parsed = {
         id: session.id,
         userId: session.userId,
