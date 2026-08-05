@@ -16,11 +16,9 @@ import {
 import { AgentInvocationSource, AgentType } from '../../domain/enums';
 import { canonicalSymbol } from '../../../../exchange/infrastructure/exchange-symbol';
 import { AgentExecutionService } from './agent-execution.service';
+import type { UnifiedAnalystResult } from '../../domain/types/unified-analyst.types';
 
-export interface UnifiedAnalystResult {
-  analyses: FusionInput;
-  fusionOutput: FusionOutput;
-}
+export type { UnifiedAnalystResult };
 
 @Injectable()
 export class UnifiedAnalystService {

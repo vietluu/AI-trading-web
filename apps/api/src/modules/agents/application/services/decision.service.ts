@@ -6,46 +6,31 @@ import {
   type AgentDataQuality,
   type DecisionInput,
   type DecisionOutput,
-  type DecisionRunInput,
   type FusionInput,
   type MarketRegime,
 } from '@platform/shared';
-import { AgentInvocationSource } from '../../domain/enums';
 import { FusionService } from './fusion.service';
+import type {
+  AnalystName,
+  Bias,
+  ConflictLevel,
+  RunDecisionOptions,
+  Weighting,
+} from '../../domain/types/decision-service.types';
+import {
+  BASE_WEIGHTS,
+  DECISION_THRESHOLDS,
+  QUALITY_FACTOR,
+  REGIME_FACTOR,
+} from '../../domain/constants/decision.constants';
 
-type AnalystName = keyof FusionInput;
-type Bias = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
-type ConflictLevel = DecisionOutput['conflictLevel'];
-type Weighting = DecisionOutput['weighting'];
-
-const BASE_WEIGHTS: Weighting = {
-  market: 20,
-  technical: 25,
-  news: 15,
-  sentiment: 15,
-  macro: 15,
-  onchain: 10,
+export type {
+  AnalystName,
+  Bias,
+  ConflictLevel,
+  RunDecisionOptions,
+  Weighting,
 };
-
-const QUALITY_FACTOR: Record<AgentDataQuality, number> = {
-  GOOD: 1,
-  PARTIAL: 0.7,
-  INSUFFICIENT: 0.3,
-};
-
-const REGIME_FACTOR: Record<MarketRegime['type'], number> = {
-  TRENDING: 1.05,
-  RANGING: 0.95,
-  HIGH_VOLATILITY: 0.9,
-};
-
-export interface RunDecisionOptions {
-  input: DecisionRunInput;
-  userId?: string;
-  sessionId?: string;
-  invocationSource: AgentInvocationSource;
-  correlationId?: string;
-}
 
 @Injectable()
 export class DecisionService {
@@ -95,8 +80,8 @@ export class DecisionService {
     const conflictLevel = this.conflictLevel(votes, rawDirectionalBias);
 
     let candidate: DecisionOutput['decision'] = 'WAIT';
-    if (directionalBias >= 20 && bullishCount > bearishCount) candidate = 'LONG';
-    if (directionalBias <= -20 && bearishCount > bullishCount) candidate = 'SHORT';
+    if (directionalBias >= DECISION_THRESHOLDS.DIRECTIONAL_BIAS_THRESHOLD && bullishCount > bearishCount) candidate = 'LONG';
+    if (directionalBias <= -DECISION_THRESHOLDS.DIRECTIONAL_BIAS_THRESHOLD && bearishCount > bullishCount) candidate = 'SHORT';
 
     if (input.news?.impact.level === 'HIGH' && input.news.impact.direction === 'NEGATIVE') {
       candidate = rawDirectionalBias <= 10 ? 'SHORT' : 'WAIT';
@@ -108,7 +93,7 @@ export class DecisionService {
     } else if (
       input.news?.impact.level === 'HIGH' &&
       input.news.impact.direction === 'POSITIVE' &&
-      directionalBias >= 20 &&
+      directionalBias >= DECISION_THRESHOLDS.DIRECTIONAL_BIAS_THRESHOLD &&
       bullishCount >= bearishCount
     ) {
       candidate = 'LONG';
@@ -151,15 +136,15 @@ export class DecisionService {
     if (coreAgree) overrides.push('Market and Technical trend alignment boosted confidence by +10%.');
 
     // Calibrated confidence calculation using weighted adjustments
-    const qualityDeduction = dataQuality === 'PARTIAL' ? 5 : dataQuality === 'INSUFFICIENT' ? 40 : 0;
-    const conflictDeduction = conflictLevel === 'MEDIUM' ? 10 : conflictLevel === 'HIGH' ? 35 : 0;
+    const qualityDeduction = dataQuality === 'PARTIAL' ? DECISION_THRESHOLDS.QUALITY_PARTIAL_DEDUCTION : dataQuality === 'INSUFFICIENT' ? DECISION_THRESHOLDS.QUALITY_INSUFFICIENT_DEDUCTION : 0;
+    const conflictDeduction = conflictLevel === 'MEDIUM' ? DECISION_THRESHOLDS.CONFLICT_MEDIUM_PENALTY : conflictLevel === 'HIGH' ? DECISION_THRESHOLDS.CONFLICT_HIGH_PENALTY : 0;
     const volDeduction = Math.abs(volatilityAdjustment);
-    const coreBonus = coreAgree ? 10 : 0;
+    const coreBonus = coreAgree ? DECISION_THRESHOLDS.CORE_TREND_ALIGNMENT_BONUS : 0;
 
     const rawConfidence = baseScore + coreBonus - qualityDeduction - conflictDeduction - volDeduction;
     const confidence = candidate === 'WAIT' ? 0 : Math.round(this.clamp(rawConfidence, 0, 100));
 
-    if (confidence < 60 && candidate !== 'WAIT') overrides.push('Calibrated confidence below 60 forced WAIT.');
+    if (confidence < DECISION_THRESHOLDS.MINIMUM_CONFIDENCE_THRESHOLD && candidate !== 'WAIT') overrides.push('Calibrated confidence below 60 forced WAIT.');
     if (dataQuality === 'INSUFFICIENT') overrides.push('Insufficient data forced WAIT.');
 
     const signals = this.signals(input, votes, weighting);
@@ -280,11 +265,11 @@ export class DecisionService {
     if (input.news?.impact.level !== 'HIGH') return 0;
     if (input.news.impact.direction === 'NEGATIVE') {
       overrides.push('Applied a -20 directional news-shock adjustment.');
-      return -20;
+      return DECISION_THRESHOLDS.NEWS_NEGATIVE_SHOCK;
     }
     if (input.news.impact.direction === 'POSITIVE') {
       overrides.push('Applied a +10 directional news-shock adjustment.');
-      return 10;
+      return DECISION_THRESHOLDS.NEWS_POSITIVE_SHOCK;
     }
     return 0;
   }
@@ -331,7 +316,7 @@ export class DecisionService {
     const namedConflicts = Number(opposing('technical', 'sentiment')) + Number(opposing('market', 'news'));
     const values = [...votes.values()];
     const hasBothDirections = values.includes('BULLISH') && values.includes('BEARISH');
-    if (namedConflicts >= 2 || (hasBothDirections && Math.abs(directionalBias) < 20)) return 'HIGH';
+    if (namedConflicts >= 2 || (hasBothDirections && Math.abs(directionalBias) < DECISION_THRESHOLDS.DIRECTIONAL_BIAS_THRESHOLD)) return 'HIGH';
     if (namedConflicts === 1 || hasBothDirections) return 'MEDIUM';
     return 'LOW';
   }

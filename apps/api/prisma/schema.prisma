@@ -1869,3 +1869,218 @@ model SensitivityHeatmap {
   @@map("sensitivity_heatmaps")
 }
 
+// ============================================================
+// Phase 15: Quant Intelligence Platform Models
+// ============================================================
+
+enum RecommendationStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  DEPLOYED
+  ROLLED_BACK
+}
+
+enum RecommendationPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ReportType {
+  DAILY
+  WEEKLY
+  MONTHLY
+  RESEARCH
+  STRATEGY
+  PORTFOLIO
+  RISK
+}
+
+model QuantHypothesis {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String?  @db.Uuid
+  title            String
+  category         String   // INDICATOR, FACTOR_COMBINATION, PROMPT, RULE, WEIGHTING, SCORING, POSITION_SIZING
+  description      String
+  hypothesisText   String
+  statisticalProof Json?
+  expectedValue    Float    @default(0)
+  profitFactor     Float    @default(0)
+  sharpeRatio      Float    @default(0)
+  status           String   @default("RESEARCHING") // RESEARCHING, TESTED, PROPOSED, ARCHIVED
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([userId, category])
+  @@map("quant_hypotheses")
+}
+
+model DiscoveredStrategy {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String?  @db.Uuid
+  key              String
+  name             String
+  kind             String   // TREND_FOLLOWING, MEAN_REVERSION, MOMENTUM, BREAKOUT, FUNDING_ARBITRAGE, VOLUME_EXPANSION, VOLATILITY_COMPRESSION, LIQUIDITY_SWEEP, HYBRID_AI
+  score            Float    @default(0)
+  expectedValue    Float    @default(0)
+  profitFactor     Float    @default(0)
+  sharpeRatio      Float    @default(0)
+  calmarRatio      Float    @default(0)
+  maxDrawdown      Float    @default(0)
+  rulesJson        Json
+  parametersJson   Json
+  status           String   @default("DISCOVERED")
+  createdAt        DateTime @default(now())
+
+  @@index([userId, kind])
+  @@map("discovered_strategies")
+}
+
+model FactorEvaluation {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String?  @db.Uuid
+  factorName       String
+  category         String   // TECHNICAL, STRUCTURE, VOLUME, FUNDING, OPEN_INTEREST, NEWS, MACRO, SENTIMENT, ONCHAIN, CORRELATION, SEASONALITY
+  predictivePower  Float    @default(0)
+  contribution     Float    @default(0)
+  noiseScore       Float    @default(0)
+  redundancyScore  Float    @default(0)
+  evaluatedAt      DateTime @default(now())
+
+  @@index([userId, category])
+  @@map("factor_evaluations")
+}
+
+model AutoBenchmarkRecord {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String?  @db.Uuid
+  strategyName      String
+  benchmarkTarget   String   // BUY_HOLD, EMA, MACD, RSI, SUPERTREND, DONCHIAN, GRID, MOMENTUM, PREVIOUS_AI, BEST_HISTORICAL
+  rank              Int
+  metricsJson       Json
+  comparedAt        DateTime @default(now())
+
+  @@index([userId, strategyName])
+  @@map("auto_benchmark_records")
+}
+
+model WeightOptimizationRecord {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String?  @db.Uuid
+  scope            String   // AGENT, FACTOR, OPPORTUNITY, RISK, REGIME
+  optimizedWeights Json
+  expectedValue    Float    @default(0)
+  sharpeRatio      Float    @default(0)
+  optimizedAt      DateTime @default(now())
+
+  @@index([userId, scope])
+  @@map("weight_optimization_records")
+}
+
+model ThresholdOptimizationRecord {
+  id                 String   @id @default(uuid()) @db.Uuid
+  userId             String?  @db.Uuid
+  thresholdName      String   // CONFIDENCE, OPPORTUNITY, ATR, VOLUME, LIQUIDITY, RISK_REWARD, COOLDOWN, STOP_LOSS, TAKE_PROFIT
+  optimizedValue     Float
+  previousValue      Float
+  expectedImprovement Float   @default(0)
+  optimizedAt        DateTime @default(now())
+
+  @@index([userId, thresholdName])
+  @@map("threshold_optimization_records")
+}
+
+model SelfLearningInsight {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String?  @db.Uuid
+  insightType      String   // WINNING_PATTERN, LOSING_PATTERN, FALSE_POSITIVE, FALSE_NEGATIVE, MISSED_OPPORTUNITY
+  tradeSymbol      String?
+  summary          String
+  evidenceJson     Json
+  recommendation   String
+  createdAt        DateTime @default(now())
+
+  @@index([userId, insightType])
+  @@map("self_learning_insights")
+}
+
+model MarketRegimeState {
+  id               String   @id @default(uuid()) @db.Uuid
+  symbol           String
+  regime           String   // BULL, BEAR, SIDEWAYS, HIGH_VOLATILITY, LOW_VOLATILITY, PANIC, EUPHORIA
+  confidence       Float    @default(0)
+  recommendedConfig Json
+  detectedAt       DateTime @default(now())
+
+  @@index([symbol, regime])
+  @@map("market_regime_states")
+}
+
+model QuantRecommendation {
+  id                 String                 @id @default(uuid()) @db.Uuid
+  userId             String?                @db.Uuid
+  title              String
+  moduleSource       String
+  problemStatement   String
+  evidenceText       String
+  historicalResult   Json
+  expectedBenefit    String
+  estimatedRisk      String
+  priority           RecommendationPriority @default(MEDIUM)
+  implementationCost String                 @default("LOW")
+  rollbackPlan       String
+  status             RecommendationStatus   @default(PENDING_APPROVAL)
+  reviewedByUserId   String?                @db.Uuid
+  reviewedAt         DateTime?
+  rejectionReason    String?
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+
+  @@index([userId, status])
+  @@map("quant_recommendations")
+}
+
+model SimulationExperiment {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String?  @db.Uuid
+  name             String
+  experimentType   String   // PROMPT, THRESHOLD, INDICATOR, AGENT, WEIGHT, STRATEGY
+  configJson       Json
+  simulationResult Json
+  passedCriteria   Boolean  @default(false)
+  executedAt       DateTime @default(now())
+
+  @@index([userId, experimentType])
+  @@map("simulation_experiments")
+}
+
+model QuantReportRecord {
+  id               String     @id @default(uuid()) @db.Uuid
+  userId           String?    @db.Uuid
+  reportType       ReportType
+  title            String
+  summary          String
+  metricsJson      Json
+  recommendations  Json
+  generatedAt      DateTime   @default(now())
+
+  @@index([userId, reportType])
+  @@map("quant_report_records")
+}
+
+model KnowledgeArchive {
+  id               String   @id @default(uuid()) @db.Uuid
+  title            String
+  category         String   // EXPERIMENT, BENCHMARK, WALK_FORWARD, MONTE_CARLO, REJECTED_IDEA, ACCEPTED_IDEA, DECISION_HISTORY
+  summary          String
+  contentJson      Json
+  reproducibleHash String
+  createdAt        DateTime @default(now())
+
+  @@index([category])
+  @@map("knowledge_archives")
+}
+
+

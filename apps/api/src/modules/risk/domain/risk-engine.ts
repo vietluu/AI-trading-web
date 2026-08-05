@@ -1,60 +1,30 @@
-import type { DecisionOutput, RiskOutput } from "@platform/shared";
+import type {
+  LastTradeRecord,
+  RiskAccount,
+  RiskEvaluation,
+  RiskInput,
+  RiskLimits,
+  RiskPosition,
+} from "./risk-engine.types";
+import { RISK_ENGINE_CONSTANTS } from "./risk-engine.constants";
 
-export interface RiskAccount {
-  balance: number;
-  equity: number;
-  peakEquity: number;
-}
-
-export interface RiskPosition {
-  symbol: string;
-  size: number;
-  markPrice: number;
-}
-
-export interface LastTradeRecord {
-  symbol: string;
-  direction: "LONG" | "SHORT";
-  createdAt: Date;
-}
-
-export interface RiskInput {
-  symbol: string;
-  decision: DecisionOutput;
-  account: RiskAccount;
-  currentPositions: RiskPosition[];
-  marketData: { price: number; volatility: number };
-  lastTradeAt?: Date;
-  lastTrades?: LastTradeRecord[];
-  now?: Date;
-}
-
-export interface RiskLimits {
-  riskPerTrade: number;
-  maxPositions: number;
-  maxLeverage: number;
-  maxDrawdown: number;
-  maxExposure: number;
-  cooldownMs: number;
-  minimumConfidence: number;
-  stopLossPct: number;
-  riskRewardRatio: number;
-  highVolatility: number;
-  abnormalVolatility: number;
-  highVolatilitySizeFactor: number;
-}
-
-export interface RiskEvaluation extends RiskOutput {
-  exposurePct: number;
-  drawdownPct: number;
-}
+export type {
+  LastTradeRecord,
+  RiskAccount,
+  RiskEvaluation,
+  RiskInput,
+  RiskLimits,
+  RiskPosition,
+};
 
 const finitePositive = (value: number): boolean =>
   Number.isFinite(value) && value > 0;
 const clamp = (value: number, minimum: number, maximum: number): number =>
   Math.min(maximum, Math.max(minimum, value));
-const rounded = (value: number, digits = 8): number =>
-  Number(value.toFixed(digits));
+const rounded = (
+  value: number,
+  digits: number = RISK_ENGINE_CONSTANTS.DEFAULT_PRECISION_DIGITS,
+): number => Number(value.toFixed(digits));
 
 export function calculateDrawdown(equity: number, peakEquity: number): number {
   return peakEquity > 0 ? clamp((peakEquity - equity) / peakEquity, 0, 1) : 1;
@@ -85,7 +55,12 @@ export function calculatePositionSize(
   stopLoss: number,
 ): number {
   const distance = Math.abs(entryPrice - stopLoss);
-  return distance > 0 ? rounded((balance * riskPerTrade) / distance, 12) : 0;
+  return distance > 0
+    ? rounded(
+        (balance * riskPerTrade) / distance,
+        RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
+      )
+    : 0;
 }
 
 export function calculateRiskScore(
@@ -103,7 +78,8 @@ export function calculateRiskScore(
   const exposureRisk = clamp(exposurePct / limits.maxExposure, 0, 1);
   const drawdownRisk = clamp(drawdown / limits.maxDrawdown, 0, 1);
   return rounded(
-    (volatilityRisk + leverageRisk + exposureRisk + drawdownRisk) * 25,
+    (volatilityRisk + leverageRisk + exposureRisk + drawdownRisk) *
+      RISK_ENGINE_CONSTANTS.RISK_SCORE_CATEGORY_WEIGHT,
     2,
   );
 }
@@ -151,7 +127,8 @@ export function evaluateRisk(
   if (decision.confidence < limits.minimumConfidence)
     return reject("CONFIDENCE_BELOW_THRESHOLD");
   if (decision.conflictLevel === "HIGH") return reject("HIGH_SIGNAL_CONFLICT");
-  if (decision.confidence < 75) return reject("CONFIDENCE_BELOW_THRESHOLD");
+  if (decision.confidence < RISK_ENGINE_CONSTANTS.MINIMUM_CONFIDENCE_THRESHOLD)
+    return reject("CONFIDENCE_BELOW_THRESHOLD");
   if (marketData.volatility >= limits.abnormalVolatility)
     return reject("ABNORMAL_VOLATILITY");
   if (drawdownPct >= limits.maxDrawdown) return reject("MAX_DRAWDOWN_EXCEEDED");
@@ -198,7 +175,8 @@ export function evaluateRisk(
     limits.riskRewardRatio,
   );
   const rewardToRisk = Math.abs(takeProfit - marketData.price) / Math.abs(marketData.price - stopLoss);
-  if (rewardToRisk < 2.5) return reject("RISK_REWARD_NOT_MET");
+  if (rewardToRisk < RISK_ENGINE_CONSTANTS.MINIMUM_REWARD_TO_RISK_RATIO)
+    return reject("RISK_REWARD_NOT_MET");
   let positionSize = calculatePositionSize(
     account.balance,
     limits.riskPerTrade,
@@ -207,7 +185,10 @@ export function evaluateRisk(
   );
   const highVolatility = marketData.volatility >= limits.highVolatility;
   if (highVolatility)
-    positionSize = rounded(positionSize * limits.highVolatilitySizeFactor, 12);
+    positionSize = rounded(
+      positionSize * limits.highVolatilitySizeFactor,
+      RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
+    );
   const leverage = highVolatility
     ? Math.max(1, Math.floor(limits.maxLeverage / 2))
     : limits.maxLeverage;
@@ -222,14 +203,17 @@ export function evaluateRisk(
   );
   positionSize = Math.min(
     positionSize,
-    rounded(availableExposure / marketData.price, 12),
+    rounded(
+      availableExposure / marketData.price,
+      RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
+    ),
   );
   if (!finitePositive(positionSize))
     return reject("MAX_PORTFOLIO_EXPOSURE_EXCEEDED", leverage);
 
   const projectedExposure = retainedExposure + positionSize * marketData.price;
   const exposurePct = projectedExposure / account.equity;
-  if (exposurePct > limits.maxExposure + 1e-9)
+  if (exposurePct > limits.maxExposure + RISK_ENGINE_CONSTANTS.EXPOSURE_TOLERANCE_EPSILON)
     return reject("MAX_PORTFOLIO_EXPOSURE_EXCEEDED", leverage);
 
   return {

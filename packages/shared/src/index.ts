@@ -47,3 +47,4 @@ export * from "./schemas/reflection.js";
 export * from "./schemas/risk.js";
 export * from "./schemas/live-trading.js";
 export * from "./schemas/research.js";
+export * from "./dto/quant-intelligence.dto.js";

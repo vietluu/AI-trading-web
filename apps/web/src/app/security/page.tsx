@@ -210,24 +210,33 @@ export default function SecurityPage(): React.JSX.Element {
           )}
           {totpSetup && (
             <form
-              className="mt-4 grid max-w-xl gap-3"
+              className="mt-4 grid max-w-xl gap-4 rounded-xl border border-border bg-card p-5"
               onSubmit={(event) => void confirmTotp(event)}
             >
-              <p className="break-all text-sm text-muted-foreground">
-                Open this setup URI in your authenticator:{" "}
-                {totpSetup.otpauthUri}
-              </p>
-              <p className="text-sm">
-                Manual key: <strong>{totpSetup.secret}</strong>
-              </p>
+              <div className="flex flex-col sm:flex-row items-center gap-4 border-b border-border pb-4">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  alt="2FA QR Code"
+                  className="h-44 w-44 rounded-lg border border-border p-2 bg-white"
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(totpSetup.otpauthUri)}`}
+                />
+                <div className="space-y-1 text-xs">
+                  <p className="font-semibold text-sm">Scan QR Code</p>
+                  <p className="text-muted-foreground">Scan with Google Authenticator, Authy, or 1Password.</p>
+                  <p className="pt-2">Manual Secret Key:</p>
+                  <code className="block rounded bg-muted px-2 py-1 font-mono text-sm font-bold tracking-wider text-primary select-all">
+                    {totpSetup.secret}
+                  </code>
+                </div>
+              </div>
               <Field
                 inputMode="numeric"
-                label="6-digit code"
+                label="6-digit verification code"
                 maxLength={6}
                 name="code"
                 required
               />
-              <button className={buttonClass}>Confirm 2FA</button>
+              <button className={buttonClass}>Confirm 2FA Setup</button>
             </form>
           )}
           {me.data?.totpEnabled && (

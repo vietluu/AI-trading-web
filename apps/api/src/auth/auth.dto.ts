@@ -43,6 +43,11 @@ export class LoginDto {
   @IsOptional()
   @IsBoolean()
   rememberMe?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{6}$/)
+  code?: string;
 }
 
 export class VerifyEmailDto {
