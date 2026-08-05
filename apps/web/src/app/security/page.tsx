@@ -214,6 +214,7 @@ export default function SecurityPage(): React.JSX.Element {
               onSubmit={(event) => void confirmTotp(event)}
             >
               <div className="flex flex-col sm:flex-row items-center gap-4 border-b border-border pb-4">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   alt="2FA QR Code"
                   className="h-44 w-44 rounded-lg border border-border p-2 bg-white"

@@ -2,16 +2,32 @@
 
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api-client";
-import { FlaskConical, Sparkles, CheckCircle2 } from "lucide-react";
+import { FlaskConical, Sparkles } from "lucide-react";
+
+interface HypothesisData {
+  title: string;
+  category: string;
+  description: string;
+  hypothesisText: string;
+  expectedValue: number;
+  profitFactor: number;
+  sharpeRatio: number;
+  statisticalProof?: {
+    pValue: number;
+    sampleSize: number;
+    tStatistic: number;
+    confidenceInterval: [number, number];
+  };
+}
 
 export default function ResearchPage() {
-  const [hypothesis, setHypothesis] = useState<any>(null);
+  const [hypothesis, setHypothesis] = useState<HypothesisData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadHypothesis() {
       try {
-        const data = await apiRequest("/quant-intelligence/hypotheses");
+        const data = await apiRequest<HypothesisData>("/quant-intelligence/hypotheses");
         setHypothesis(data);
       } catch {
         setHypothesis({

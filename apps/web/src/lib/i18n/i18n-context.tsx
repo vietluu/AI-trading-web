@@ -33,10 +33,8 @@ export function LanguageProvider({
   children: React.ReactNode;
 }): React.JSX.Element {
   const [language, setLanguageState] = useState<Language>(DEFAULT_LANGUAGE);
-  const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
-    setIsMounted(true);
     const saved = localStorage.getItem(STORAGE_KEY) as Language | null;
     if (saved && (saved === 'en' || saved === 'vi')) {
       setLanguageState(saved);

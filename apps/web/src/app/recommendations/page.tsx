@@ -2,54 +2,67 @@
 
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api-client";
-import { ShieldCheck, Check, X, AlertOctagon, HelpCircle } from "lucide-react";
+import { ShieldCheck, Check, X } from "lucide-react";
+
+interface RecommendationItem {
+  id: string;
+  title: string;
+  moduleSource: string;
+  problemStatement: string;
+  evidenceText: string;
+  expectedBenefit: string;
+  estimatedRisk: string;
+  priority: string;
+  implementationCost: string;
+  rollbackPlan: string;
+  status: "PENDING_APPROVAL" | "APPROVED" | "REJECTED";
+}
 
 export default function RecommendationsPage() {
-  const [recommendations, setRecommendations] = useState<any[]>([]);
+  const [recommendations, setRecommendations] = useState<RecommendationItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [actioningId, setActioningId] = useState<string | null>(null);
 
   useEffect(() => {
+    async function loadRecommendations() {
+      try {
+        const data = await apiRequest<RecommendationItem[]>("/quant-intelligence/recommendations");
+        setRecommendations(data);
+      } catch {
+        setRecommendations([
+          {
+            id: "rec-1",
+            title: "Increase Technical Agent Weight in Trending Regime",
+            moduleSource: "WEIGHT_OPTIMIZER",
+            problemStatement: "Technical indicators have higher predictive power during trending regimes, but current weights allocate equal share.",
+            evidenceText: "Backtest over 1,200 candles showed Technical alignment accuracy of 82% in trending regimes vs 55% in ranging regimes.",
+            expectedBenefit: "Expected Value increases from +1.45 to +1.85 per trade.",
+            estimatedRisk: "Minor increase in drawdowns if regime detection misclassifies sideways markets.",
+            priority: "HIGH",
+            implementationCost: "LOW",
+            rollbackPlan: "Revert weight configuration in database to default BASE_WEIGHTS dictionary.",
+            status: "PENDING_APPROVAL",
+          },
+          {
+            id: "rec-2",
+            title: "Enforce News Shock Wait Guard during High-Impact Macro Events",
+            moduleSource: "FACTOR_DISCOVERY",
+            problemStatement: "High-impact CPI and FOMC announcements cause sharp spread spikes and slippage.",
+            evidenceText: "3 out of 4 false positive trades occurred within 10 minutes of major macro releases.",
+            expectedBenefit: "Reduces maximum portfolio drawdown by 2.1%.",
+            estimatedRisk: "May miss rapid trend reversals during volatile news spikes.",
+            priority: "CRITICAL",
+            implementationCost: "LOW",
+            rollbackPlan: "Toggle off NEWS_SHOCK_GUARD feature flag in user settings.",
+            status: "PENDING_APPROVAL",
+          },
+        ]);
+      } finally {
+        setLoading(false);
+      }
+    }
     void loadRecommendations();
   }, []);
-
-  async function loadRecommendations() {
-    try {
-      const data = (await apiRequest("/quant-intelligence/recommendations")) as any[];
-      setRecommendations(data);
-    } catch {
-      setRecommendations([
-        {
-          id: "rec-1",
-          title: "Increase Technical Agent Weight in Trending Regime",
-          moduleSource: "WEIGHT_OPTIMIZER",
-          problemStatement: "Technical indicators have higher predictive power during trending regimes, but current weights allocate equal share.",
-          evidenceText: "Backtest over 1,200 candles showed Technical alignment accuracy of 82% in trending regimes vs 55% in ranging regimes.",
-          expectedBenefit: "Expected Value increases from +1.45 to +1.85 per trade.",
-          estimatedRisk: "Minor increase in drawdowns if regime detection misclassifies sideways markets.",
-          priority: "HIGH",
-          implementationCost: "LOW",
-          rollbackPlan: "Revert weight configuration in database to default BASE_WEIGHTS dictionary.",
-          status: "PENDING_APPROVAL",
-        },
-        {
-          id: "rec-2",
-          title: "Enforce News Shock Wait Guard during High-Impact Macro Events",
-          moduleSource: "FACTOR_DISCOVERY",
-          problemStatement: "High-impact CPI and FOMC announcements cause sharp spread spikes and slippage.",
-          evidenceText: "3 out of 4 false positive trades occurred within 10 minutes of major macro releases.",
-          expectedBenefit: "Reduces maximum portfolio drawdown by 2.1%.",
-          estimatedRisk: "May miss rapid trend reversals during volatile news spikes.",
-          priority: "CRITICAL",
-          implementationCost: "LOW",
-          rollbackPlan: "Toggle off NEWS_SHOCK_GUARD feature flag in user settings.",
-          status: "PENDING_APPROVAL",
-        },
-      ]);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function handleReview(id: string, action: "APPROVE" | "REJECT") {
     setActioningId(id);
@@ -58,7 +71,10 @@ export default function RecommendationsPage() {
         method: "POST",
         body: JSON.stringify({ action }),
       });
-      await loadRecommendations();
+      // Update local state
+      setRecommendations((prev) =>
+        prev.map((r) => (r.id === id ? { ...r, status: action === "APPROVE" ? "APPROVED" : "REJECTED" } : r))
+      );
     } catch {
       // Fallback optimistic UI update
       setRecommendations((prev) =>
@@ -123,14 +139,14 @@ export default function RecommendationsPage() {
             {rec.status === "PENDING_APPROVAL" && (
               <div className="flex justify-end gap-3 pt-2">
                 <button
-                  onClick={() => handleReview(rec.id, "REJECT")}
+                  onClick={() => void handleReview(rec.id, "REJECT")}
                   disabled={actioningId === rec.id}
                   className="flex items-center gap-1.5 rounded-xl border border-rose-500/30 px-4 py-2 text-xs font-bold text-rose-500 hover:bg-rose-500/10 transition-colors disabled:opacity-50"
                 >
                   <X className="h-4 w-4" /> Reject Recommendation
                 </button>
                 <button
-                  onClick={() => handleReview(rec.id, "APPROVE")}
+                  onClick={() => void handleReview(rec.id, "APPROVE")}
                   disabled={actioningId === rec.id}
                   className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700 transition-colors disabled:opacity-50"
                 >

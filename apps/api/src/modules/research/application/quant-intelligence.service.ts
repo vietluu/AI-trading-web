@@ -1,11 +1,11 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service';
-import { Prisma, type QuantRecommendation } from '@prisma/client';
-import { generateQuantHypothesis } from '../domain/quant-research.engine';
+import { Prisma, type QuantRecommendation, type ReportType } from '@prisma/client';
+import { generateQuantHypothesis, type HypothesisInput } from '../domain/quant-research.engine';
 import { discoverStrategies } from '../domain/strategy-discovery.engine';
 import { evaluateFactors } from '../domain/factor-discovery.engine';
 import { runAutoBenchmark } from '../domain/auto-benchmark.engine';
-import { optimizeThresholds, optimizeWeights } from '../domain/weight-threshold-optimizer.engine';
+import { optimizeThresholds, optimizeWeights, type OptimizedWeightsResult } from '../domain/weight-threshold-optimizer.engine';
 import { analyzePortfolioIntelligence } from '../domain/portfolio-intelligence.engine';
 import { generateSelfLearningInsights } from '../domain/self-learning.engine';
 import { detectMarketRegimeIntelligence } from '../domain/regime-intelligence.engine';
@@ -29,7 +29,7 @@ export class QuantIntelligenceService {
     return calculateDecisionScorecard();
   }
 
-  generateHypothesis(category: any, symbol = 'BTC-USDT') {
+  generateHypothesis(category?: HypothesisInput['category'], symbol = 'BTC-USDT') {
     return generateQuantHypothesis({ category: category ?? 'FACTOR_COMBINATION', symbol });
   }
 
@@ -45,7 +45,7 @@ export class QuantIntelligenceService {
     return runAutoBenchmark(strategyName);
   }
 
-  getOptimizedWeights(scope: any = 'AGENT') {
+  getOptimizedWeights(scope: OptimizedWeightsResult['scope'] = 'AGENT') {
     return optimizeWeights(scope);
   }
 
@@ -129,7 +129,7 @@ export class QuantIntelligenceService {
     return runSimulationExperiment(request);
   }
 
-  async getReport(type: any = 'DAILY', userId?: string) {
+  async getReport(type: ReportType = 'DAILY', userId?: string) {
     return this.reportService.generateReport(type, userId);
   }
 

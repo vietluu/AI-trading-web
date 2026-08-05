@@ -4,21 +4,38 @@ import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api-client";
 import { Cpu, Play, Award, CheckCircle } from "lucide-react";
 
+interface StrategyCandidate {
+  key: string;
+  name: string;
+  kind: string;
+  score: number;
+  expectedValue: number;
+  profitFactor: number;
+  sharpeRatio: number;
+  maxDrawdown: number;
+}
+
+interface SimulationResultData {
+  name: string;
+  experimentType: string;
+  passedCriteria: boolean;
+  baselineExpectedValue: number;
+  simulatedExpectedValue: number;
+  baselineSharpe: number;
+  simulatedSharpe: number;
+  summary: string;
+}
+
 export default function StrategyLabPage() {
-  const [strategies, setStrategies] = useState<any[]>([]);
-  const [benchmarks, setBenchmarks] = useState<any[]>([]);
-  const [simulationResult, setSimulationResult] = useState<any>(null);
+  const [strategies, setStrategies] = useState<StrategyCandidate[]>([]);
+  const [simulationResult, setSimulationResult] = useState<SimulationResultData | null>(null);
   const [simulating, setSimulating] = useState(false);
 
   useEffect(() => {
     async function loadData() {
       try {
-        const [strats, benchs] = await Promise.all([
-          apiRequest("/quant-intelligence/strategies") as Promise<any[]>,
-          apiRequest("/quant-intelligence/benchmarks") as Promise<any[]>,
-        ]);
+        const strats = await apiRequest<StrategyCandidate[]>("/quant-intelligence/strategies");
         setStrategies(strats);
-        setBenchmarks(benchs);
       } catch {
         setStrategies([
           { key: "hybrid-ai", name: "Hybrid AI Strategy", kind: "HYBRID_AI", score: 92, expectedValue: 1.85, profitFactor: 2.35, sharpeRatio: 2.45, maxDrawdown: 6.5 },
@@ -32,7 +49,7 @@ export default function StrategyLabPage() {
   async function handleRunSimulation() {
     setSimulating(true);
     try {
-      const res = await apiRequest("/quant-intelligence/simulation", {
+      const res = await apiRequest<SimulationResultData>("/quant-intelligence/simulation", {
         method: "POST",
         body: JSON.stringify({
           name: "Virtual Prompt & Threshold Test",
@@ -69,7 +86,7 @@ export default function StrategyLabPage() {
           </p>
         </div>
         <button
-          onClick={handleRunSimulation}
+          onClick={() => void handleRunSimulation()}
           disabled={simulating}
           className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
         >

@@ -1,6 +1,9 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { QuantIntelligenceService } from '../application/quant-intelligence.service';
 import type { ReportType } from '@prisma/client';
+import type { ExperimentType } from '../domain/simulation-lab.engine';
+import type { HypothesisInput } from '../domain/quant-research.engine';
+import type { OptimizedWeightsResult } from '../domain/weight-threshold-optimizer.engine';
 
 @Controller('quant-intelligence')
 export class QuantIntelligenceController {
@@ -12,7 +15,7 @@ export class QuantIntelligenceController {
   }
 
   @Get('hypotheses')
-  getHypotheses(@Query('category') category?: string, @Query('symbol') symbol?: string) {
+  getHypotheses(@Query('category') category?: HypothesisInput['category'], @Query('symbol') symbol?: string) {
     return this.quantService.generateHypothesis(category, symbol);
   }
 
@@ -32,7 +35,7 @@ export class QuantIntelligenceController {
   }
 
   @Get('weights')
-  getWeights(@Query('scope') scope?: string) {
+  getWeights(@Query('scope') scope?: OptimizedWeightsResult['scope']) {
     return this.quantService.getOptimizedWeights(scope);
   }
 
@@ -70,7 +73,7 @@ export class QuantIntelligenceController {
   }
 
   @Post('simulation')
-  runSimulation(@Body() body: { name: string; experimentType: any; config: Record<string, unknown> }) {
+  runSimulation(@Body() body: { name: string; experimentType: ExperimentType; config: Record<string, unknown> }) {
     return this.quantService.runSimulation(body);
   }
 

@@ -2,16 +2,25 @@
 
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api-client";
-import { Layers, Activity, AlertTriangle } from "lucide-react";
+import { Layers } from "lucide-react";
+
+interface FactorItem {
+  factorName: string;
+  category: string;
+  predictivePower: number;
+  contribution: number;
+  noiseScore: number;
+  redundancyScore: number;
+}
 
 export default function FactorsPage() {
-  const [factors, setFactors] = useState<any[]>([]);
+  const [factors, setFactors] = useState<FactorItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadFactors() {
       try {
-        const data = (await apiRequest("/quant-intelligence/factors")) as any[];
+        const data = await apiRequest<FactorItem[]>("/quant-intelligence/factors");
         setFactors(data);
       } catch {
         setFactors([

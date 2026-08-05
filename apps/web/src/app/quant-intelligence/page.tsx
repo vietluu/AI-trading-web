@@ -4,14 +4,27 @@ import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api-client";
 import { Brain, ShieldCheck, TrendingUp, Award, Activity, BarChart2 } from "lucide-react";
 
+interface ScorecardData {
+  overallScore: number;
+  grade: string;
+  dimensions: Record<string, number>;
+  expectedValue: number;
+  profitFactor: number;
+  sharpeRatio: number;
+  calmarRatio: number;
+  maxDrawdownPct: number;
+  walkForwardStability: number;
+  monteCarloSurvivalRate: number;
+}
+
 export default function QuantIntelligencePage() {
-  const [scorecard, setScorecard] = useState<any>(null);
+  const [scorecard, setScorecard] = useState<ScorecardData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadScorecard() {
       try {
-        const data = await apiRequest("/quant-intelligence/scorecard");
+        const data = await apiRequest<ScorecardData>("/quant-intelligence/scorecard");
         setScorecard(data);
       } catch {
         // Fallback default
@@ -106,7 +119,7 @@ export default function QuantIntelligencePage() {
       <div className="rounded-2xl border border-border bg-card p-6 shadow-sm">
         <h2 className="text-lg font-semibold mb-4">10-Dimension Decision Scorecard (Module 13)</h2>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-          {Object.entries(scorecard?.dimensions ?? {}).map(([dim, score]: [string, any]) => (
+          {Object.entries(scorecard?.dimensions ?? {}).map(([dim, score]: [string, number]) => (
             <div key={dim} className="rounded-xl border border-border/60 bg-muted/30 p-3 text-center">
               <p className="text-xs font-medium text-muted-foreground capitalize">{dim.replace(/([A-Z])/g, " $1")}</p>
               <p className="mt-1 text-xl font-bold text-primary">{score}/100</p>

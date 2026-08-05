@@ -2,16 +2,33 @@
 
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api-client";
-import { PieChart, ShieldAlert, CheckCircle2 } from "lucide-react";
+import { PieChart } from "lucide-react";
+
+interface AllocationItem {
+  strategyName: string;
+  currentCapitalAllocationPct: number;
+  recommendedCapitalAllocationPct: number;
+  correlationWithPortfolio: number;
+  diversificationBenefitScore: number;
+}
+
+interface PortfolioData {
+  overallSharpeRatio: number;
+  overallProfitFactor: number;
+  expectedValue: number;
+  maxPortfolioDrawdownPct: number;
+  allocations: AllocationItem[];
+  recommendedActions: string[];
+}
 
 export default function PortfolioIntelligencePage() {
-  const [portfolio, setPortfolio] = useState<any>(null);
+  const [portfolio, setPortfolio] = useState<PortfolioData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadPortfolio() {
       try {
-        const data = await apiRequest("/quant-intelligence/portfolio");
+        const data = await apiRequest<PortfolioData>("/quant-intelligence/portfolio");
         setPortfolio(data);
       } catch {
         setPortfolio({
@@ -75,7 +92,7 @@ export default function PortfolioIntelligencePage() {
       <div className="rounded-2xl border border-border bg-card p-6 space-y-4">
         <h2 className="text-lg font-semibold">Recommended Capital Allocation</h2>
         <div className="space-y-3">
-          {portfolio?.allocations?.map((a: any, i: number) => (
+          {portfolio?.allocations?.map((a, i) => (
             <div key={i} className="flex items-center justify-between p-3 rounded-xl border border-border">
               <div>
                 <p className="font-bold text-sm">{a.strategyName}</p>

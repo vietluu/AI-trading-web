@@ -1,4 +1,4 @@
-import type { DecisionInput, DecisionOutput, DecisionRunInput, FusionInput } from '@platform/shared';
+import type { DecisionOutput, DecisionRunInput, FusionInput } from '@platform/shared';
 import type { AgentInvocationSource } from '../../domain/enums';
 
 export type AnalystName = keyof FusionInput;

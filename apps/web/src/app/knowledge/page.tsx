@@ -2,16 +2,25 @@
 
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api-client";
-import { BookOpen, Database, Lock } from "lucide-react";
+import { BookOpen, Lock } from "lucide-react";
+
+interface ArchiveItem {
+  id: string;
+  title: string;
+  category: string;
+  summary: string;
+  reproducibleHash: string;
+  createdAt: string;
+}
 
 export default function KnowledgePage() {
-  const [archives, setArchives] = useState<any[]>([]);
+  const [archives, setArchives] = useState<ArchiveItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadKnowledge() {
       try {
-        const data = (await apiRequest("/quant-intelligence/knowledge")) as any[];
+        const data = await apiRequest<ArchiveItem[]>("/quant-intelligence/knowledge");
         setArchives(data);
       } catch {
         setArchives([

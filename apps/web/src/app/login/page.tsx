@@ -38,10 +38,14 @@ export default function LoginPage(): React.JSX.Element {
     setBusy(true);
     setError(undefined);
     const form = new FormData(event.currentTarget);
-    const identifier = credentials?.identifier ?? String(form.get("identifier") ?? "");
-    const password = credentials?.password ?? String(form.get("password") ?? "");
+    const rawId = form.get("identifier");
+    const rawPass = form.get("password");
+    const rawCode = form.get("code");
+
+    const identifier = credentials?.identifier ?? (typeof rawId === "string" ? rawId : "");
+    const password = credentials?.password ?? (typeof rawPass === "string" ? rawPass : "");
     const rememberMe = credentials?.rememberMe ?? (form.get("rememberMe") === "on");
-    const code = requiresTotp ? String(form.get("code") ?? "") : undefined;
+    const code = requiresTotp ? (typeof rawCode === "string" ? rawCode : undefined) : undefined;
 
     try {
       const res = await apiRequest<{ requiresTotp?: boolean }>("/auth/login", {
