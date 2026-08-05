@@ -13,6 +13,7 @@
     "test:e2e": "RUN_E2E_TESTS=true vitest run test/phase3.e2e.spec.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
+    "db:push": "prisma db push",
     "db:studio": "prisma studio"
   },
   "dependencies": {
