@@ -1,6 +1,11 @@
 import { publicEnvironment } from "./environment";
 import type { ZodType } from "zod";
 
+interface ApiErrorToastDetail {
+  message: string;
+  status: number;
+}
+
 export interface ApiErrorBody {
   message?: string | string[];
 }
@@ -47,11 +52,13 @@ export async function apiRequest<T>(
     const csrfToken = readCookie("csrf_token");
     if (csrfToken) headers.set("X-CSRF-Token", csrfToken);
   }
+
   const response = await fetch(resolveApiUrl(path), {
     ...init,
     credentials: "include",
     headers,
   });
+
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as ApiErrorBody;
     const message = Array.isArray(body.message)
@@ -68,6 +75,15 @@ export async function apiRequest<T>(
     ) {
       window.dispatchEvent(new CustomEvent("auth:expired"));
     }
+
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent<ApiErrorToastDetail>("api:error", {
+          detail: { message: error.message, status: error.status },
+        }),
+      );
+    }
+
     throw error;
   }
   if (response.status === 204) return undefined as T;

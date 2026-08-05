@@ -72,24 +72,43 @@ export class SessionService {
   ): Promise<CachedSession> {
     const sessionId = this.hash(`session:${token}`);
     const cached = await this.redis.get(this.key(sessionId));
-    if (!cached) {
-      await this.handlePossibleReuse(sessionId);
-      throw new UnauthorizedException("Session is invalid or expired");
+    let parsed: CachedSession | undefined;
+
+    if (cached) {
+      parsed = this.parseCachedSession(cached);
     }
-    const parsed = this.parseCachedSession(cached);
+
     const session = await this.repository.findBySessionId(sessionId);
-    if (
-      !session ||
-      session.revokedAt ||
-      session.expiresAt <= new Date() ||
-      session.id !== parsed.id ||
-      session.userId !== parsed.userId
-    ) {
+    if (!session || session.revokedAt || session.expiresAt <= new Date()) {
       await this.redis.delete(this.key(sessionId));
       if (session && !session.revokedAt)
         await this.repository.revoke(session.id);
       throw new UnauthorizedException("Session is invalid or expired");
     }
+
+    if (!parsed) {
+      parsed = {
+        id: session.id,
+        userId: session.userId,
+        tokenFamily: session.tokenFamily,
+        generation: session.generation,
+        csrfHash: session.csrfHash,
+        fingerprint: session.fingerprint,
+        expiresAt: session.expiresAt.toISOString(),
+        rememberMe: session.rememberMe,
+      };
+      await this.redis.setWithTtl(
+        this.key(sessionId),
+        JSON.stringify(parsed),
+        Math.max(1, Math.floor((session.expiresAt.getTime() - Date.now()) / 1000)),
+      );
+    }
+
+    if (parsed.id !== session.id || parsed.userId !== session.userId) {
+      await this.redis.delete(this.key(sessionId));
+      throw new UnauthorizedException("Session is invalid or expired");
+    }
+
     const fingerprint = this.fingerprint(context);
     if (
       this.fingerprintEnabled &&

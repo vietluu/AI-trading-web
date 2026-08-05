@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { AccountNav } from "@/components/account-nav";
+import { LoadingButton } from "@/components/loading-button";
 import { apiRequest } from "@/lib/api-client";
 import { useExternalDataSocket } from "@/lib/use-external-data-socket";
 
@@ -238,19 +239,21 @@ export default function NewsPage() {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <button
+                    <LoadingButton
+                      loading={saveMutation.isPending}
                       onClick={() => saveMutation.mutate({ id: article.id, isSaved: !isSaved })}
                       className={`text-xs hover:underline ${isSaved ? "text-amber-400 font-medium" : "text-muted-foreground"}`}
                     >
                       {isSaved ? "★ Saved" : "☆ Save"}
-                    </button>
+                    </LoadingButton>
 
-                    <button
+                    <LoadingButton
+                      loading={readMutation.isPending}
                       onClick={() => readMutation.mutate({ id: article.id, isRead: !isRead })}
                       className="text-xs text-muted-foreground hover:underline"
                     >
                       {isRead ? "Mark Unread" : "Mark Read"}
-                    </button>
+                    </LoadingButton>
                   </div>
                 </div>
 

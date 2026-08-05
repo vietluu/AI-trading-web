@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -7,10 +8,11 @@ import {
   Param,
   Patch,
   Post,
+  UnprocessableEntityException,
   UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { ExternalDataProvider, Prisma } from '@prisma/client';
+import { ExternalDataProvider, NewsSourceType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../../database/prisma.service';
 import { SessionGuard } from '../../../../session/session.guard';
 import { ExternalHttpClient } from '../../infrastructure/http/external-http-client';
@@ -45,6 +47,7 @@ export class SourcesController {
     // Validate SSRF target safety before saving
     const parsedUrl = new URL(validated.feedUrl);
     await this.httpClient.validateSsrfTarget(parsedUrl.hostname);
+    await this.validateRssFeedUrl(validated.feedUrl);
 
     const baseDomain = this.extractRootDomain(parsedUrl.hostname);
 
@@ -60,6 +63,7 @@ export class SourcesController {
         pollIntervalSeconds: validated.pollIntervalSeconds,
         isCustom: true,
         provider: ExternalDataProvider.GENERIC_RSS,
+        sourceType: NewsSourceType.RSS,
       },
     });
 
@@ -83,6 +87,7 @@ export class SourcesController {
     if (validated.feedUrl) {
       const parsedUrl = new URL(validated.feedUrl);
       await this.httpClient.validateSsrfTarget(parsedUrl.hostname);
+      await this.validateRssFeedUrl(validated.feedUrl);
     }
 
     return this.prisma.externalDataSource.update({
@@ -124,6 +129,26 @@ export class SourcesController {
       samplePublishedAt: fetchResult.items[0]?.publishedAt || null,
       status: 'SUCCESS',
     };
+  }
+
+  private async validateRssFeedUrl(feedUrl: string): Promise<void> {
+    try {
+      const fetchResult = await this.rssAdapter.fetchLatest({
+        sourceId: 'feed-validation',
+        feedUrl,
+      });
+
+      if (!fetchResult.items.length) {
+        throw new UnprocessableEntityException(`Feed URL did not return any RSS/Atom items: ${feedUrl}`);
+      }
+    } catch (error) {
+      if (error instanceof BadRequestException || error instanceof UnprocessableEntityException) {
+        throw error;
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      throw new UnprocessableEntityException(`Feed URL is not a valid RSS/Atom feed: ${message}`);
+    }
   }
 
   private extractRootDomain(hostname: string): string {

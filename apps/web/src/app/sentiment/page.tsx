@@ -38,7 +38,7 @@ export default function SentimentPage() {
   };
 
   return (
-    <div className="container mx-auto max-w-5xl p-6">
+    <div className="container mx-auto max-w-5xl">
       <AccountNav />
 
       <div className="mb-6">

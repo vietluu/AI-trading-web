@@ -5,6 +5,19 @@ import { PrismaService } from '../../../database/prisma.service';
 function toInputJson(val: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(val)) as Prisma.InputJsonValue;
 }
+
+type ResearchPersistenceClient = {
+  researchValidationRun: {
+    create(args: { data: Record<string, unknown> }): Promise<unknown>;
+  };
+  benchmarkSuiteRun: {
+    create(args: { data: Record<string, unknown> }): Promise<unknown>;
+  };
+  sensitivityHeatmap: {
+    create(args: { data: Record<string, unknown> }): Promise<unknown>;
+  };
+};
+
 import { ExchangeInterval, ExchangeProvider } from '../../../exchange/domain/exchange.types';
 import { MarketDataService } from '../../../market-data/application/market-data.service';
 import { runHistoricalBacktest } from '../domain/backtest-engine';
@@ -33,7 +46,7 @@ export class ResearchService {
 
   constructor(
     private readonly marketData: MarketDataService,
-    @Optional() private readonly prisma?: PrismaService,
+    @Optional() private readonly prisma?: PrismaService & ResearchPersistenceClient,
   ) {}
 
   async runBacktest(input: {
