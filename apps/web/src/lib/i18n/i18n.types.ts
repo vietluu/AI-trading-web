@@ -34,6 +34,28 @@ export interface Dictionary {
     success: string;
     toggleLanguage: string;
   };
+  dashboard: {
+    badge: string;
+    heroTitle: string;
+    heroDesc: string;
+    openMarket: string;
+    openMarketDesc: string;
+    agentPipelineTitle: string;
+    agentPipelineDesc: string;
+    riskTitle: string;
+    riskDesc: string;
+    footerNotice: string;
+  };
+  health: {
+    title: string;
+    subtitle: string;
+    systemConnections: string;
+    allHealthy: string;
+    degraded: string;
+    postgres: string;
+    redis: string;
+    api: string;
+  };
   auth: {
     enter2faCode: string;
     totpCodeLabel: string;
@@ -42,6 +64,76 @@ export interface Dictionary {
     resendVerificationEmail: string;
     verificationEmailRequested: string;
     scanQrCode: string;
+  };
+  quant: {
+    title: string;
+    subtitle: string;
+    scorecardGrade: string;
+    expectedValue: string;
+    expectedValueDesc: string;
+    profitFactor: string;
+    profitFactorDesc: string;
+    sharpeCalmar: string;
+    sharpeCalmarDesc: string;
+    survivalRate: string;
+    maxDrawdown: string;
+    scorecardHeader: string;
+    researchTitle: string;
+    researchSubtitle: string;
+    factorsTitle: string;
+    factorsSubtitle: string;
+    strategyLabTitle: string;
+    strategyLabSubtitle: string;
+    runSimulation: string;
+    simulating: string;
+    simulationResult: string;
+    portfolioTitle: string;
+    portfolioSubtitle: string;
+    recommendedAllocation: string;
+    recommendationsTitle: string;
+    recommendationsSubtitle: string;
+    problemStatement: string;
+    evidenceText: string;
+    expectedBenefit: string;
+    estimatedRisk: string;
+    approveRecommendation: string;
+    rejectRecommendation: string;
+    noRecommendations: string;
+    noRecommendationsDesc: string;
+    knowledgeTitle: string;
+    knowledgeSubtitle: string;
+    noKnowledge: string;
+    noKnowledgeDesc: string;
+  };
+  profile: {
+    title: string;
+    username: string;
+    email: string;
+    securityVerification: string;
+    memberSince: string;
+    logout: string;
+  };
+  security: {
+    title: string;
+    changePassword: string;
+    currentPassword: string;
+    newPassword: string;
+    activeSessions: string;
+    thisDevice: string;
+    logOutAllDevices: string;
+    twoFactorAuth: string;
+    setupAuthenticator: string;
+    scanQrCodeTitle: string;
+    scanQrCodeDesc: string;
+    manualKey: string;
+    confirm2FA: string;
+    disable2FA: string;
+  };
+  accountNav: {
+    profile: string;
+    security: string;
+    apiKeys: string;
+    sessions: string;
   };
 }
 

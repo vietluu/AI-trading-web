@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api-client";
+import { useTranslation } from "@/lib/i18n/i18n-context";
 import { Layers } from "lucide-react";
 
 interface FactorItem {
@@ -14,6 +15,7 @@ interface FactorItem {
 }
 
 export default function FactorsPage() {
+  const { t } = useTranslation();
   const [factors, setFactors] = useState<FactorItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -36,17 +38,17 @@ export default function FactorsPage() {
     void loadFactors();
   }, []);
 
-  if (loading) return <div className="p-8 text-center text-muted-foreground">Loading Factor Discovery Engine...</div>;
+  if (loading) return <div className="p-8 text-center text-muted-foreground">{t.common.loading}</div>;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between border-b border-border pb-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <Layers className="h-6 w-6 text-primary" /> Factor Discovery Engine (Module 3)
+            <Layers className="h-6 w-6 text-primary" /> {t.quant.factorsTitle}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Predictive power, contribution, noise, and redundancy evaluation across 11 factor categories.
+            {t.quant.factorsSubtitle}
           </p>
         </div>
       </div>

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api-client";
+import { useTranslation } from "@/lib/i18n/i18n-context";
 import { PieChart } from "lucide-react";
 
 interface AllocationItem {
@@ -22,6 +23,7 @@ interface PortfolioData {
 }
 
 export default function PortfolioIntelligencePage() {
+  const { t } = useTranslation();
   const [portfolio, setPortfolio] = useState<PortfolioData | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -53,17 +55,17 @@ export default function PortfolioIntelligencePage() {
     void loadPortfolio();
   }, []);
 
-  if (loading) return <div className="p-8 text-center text-muted-foreground">Loading Portfolio Intelligence Engine...</div>;
+  if (loading) return <div className="p-8 text-center text-muted-foreground">{t.common.loading}</div>;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between border-b border-border pb-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <PieChart className="h-6 w-6 text-primary" /> Portfolio Intelligence (Module 7)
+            <PieChart className="h-6 w-6 text-primary" /> {t.quant.portfolioTitle}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Capital & risk allocation, correlation matrix, diversification benefit scoring, and optimal portfolio recommendations.
+            {t.quant.portfolioSubtitle}
           </p>
         </div>
       </div>
@@ -75,7 +77,7 @@ export default function PortfolioIntelligencePage() {
           <p className="text-xl font-bold text-emerald-500">{portfolio?.overallSharpeRatio}</p>
         </div>
         <div className="rounded-xl border border-border p-4">
-          <span className="text-xs text-muted-foreground">Profit Factor</span>
+          <span className="text-xs text-muted-foreground">{t.quant.profitFactor}</span>
           <p className="text-xl font-bold">{portfolio?.overallProfitFactor}</p>
         </div>
         <div className="rounded-xl border border-border p-4">
@@ -90,7 +92,7 @@ export default function PortfolioIntelligencePage() {
 
       {/* Allocation Recommendations */}
       <div className="rounded-2xl border border-border bg-card p-6 space-y-4">
-        <h2 className="text-lg font-semibold">Recommended Capital Allocation</h2>
+        <h2 className="text-lg font-semibold">{t.quant.recommendedAllocation}</h2>
         <div className="space-y-3">
           {portfolio?.allocations?.map((a, i) => (
             <div key={i} className="flex items-center justify-between p-3 rounded-xl border border-border">
