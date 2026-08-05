@@ -9,8 +9,10 @@ import { useState, type FormEvent } from "react";
 import { AccountNav } from "@/components/account-nav";
 import { buttonClass, Feedback, Field } from "@/components/form-controls";
 import { apiRequest, apiRequestValidated } from "@/lib/api-client";
+import { useTranslation } from "@/lib/i18n/i18n-context";
 
 export default function SecurityPage(): React.JSX.Element {
+  const { t } = useTranslation();
   const client = useQueryClient();
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
@@ -129,38 +131,38 @@ export default function SecurityPage(): React.JSX.Element {
   return (
     <section>
       <AccountNav />
-      <h1 className="text-3xl font-semibold">Security</h1>
+      <h1 className="text-3xl font-semibold">{t.security.title}</h1>
       <div className="mt-6 grid gap-6 lg:grid-cols-2 w-full">
         <form
           className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6 w-full"
           onSubmit={(event) => void changePassword(event)}
         >
-          <h2 className="font-semibold">Change password</h2>
+          <h2 className="font-semibold">{t.security.changePassword}</h2>
           <Field
-            label="Current password"
+            label={t.security.currentPassword}
             name="currentPassword"
             type="password"
             required
           />
           <Field
-            label="New password"
+            label={t.security.newPassword}
             name="newPassword"
             type="password"
             minLength={12}
             required
           />
           <Feedback error={error} success={message} />
-          <button className={buttonClass}>Change password</button>
+          <button className={buttonClass}>{t.security.changePassword}</button>
         </form>
         <div className="rounded-xl border border-border bg-card p-6">
           <div className="flex items-center justify-between">
-            <h2 className="font-semibold">Active sessions</h2>
+            <h2 className="font-semibold">{t.security.activeSessions}</h2>
             <button
               className="text-xs text-red-300"
               onClick={() => void removeAll()}
               type="button"
             >
-              Log out all devices
+              {t.security.logOutAllDevices}
             </button>
           </div>
           <div className="mt-4 grid gap-3">
@@ -172,7 +174,7 @@ export default function SecurityPage(): React.JSX.Element {
                 <div className="flex justify-between">
                   <strong>
                     {session.current
-                      ? "This device"
+                      ? t.security.thisDevice
                       : (session.ip ?? "Unknown device")}
                   </strong>
                   <button
@@ -198,14 +200,14 @@ export default function SecurityPage(): React.JSX.Element {
           </div>
         </div>
         <div className="border-t border-border pt-6 lg:col-span-2">
-          <h2 className="font-semibold">Two-factor authentication</h2>
+          <h2 className="font-semibold">{t.security.twoFactorAuth}</h2>
           {!me.data?.totpEnabled && !totpSetup && (
             <button
               className={`${buttonClass} mt-4`}
               onClick={() => void beginTotp()}
               type="button"
             >
-              Set up authenticator
+              {t.security.setupAuthenticator}
             </button>
           )}
           {totpSetup && (
@@ -221,9 +223,9 @@ export default function SecurityPage(): React.JSX.Element {
                   src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(totpSetup.otpauthUri)}`}
                 />
                 <div className="space-y-1 text-xs">
-                  <p className="font-semibold text-sm">Scan QR Code</p>
-                  <p className="text-muted-foreground">Scan with Google Authenticator, Authy, or 1Password.</p>
-                  <p className="pt-2">Manual Secret Key:</p>
+                  <p className="font-semibold text-sm">{t.security.scanQrCodeTitle}</p>
+                  <p className="text-muted-foreground">{t.security.scanQrCodeDesc}</p>
+                  <p className="pt-2">{t.security.manualKey}</p>
                   <code className="block rounded bg-muted px-2 py-1 font-mono text-sm font-bold tracking-wider text-primary select-all">
                     {totpSetup.secret}
                   </code>
@@ -231,12 +233,12 @@ export default function SecurityPage(): React.JSX.Element {
               </div>
               <Field
                 inputMode="numeric"
-                label="6-digit verification code"
+                label={t.auth.totpCodeLabel}
                 maxLength={6}
                 name="code"
                 required
               />
-              <button className={buttonClass}>Confirm 2FA Setup</button>
+              <button className={buttonClass}>{t.security.confirm2FA}</button>
             </form>
           )}
           {me.data?.totpEnabled && (
@@ -245,19 +247,19 @@ export default function SecurityPage(): React.JSX.Element {
               onSubmit={(event) => void disableTotp(event)}
             >
               <Field
-                label="Current password"
+                label={t.security.currentPassword}
                 name="currentPassword"
                 type="password"
                 required
               />
               <Field
                 inputMode="numeric"
-                label="6-digit code"
+                label={t.auth.totpCodeLabel}
                 maxLength={6}
                 name="code"
                 required
               />
-              <button className={buttonClass}>Disable 2FA</button>
+              <button className={buttonClass}>{t.security.disable2FA}</button>
             </form>
           )}
         </div>

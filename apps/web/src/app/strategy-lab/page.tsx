@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api-client";
+import { useTranslation } from "@/lib/i18n/i18n-context";
 import { Cpu, Play, Award, CheckCircle } from "lucide-react";
 
 interface StrategyCandidate {
@@ -27,6 +28,7 @@ interface SimulationResultData {
 }
 
 export default function StrategyLabPage() {
+  const { t } = useTranslation();
   const [strategies, setStrategies] = useState<StrategyCandidate[]>([]);
   const [simulationResult, setSimulationResult] = useState<SimulationResultData | null>(null);
   const [simulating, setSimulating] = useState(false);
@@ -79,10 +81,10 @@ export default function StrategyLabPage() {
       <div className="flex items-center justify-between border-b border-border pb-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <Cpu className="h-6 w-6 text-primary" /> Strategy Discovery & Simulation Lab (Modules 2, 4 & 15)
+            <Cpu className="h-6 w-6 text-primary" /> {t.quant.strategyLabTitle}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Discover candidate strategies, auto-benchmark against baseline models, and run pre-implementation simulations.
+            {t.quant.strategyLabSubtitle}
           </p>
         </div>
         <button
@@ -90,14 +92,14 @@ export default function StrategyLabPage() {
           disabled={simulating}
           className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
         >
-          <Play className="h-4 w-4" /> {simulating ? "Simulating..." : "Run Simulation Experiment"}
+          <Play className="h-4 w-4" /> {simulating ? t.quant.simulating : t.quant.runSimulation}
         </button>
       </div>
 
       {simulationResult && (
         <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-5 space-y-2">
           <div className="flex items-center gap-2 font-bold text-emerald-500">
-            <CheckCircle className="h-5 w-5" /> Simulation Result: {simulationResult.passedCriteria ? "PASSED" : "FAILED"}
+            <CheckCircle className="h-5 w-5" /> {t.quant.simulationResult}: {simulationResult.passedCriteria ? "PASSED" : "FAILED"}
           </div>
           <p className="text-sm font-medium">{simulationResult.summary}</p>
           <div className="flex gap-4 text-xs font-semibold pt-1">

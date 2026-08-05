@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api-client";
+import { useTranslation } from "@/lib/i18n/i18n-context";
 import { FlaskConical, Sparkles } from "lucide-react";
 
 interface HypothesisData {
@@ -21,6 +22,7 @@ interface HypothesisData {
 }
 
 export default function ResearchPage() {
+  const { t } = useTranslation();
   const [hypothesis, setHypothesis] = useState<HypothesisData | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -52,17 +54,17 @@ export default function ResearchPage() {
     void loadHypothesis();
   }, []);
 
-  if (loading) return <div className="p-8 text-center text-muted-foreground">Loading Quant Research Engine...</div>;
+  if (loading) return <div className="p-8 text-center text-muted-foreground">{t.common.loading}</div>;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between border-b border-border pb-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <FlaskConical className="h-6 w-6 text-primary" /> Quant Research Engine (Module 1)
+            <FlaskConical className="h-6 w-6 text-primary" /> {t.quant.researchTitle}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Automated hypothesis generation for indicators, factor combinations, AI prompts, decision rules, and position sizing.
+            {t.quant.researchSubtitle}
           </p>
         </div>
       </div>

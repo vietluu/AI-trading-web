@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api-client";
+import { useTranslation } from "@/lib/i18n/i18n-context";
 import { BookOpen, Lock } from "lucide-react";
 
 interface ArchiveItem {
@@ -14,6 +15,7 @@ interface ArchiveItem {
 }
 
 export default function KnowledgePage() {
+  const { t } = useTranslation();
   const [archives, setArchives] = useState<ArchiveItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -56,17 +58,17 @@ export default function KnowledgePage() {
     void loadKnowledge();
   }, []);
 
-  if (loading) return <div className="p-8 text-center text-muted-foreground">Loading Research Knowledge Base...</div>;
+  if (loading) return <div className="p-8 text-center text-muted-foreground">{t.common.loading}</div>;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between border-b border-border pb-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <BookOpen className="h-6 w-6 text-primary" /> Research Knowledge Base (Module 17)
+            <BookOpen className="h-6 w-6 text-primary" /> {t.quant.knowledgeTitle}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Auditable archive of walk-forward results, Monte Carlo simulations, accepted/rejected ideas, and decision history.
+            {t.quant.knowledgeSubtitle}
           </p>
         </div>
       </div>

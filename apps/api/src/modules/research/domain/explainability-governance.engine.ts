@@ -16,6 +16,7 @@ export interface FullQuantRecommendation {
 }
 
 export function buildQuantRecommendation(input: {
+  id?: string;
   title: string;
   moduleSource: string;
   problemStatement: string;
@@ -28,6 +29,7 @@ export function buildQuantRecommendation(input: {
   rollbackPlan: string;
 }): FullQuantRecommendation {
   return {
+    id: input.id,
     title: input.title,
     moduleSource: input.moduleSource,
     problemStatement: input.problemStatement,
@@ -45,6 +47,7 @@ export function buildQuantRecommendation(input: {
 export function generateDefaultRecommendations(): FullQuantRecommendation[] {
   return [
     buildQuantRecommendation({
+      id: 'rec-1',
       title: 'Increase Technical Agent Weight in Trending Regime',
       moduleSource: 'WEIGHT_OPTIMIZER',
       problemStatement: 'Technical indicators have higher predictive power during trending regimes, but current weights allocate equal share.',
@@ -57,6 +60,7 @@ export function generateDefaultRecommendations(): FullQuantRecommendation[] {
       rollbackPlan: 'Revert weight configuration in database to default BASE_WEIGHTS dictionary.',
     }),
     buildQuantRecommendation({
+      id: 'rec-2',
       title: 'Enforce News Shock Wait Guard during High-Impact Macro Events',
       moduleSource: 'FACTOR_DISCOVERY',
       problemStatement: 'High-impact CPI and FOMC announcements cause sharp spread spikes and slippage.',
