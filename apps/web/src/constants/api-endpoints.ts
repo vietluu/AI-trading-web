@@ -72,10 +72,10 @@ export const API_ENDPOINTS = {
     run: "/pipeline/run",
   },
   pipelineRuns: {
-    root: "/pipeline/runs",
-    byId: (id: string) => `/pipeline/runs/${id}`,
-    replay: (id: string) => `/pipeline/runs/${id}/replay`,
-    cancel: (id: string) => `/pipeline/runs/${id}/cancel`,
+    root: "/pipeline-runs",
+    byId: (id: string) => `/pipeline-runs/${id}`,
+    replay: (id: string) => `/pipeline-runs/${id}/replay`,
+    cancel: (id: string) => `/pipeline-runs/${id}/cancel`,
   },
   externalData: {
     newsList: "/external-data/news",
