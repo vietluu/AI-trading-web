@@ -59,7 +59,7 @@ async function bootstrap(): Promise<void> {
     .build();
   const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup("docs", app, swaggerDocument, {
-    jsonDocumentUrl: "docs/json",
+    jsonDocumentUrl: "api/docs/json",
   });
 
   await app.listen(port, "0.0.0.0");
@@ -67,7 +67,7 @@ async function bootstrap(): Promise<void> {
     event: "application_started",
     port,
     healthUrl: `http://localhost:${port}/api/health`,
-    swaggerUrl: `http://localhost:${port}/docs`,
+    swaggerUrl: `http://localhost:${port}/api/docs`,
   });
 }
 
