@@ -156,7 +156,7 @@ export const MarketAgentIntervalSchema = z.enum(['1m', '5m', '15m', '1h']);
 
 export const MarketAgentInputSchema = z
   .object({
-    symbol: z.enum(['BTC-USDT', 'ETH-USDT']),
+    symbol: z.string().min(1).max(32),
     provider: MarketAgentProviderSchema,
     interval: MarketAgentIntervalSchema,
     lookbackCandles: z.number().int().min(1).max(500).default(100),
@@ -220,7 +220,7 @@ export type MarketAgentOutput = z.infer<typeof MarketAgentOutputSchema>;
 
 export const TechnicalAgentInputSchema = z
   .object({
-    symbol: z.enum(['BTC-USDT', 'ETH-USDT']),
+    symbol: z.string().min(1).max(32),
     provider: MarketAgentProviderSchema,
     interval: MarketAgentIntervalSchema,
     lookbackCandles: z.number().int().min(1).max(500).default(150),
@@ -294,7 +294,7 @@ export type TechnicalAgentOutput = z.infer<typeof TechnicalAgentOutputSchema>;
 
 export const NewsSentimentInputSchema = z
   .object({
-    symbol: z.enum(['BTC', 'ETH']).optional(),
+    symbol: z.string().min(1).max(32).optional(),
     lookbackHours: z.number().int().min(1).max(24).default(6),
     maxItems: z.number().int().min(1).max(50).default(20),
   })
@@ -397,7 +397,7 @@ export type MacroAgentOutput = z.infer<typeof MacroAgentOutputSchema>;
 
 export const OnChainAgentInputSchema = z
   .object({
-    symbol: z.enum(['BTC', 'ETH']).optional(),
+    symbol: z.string().min(1).max(32).optional(),
     lookbackHours: z.number().int().min(1).max(720).default(24),
   })
   .strict();

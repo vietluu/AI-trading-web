@@ -364,8 +364,8 @@ const environmentSchema = z
       .number()
       .int()
       .min(1)
-      .max(10)
-      .default(3),
+      .max(30)
+      .default(10),
     AGENT_MAX_TYPE_CONCURRENCY: z.coerce
       .number()
       .int()

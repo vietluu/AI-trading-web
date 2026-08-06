@@ -15,8 +15,8 @@ export interface AgentRunTransition {
 
 export class AgentStateMachine {
   private static readonly VALID_TRANSITIONS = new Map<AgentRunState, AgentRunState[]>([
-    [AgentRunState.CREATED, [AgentRunState.QUEUED, AgentRunState.PREPARING_CONTEXT, AgentRunState.REJECTED]],
-    [AgentRunState.QUEUED, [AgentRunState.PREPARING_CONTEXT, AgentRunState.CANCEL_REQUESTED, AgentRunState.REJECTED]],
+    [AgentRunState.CREATED, [AgentRunState.QUEUED, AgentRunState.PREPARING_CONTEXT, AgentRunState.REJECTED, AgentRunState.FAILED]],
+    [AgentRunState.QUEUED, [AgentRunState.PREPARING_CONTEXT, AgentRunState.CANCEL_REQUESTED, AgentRunState.REJECTED, AgentRunState.FAILED]],
     [AgentRunState.PREPARING_CONTEXT, [AgentRunState.READY, AgentRunState.FAILED, AgentRunState.TIMED_OUT, AgentRunState.CANCEL_REQUESTED]],
     [AgentRunState.READY, [AgentRunState.RUNNING, AgentRunState.CANCEL_REQUESTED]],
     [AgentRunState.RUNNING, [AgentRunState.WAITING_FOR_TOOL, AgentRunState.VALIDATING_OUTPUT, AgentRunState.FAILED, AgentRunState.TIMED_OUT, AgentRunState.CANCEL_REQUESTED]],
