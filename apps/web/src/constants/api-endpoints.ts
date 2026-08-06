@@ -48,7 +48,7 @@ export const API_ENDPOINTS = {
     agentRun: (id: string) => `/ai/agents/${id}`,
     systemDiagnosticRun: "/ai/agents/system-diagnostic/run",
     decision: "/ai/decision",
-    analysisRun: (agentType: string) => `/ai/agents/${agentType}/runs`,
+    analysisRun: (agentType: string) => `/agents/${agentType}/runs`,
     liveTrading: "/ai/live-trading",
     liveTradingSync: "/ai/live-trading/sync",
     liveTradingKillSwitch: "/ai/live-trading/kill-switch",
