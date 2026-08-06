@@ -672,28 +672,29 @@ export class PortfolioService {
       });
 
     const quantRecommendationModel = this.prisma.quantRecommendation;
-
-    await quantRecommendationModel.deleteMany({ where: { userId } });
-    await quantRecommendationModel.createMany({
-      data: recommendations.map((item) => ({
-        userId,
-        title: item.title,
-        moduleSource: item.moduleSource,
-        problemStatement: item.problemStatement,
-        evidenceText: item.evidenceText,
-        historicalResult: item.historicalResult as Prisma.InputJsonValue,
-        expectedBenefit: item.expectedBenefit,
-        estimatedRisk: item.estimatedRisk,
-        priority: item.priority,
-        implementationCost: item.implementationCost,
-        rollbackPlan: item.rollbackPlan,
-        status: "PENDING_APPROVAL",
-      })),
-    });
+    if (quantRecommendationModel) {
+      await quantRecommendationModel.deleteMany({ where: { userId } });
+      await quantRecommendationModel.createMany({
+        data: recommendations.map((item) => ({
+          userId,
+          title: item.title,
+          moduleSource: item.moduleSource,
+          problemStatement: item.problemStatement,
+          evidenceText: item.evidenceText,
+          historicalResult: item.historicalResult as Prisma.InputJsonValue,
+          expectedBenefit: item.expectedBenefit,
+          estimatedRisk: item.estimatedRisk,
+          priority: item.priority,
+          implementationCost: item.implementationCost,
+          rollbackPlan: item.rollbackPlan,
+          status: "PENDING_APPROVAL",
+        })),
+      });
+    }
   }
 
   private async detectMarketRegime(): Promise<"TRENDING" | "SIDEWAYS" | "HIGH_VOLATILITY"> {
-    const persisted = await this.prisma.marketRegimeState.findFirst({
+    const persisted = await this.prisma.marketRegimeState?.findFirst({
       where: { symbol: "BTC-USDT" },
       orderBy: { detectedAt: "desc" },
     });

@@ -50,6 +50,11 @@ describe("PortfolioService persistence", () => {
           },
         ]),
       },
+      marketRegimeState: { findFirst: vi.fn().mockResolvedValue(null) },
+      quantRecommendation: {
+        deleteMany: vi.fn().mockResolvedValue({}),
+        createMany: vi.fn().mockResolvedValue({}),
+      },
       $transaction: vi.fn(
         (callback: (tx: typeof transactionClient) => Promise<void>) =>
           callback(transactionClient),
