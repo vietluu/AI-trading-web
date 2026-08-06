@@ -25,7 +25,7 @@ export class ExchangeRateLimitService {
     this.publicLimit =
       config.get<number>("EXCHANGE_PUBLIC_RATE_LIMIT_PER_MINUTE") ?? 1200;
     this.privateLimit =
-      config.get<number>("EXCHANGE_PRIVATE_RATE_LIMIT_PER_MINUTE") ?? 300;
+      config.get<number>("EXCHANGE_PRIVATE_RATE_LIMIT_PER_MINUTE") ?? 1200;
   }
 
   async public(
