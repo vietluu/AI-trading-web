@@ -11,6 +11,7 @@ import { PipelineThresholdService } from "./application/pipeline-threshold.servi
 import { SignalFilterService } from "./application/signal-filter.service";
 import { PipelineAlertService } from "./application/pipeline-alert.service";
 import { PipelineRunnerService } from "./application/pipeline-runner.service";
+import { DecisionRiskPolicyService } from "../risk/application/decision-risk-policy.service";
 import { PipelineService } from "./application/pipeline.service";
 import { PipelineSchedulerService } from "./application/pipeline-scheduler.service";
 import { PipelineHealthService } from "./application/pipeline-health.service";
@@ -53,6 +54,7 @@ import { createBullRootConfig } from "./infrastructure/bull-config";
     PipelineThresholdService,
     SignalFilterService,
     PipelineAlertService,
+    DecisionRiskPolicyService,
     PipelineRunnerService,
     PipelineService,
     PipelineSchedulerService,

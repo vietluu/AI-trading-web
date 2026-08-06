@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service';
-import type { ReportType } from '@prisma/client';
+
+type ReportType = 'DAILY' | 'WEEKLY' | 'MONTHLY';
 
 export interface GeneratedReport {
   id?: string;
@@ -44,7 +45,7 @@ export class QuantReportService {
     let reportId = `report-${Date.now()}`;
 
     try {
-      const record = await this.prisma.quantReportRecord.create({
+      const record = await (this.prisma as any).quantReportRecord.create({
         data: {
           userId: userId ?? null,
           reportType,

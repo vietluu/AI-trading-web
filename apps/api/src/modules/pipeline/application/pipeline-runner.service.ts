@@ -14,6 +14,7 @@ import { PipelineCancellationService } from "../infrastructure/pipeline-cancella
 import { PipelineThresholdService } from "./pipeline-threshold.service";
 import { SignalFilterService } from "./signal-filter.service";
 import { PipelineAlertService } from "./pipeline-alert.service";
+import { DecisionRiskPolicyService } from "../../risk/application/decision-risk-policy.service";
 import { PipelineAnalyticsService } from "./pipeline-analytics.service";
 import { resolvePipelineDefinition } from "../domain/pipeline.definition";
 import type { PipelineJob } from "../infrastructure/pipeline-queue.service";
@@ -36,6 +37,7 @@ export class PipelineRunnerService {
     private readonly repository: PipelineRepository,
     private readonly cancellation: PipelineCancellationService,
     private readonly threshold: PipelineThresholdService,
+    private readonly riskPolicy: DecisionRiskPolicyService,
     private readonly signalFilter: SignalFilterService,
     private readonly marketData: MarketDataService,
     private readonly alerts: PipelineAlertService,
@@ -200,7 +202,10 @@ export class PipelineRunnerService {
         analyses,
       );
       const decisionCompletedAt = new Date();
-      const filter = this.threshold.evaluate(output);
+      const thresholdFilter = this.threshold.evaluate(output);
+      const filter = this.riskPolicy.evaluate(output);
+      const actionable = thresholdFilter.actionable && filter.actionable;
+      const reason = thresholdFilter.reason ?? filter.reason;
       await this.finishStep(runId, "decision", output, decisionCompletedAt);
       this.analytics.recordStageTelemetry({
         pipelineId: job.pipelineId,
@@ -215,36 +220,40 @@ export class PipelineRunnerService {
         opportunityScore: output.opportunityScore,
         riskScore: output.riskScore,
         decision: output.decision,
-        rejectReason: filter.reason,
-        executionResult: filter.actionable ? 'EXECUTED' : 'REJECTED',
+        rejectReason: reason,
+        executionResult: actionable ? 'EXECUTED' : 'REJECTED',
         durationMs: decisionCompletedAt.getTime() - startedAt.getTime(),
         tokenUsage: 0,
         apiCost: 0,
         createdAt: decisionCompletedAt.toISOString(),
       });
-      const executionDecision = filter.actionable
+      const executionDecision = actionable
         ? output
         : { ...output, decision: "WAIT" as const };
       const volatilityAtr = Number(analyses.market?.volatility.atr);
-      const riskAssessment = await this.liveTrading.assessPipelineDecision({
-        userId: job.userId,
-        pipelineRunId: runId,
-        symbol,
-        provider: job.provider as unknown as ExchangeProvider,
-        decision: executionDecision,
-        ...(typeof job.params?.strategyId === "string"
-          ? { strategyKey: job.params.strategyId }
-          : {}),
-        ...(Number.isFinite(volatilityAtr) && volatilityAtr >= 0
-          ? { volatilityAtr }
-          : {}),
-      });
-      const liveExecution = await this.liveTrading.executePipeline(
-        job.userId,
-        runId,
-      );
+      let riskAssessment: Awaited<ReturnType<LiveTradingService["assessPipelineDecision"]>> | undefined;
+      let liveExecution: Awaited<ReturnType<LiveTradingService["executePipeline"]>> | undefined;
+      if (actionable) {
+        riskAssessment = await this.liveTrading.assessPipelineDecision({
+          userId: job.userId,
+          pipelineRunId: runId,
+          symbol,
+          provider: job.provider as unknown as ExchangeProvider,
+          decision: executionDecision,
+          ...(typeof job.params?.strategyId === "string"
+            ? { strategyKey: job.params.strategyId }
+            : {}),
+          ...(Number.isFinite(volatilityAtr) && volatilityAtr >= 0
+            ? { volatilityAtr }
+            : {}),
+        });
+        liveExecution = await this.liveTrading.executePipeline(
+          job.userId,
+          runId,
+        );
+      }
       const completedAt = new Date();
-      const risk = riskAssessment.risk;
+      const risk = riskAssessment?.risk;
       const executionApproved = Boolean(risk?.approved);
       this.analytics.recordStageTelemetry({
         pipelineId: job.pipelineId,
@@ -277,8 +286,8 @@ export class PipelineRunnerService {
         storedContext: { analyses, fusionOutput },
         result: {
           ...output,
-          actionable: filter.actionable,
-          skippedReason: filter.reason,
+          actionable,
+          skippedReason: reason,
           riskAssessment,
           liveExecution,
         },

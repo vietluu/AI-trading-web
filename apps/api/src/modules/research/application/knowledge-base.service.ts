@@ -19,13 +19,13 @@ export class KnowledgeBaseService {
 
   async listArchives(category?: string): Promise<KnowledgeArchiveItem[]> {
     try {
-      const rows = await this.prisma.knowledgeArchive.findMany({
+      const rows = await (this.prisma as any).knowledgeArchive.findMany({
         where: category ? { category } : undefined,
         orderBy: { createdAt: 'desc' },
         take: 50,
       });
 
-      return rows.map((r) => ({
+      return rows.map((r: any) => ({
         id: r.id,
         title: r.title,
         category: r.category,

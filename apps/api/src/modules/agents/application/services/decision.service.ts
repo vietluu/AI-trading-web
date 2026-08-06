@@ -140,11 +140,14 @@ export class DecisionService {
     const conflictDeduction = conflictLevel === 'MEDIUM' ? DECISION_THRESHOLDS.CONFLICT_MEDIUM_PENALTY : conflictLevel === 'HIGH' ? DECISION_THRESHOLDS.CONFLICT_HIGH_PENALTY : 0;
     const volDeduction = Math.abs(volatilityAdjustment);
     const coreBonus = coreAgree ? DECISION_THRESHOLDS.CORE_TREND_ALIGNMENT_BONUS : 0;
+    const convictionBonus = agreementScore >= 80 && baseScore >= 70 ? 8 : agreementScore >= 70 && baseScore >= 60 ? 4 : 0;
 
-    const rawConfidence = baseScore + coreBonus - qualityDeduction - conflictDeduction - volDeduction;
+    const rawConfidence = baseScore + coreBonus + convictionBonus - qualityDeduction - conflictDeduction - volDeduction;
     const confidence = candidate === 'WAIT' ? 0 : Math.round(this.clamp(rawConfidence, 0, 100));
 
-    if (confidence < DECISION_THRESHOLDS.MINIMUM_CONFIDENCE_THRESHOLD && candidate !== 'WAIT') overrides.push('Calibrated confidence below 60 forced WAIT.');
+    if (confidence < DECISION_THRESHOLDS.MINIMUM_CONFIDENCE_THRESHOLD && candidate !== 'WAIT') {
+      overrides.push('Calibrated confidence below 60 forced WAIT.');
+    }
     if (dataQuality === 'INSUFFICIENT') overrides.push('Insufficient data forced WAIT.');
 
     const signals = this.signals(input, votes, weighting);
@@ -159,15 +162,20 @@ export class DecisionService {
     const profitFactorEstimate = this.clamp(expectedReward / Math.max(expectedLoss, 0.05), 0.1, 10);
     const riskScore = this.clamp(50 + (volatilityAdjustment * -0.4) + (conflictLevel === 'HIGH' ? 15 : conflictLevel === 'MEDIUM' ? 8 : 0) + Math.max(0, 100 - opportunityScore) * 0.2, 0, 100);
     const executionCost = this.estimateExecutionCost(input, opportunityScore, regime.type);
+    const strongConviction = agreementScore >= 80 && opportunityScore >= 68 && expectedValue > 0.2;
     const finalDecision: DecisionOutput['decision'] =
       dataQuality === 'INSUFFICIENT' ||
       conflictLevel === 'HIGH' ||
       extreme ||
-      calibratedConfidence < adaptiveThreshold ||
-      expectedValue <= 0 ||
-      opportunityScore < Math.max(55, adaptiveThreshold - 5)
+      (calibratedConfidence < adaptiveThreshold && !strongConviction) ||
+      (expectedValue <= 0 && !strongConviction) ||
+      (opportunityScore < Math.max(55, adaptiveThreshold - 5) && !strongConviction)
         ? 'WAIT'
         : candidate;
+
+    if (strongConviction) {
+      overrides.push('Strong conviction override allowed the decision to proceed despite a higher guardrail threshold.');
+    }
     const weightedBias =
       directionalBias > 0 ? 'bullish' : directionalBias < 0 ? 'bearish' : 'neutral';
     const output = DecisionOutputSchema.parse({

@@ -18,6 +18,7 @@ import {
   type PositionSide,
   type StrategyPositionSnapshot,
 } from "../domain/portfolio-engine";
+import { buildQuantRecommendation } from "../../research/domain/explainability-governance.engine";
 import { PortfolioConfigService } from "./portfolio-config.service";
 import { resolveDefaultSymbols } from "../../../exchange/infrastructure/exchange-symbol";
 
@@ -302,7 +303,7 @@ export class PortfolioService {
     const equity = live.equity;
     const strategies = await this.prisma.portfolioStrategy.findMany({
       where: { userId },
-      include: { performance: true, allocation: true },
+      include: { performance: true, allocation: true, livePositions: true },
       orderBy: { createdAt: "asc" },
     });
     const allocations = calculateAllocations(
@@ -376,6 +377,11 @@ export class PortfolioService {
         },
       });
     });
+    const refreshPayload = strategies.map((strategy) => ({
+      ...strategy,
+      livePositions: (strategy as { livePositions?: Array<{ unrealizedPnl?: Prisma.Decimal | number | null; realizedPnl?: Prisma.Decimal | number | null }> }).livePositions ?? [],
+    }));
+    await this.refreshQuantRecommendations(userId, refreshPayload);
     return allocations;
   }
 
@@ -605,6 +611,103 @@ export class PortfolioService {
         createdAt: item.createdAt.toISOString(),
       })),
     };
+  }
+
+  private async refreshQuantRecommendations(
+    userId: string,
+    strategies: Array<{
+      id: string;
+      key: string;
+      name: string;
+      allocation?: { weight?: Prisma.Decimal | number | null; allocatedCapital?: Prisma.Decimal | number | null } | null;
+      performance?: { returnPct?: Prisma.Decimal | number | null; drawdownPct?: Prisma.Decimal | number | null } | null;
+      livePositions?: Array<{ unrealizedPnl?: Prisma.Decimal | number | null; realizedPnl?: Prisma.Decimal | number | null }>;
+    }>,
+  ) {
+    const regime = await this.detectMarketRegime();
+    const normalizedStrategies = strategies.map((strategy) => {
+      const strategyWithOptionalPositions = strategy as unknown as {
+        livePositions?: Array<{
+          unrealizedPnl?: Prisma.Decimal | number | null;
+          realizedPnl?: Prisma.Decimal | number | null;
+        }>;
+      };
+      const livePositions = (strategyWithOptionalPositions.livePositions ?? []) as Array<{
+        unrealizedPnl?: Prisma.Decimal | number | null;
+        realizedPnl?: Prisma.Decimal | number | null;
+      }>;
+      return {
+        ...strategy,
+        livePositions,
+      };
+    });
+    const recommendations = normalizedStrategies
+      .filter((strategy) => Boolean(strategy.performance) || strategy.livePositions.length > 0)
+      .map((strategy) => {
+        const returnPct = Number(strategy.performance?.returnPct ?? 0);
+        const drawdownPct = Number(strategy.performance?.drawdownPct ?? 0);
+        const weight = Number(strategy.allocation?.weight ?? 0);
+        const livePositions = strategy.livePositions ?? [];
+        const livePnl = livePositions.reduce(
+          (sum, item) => sum + Number(item.unrealizedPnl ?? 0) + Number(item.realizedPnl ?? 0),
+          0,
+        );
+        const liveSignal = livePnl > 0 ? 0.02 : livePnl < 0 ? -0.02 : 0;
+        const regimeSignal = regime === "TRENDING" ? 0.03 : regime === "HIGH_VOLATILITY" ? -0.04 : 0.01;
+        const delta = Math.max(-0.12, Math.min(0.12, returnPct * 0.08 - drawdownPct * 0.2 + liveSignal + regimeSignal));
+        const recommendedWeight = Math.max(0.05, Math.min(0.4, weight + delta));
+
+        return buildQuantRecommendation({
+          title: `Adjust ${strategy.name} allocation to ${Math.round(recommendedWeight * 100)}%`,
+          moduleSource: "PORTFOLIO_INTELLIGENCE",
+          problemStatement: `Strategy ${strategy.name} should be rebalanced based on live exchange positions and the current ${regime.toLowerCase()} regime.`,
+          evidenceText: `Current weight ${Math.round(weight * 100)}%, live pnl ${livePnl.toFixed(2)}, return ${(returnPct * 100).toFixed(2)}%, drawdown ${(drawdownPct * 100).toFixed(2)}%.`,
+          historicalResult: { returnPct, drawdownPct, recommendedWeight, marketRegime: regime, livePnl },
+          expectedBenefit: "Improves portfolio risk-adjusted returns by reweighting to live performance.",
+          estimatedRisk: "Medium if market regime changes abruptly.",
+          priority: drawdownPct > 0.05 || regime === "HIGH_VOLATILITY" ? "HIGH" : "MEDIUM",
+          implementationCost: "LOW",
+          rollbackPlan: "Revert the allocation weight using the portfolio rebalance endpoint.",
+        });
+      });
+
+    const quantRecommendationModel = (this.prisma as any).quantRecommendation as {
+      deleteMany: (args: { where: { userId: string } }) => Promise<unknown>;
+      createMany: (args: { data: Array<Record<string, unknown>> }) => Promise<unknown>;
+    };
+
+    await quantRecommendationModel.deleteMany({ where: { userId } });
+    await quantRecommendationModel.createMany({
+      data: recommendations.map((item) => ({
+        userId,
+        title: item.title,
+        moduleSource: item.moduleSource,
+        problemStatement: item.problemStatement,
+        evidenceText: item.evidenceText,
+        historicalResult: item.historicalResult as Prisma.InputJsonValue,
+        expectedBenefit: item.expectedBenefit,
+        estimatedRisk: item.estimatedRisk,
+        priority: item.priority,
+        implementationCost: item.implementationCost,
+        rollbackPlan: item.rollbackPlan,
+        status: "PENDING_APPROVAL",
+      })),
+    });
+  }
+
+  private async detectMarketRegime(): Promise<"TRENDING" | "SIDEWAYS" | "HIGH_VOLATILITY"> {
+    const persisted = await (this.prisma as any).marketRegimeState.findFirst({
+      where: { symbol: "BTC-USDT" },
+      orderBy: { detectedAt: "desc" },
+    });
+    const regime = (persisted?.regime ?? "TRENDING") as string;
+    if (regime === "HIGH_VOLATILITY" || regime === "PANIC" || regime === "EUPHORIA") {
+      return "HIGH_VOLATILITY";
+    }
+    if (regime === "BULL" || regime === "BEAR" || regime === "TRENDING") {
+      return "TRENDING";
+    }
+    return "SIDEWAYS";
   }
 
   private exchangeEnvironments(): string[] {
