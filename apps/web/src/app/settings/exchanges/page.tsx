@@ -1,24 +1,14 @@
 "use client";
 
-import { exchangeConnectionSchema } from "@platform/shared";
-import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, Plus, ServerCog } from "lucide-react";
 import Link from "next/link";
-import { z } from "zod";
 
 import { AccountNav } from "@/components/account-nav";
-import { apiRequestValidated } from "@/lib/api-client";
+import { ROUTES } from "@/constants/routes";
+import { useExchangeConnections } from "@/hooks/settings/useSettings";
 
 export default function ExchangesPage(): React.JSX.Element {
-  const connections = useQuery({
-    queryKey: ["exchange-connections"],
-    queryFn: () =>
-      apiRequestValidated(
-        "/exchange-connections",
-        z.array(exchangeConnectionSchema),
-      ),
-    retry: false,
-  });
+  const connections = useExchangeConnections();
   return (
     <section>
       <AccountNav />
@@ -31,7 +21,7 @@ export default function ExchangesPage(): React.JSX.Element {
         </div>
         <Link
           className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"
-          href="/settings/exchanges/new"
+          href={ROUTES.settingsExchanges + "/new"}
         >
           <Plus className="h-4 w-4" /> New connection
         </Link>
@@ -56,7 +46,7 @@ export default function ExchangesPage(): React.JSX.Element {
         {connections.data?.map((connection) => (
           <Link
             className="grid gap-3 py-5 hover:bg-muted/20 sm:grid-cols-[1fr_auto_auto] sm:items-center sm:px-3"
-            href={`/settings/exchanges/${connection.id}`}
+            href={ROUTES.settingsExchangeDetail(connection.id)}
             key={connection.id}
           >
             <div>

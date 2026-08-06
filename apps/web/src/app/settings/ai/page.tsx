@@ -1,20 +1,20 @@
 "use client";
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import type {
-  AIConfigDto,
-  AIHistoryDto,
-  AIModel,
-  AIProviderHealth,
-  AIResponseDto,
-  AIUsageDto,
-} from "@platform/shared";
+import type { AIResponseDto } from "@platform/shared";
 import { AccountNav } from "@/components/account-nav";
-import { apiRequest, resolveApiUrl } from "@/lib/api-client";
+import {
+  useAIConfig,
+  useAIHistory,
+  useAIModels,
+  useAIProviders,
+  useAIUsage,
+  useTestAIRequest,
+  useUpdateAIConfig,
+} from "@/hooks/ai/useAiSettings";
+import { streamAIChat } from "@/services/ai-settings.service";
 
 export default function AISettingsPage(): React.JSX.Element {
-  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<"telemetry" | "config" | "sandbox" | "history">("telemetry");
 
   // Prompt Sandbox state
@@ -26,62 +26,13 @@ export default function AISettingsPage(): React.JSX.Element {
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamOutput, setStreamOutput] = useState("");
 
-  // Queries
-  const providersQuery = useQuery<AIProviderHealth[]>({
-    queryKey: ["ai-providers"],
-    queryFn: () => apiRequest("/ai/providers"),
-  });
-
-  const modelsQuery = useQuery<AIModel[]>({
-    queryKey: ["ai-models"],
-    queryFn: () => apiRequest("/ai/models"),
-  });
-
-  const configQuery = useQuery<AIConfigDto>({
-    queryKey: ["ai-config"],
-    queryFn: () => apiRequest("/ai/config"),
-  });
-
-  const usageQuery = useQuery<AIUsageDto>({
-    queryKey: ["ai-usage"],
-    queryFn: () => apiRequest("/ai/usage"),
-  });
-
-  const historyQuery = useQuery<AIHistoryDto[]>({
-    queryKey: ["ai-history"],
-    queryFn: () => apiRequest("/ai/history?limit=30"),
-  });
-
-  // Config Update Mutation
-  const updateConfigMutation = useMutation({
-    mutationFn: (newConfig: Partial<AIConfigDto>) =>
-      apiRequest("/ai/config", {
-        method: "PUT",
-        body: JSON.stringify(newConfig),
-      }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["ai-config"] });
-    },
-  });
-
-  // Prompt Test Mutation
-  const testPromptMutation = useMutation({
-    mutationFn: (body: {
-      prompt: string;
-      provider?: "OPENAI" | "ANTHROPIC" | "GEMINI" | "OLLAMA";
-      model?: string;
-      responseFormat?: "text" | "json";
-    }) =>
-      apiRequest<AIResponseDto>("/ai/test", {
-        method: "POST",
-        body: JSON.stringify(body),
-      }),
-    onSuccess: (data) => {
-      setTestResult(data);
-      void queryClient.invalidateQueries({ queryKey: ["ai-usage"] });
-      void queryClient.invalidateQueries({ queryKey: ["ai-history"] });
-    },
-  });
+  const providersQuery = useAIProviders();
+  const modelsQuery = useAIModels();
+  const configQuery = useAIConfig();
+  const usageQuery = useAIUsage();
+  const historyQuery = useAIHistory();
+  const updateConfigMutation = useUpdateAIConfig();
+  const testPromptMutation = useTestAIRequest();
 
   const handleStreamPrompt = async () => {
     setIsStreaming(true);
@@ -89,14 +40,10 @@ export default function AISettingsPage(): React.JSX.Element {
     setTestResult(null);
 
     try {
-      const res = await fetch(resolveApiUrl("/ai/chat/stream"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: testPrompt,
-          provider: testProvider,
-          model: testModel,
-        }),
+      const res = await streamAIChat({
+        prompt: testPrompt,
+        provider: testProvider,
+        model: testModel,
       });
 
       if (!res.body) return;
@@ -127,8 +74,6 @@ export default function AISettingsPage(): React.JSX.Element {
       console.error("Streaming failed", err);
     } finally {
       setIsStreaming(false);
-      void queryClient.invalidateQueries({ queryKey: ["ai-usage"] });
-      void queryClient.invalidateQueries({ queryKey: ["ai-history"] });
     }
   };
 

@@ -32,21 +32,7 @@ export default function ResearchPage() {
         const data = await apiRequest<HypothesisData>("/quant-intelligence/hypotheses");
         setHypothesis(data);
       } catch {
-        setHypothesis({
-          title: "Hypothesis [FACTOR_COMBINATION]: Dynamic factor combination optimization for BTC-USDT",
-          category: "FACTOR_COMBINATION",
-          description: "Statistical evaluation of factor combination adjustment under multi-regime backtesting.",
-          hypothesisText: "Adjusting factor combination improves expected value to +1.95 with a Profit Factor of 2.45 and Sharpe Ratio of 2.58 at p=0.012.",
-          expectedValue: 1.95,
-          profitFactor: 2.45,
-          sharpeRatio: 2.58,
-          statisticalProof: {
-            pValue: 0.012,
-            sampleSize: 1450,
-            tStatistic: 2.68,
-            confidenceInterval: [0.015, 0.048],
-          },
-        });
+        //
       } finally {
         setLoading(false);
       }
@@ -72,7 +58,7 @@ export default function ResearchPage() {
       {/* Hypothesis Card */}
       <div className="rounded-2xl border border-border bg-card p-6 shadow-sm space-y-4">
         <div className="flex items-center gap-2 text-xs font-bold text-primary uppercase tracking-wider">
-          <Sparkles className="h-4 w-4" /> Category: {hypothesis?.category}
+          <Sparkles className="h-4 w-4" /> {t.research.category}: {hypothesis?.category}
         </div>
         <h2 className="text-xl font-bold">{hypothesis?.title}</h2>
         <p className="text-sm text-muted-foreground">{hypothesis?.description}</p>
@@ -84,19 +70,19 @@ export default function ResearchPage() {
         {/* Statistical Evidence */}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 pt-2">
           <div className="rounded-xl border border-border p-3">
-            <span className="text-xs text-muted-foreground">p-Value</span>
-            <p className="text-lg font-bold text-emerald-500">{hypothesis?.statisticalProof?.pValue} (Statistically Significant)</p>
+            <span className="text-xs text-muted-foreground">{t.research.pValue}</span>
+            <p className="text-lg font-bold text-emerald-500">{hypothesis?.statisticalProof?.pValue} ({t.research.statSig})</p>
           </div>
           <div className="rounded-xl border border-border p-3">
-            <span className="text-xs text-muted-foreground">Sample Size</span>
-            <p className="text-lg font-bold">{hypothesis?.statisticalProof?.sampleSize} candles</p>
+            <span className="text-xs text-muted-foreground">{t.research.sampleSize}</span>
+            <p className="text-lg font-bold">{hypothesis?.statisticalProof?.sampleSize} {t.research.candles}</p>
           </div>
           <div className="rounded-xl border border-border p-3">
-            <span className="text-xs text-muted-foreground">t-Statistic</span>
+            <span className="text-xs text-muted-foreground">{t.research.tStatistic}</span>
             <p className="text-lg font-bold">{hypothesis?.statisticalProof?.tStatistic}</p>
           </div>
           <div className="rounded-xl border border-border p-3">
-            <span className="text-xs text-muted-foreground">95% Confidence Interval</span>
+            <span className="text-xs text-muted-foreground">{t.research.confidenceInterval}</span>
             <p className="text-lg font-bold">[{hypothesis?.statisticalProof?.confidenceInterval?.[0]}, {hypothesis?.statisticalProof?.confidenceInterval?.[1]}]</p>
           </div>
         </div>

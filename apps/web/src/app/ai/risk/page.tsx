@@ -1,41 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/api-client";
-
-interface RiskDashboard {
-  config: {
-    riskPerTrade: number;
-    maxPositions: number;
-    maxLeverage: number;
-    maxDrawdown: number;
-    maxExposure: number;
-    cooldownMs: number;
-  };
-  portfolio: {
-    balance: number;
-    equity: number;
-    peakEquity: number;
-    openPositions: number;
-    exposure: number;
-    exposurePct: number;
-    drawdownPct: number;
-  };
-  assessments: Array<{
-    id: string;
-    symbol: string;
-    decision: string;
-    confidence: number;
-    approved: boolean;
-    reason?: string;
-    positionSize?: number;
-    leverage?: number;
-    stopLoss?: number;
-    takeProfit?: number;
-    riskScore: number;
-    createdAt: string;
-  }>;
-}
+import { useRiskDashboard } from "@/hooks/ai/useAiFeature";
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -45,11 +10,7 @@ const money = new Intl.NumberFormat("en-US", {
 const percent = (value: number): string => `${(value * 100).toFixed(2)}%`;
 
 export default function RiskPage(): React.JSX.Element {
-  const query = useQuery({
-    queryKey: ["risk-dashboard"],
-    queryFn: () => apiRequest<RiskDashboard>("/ai/risk"),
-    refetchInterval: 15_000,
-  });
+  const query = useRiskDashboard();
   if (query.isLoading)
     return <p className="text-muted-foreground">Loading portfolio risk…</p>;
   if (query.isError)

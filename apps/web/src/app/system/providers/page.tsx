@@ -1,45 +1,12 @@
 "use client";
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AccountNav } from "@/components/account-nav";
 import { LoadingButton } from "@/components/loading-button";
-import { apiRequest } from "@/lib/api-client";
-
-interface ProviderHealth {
-  id: string;
-  provider: string;
-  status: string;
-  lastAttemptAt?: string;
-  lastSuccessAt?: string;
-  lastItemAt?: string;
-  consecutiveFailures: number;
-  averageLatencyMs: number;
-  lastErrorCode?: string;
-  itemsFetchedTotal: number;
-  itemsAcceptedTotal: number;
-  updatedAt: string;
-}
+import { useProviderHealth } from "@/hooks/system/useSystemProviders";
 
 export default function SystemProvidersPage() {
-  const queryClient = useQueryClient();
-
-  const { data: providers, isLoading, isError, refetch } = useQuery({
-    queryKey: ["provider-health"],
-    queryFn: async () => {
-      return apiRequest<ProviderHealth[]>("/external-data/providers/health");
-    },
-  });
-
-  const triggerRunMutation = useMutation({
-    mutationFn: async (providerId: string) => {
-      return apiRequest(`/external-data/providers/${providerId}/run`, {
-        method: "POST",
-      });
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["provider-health"] });
-    },
-  });
+  const { query, triggerRunMutation } = useProviderHealth();
+  const { data: providers, isLoading, isError, refetch } = query;
 
   return (
     <div className="container mx-auto max-w-5xl">

@@ -1,61 +1,32 @@
 "use client";
 
 import { use } from "react";
-import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { AccountNav } from "@/components/account-nav";
-import { apiRequest } from "@/lib/api-client";
-
-interface NewsDetail {
-  id: string;
-  sourceId: string;
-  title: string;
-  summary?: string;
-  excerpt?: string;
-  canonicalUrl: string;
-  originalUrl?: string;
-  author?: string;
-  language?: string;
-  publishedAt: string;
-  reliabilityScore: number;
-  importanceScore: number;
-  symbols: string[];
-  topics: string[];
-  entities: string[];
-  sourceReferences: {
-    id: string;
-    sourceId: string;
-    sourceName: string;
-    publishedAt: string;
-    canonicalUrl: string;
-  }[];
-  importanceReasons: string[];
-}
+import { ROUTES } from "@/constants/routes";
+import { useNewsDetail } from "@/hooks/news/useNews";
+import { useTranslation } from "@/lib/i18n/i18n-context";
 
 export default function NewsDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { t } = useTranslation();
   const { id } = use(params);
 
-  const { data: article, isLoading, isError } = useQuery({
-    queryKey: ["news-detail", id],
-    queryFn: async () => {
-      return apiRequest<NewsDetail>(`/external-data/news/${id}`);
-    },
-  });
+  const { data: article, isLoading, isError } = useNewsDetail(id);
 
   return (
     <div className="container mx-auto max-w-4xl p-6">
       <AccountNav />
 
       <div className="mb-4">
-        <Link href="/news" className="text-xs text-primary hover:underline">
-          ← Back to News Feed
+        <Link href={ROUTES.news} className="text-xs text-primary hover:underline">
+          {t.news.backToFeed}
         </Link>
       </div>
 
       {isLoading ? (
-        <div className="py-12 text-center text-sm text-muted-foreground">Loading article details...</div>
+        <div className="py-12 text-center text-sm text-muted-foreground">{t.news.detailLoading}</div>
       ) : isError || !article ? (
-        <div className="py-12 text-center text-sm text-red-400">Failed to load article details.</div>
+        <div className="py-12 text-center text-sm text-red-400">{t.news.detailError}</div>
       ) : (
         <div className="space-y-6">
           <div className="rounded-lg border border-border bg-card p-6">
@@ -84,7 +55,7 @@ export default function NewsDetailPage({ params }: { params: Promise<{ id: strin
 
             {article.excerpt && (
               <div className="rounded-md bg-muted/40 p-4 text-sm text-foreground mb-6">
-                <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">Sanitized Excerpt</h3>
+                <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">{t.news.sanitizedExcerpt}</h3>
                 <p className="leading-relaxed">{article.excerpt}</p>
               </div>
             )}
@@ -109,14 +80,14 @@ export default function NewsDetailPage({ params }: { params: Promise<{ id: strin
                 rel="noreferrer"
                 className="rounded-md bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90"
               >
-                Read Original Article ↗
+                {t.news.originalSource}
               </a>
             </div>
           </div>
 
           {/* Importance Breakdown */}
           <div className="rounded-lg border border-border bg-card p-6">
-            <h2 className="text-sm font-semibold tracking-tight mb-3">Deterministic Importance Score Factors</h2>
+            <h2 className="text-sm font-semibold tracking-tight mb-3">{t.news.importanceFactors}</h2>
             <ul className="list-disc list-inside text-xs text-muted-foreground space-y-1">
               {article.importanceReasons.map((reason, idx) => (
                 <li key={idx}>{reason}</li>
@@ -128,7 +99,7 @@ export default function NewsDetailPage({ params }: { params: Promise<{ id: strin
           {article.sourceReferences.length > 0 && (
             <div className="rounded-lg border border-border bg-card p-6">
               <h2 className="text-sm font-semibold tracking-tight mb-3">
-                Associated Sources ({article.sourceReferences.length})
+                {t.news.associatedSources} ({article.sourceReferences.length})
               </h2>
               <div className="divide-y divide-border rounded-md border border-border">
                 {article.sourceReferences.map((ref) => (
@@ -138,7 +109,7 @@ export default function NewsDetailPage({ params }: { params: Promise<{ id: strin
                       <span className="ml-2 text-muted-foreground">{new Date(ref.publishedAt).toLocaleString()}</span>
                     </div>
                     <a href={ref.canonicalUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline">
-                      Link ↗
+                      {t.news.link}
                     </a>
                   </div>
                 ))}

@@ -1,50 +1,21 @@
 "use client";
 
-import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
-import type { ToolDefinitionDto, ToolHealthDto, ToolInvocationRecordDto, ToolResultDto } from "@platform/shared";
+import type { ToolResultDto } from "@platform/shared";
 import Link from "next/link";
 import { LoadingButton } from "@/components/loading-button";
-import { apiRequest } from "@/lib/api-client";
+import { ROUTES } from "@/constants/routes";
+import { useAIToolsSettings } from "@/hooks/ai/useAiSettings";
 
 export default function AIToolsSettingsPage() {
   const [selectedTool, setSelectedTool] = useState<string>("market.ticker.get");
   const [testArguments, setTestArguments] = useState<string>('{\n  "symbol": "BTC-USDT"\n}');
-  const [executionOutput, setExecutionOutput] = useState<ToolResultDto | null>(null);
+  const [executionOutput] = useState<ToolResultDto | null>(null);
 
-  // Fetch registered tools
-  const { data: tools, isLoading: isLoadingTools } = useQuery<ToolDefinitionDto[]>({
-    queryKey: ["ai-tools-list"],
-    queryFn: () => apiRequest<ToolDefinitionDto[]>("/ai/tools", { headers: { Accept: "application/json" } }),
-  });
-
-  // Fetch tools health
-  const { data: health } = useQuery<ToolHealthDto[]>({
-    queryKey: ["ai-tools-health"],
-    queryFn: () => apiRequest<ToolHealthDto[]>("/ai/tools/health", { headers: { Accept: "application/json" } }),
-    refetchInterval: 10000,
-  });
-
-  // Fetch invocation history
-  const { data: history, refetch: refetchHistory } = useQuery<ToolInvocationRecordDto[]>({
-    queryKey: ["ai-tools-history"],
-    queryFn: () => apiRequest<ToolInvocationRecordDto[]>("/ai/tools/history?limit=30", { headers: { Accept: "application/json" } }),
-  });
-
-  // Execute manual tool test
-  const testMutation = useMutation({
-    mutationFn: async ({ name, args }: { name: string; args: Record<string, unknown> }) => {
-      return apiRequest<ToolResultDto>(`/ai/tools/${name}/test`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(args),
-      });
-    },
-    onSuccess: (data: ToolResultDto) => {
-      setExecutionOutput(data);
-      void refetchHistory();
-    },
-  });
+  const { toolsQuery, healthQuery, historyQuery, testMutation } = useAIToolsSettings();
+  const { data: tools, isLoading: isLoadingTools } = toolsQuery;
+  const { data: health } = healthQuery;
+  const { data: history } = historyQuery;
 
   const handleRunTest = () => {
     try {
@@ -71,7 +42,7 @@ export default function AIToolsSettingsPage() {
         </div>
         <div className="flex items-center gap-3">
           <Link
-            href="/settings/ai"
+            href={ROUTES.settingsAi}
             className="px-3 py-1.5 rounded-md border border-border bg-card text-xs font-medium hover:bg-muted transition-colors"
           >
             ← Back to AI Provider Settings
@@ -141,9 +112,9 @@ export default function AIToolsSettingsPage() {
                 onChange={(e) => setSelectedTool(e.target.value)}
                 className="w-full rounded-md border border-border bg-background p-2 text-sm text-foreground"
               >
-                {tools?.map((t) => (
-                  <option key={t.name} value={t.name}>
-                    {t.name} ({t.displayName})
+                {tools?.map((tool) => (
+                  <option key={tool.name} value={tool.name}>
+                    {tool.name} ({tool.displayName})
                   </option>
                 ))}
               </select>

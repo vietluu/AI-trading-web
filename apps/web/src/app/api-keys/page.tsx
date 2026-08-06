@@ -1,8 +1,5 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { credentialViewSchema } from "@platform/shared";
-import { z } from "zod";
 import { useState, type FormEvent } from "react";
 
 import { AccountNav } from "@/components/account-nav";
@@ -12,20 +9,17 @@ import {
   Field,
   SelectField,
 } from "@/components/form-controls";
-import { apiRequest, apiRequestValidated } from "@/lib/api-client";
+import { useCredentials } from "@/hooks/credentials/useCredentials";
+import { useTranslation } from "@/lib/i18n/i18n-context";
+import { createCredential, deleteCredential, testCredential } from "@/services/credentials.service";
 const providers = ["OPENAI", "BINANCE", "OKX", "NEWS_API", "CUSTOM"];
 
 export default function ApiKeysPage(): React.JSX.Element {
-  const client = useQueryClient();
+  const { t } = useTranslation();
   const [error, setError] = useState<string>();
   const [message, setMessage] = useState<string>();
   const [totpCode, setTotpCode] = useState("");
-  const credentials = useQuery({
-    queryKey: ["credentials"],
-    queryFn: () =>
-      apiRequestValidated("/credentials", z.array(credentialViewSchema)),
-    retry: false,
-  });
+  const credentials = useCredentials();
   async function create(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     setError(undefined);
@@ -33,25 +27,18 @@ export default function ApiKeysPage(): React.JSX.Element {
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     try {
-      await apiRequest("/credentials", {
-        method: "POST",
-        ...(totpCode ? { headers: { "X-TOTP-Code": totpCode } } : {}),
-        body: JSON.stringify({
-          provider: form.get("provider"),
-          label: form.get("label") || undefined,
-          apiKey: form.get("apiKey"),
-          secret: form.get("secret") || undefined,
-          passphrase: form.get("passphrase") || undefined,
-        }),
-      });
+      await createCredential({
+        provider: form.get("provider"),
+        label: form.get("label") || undefined,
+        apiKey: form.get("apiKey"),
+        secret: form.get("secret") || undefined,
+        passphrase: form.get("passphrase") || undefined,
+      }, totpCode);
       formElement.reset();
       setTotpCode("");
-      setMessage("Credential encrypted and saved.");
-      await client.invalidateQueries({ queryKey: ["credentials"] });
+      setMessage(t.apiKeys.successMessage);
     } catch (caught) {
-      setError(
-        caught instanceof Error ? caught.message : "Could not save credential",
-      );
+      setError(caught instanceof Error ? caught.message : t.apiKeys.errorSave);
     }
   }
   async function action(
@@ -62,65 +49,59 @@ export default function ApiKeysPage(): React.JSX.Element {
     setError(undefined);
     setMessage(undefined);
     try {
-      await apiRequest(path, {
-        method,
-        ...(totpCode ? { headers: { "X-TOTP-Code": totpCode } } : {}),
-      });
+      if (method === "POST") {
+        await testCredential(path.replace("/credentials/", "").replace("/test", ""), totpCode);
+      } else {
+        await deleteCredential(path.replace("/credentials/", ""), totpCode);
+      }
       setTotpCode("");
       setMessage(messageText);
-      await client.invalidateQueries({ queryKey: ["credentials"] });
     } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "Could not complete credential action",
-      );
+      setError(caught instanceof Error ? caught.message : t.apiKeys.errorAction);
     }
   }
   return (
     <section>
       <AccountNav />
-      <h1 className="text-3xl font-semibold">API keys</h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        Secrets are encrypted at rest and are never returned after saving.
-      </p>
+      <h1 className="text-3xl font-semibold">{t.apiKeys.title}</h1>
+      <p className="mt-2 text-sm text-muted-foreground">{t.apiKeys.subtitle}</p>
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <form
           className="grid content-start gap-4 rounded-xl border border-border bg-card p-6"
           onSubmit={(event) => void create(event)}
         >
-          <h2 className="font-semibold">Add credential</h2>
-          <SelectField label="Provider" name="provider">
+          <h2 className="font-semibold">{t.apiKeys.addCredential}</h2>
+          <SelectField label={t.apiKeys.provider} name="provider">
             {providers.map((provider) => (
               <option key={provider}>{provider}</option>
             ))}
           </SelectField>
-          <Field label="Label (optional)" name="label" />
-          <Field autoComplete="off" label="API key" name="apiKey" required />
+          <Field label={t.apiKeys.labelOptional} name="label" />
+          <Field autoComplete="off" label={t.apiKeys.apiKey} name="apiKey" required />
           <Field
             autoComplete="new-password"
-            label="Secret (optional)"
+            label={t.apiKeys.secretOptional}
             name="secret"
             type="password"
           />
           <Field
             inputMode="numeric"
-            label="2FA code (required when enabled)"
+            label={t.apiKeys.totpCode}
             maxLength={6}
             onChange={(event) => setTotpCode(event.target.value)}
             value={totpCode}
           />
           <Field
             autoComplete="new-password"
-            label="Passphrase (optional)"
+            label={t.apiKeys.passphraseOptional}
             name="passphrase"
             type="password"
           />
           <Feedback error={error} success={message} />
-          <button className={buttonClass}>Encrypt and save</button>
+          <button className={buttonClass}>{t.apiKeys.encryptAndSave}</button>
         </form>
         <div className="rounded-xl border border-border bg-card p-6">
-          <h2 className="font-semibold">Configured providers</h2>
+          <h2 className="font-semibold">{t.apiKeys.configuredProviders}</h2>
           <div className="mt-4 grid gap-3">
             {providers.map((provider) => {
               const entries =
@@ -141,7 +122,7 @@ export default function ApiKeysPage(): React.JSX.Element {
                           : "text-muted-foreground"
                       }
                     >
-                      {entries.length ? "Configured" : "Not configured"}
+                      {entries.length ? t.apiKeys.configured : t.apiKeys.notConfigured}
                     </span>
                   </div>
                   {entries.map((item) => (
@@ -150,7 +131,7 @@ export default function ApiKeysPage(): React.JSX.Element {
                       key={item.id}
                     >
                       <p>
-                        {item.label ?? "Default"} · {item.maskedKey}
+                        {item.label ?? t.apiKeys.defaultLabel} · {item.maskedKey}
                       </p>
                       <p className="text-muted-foreground">
                         {item.status} ·{" "}
@@ -170,7 +151,7 @@ export default function ApiKeysPage(): React.JSX.Element {
                             )
                           }
                         >
-                          Test storage
+                          {t.apiKeys.testStorage}
                         </button>
                         <button
                           className="text-red-300"
@@ -183,7 +164,7 @@ export default function ApiKeysPage(): React.JSX.Element {
                             )
                           }
                         >
-                          Delete
+                          {t.apiKeys.delete}
                         </button>
                       </div>
                     </div>

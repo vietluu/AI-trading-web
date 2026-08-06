@@ -10,6 +10,7 @@ import {
 
 import { HealthStatus } from "@/components/health-status";
 import { Card, CardContent } from "@/components/ui/card";
+import { ROUTES } from "@/constants/routes";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 
 export default function DashboardPage(): React.JSX.Element {
@@ -35,7 +36,7 @@ export default function DashboardPage(): React.JSX.Element {
 
       <Link
         className="group flex items-center justify-between rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-5 transition hover:border-emerald-300/40 hover:bg-emerald-400/15"
-        href="/market"
+        href={ROUTES.market}
       >
         <div className="flex items-center gap-4">
           <div className="grid h-11 w-11 place-items-center rounded-xl bg-emerald-400/15 text-emerald-300">

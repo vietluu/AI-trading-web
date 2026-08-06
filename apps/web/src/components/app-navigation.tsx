@@ -4,9 +4,10 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
 import { ChevronDown, Globe, Menu, X } from "lucide-react";
-import { apiRequest } from "@/lib/api-client";
+import { ROUTES } from "@/constants/routes";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 import { MORE_NAV_ITEMS, PRIMARY_NAV_ITEMS } from "@/constants/navigation.constants";
+import { logout as logoutUser } from "@/services/auth.service";
 
 export function AppNavigation(): React.JSX.Element {
   const pathname = usePathname();
@@ -16,10 +17,10 @@ export function AppNavigation(): React.JSX.Element {
   const router = useRouter();
   const { language, setLanguage, t } = useTranslation();
 
-  async function logout(): Promise<void> {
+  async function handleLogout(): Promise<void> {
     try {
-      await apiRequest("/auth/logout", { method: "POST" });
-      router.push("/login");
+      await logoutUser();
+      router.push(ROUTES.login);
     } catch (caught) {
       console.error(caught instanceof Error ? caught.message : "Logout failed");
     }
@@ -140,7 +141,7 @@ export function AppNavigation(): React.JSX.Element {
               ? "bg-primary/15 text-primary"
               : "text-muted-foreground hover:bg-muted hover:text-foreground"
           }`}
-          href="/settings"
+          href={ROUTES.settings}
           onClick={() => {
             setDropdownOpen(false);
             setMobileMenuOpen(false);
@@ -168,7 +169,7 @@ export function AppNavigation(): React.JSX.Element {
             event.preventDefault();
             setDropdownOpen(false);
             setMobileMenuOpen(false);
-            void logout();
+            void handleLogout();
           }}
           type="button"
         >

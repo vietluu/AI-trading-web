@@ -1,18 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import type {
-  NewsSentimentInput,
-  SentimentAgentOutput,
-} from "@platform/shared";
-import { apiRequest } from "@/lib/api-client";
-
-interface SentimentAnalysisRun {
-  id: string;
-  status: string;
-  output?: SentimentAgentOutput;
-}
+import type { NewsSentimentInput } from "@platform/shared";
+import { useAnalysisRunner, type SentimentAnalysisResult } from "@/hooks/ai/useAiFeature";
 const fieldClassName =
   "w-full rounded-md border border-border bg-background px-3 py-2 text-sm";
 
@@ -20,14 +10,13 @@ export default function SentimentAnalysisPage(): React.JSX.Element {
   const [symbol, setSymbol] = useState<NewsSentimentInput["symbol"]>("BTC");
   const [lookbackHours, setLookbackHours] = useState(6);
   const [maxItems, setMaxItems] = useState(20);
-  const analysis = useMutation<SentimentAnalysisRun, Error>({
-    mutationFn: () =>
-      apiRequest<SentimentAnalysisRun>("/agents/SENTIMENT_ANALYST/runs", {
-        method: "POST",
-        body: JSON.stringify({ input: { symbol, lookbackHours, maxItems } }),
-      }),
-  });
-  const output = analysis.data?.output;
+  const analysis = useAnalysisRunner("SENTIMENT");
+  const analysisInput: NewsSentimentInput = {
+    symbol,
+    lookbackHours,
+    maxItems,
+  };
+  const output = analysis.data?.output as SentimentAnalysisResult | undefined;
   const invalid =
     lookbackHours < 1 || lookbackHours > 24 || maxItems < 1 || maxItems > 50;
 
@@ -73,7 +62,7 @@ export default function SentimentAnalysisPage(): React.JSX.Element {
         <button
           className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50 md:col-span-3"
           disabled={analysis.isPending || invalid}
-          onClick={() => analysis.mutate()}
+          onClick={() => analysis.mutate(analysisInput)}
           type="button"
         >
           {analysis.isPending
@@ -118,7 +107,7 @@ export default function SentimentAnalysisPage(): React.JSX.Element {
           <Card title="Anomalies">
             {output.anomalies.length ? (
               <ul className="list-inside list-disc space-y-1 text-sm">
-                {output.anomalies.map((item) => (
+                {output.anomalies.map((item: string) => (
                   <li key={item}>{item}</li>
                 ))}
               </ul>

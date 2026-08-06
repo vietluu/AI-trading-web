@@ -4,9 +4,9 @@ export const PRIMARY_NAV_ITEMS: readonly NavItem[] = [
   { key: 'overview', href: '/' },
   { key: 'quantIntelligence', href: '/quant-intelligence' },
   { key: 'market', href: '/market' },
-  { key: 'decision', href: '/ai/decision' },
-  { key: 'automation', href: '/ai/pipeline' },
-  { key: 'trading', href: '/ai/live-trading' },
+  { key: 'decision', href: '/decision' },
+  { key: 'automation', href: '/pipeline' },
+  { key: 'trading', href: '/live-trading' },
 ] as const;
 
 export const MORE_NAV_ITEMS: readonly NavItem[] = [

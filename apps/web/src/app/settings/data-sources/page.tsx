@@ -1,29 +1,26 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AccountNav } from "@/components/account-nav";
 import { LoadingButton } from "@/components/loading-button";
-import { apiRequest } from "@/lib/api-client";
+import { useDataSourcesSettings } from "@/hooks/settings/useSettings";
+import { useTranslation } from "@/lib/i18n/i18n-context";
 
-interface ExternalSource {
-  id: string;
-  sourceId: string;
-  displayName: string;
+interface SocialProviderItem {
   provider: string;
-  sourceType: string;
-  feedUrl: string;
-  isEnabled: boolean;
-  reliabilityScore: number;
-  lastFetchedAt?: string;
-  lastError?: string;
+  displayName: string;
+  status: "AVAILABLE" | "NOT_CONFIGURED" | "UNAVAILABLE";
+  notes?: string | null;
 }
 
-interface SocialProviderInfo {
-  provider: string;
+interface DataSourceItem {
+  id: string;
   displayName: string;
-  status: string;
-  notes?: string;
+  sourceId: string;
+  provider: string;
+  feedUrl: string;
+  reliabilityScore: number;
+  isEnabled: boolean;
 }
 
 interface TestSourceResult {
@@ -33,7 +30,7 @@ interface TestSourceResult {
 }
 
 export default function DataSourcesSettingsPage() {
-  const queryClient = useQueryClient();
+  const { t } = useTranslation();
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [sourceId, setSourceId] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -43,72 +40,11 @@ export default function DataSourcesSettingsPage() {
   // Test source feedback
   const [testResult, setTestResult] = useState<TestSourceResult | null>(null);
 
-  const { data: sources, isLoading } = useQuery({
-    queryKey: ["sources"],
-    queryFn: async () => {
-      return apiRequest<ExternalSource[]>("/external-data/sources");
-    },
-  });
-
-  const { data: socialProviders } = useQuery({
-    queryKey: ["social-providers"],
-    queryFn: async () => {
-      return apiRequest<SocialProviderInfo[]>("/external-data/social/providers");
-    },
-  });
-
-  const addSourceMutation = useMutation({
-    mutationFn: async () => {
-      return apiRequest<unknown>("/external-data/sources", {
-        method: "POST",
-        body: JSON.stringify({
-          sourceId,
-          displayName,
-          feedUrl,
-          reliabilityScore,
-        }),
-      });
-    },
-    onSuccess: () => {
-      setIsAddModalOpen(false);
-      setSourceId("");
-      setDisplayName("");
-      setFeedUrl("");
-      void queryClient.invalidateQueries({ queryKey: ["sources"] });
-    },
-  });
-
-  const testSourceMutation = useMutation({
-    mutationFn: async (id: string) => {
-      return apiRequest<TestSourceResult>(`/external-data/sources/${id}/test`, {
-        method: "POST",
-      });
-    },
-    onSuccess: (res) => {
-      setTestResult(res);
-    },
-  });
-  const deleteSourceMutation = useMutation({
-    mutationFn: async (id: string) => {
-      return apiRequest<unknown>(`/external-data/sources/${id}`, {
-        method: "DELETE",
-      });
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["sources"] });
-    },
-  });
-  const toggleSourceMutation = useMutation({
-    mutationFn: async ({ id, isEnabled }: { id: string; isEnabled: boolean }) => {
-      return apiRequest<unknown>(`/external-data/sources/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ isEnabled }),
-      });
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["sources"] });
-    },
-  });
+  const { sourcesQuery, socialProvidersQuery, addSourceMutation, testSourceMutation, deleteSourceMutation, toggleSourceMutation } = useDataSourcesSettings();
+  const { data: sources, isLoading } = sourcesQuery;
+  const { data: socialProviders } = socialProvidersQuery;
+  const normalizedSources = (sources as DataSourceItem[] | undefined) ?? [];
+  const normalizedProviders = (socialProviders as SocialProviderItem[] | undefined) ?? [];
 
   return (
     <div className="container mx-auto max-w-5xl">
@@ -116,9 +52,9 @@ export default function DataSourcesSettingsPage() {
 
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">External Data Sources</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{t.settings.dataSourcesTitle}</h1>
           <p className="text-sm text-muted-foreground">
-            Manage public RSS/Atom feeds, exchange announcement channels, and external API providers.
+            {t.settings.dataSourcesSubtitle}
           </p>
         </div>
 
@@ -126,15 +62,15 @@ export default function DataSourcesSettingsPage() {
           onClick={() => setIsAddModalOpen(true)}
           className="rounded-md bg-primary px-3.5 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90"
         >
-          + Add RSS Feed
+          {t.settings.addRssFeed}
         </button>
       </div>
 
       {testResult && (
         <div className="mb-6 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-xs text-emerald-200">
           <div className="flex items-center justify-between mb-1 font-semibold">
-            <span>Test Successful for {testResult.sourceId}</span>
-            <button onClick={() => setTestResult(null)} className="hover:underline">Dismiss</button>
+            <span>{t.settings.testSuccessful} {testResult.sourceId}</span>
+            <button onClick={() => setTestResult(null)} className="hover:underline">{t.settings.dismiss}</button>
           </div>
           <p>Fetched {testResult.itemsFetched} items. Sample: &quot;{testResult.sampleTitle}&quot;</p>
         </div>
@@ -142,14 +78,14 @@ export default function DataSourcesSettingsPage() {
 
       {/* Configured Sources List */}
       <div className="mb-8 rounded-lg border border-border bg-card p-6">
-        <h2 className="text-base font-semibold tracking-tight mb-4">Configured Feeds & Sources</h2>
+        <h2 className="text-base font-semibold tracking-tight mb-4">{t.settings.configuredFeeds}</h2>
         {isLoading ? (
-          <div className="py-6 text-center text-sm text-muted-foreground">Loading sources...</div>
-        ) : !sources || sources.length === 0 ? (
-          <div className="py-6 text-center text-sm text-muted-foreground">No custom sources configured.</div>
+          <div className="py-6 text-center text-sm text-muted-foreground">{t.settings.loadingSources}</div>
+        ) : normalizedSources.length === 0 ? (
+          <div className="py-6 text-center text-sm text-muted-foreground">{t.settings.noSourcesConfigured}</div>
         ) : (
           <div className="divide-y divide-border rounded-md border border-border">
-            {sources.map((src) => (
+            {normalizedSources.map((src) => (
               <div key={src.id} className="flex flex-wrap items-center justify-between gap-4 p-4 text-xs">
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
@@ -162,15 +98,15 @@ export default function DataSourcesSettingsPage() {
 
                 <div className="flex items-center gap-3 flex-wrap">
                   <span className="text-muted-foreground">
-                    Reliability: <strong className="text-foreground">{src.reliabilityScore}</strong>/100
+                    {t.settings.reliability}: <strong className="text-foreground">{src.reliabilityScore}</strong>/100
                   </span>
 
                   <LoadingButton
                     loading={testSourceMutation.isPending}
-                    onClick={() => { testSourceMutation.mutate(src.id); }}
+                    onClick={() => { testSourceMutation.mutate({ id: src.id }); }}
                     className="rounded border border-border px-2.5 py-1 font-medium hover:bg-muted"
                   >
-                    Test Fetch
+                    {t.settings.testFetch}
                   </LoadingButton>
 
                   <LoadingButton
@@ -180,13 +116,13 @@ export default function DataSourcesSettingsPage() {
                       src.isEnabled ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "bg-zinc-800 text-zinc-400"
                     }`}
                   >
-                    {src.isEnabled ? "Enabled" : "Disabled"}
+                    {src.isEnabled ? t.settings.enabled : t.settings.disabled}
                   </LoadingButton>
                   <LoadingButton
                     loading={deleteSourceMutation.isPending}
-                    onClick={() => { deleteSourceMutation.mutate(src.id); }}
+                    onClick={() => { deleteSourceMutation.mutate({ id: src.id }); }}
                     className="rounded border border-red-500/20 px-2.5 py-1 font-medium text-red-600 hover:bg-red-500/10"
-                  >Delete</LoadingButton>
+                  >{t.settings.delete}</LoadingButton>
                 </div>
               </div>
             ))}
@@ -196,13 +132,13 @@ export default function DataSourcesSettingsPage() {
 
       {/* Social & Premium Integrations */}
       <div className="rounded-lg border border-border bg-card p-6">
-        <h2 className="text-base font-semibold tracking-tight mb-2">Social & Community Data Providers</h2>
+        <h2 className="text-base font-semibold tracking-tight mb-2">{t.settings.socialProvidersTitle}</h2>
         <p className="text-xs text-muted-foreground mb-4">
-          Integrations require user-owned credentials stored safely through Phase 2 encryption.
+          {t.settings.socialProvidersSubtitle}
         </p>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {socialProviders?.map((p) => (
+          {normalizedProviders.map((p) => (
             <div key={p.provider} className="rounded-md border border-border p-4 text-xs space-y-2">
               <div className="flex items-center justify-between">
                 <span className="font-semibold text-sm">{p.displayName}</span>
@@ -218,7 +154,7 @@ export default function DataSourcesSettingsPage() {
                   {p.status}
                 </span>
               </div>
-              <p className="text-muted-foreground">{p.notes || "Configure API keys in Security settings to enable ingestion."}</p>
+              <p className="text-muted-foreground">{p.notes || t.settings.configureApiKeys}</p>
             </div>
           ))}
         </div>
@@ -228,11 +164,11 @@ export default function DataSourcesSettingsPage() {
       {isAddModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-xl">
-            <h2 className="text-lg font-bold tracking-tight mb-4">Add Custom RSS / Atom Feed</h2>
+            <h2 className="text-lg font-bold tracking-tight mb-4">{t.settings.addFeedTitle}</h2>
 
             <div className="space-y-4 text-xs">
               <div>
-                <label className="mb-1 block font-medium">Source Identifier (e.g. coindesk-news)</label>
+                <label className="mb-1 block font-medium">{t.settings.sourceIdentifier}</label>
                 <input
                   type="text"
                   value={sourceId}
@@ -242,7 +178,7 @@ export default function DataSourcesSettingsPage() {
               </div>
 
               <div>
-                <label className="mb-1 block font-medium">Display Name</label>
+                <label className="mb-1 block font-medium">{t.settings.displayName}</label>
                 <input
                   type="text"
                   value={displayName}
@@ -252,7 +188,7 @@ export default function DataSourcesSettingsPage() {
               </div>
 
               <div>
-                <label className="mb-1 block font-medium">Feed URL (HTTP/HTTPS only, SSRF protected)</label>
+                <label className="mb-1 block font-medium">{t.settings.feedUrl}</label>
                 <input
                   type="url"
                   placeholder="https://example.com/rss.xml"
@@ -263,7 +199,7 @@ export default function DataSourcesSettingsPage() {
               </div>
 
               <div>
-                <label className="mb-1 block font-medium">Source Reliability Score ({reliabilityScore}/100)</label>
+                <label className="mb-1 block font-medium">{t.settings.reliabilityScore} ({reliabilityScore}/100)</label>
                 <input
                   type="range"
                   min="0"
@@ -285,15 +221,15 @@ export default function DataSourcesSettingsPage() {
                 }}
                 className="rounded-md border border-border px-4 py-2 text-xs font-medium hover:bg-muted"
               >
-                Cancel
+                {t.settings.cancel}
               </button>
               <LoadingButton
                 disabled={!sourceId || !displayName || !feedUrl || addSourceMutation.isPending}
                 loading={addSourceMutation.isPending}
-                onClick={() => { addSourceMutation.mutate(); }}
+                onClick={() => { addSourceMutation.mutate({ sourceId, displayName, feedUrl, reliabilityScore }); }}
                 className="rounded-md bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               >
-                {addSourceMutation.isPending ? "Validating..." : "Add Source"}
+                {addSourceMutation.isPending ? t.settings.validating : t.settings.addSource}
               </LoadingButton>
             </div>
           </div>

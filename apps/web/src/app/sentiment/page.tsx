@@ -1,33 +1,14 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
 import { AccountNav } from "@/components/account-nav";
-import { apiRequest } from "@/lib/api-client";
-
-interface SentimentObservation {
-  id?: string;
-  provider: string;
-  indexType: string;
-  value: number;
-  classification: string;
-  observedAt: string;
-  isStale?: boolean;
-}
+import { useSentimentData } from "@/hooks/settings/useSettings";
+import { useTranslation } from "@/lib/i18n/i18n-context";
 
 export default function SentimentPage() {
-  const { data: current, isLoading: isCurrentLoading } = useQuery({
-    queryKey: ["sentiment-current"],
-    queryFn: async () => {
-      return apiRequest<SentimentObservation>("/external-data/sentiment");
-    },
-  });
-
-  const { data: history, isLoading: isHistoryLoading } = useQuery({
-    queryKey: ["sentiment-history"],
-    queryFn: async () => {
-      return apiRequest<SentimentObservation[]>("/external-data/sentiment/history?limit=30");
-    },
-  });
+  const { t } = useTranslation();
+  const { currentQuery, historyQuery } = useSentimentData();
+  const { data: current, isLoading: isCurrentLoading } = currentQuery;
+  const { data: history, isLoading: isHistoryLoading } = historyQuery;
 
   const getGaugeColor = (val: number) => {
     if (val <= 25) return "text-red-500 border-red-500 bg-red-500/10";
@@ -42,18 +23,16 @@ export default function SentimentPage() {
       <AccountNav />
 
       <div className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight">Public Market Sentiment</h1>
-        <p className="text-sm text-muted-foreground">
-          Crypto Fear & Greed Index observations collected continuously from public market sources.
-        </p>
+        <h1 className="text-2xl font-bold tracking-tight">{t.sentiment.title}</h1>
+        <p className="text-sm text-muted-foreground">{t.sentiment.subtitle}</p>
       </div>
 
       {/* Current Sentiment Card */}
       <div className="mb-8 grid grid-cols-1 gap-6 md:grid-cols-3">
         <div className="md:col-span-1 rounded-lg border border-border bg-card p-6 flex flex-col items-center justify-center text-center">
-          <h2 className="text-xs font-semibold text-muted-foreground uppercase mb-4">Current Index Value</h2>
+          <h2 className="text-xs font-semibold text-muted-foreground uppercase mb-4">{t.sentiment.currentIndexValue}</h2>
           {isCurrentLoading ? (
-            <div className="py-6 text-sm text-muted-foreground">Loading...</div>
+            <div className="py-6 text-sm text-muted-foreground">{t.sentiment.loading}</div>
           ) : current ? (
             <>
               <div
@@ -65,41 +44,39 @@ export default function SentimentPage() {
               </div>
               <h3 className="mt-3 text-lg font-bold">{current.classification}</h3>
               <p className="mt-1 text-xs text-muted-foreground">
-                Observed: {new Date(current.observedAt).toLocaleString()}
+                {t.sentiment.observed} {new Date(current.observedAt).toLocaleString()}
               </p>
               {current.isStale && (
                 <span className="mt-2 rounded bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-400 border border-amber-500/20">
-                  Stale Observation Warning
+                  {t.sentiment.staleWarning}
                 </span>
               )}
             </>
           ) : (
-            <div className="text-sm text-muted-foreground">No sentiment data available</div>
+            <div className="text-sm text-muted-foreground">{t.sentiment.noData}</div>
           )}
         </div>
 
         {/* Index Explanation */}
         <div className="md:col-span-2 rounded-lg border border-border bg-card p-6 flex flex-col justify-between">
           <div>
-            <h2 className="text-base font-semibold tracking-tight mb-2">About Fear & Greed Index</h2>
-            <p className="text-xs text-muted-foreground leading-relaxed mb-4">
-              The Crypto Fear and Greed Index analyzes volatility, market momentum, volume, social media sentiment, dominance, and Google search trends to measure market sentiment from 0 (Extreme Fear) to 100 (Extreme Greed).
-            </p>
+            <h2 className="text-base font-semibold tracking-tight mb-2">{t.sentiment.aboutTitle}</h2>
+            <p className="text-xs text-muted-foreground leading-relaxed mb-4">{t.sentiment.aboutDescription}</p>
             <div className="grid grid-cols-5 gap-2 text-center text-[11px] font-medium">
               <div className="rounded bg-red-500/10 p-2 text-red-400 border border-red-500/20">
-                0-25<br />Extreme Fear
+                0-25<br />{t.sentiment.extremeFear}
               </div>
               <div className="rounded bg-orange-400/10 p-2 text-orange-400 border border-orange-400/20">
-                26-45<br />Fear
+                26-45<br />{t.sentiment.fear}
               </div>
               <div className="rounded bg-yellow-400/10 p-2 text-yellow-400 border border-yellow-400/20">
-                46-55<br />Neutral
+                46-55<br />{t.sentiment.neutral}
               </div>
               <div className="rounded bg-emerald-400/10 p-2 text-emerald-400 border border-emerald-400/20">
-                56-75<br />Greed
+                56-75<br />{t.sentiment.greed}
               </div>
               <div className="rounded bg-emerald-500/20 p-2 text-emerald-500 border border-emerald-500/30">
-                76-100<br />Extreme Greed
+                76-100<br />{t.sentiment.extremeGreed}
               </div>
             </div>
           </div>
@@ -108,11 +85,11 @@ export default function SentimentPage() {
 
       {/* Historical Observations */}
       <div className="rounded-lg border border-border bg-card p-6">
-        <h2 className="text-base font-semibold tracking-tight mb-4">Historical Sentiment (Last 30 Days)</h2>
+        <h2 className="text-base font-semibold tracking-tight mb-4">{t.sentiment.historicalTitle}</h2>
         {isHistoryLoading ? (
-          <div className="py-8 text-center text-sm text-muted-foreground">Loading history...</div>
+          <div className="py-8 text-center text-sm text-muted-foreground">{t.sentiment.loading}</div>
         ) : !history || history.length === 0 ? (
-          <div className="py-8 text-center text-sm text-muted-foreground">No historical observations found.</div>
+          <div className="py-8 text-center text-sm text-muted-foreground">{t.sentiment.noHistory}</div>
         ) : (
           <div className="space-y-3">
             {history.map((obs) => (

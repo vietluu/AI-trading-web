@@ -1,76 +1,7 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LoadingButton } from "@/components/loading-button";
-import { apiRequest } from "@/lib/api-client";
-
-interface PortfolioDashboard {
-  source: {
-    mode: string;
-    kind: "EXCHANGE";
-    environment: string;
-    available: boolean;
-    stale: boolean;
-    syncedAt: string | null;
-    connectionCount: number;
-  };
-  config: {
-    maxStrategies: number;
-    maxTotalExposure: number;
-    maxStrategyExposure: number;
-    maxDrawdown: number;
-  };
-  portfolio: {
-    equity: number;
-    pnl: number;
-    grossExposure: number;
-    exposurePct: number;
-    drawdownPct: number;
-    failsafeActive: boolean;
-    pnlKind: string;
-  };
-  strategies: Array<{
-    id: string;
-    key: string;
-    name: string;
-    type: string;
-    kind: string;
-    symbols: string[];
-    status: string;
-    disabledReason: string | null;
-    allocation: { weight: number; allocatedCapital: number };
-    performance: null | {
-      totalTrades: number;
-      source: string;
-      winRate: number | null;
-      returnPct: number | null;
-      drawdownPct: number | null;
-      sharpeRatio: number | null;
-      realizedPnl: number;
-      unrealizedPnl: number;
-    };
-    exposure: number;
-  }>;
-  aggregation: Array<{
-    symbol: string;
-    longNotional: number;
-    shortNotional: number;
-    grossNotional: number;
-    netNotional: number;
-    strategyCount: number;
-  }>;
-  riskEvents: Array<{
-    id: string;
-    symbol: string;
-    side: string;
-    approved: boolean;
-    reason: string | null;
-    requestedNotional: number;
-    approvedNotional: number;
-    createdAt: string;
-  }>;
-  unassignedExposure: number;
-}
+import { usePortfolioActions, usePortfolioDashboard } from "@/hooks/ai/useAiFeature";
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -82,26 +13,8 @@ const optionalPercent = (value: number | null | undefined): string =>
   value === null || value === undefined ? "—" : percent(value);
 
 export default function PortfolioPage(): React.JSX.Element {
-  const client = useQueryClient();
-  const query = useQuery({
-    queryKey: ["portfolio-dashboard"],
-    queryFn: () => apiRequest<PortfolioDashboard>("/ai/portfolio"),
-    refetchInterval: 15_000,
-  });
-  const rebalance = useMutation({
-    mutationFn: () => apiRequest("/ai/portfolio/rebalance", { method: "POST" }),
-    onSuccess: () =>
-      client.invalidateQueries({ queryKey: ["portfolio-dashboard"] }),
-  });
-  const status = useMutation({
-    mutationFn: ({ key, next }: { key: string; next: string }) =>
-      apiRequest(`/ai/portfolio/strategies/${key}/status`, {
-        method: "PATCH",
-        body: JSON.stringify({ status: next }),
-      }),
-    onSuccess: () =>
-      client.invalidateQueries({ queryKey: ["portfolio-dashboard"] }),
-  });
+  const query = usePortfolioDashboard();
+  const { rebalanceMutation, updateStrategyStatusMutation } = usePortfolioActions();
   if (query.isLoading)
     return <p className="text-muted-foreground">Loading strategy portfolio…</p>;
   if (query.isError)
@@ -139,10 +52,10 @@ export default function PortfolioPage(): React.JSX.Element {
           <LoadingButton
             className="rounded-lg border px-4 py-2 text-sm font-semibold disabled:opacity-50"
             disabled={!source.available}
-            loading={rebalance.isPending}
-            onClick={() => rebalance.mutate()}
+            loading={rebalanceMutation.isPending}
+            onClick={() => rebalanceMutation.mutate()}
           >
-            {rebalance.isPending ? "Rebalancing…" : "Rebalance now"}
+            {rebalanceMutation.isPending ? "Rebalancing…" : "Rebalance now"}
           </LoadingButton>
         </div>
       </div>
@@ -248,9 +161,9 @@ export default function PortfolioPage(): React.JSX.Element {
               <LoadingButton
                 className="mt-4 w-full rounded-md border px-3 py-2 text-sm disabled:opacity-50"
                 disabled={strategy.status === "DISABLED"}
-                loading={status.isPending}
+                loading={updateStrategyStatusMutation.isPending}
                 onClick={() =>
-                  status.mutate({
+                  updateStrategyStatusMutation.mutate({
                     key: strategy.key,
                     next: strategy.status === "ACTIVE" ? "PAUSED" : "ACTIVE",
                   })
@@ -317,9 +230,9 @@ export default function PortfolioPage(): React.JSX.Element {
           </tr>
         ))}
       </DataTable>
-      {(rebalance.error || status.error) && (
+      {(rebalanceMutation.error || updateStrategyStatusMutation.error) && (
         <p className="text-sm text-red-400" role="alert">
-          {(rebalance.error ?? status.error)?.message}
+          {(rebalanceMutation.error ?? updateStrategyStatusMutation.error)?.message}
         </p>
       )}
     </div>
