@@ -639,14 +639,14 @@ export class SyntheticSimulationService {
   }
 
   private deriveDecision(scenario: SyntheticScenario): string {
-    const regime = String(scenario.input.regime ?? 'SIDEWAYS');
+    const regime = typeof scenario.input.regime === 'string' ? scenario.input.regime : 'SIDEWAYS';
     if (regime === 'BULL' || regime === 'BREAKOUT' || regime === 'ACCUMULATION' || regime === 'ETF_FLOW' || regime === 'OPEN_INTEREST_EXPANSION' || regime === 'WHALE_ACTIVITY') return 'LONG';
     if (regime === 'BEAR' || regime === 'DISTRIBUTION') return 'SHORT';
     return 'WAIT';
   }
 
   private deriveRiskOutcome(scenario: SyntheticScenario): string {
-    const regime = String(scenario.input.regime ?? 'SIDEWAYS');
+    const regime = typeof scenario.input.regime === 'string' ? scenario.input.regime : 'SIDEWAYS';
     if (regime === 'FLASH_CRASH' || regime === 'API_FAILURES' || regime === 'DATA_CORRUPTION' || regime === 'EXCHANGE_FAILURE' || regime === 'NETWORK_FAILURE' || regime === 'MARKET_MANIPULATION') return 'CRITICAL';
     if (regime === 'BREAKOUT' || regime === 'FAKE_BREAKOUT' || regime === 'NEWS_SHOCK' || regime === 'FUNDING_EXTREMES' || regime === 'ORDERBOOK_ANOMALIES' || regime === 'LIQUIDITY_SWEEP' || regime === 'LOW_LIQUIDITY' || regime === 'HIGH_SPREAD' || regime === 'OPEN_INTEREST_COLLAPSE' || regime === 'MACRO_EVENT') return 'HIGH';
     if (regime === 'BULL' || regime === 'BEAR' || regime === 'ACCUMULATION' || regime === 'DISTRIBUTION' || regime === 'ETF_FLOW' || regime === 'OPEN_INTEREST_EXPANSION' || regime === 'WHALE_ACTIVITY') return 'MODERATE';
@@ -654,7 +654,7 @@ export class SyntheticSimulationService {
   }
 
   private deriveGuardianOutcome(scenario: SyntheticScenario): string {
-    const regime = String(scenario.input.regime ?? 'SIDEWAYS');
+    const regime = typeof scenario.input.regime === 'string' ? scenario.input.regime : 'SIDEWAYS';
     if (regime === 'FLASH_CRASH' || regime === 'API_FAILURES' || regime === 'EXCHANGE_FAILURE' || regime === 'NETWORK_FAILURE') return 'HALT';
     if (regime === 'FAKE_BREAKOUT' || regime === 'DATA_CORRUPTION' || regime === 'ORDERBOOK_ANOMALIES' || regime === 'MARKET_MANIPULATION') return 'BLOCK';
     if (regime === 'NEWS_SHOCK' || regime === 'MACRO_EVENT' || regime === 'OPEN_INTEREST_COLLAPSE') return 'PAUSE';
@@ -664,7 +664,7 @@ export class SyntheticSimulationService {
   }
 
   private deriveExecutionOutcome(scenario: SyntheticScenario): string {
-    const regime = String(scenario.input.regime ?? 'SIDEWAYS');
+    const regime = typeof scenario.input.regime === 'string' ? scenario.input.regime : 'SIDEWAYS';
     if (regime === 'FLASH_CRASH' || regime === 'API_FAILURES' || regime === 'DATA_CORRUPTION' || regime === 'ORDERBOOK_ANOMALIES' || regime === 'FAKE_BREAKOUT' || regime === 'EXCHANGE_FAILURE' || regime === 'NETWORK_FAILURE' || regime === 'MARKET_MANIPULATION') return 'SKIP';
     if (regime === 'NEWS_SHOCK' || regime === 'MACRO_EVENT' || regime === 'OPEN_INTEREST_COLLAPSE') return 'DELAY';
     if (regime === 'FUNDING_EXTREMES' || regime === 'LOW_LIQUIDITY' || regime === 'HIGH_SPREAD') return 'REDUCE_SIZE';

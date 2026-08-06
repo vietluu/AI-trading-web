@@ -45,7 +45,7 @@ export class QuantReportService {
     let reportId = `report-${Date.now()}`;
 
     try {
-      const record = await (this.prisma as any).quantReportRecord.create({
+      const record = await this.prisma.quantReportRecord.create({
         data: {
           userId: userId ?? null,
           reportType,

@@ -8,35 +8,36 @@ describe('synthetic simulation platform', () => {
 
     expect(dashboard.scenarioCount).toBe(300);
     expect(dashboard.localOnly).toBe(true);
-    expect(dashboard.categoryBreakdown).toEqual(
-      expect.objectContaining({
-        BULL: expect.any(Number),
-        BEAR: expect.any(Number),
-        SIDEWAY: expect.any(Number),
-        BREAKOUT: expect.any(Number),
-        FAKE_BREAKOUT: expect.any(Number),
-        FLASH_CRASH: expect.any(Number),
-        NEWS_SHOCK: expect.any(Number),
-        FUNDING_EXTREMES: expect.any(Number),
-        ORDERBOOK_ANOMALIES: expect.any(Number),
-        API_FAILURES: expect.any(Number),
-        DATA_CORRUPTION: expect.any(Number),
-        BOUNDARY_CONDITIONS: expect.any(Number),
-        ACCUMULATION: expect.any(Number),
-        DISTRIBUTION: expect.any(Number),
-        LIQUIDITY_SWEEP: expect.any(Number),
-        OPEN_INTEREST_EXPANSION: expect.any(Number),
-        OPEN_INTEREST_COLLAPSE: expect.any(Number),
-        WHALE_ACTIVITY: expect.any(Number),
-        MACRO_EVENT: expect.any(Number),
-        ETF_FLOW: expect.any(Number),
-        EXCHANGE_FAILURE: expect.any(Number),
-        NETWORK_FAILURE: expect.any(Number),
-        LOW_LIQUIDITY: expect.any(Number),
-        HIGH_SPREAD: expect.any(Number),
-        MARKET_MANIPULATION: expect.any(Number),
-      }),
-    );
+    const expectedCategories = [
+      'BULL',
+      'BEAR',
+      'SIDEWAY',
+      'BREAKOUT',
+      'FAKE_BREAKOUT',
+      'FLASH_CRASH',
+      'NEWS_SHOCK',
+      'FUNDING_EXTREMES',
+      'ORDERBOOK_ANOMALIES',
+      'API_FAILURES',
+      'DATA_CORRUPTION',
+      'BOUNDARY_CONDITIONS',
+      'ACCUMULATION',
+      'DISTRIBUTION',
+      'LIQUIDITY_SWEEP',
+      'OPEN_INTEREST_EXPANSION',
+      'OPEN_INTEREST_COLLAPSE',
+      'WHALE_ACTIVITY',
+      'MACRO_EVENT',
+      'ETF_FLOW',
+      'EXCHANGE_FAILURE',
+      'NETWORK_FAILURE',
+      'LOW_LIQUIDITY',
+      'HIGH_SPREAD',
+      'MARKET_MANIPULATION',
+    ] as const;
+
+    expect(Object.keys(dashboard.categoryBreakdown)).toEqual(expect.arrayContaining(expectedCategories));
+    expect(Object.values(dashboard.categoryBreakdown).every((value) => typeof value === 'number')).toBe(true);
   });
 
   it('runs scenarios and produces measurable verification and mutation results', () => {

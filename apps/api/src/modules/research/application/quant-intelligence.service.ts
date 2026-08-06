@@ -22,6 +22,27 @@ type QuantRecommendation = {
   updatedAt?: Date;
 };
 
+interface QuantRecommendationRecord {
+  id: string;
+  userId?: string | null;
+  title: string;
+  moduleSource: string;
+  problemStatement: string;
+  evidenceText: string;
+  historicalResult?: Prisma.InputJsonValue | null;
+  expectedBenefit: string;
+  estimatedRisk: string;
+  priority: QuantRecommendation['priority'];
+  implementationCost: string;
+  rollbackPlan: string;
+  status: QuantRecommendation['status'];
+  reviewedByUserId?: string | null;
+  reviewedAt?: Date | null;
+  rejectionReason?: string | null;
+  createdAt?: Date;
+  updatedAt?: Date;
+}
+
 type ReportType = 'DAILY' | 'WEEKLY' | 'MONTHLY';
 import { buildQuantRecommendation } from '../domain/explainability-governance.engine';
 import { generateQuantHypothesis, type HypothesisInput } from '../domain/quant-research.engine';
@@ -139,7 +160,7 @@ export class QuantIntelligenceService {
 
   async getRegimeIntelligence(symbol = 'BTC-USDT') {
     const fallback = detectMarketRegimeIntelligence(symbol);
-    const persisted = await (this.prisma as any).marketRegimeState.findFirst({
+    const persisted = await this.prisma.marketRegimeState.findFirst({
       where: { symbol },
       orderBy: { detectedAt: 'desc' },
     });
@@ -157,11 +178,11 @@ export class QuantIntelligenceService {
 
   async getRecommendations(userId?: string): Promise<QuantRecommendation[]> {
     try {
-      const dbRecs = await (this.prisma as any).quantRecommendation.findMany({
+      const dbRecs = await this.prisma.quantRecommendation.findMany({
         where: userId ? { userId } : undefined,
         orderBy: { createdAt: 'desc' },
       });
-      const normalizedDbRecs: QuantRecommendation[] = (dbRecs ?? []).map((item: any) => ({
+      const normalizedDbRecs: QuantRecommendation[] = (dbRecs ?? []).map((item: QuantRecommendationRecord) => ({
         ...item,
         historicalResult: (item.historicalResult ?? {}) as Record<string, unknown>,
       }));
@@ -171,11 +192,11 @@ export class QuantIntelligenceService {
 
       if (userId) {
         await this.refreshRecommendations(userId);
-        const refreshed = await (this.prisma as any).quantRecommendation.findMany({
+        const refreshed = await this.prisma.quantRecommendation.findMany({
           where: { userId },
           orderBy: { createdAt: 'desc' },
         });
-        return (refreshed ?? []).map((item: any) => ({
+        return (refreshed ?? []).map((item: QuantRecommendationRecord) => ({
           ...item,
           historicalResult: (item.historicalResult ?? {}) as Record<string, unknown>,
         }));
@@ -227,7 +248,7 @@ export class QuantIntelligenceService {
         });
       });
 
-    const quantRecommendationModel = (this.prisma as any).quantRecommendation;
+    const quantRecommendationModel = this.prisma.quantRecommendation;
 
     await quantRecommendationModel.deleteMany({ where: { userId } });
     await quantRecommendationModel.createMany({
@@ -300,7 +321,7 @@ export class QuantIntelligenceService {
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
     if (isUuid) {
       try {
-        const quantRecommendationModel = (this.prisma as any).quantRecommendation;
+        const quantRecommendationModel = this.prisma.quantRecommendation;
         const rec = await quantRecommendationModel.findUnique({ where: { id } });
         if (rec) {
           const updated = await quantRecommendationModel.update({

@@ -11,6 +11,16 @@ export interface KnowledgeArchiveItem {
   createdAt: string;
 }
 
+interface KnowledgeArchiveRow {
+  id: string;
+  title: string;
+  category: string;
+  summary: string;
+  contentJson: Record<string, unknown> | null;
+  reproducibleHash: string;
+  createdAt: Date;
+}
+
 @Injectable()
 export class KnowledgeBaseService {
   private readonly logger = new Logger(KnowledgeBaseService.name);
@@ -19,20 +29,20 @@ export class KnowledgeBaseService {
 
   async listArchives(category?: string): Promise<KnowledgeArchiveItem[]> {
     try {
-      const rows = await (this.prisma as any).knowledgeArchive.findMany({
+      const rows = await this.prisma.knowledgeArchive.findMany({
         where: category ? { category } : undefined,
         orderBy: { createdAt: 'desc' },
         take: 50,
       });
 
-      return rows.map((r: any) => ({
-        id: r.id,
-        title: r.title,
-        category: r.category,
-        summary: r.summary,
-        content: r.contentJson as Record<string, unknown>,
-        reproducibleHash: r.reproducibleHash,
-        createdAt: r.createdAt.toISOString(),
+      return rows.map((row: KnowledgeArchiveRow) => ({
+        id: row.id,
+        title: row.title,
+        category: row.category,
+        summary: row.summary,
+        content: row.contentJson ?? {},
+        reproducibleHash: row.reproducibleHash,
+        createdAt: row.createdAt.toISOString(),
       }));
     } catch (error) {
       this.logger.warn({

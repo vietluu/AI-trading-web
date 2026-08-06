@@ -114,7 +114,7 @@ describe('Phase 6.6 pipeline runtime policies', () => {
       repository as never,
       { isCancelled: vi.fn().mockResolvedValue(false) } as never,
       threshold as never,
-      riskPolicy as never,
+      riskPolicy,
       signalFilter as never,
       marketData as never,
       alerts as never,

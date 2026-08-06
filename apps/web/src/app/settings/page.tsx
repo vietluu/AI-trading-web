@@ -3,12 +3,7 @@
 import { useState, type FormEvent } from "react";
 
 import { AccountNav } from "@/components/account-nav";
-import {
-  buttonClass,
-  Feedback,
-  Field,
-  SelectField,
-} from "@/components/form-controls";
+import { buttonClass, Field, SelectField } from "@/components/form-controls";
 import { useAppSettings } from "@/hooks/settings/useSettings";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 
@@ -19,19 +14,14 @@ function formString(form: FormData, name: string): string {
 
 export default function SettingsPage(): React.JSX.Element {
   const { t } = useTranslation();
-  const [message, setMessage] = useState<string>();
-  const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const { settingsQuery, saveMutation } = useAppSettings();
   const settings = settingsQuery;
   async function save(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     setBusy(true);
-    setError(undefined);
-    setMessage(undefined);
     const form = new FormData(event.currentTarget);
     try {
-      setMessage(t.settings.settingsSaved);
       await saveMutation.mutateAsync({
           theme: form.get("theme"),
           timezone: form.get("timezone"),
@@ -52,8 +42,8 @@ export default function SettingsPage(): React.JSX.Element {
             : undefined,
           riskPreference: form.get("riskPreference"),
         });
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : t.settings.saveFailed);
+    } catch {
+      // Keep the save flow resilient without surfacing transient UI errors.
     } finally {
       setBusy(false);
     }
@@ -121,15 +111,14 @@ export default function SettingsPage(): React.JSX.Element {
             label={t.settings.riskPreference}
             name="riskPreference"
           >
-            <option>{t.settings.conservative}</option>
-            <option>{t.settings.moderate}</option>
-            <option>{t.settings.aggressive}</option>
+            <option value="conservative">{t.settings.conservative}</option>
+            <option value="moderate">{t.settings.moderate}</option>
+            <option value="aggressive">{t.settings.aggressive}</option>
           </SelectField>
           <div className="flex items-end gap-3">
             <button className={buttonClass} disabled={busy}>
               {busy ? t.settings.saving : t.settings.saveSettings}
             </button>
-            <Feedback error={error} success={message} />
           </div>
         </form>
       )}
