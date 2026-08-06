@@ -98,12 +98,17 @@ export class ToolExecutorService {
 
     try {
       const timeoutMs = tool.timeoutMs || 10000;
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`Tool execution timed out after ${timeoutMs}ms`)), timeoutMs)
-      );
+      let timer: NodeJS.Timeout | undefined;
+      const timeoutPromise = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Tool execution timed out after ${timeoutMs}ms`)), timeoutMs);
+      });
 
-      rawOutput = await Promise.race([tool.execute(validation.data, context), timeoutPromise]);
-      executionSuccess = true;
+      try {
+        rawOutput = await Promise.race([tool.execute(validation.data, context), timeoutPromise]);
+        executionSuccess = true;
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
     } catch (err: unknown) {
       errorMessage = err instanceof Error ? err.message : String(err);
       this.logger.error(`Execution error in tool '${tool.name}': ${errorMessage}`);
