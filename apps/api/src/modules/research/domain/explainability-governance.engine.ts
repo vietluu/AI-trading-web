@@ -1,4 +1,5 @@
-import type { RecommendationPriority, RecommendationStatus } from '@prisma/client';
+type RecommendationPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+type RecommendationStatus = 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED' | 'DEPLOYED' | 'ROLLED_BACK';
 
 export interface FullQuantRecommendation {
   id?: string;

@@ -11,6 +11,16 @@ export interface KnowledgeArchiveItem {
   createdAt: string;
 }
 
+interface KnowledgeArchiveRow {
+  id: string;
+  title: string;
+  category: string;
+  summary: string;
+  contentJson: unknown;
+  reproducibleHash: string;
+  createdAt: Date;
+}
+
 @Injectable()
 export class KnowledgeBaseService {
   private readonly logger = new Logger(KnowledgeBaseService.name);
@@ -25,14 +35,17 @@ export class KnowledgeBaseService {
         take: 50,
       });
 
-      return rows.map((r) => ({
-        id: r.id,
-        title: r.title,
-        category: r.category,
-        summary: r.summary,
-        content: r.contentJson as Record<string, unknown>,
-        reproducibleHash: r.reproducibleHash,
-        createdAt: r.createdAt.toISOString(),
+      return rows.map((row: KnowledgeArchiveRow) => ({
+        id: row.id,
+        title: row.title,
+        category: row.category,
+        summary: row.summary,
+        content:
+          row.contentJson && typeof row.contentJson === 'object' && !Array.isArray(row.contentJson)
+            ? (row.contentJson as Record<string, unknown>)
+            : {},
+        reproducibleHash: row.reproducibleHash,
+        createdAt: row.createdAt.toISOString(),
       }));
     } catch (error) {
       this.logger.warn({

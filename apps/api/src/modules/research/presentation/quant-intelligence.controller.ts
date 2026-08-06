@@ -1,9 +1,11 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { QuantIntelligenceService } from '../application/quant-intelligence.service';
-import type { ReportType } from '@prisma/client';
 import type { ExperimentType } from '../domain/simulation-lab.engine';
 import type { HypothesisInput } from '../domain/quant-research.engine';
 import type { OptimizedWeightsResult } from '../domain/weight-threshold-optimizer.engine';
+
+type ReportType = 'DAILY' | 'WEEKLY' | 'MONTHLY';
 
 @Controller('quant-intelligence')
 export class QuantIntelligenceController {
@@ -45,8 +47,17 @@ export class QuantIntelligenceController {
   }
 
   @Get('portfolio')
-  getPortfolio() {
-    return this.quantService.getPortfolioIntelligence();
+  getPortfolio(@CurrentUser() user?: { id: string }, @Query('userId') userId?: string) {
+    return this.quantService.getPortfolioIntelligence(userId ?? user?.id);
+  }
+
+  @Post('portfolio/strategies/:key/apply')
+  applyStrategyRecommendation(
+    @CurrentUser() user: { id: string },
+    @Param('key') key: string,
+    @Body() body: { targetWeight?: number },
+  ) {
+    return this.quantService.applyStrategyRecommendation(user.id, key, body.targetWeight);
   }
 
   @Get('self-learning')
@@ -60,21 +71,40 @@ export class QuantIntelligenceController {
   }
 
   @Get('recommendations')
-  getRecommendations() {
-    return this.quantService.getRecommendations();
+  getRecommendations(@CurrentUser() user?: { id: string }) {
+    return this.quantService.getRecommendations(user?.id);
   }
 
   @Post('recommendations/:id/review')
   reviewRecommendation(
+    @CurrentUser() user: { id: string } | undefined,
     @Param('id') id: string,
     @Body() body: { action: 'APPROVE' | 'REJECT'; reason?: string },
   ) {
-    return this.quantService.reviewRecommendation(id, body.action, undefined, body.reason);
+    return this.quantService.reviewRecommendation(id, body.action, user?.id, body.reason);
   }
 
   @Post('simulation')
   runSimulation(@Body() body: { name: string; experimentType: ExperimentType; config: Record<string, unknown> }) {
     return this.quantService.runSimulation(body);
+  }
+
+  @Get('synthetic-simulation/dashboard')
+  getSyntheticSimulationDashboard() {
+    return this.quantService.getSyntheticSimulationDashboard();
+  }
+
+  @Get('synthetic-simulation/run')
+  runSyntheticSimulationSuite(@Query('limit') limit?: string) {
+    return this.quantService.runSyntheticSimulationSuite({ limit: limit ? Number(limit) : undefined });
+  }
+
+  @Get('synthetic-simulation/statistics')
+  runSyntheticStatisticalValidation(@Query('limit') limit?: string, @Query('iterations') iterations?: string) {
+    return this.quantService.runSyntheticStatisticalValidation({
+      limit: limit ? Number(limit) : undefined,
+      iterations: iterations ? Number(iterations) : undefined,
+    });
   }
 
   @Get('reports')

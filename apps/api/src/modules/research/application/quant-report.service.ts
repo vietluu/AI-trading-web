@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service';
-import type { ReportType } from '@prisma/client';
+
+type ReportType = 'DAILY' | 'WEEKLY' | 'MONTHLY';
 
 export interface GeneratedReport {
   id?: string;

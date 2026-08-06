@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -11,10 +12,34 @@ import {
 import { HealthStatus } from "@/components/health-status";
 import { Card, CardContent } from "@/components/ui/card";
 import { ROUTES } from "@/constants/routes";
+import { apiRequest } from "@/lib/api-client";
 import { useTranslation } from "@/lib/i18n/i18n-context";
+
+interface DashboardRecommendation {
+  id: string;
+  title: string;
+  priority: string;
+  status: string;
+  moduleSource: string;
+}
 
 export default function DashboardPage(): React.JSX.Element {
   const { t } = useTranslation();
+  const [recommendations, setRecommendations] = useState<DashboardRecommendation[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    void apiRequest<DashboardRecommendation[]>("/quant-intelligence/recommendations")
+      .then((data) => {
+        if (active) setRecommendations(data.slice(0, 3));
+      })
+      .catch(() => {
+        if (active) setRecommendations([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return (
     <div className="space-y-8">
@@ -79,6 +104,37 @@ export default function DashboardPage(): React.JSX.Element {
             </div>
           </CardContent>
         </Card>
+      </section>
+
+      <section className="rounded-2xl border border-border bg-card p-5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="font-semibold">Live recommendations</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Pending quant recommendations are now surfaced directly on the main dashboard.
+            </p>
+          </div>
+          <Link className="text-sm font-semibold text-primary" href={ROUTES.recommendations}>
+            View all
+          </Link>
+        </div>
+        <div className="mt-4 space-y-2">
+          {recommendations.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No pending recommendations yet.</p>
+          ) : (
+            recommendations.map((recommendation) => (
+              <div key={recommendation.id} className="flex items-center justify-between rounded-xl border border-border p-3 text-sm">
+                <div>
+                  <p className="font-medium">{recommendation.title}</p>
+                  <p className="text-xs text-muted-foreground">{recommendation.moduleSource}</p>
+                </div>
+                <span className="rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-semibold text-amber-500">
+                  {recommendation.priority}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
       </section>
 
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
