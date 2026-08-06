@@ -85,7 +85,11 @@ export class AuthController {
   ) {
     const result = await this.auth.login(dto, requestMetadata(request));
     if (result.session) this.setCookies(response, result.session);
-    return result.user;
+    return {
+      ...result.user,
+      requiresEmailVerification: result.requiresEmailVerification,
+      requiresTotp: result.requiresTotp,
+    };
   }
 
   @Post("logout")
