@@ -267,6 +267,7 @@ export interface PipelineRun {
   safeErrorMessage?: string;
   trigger: string;
   durationMs?: number;
+  createdAt: string;
   result?: { reasoning?: string; conflictLevel?: string };
   steps: Array<{ id: string; stepId: string; type: string; status: string; durationMs?: number; errorCode?: string }>;
   alerts: Array<{ id: string; kind: string; reasoningSummary: string; createdAt: string }>;

@@ -3,8 +3,12 @@ import type {
   DecisionOutput,
   FusionRunInput,
   MarketAgentInput,
+  MarketAgentOutput,
+  NewsAgentOutput,
   NewsSentimentInput,
+  SentimentAgentOutput,
   TechnicalAgentInput,
+  TechnicalAgentOutput,
 } from "@platform/shared";
 
 import { queryKeys } from "@/hooks/query-keys";
@@ -102,48 +106,10 @@ export interface DiagnosticRunResult {
   outputTokens: number;
 }
 
-export interface MarketAnalysisResult {
-  dataQuality: string;
-  summary: string;
-  trend: { direction: string; strength: string };
-  volatility: { level: string; atr?: string };
-  liquidity: { bidAskSpread: string; depthImbalance: string };
-  derivatives: { fundingRate?: string; fundingTrend?: string; openInterest?: string; oiTrend?: string };
-  anomalies: string[];
-}
-
-export interface NewsAnalysisResult {
-  summary: string;
-  dataQuality: string;
-  impact: { level: string; direction: string };
-  themes: string[];
-  riskSignals: string[];
-  keyEvents: Array<{ title: string; impact: string; importance: number }>;
-}
-
-export interface SentimentAnalysisResult {
-  summary: string;
-  dataQuality: string;
-  sentiment: { overall: string; intensity: string };
-  crowdBehavior: { fomo: boolean; panic: boolean; euphoria: boolean };
-  sources: { social?: string; marketSentimentIndex?: string };
-  anomalies: string[];
-}
-
-export interface TechnicalAnalysisResult {
-  summary: string;
-  dataQuality: string;
-  momentum: {
-    rsi: string;
-    rsiState: string;
-    macd: { trend: string; crossover?: string };
-  };
-  movingAverages: { alignment: string; pricePosition: string };
-  divergence: { rsiDivergence?: string; macdDivergence?: string };
-  structure: { marketStructure: string; breakout?: boolean };
-  volatility: { atr?: string; bollinger: { position: string; squeeze: boolean } };
-  signals: string[];
-}
+export type MarketAnalysisResult = MarketAgentOutput;
+export type NewsAnalysisResult = NewsAgentOutput;
+export type SentimentAnalysisResult = SentimentAgentOutput;
+export type TechnicalAnalysisResult = TechnicalAgentOutput;
 
 export interface AnalysisRunResult {
   id: string;
