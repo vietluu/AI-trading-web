@@ -16,7 +16,7 @@ interface KnowledgeArchiveRow {
   title: string;
   category: string;
   summary: string;
-  contentJson: Record<string, unknown> | null;
+  contentJson: unknown;
   reproducibleHash: string;
   createdAt: Date;
 }
@@ -40,7 +40,10 @@ export class KnowledgeBaseService {
         title: row.title,
         category: row.category,
         summary: row.summary,
-        content: row.contentJson ?? {},
+        content:
+          row.contentJson && typeof row.contentJson === 'object' && !Array.isArray(row.contentJson)
+            ? (row.contentJson as Record<string, unknown>)
+            : {},
         reproducibleHash: row.reproducibleHash,
         createdAt: row.createdAt.toISOString(),
       }));

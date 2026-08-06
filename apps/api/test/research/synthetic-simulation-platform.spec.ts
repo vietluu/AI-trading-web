@@ -36,7 +36,7 @@ describe('synthetic simulation platform', () => {
       'MARKET_MANIPULATION',
     ] as const;
 
-    expect(Object.keys(dashboard.categoryBreakdown)).toEqual(expect.arrayContaining(expectedCategories));
+    expect(Object.keys(dashboard.categoryBreakdown)).toEqual(expect.arrayContaining([...expectedCategories]));
     expect(Object.values(dashboard.categoryBreakdown).every((value) => typeof value === 'number')).toBe(true);
   });
 
