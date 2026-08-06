@@ -1,27 +1,14 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import Link from "next/link";
-import { apiRequest } from "@/lib/api-client";
-
-interface Schedule {
-  id: string;
-  symbols: string[];
-  provider: string;
-  mode: string;
-  cron?: string;
-  intervalMs?: number;
-  enabled: boolean;
-  timezone: string;
-}
-interface Health {
-  status: string;
-  queueDepth: number;
-  failureStreak: number;
-  lastSuccessfulRun?: string;
-  scheduler: { enabled: boolean; running: boolean };
-}
+import { ROUTES } from "@/constants/routes";
+import {
+  usePipelineActions,
+  usePipelineDashboard,
+  usePipelineSchedules,
+} from "@/hooks/ai/useAiFeature";
+import { useTranslation } from "@/lib/i18n/i18n-context";
 
 const AVAILABLE_SYMBOLS = [
   "BTC-USDT",
@@ -38,72 +25,55 @@ const AVAILABLE_SYMBOLS = [
 ];
 
 export default function PipelinePage() {
-  const client = useQueryClient();
+  const { t } = useTranslation();
   const [symbol, setSymbol] = useState("BTC-USDT");
   const [provider, setProvider] = useState("BINANCE_FUTURES");
   const [message, setMessage] = useState("");
-  const health = useQuery({
-    queryKey: ["pipeline-health"],
-    queryFn: () => apiRequest<Health>("/system/pipeline/health"),
-    refetchInterval: 10_000,
-  });
-  const schedules = useQuery({
-    queryKey: ["pipeline-schedules"],
-    queryFn: () => apiRequest<Schedule[]>("/pipeline/schedules"),
-  });
+  const health = usePipelineDashboard();
+  const schedules = usePipelineSchedules();
+  const { runMutation, createScheduleMutation, cancelScheduleMutation } = usePipelineActions();
   async function run() {
     try {
-      const result = await apiRequest<{ id: string; status: string }>(
-        "/pipeline/run",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            symbol,
-            provider,
-            pipelineId: "FULL_ANALYSIS_DECISION",
-            params: {},
-          }),
-        },
-      );
-      setMessage(`Run ${result.id.slice(0, 8)} queued (${result.status}).`);
+      const result = await runMutation.mutateAsync({
+        symbol,
+        provider,
+        pipelineId: "FULL_ANALYSIS_DECISION",
+        params: {},
+      });
+      setMessage(`Run ${result.id.slice(0, 8)} ${t.ai.runQueued} (${result.status}).`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Trigger failed");
+      setMessage(error instanceof Error ? error.message : t.ai.triggerFailed);
     }
   }
 
   async function addSchedule(intervalMinutes = 15, targetSymbols?: string[]) {
     const symbolsToSchedule = targetSymbols ?? [symbol];
     try {
-      await apiRequest("/pipeline/schedules", {
-        method: "POST",
-        body: JSON.stringify({
-          pipelineId: "FULL_ANALYSIS_DECISION",
-          symbols: symbolsToSchedule,
-          provider,
-          mode: "INTERVAL",
-          intervalMs: intervalMinutes * 60_000,
-          enabled: true,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          maxRunsPerHour: 60,
-        }),
+      await createScheduleMutation.mutateAsync({
+        pipelineId: "FULL_ANALYSIS_DECISION",
+        symbols: symbolsToSchedule,
+        provider,
+        mode: "INTERVAL",
+        intervalMs: intervalMinutes * 60_000,
+        enabled: true,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        maxRunsPerHour: 60,
       });
-      await client.invalidateQueries({ queryKey: ["pipeline-schedules"] });
       setMessage(
         `Schedule created: ${intervalMinutes} min interval for ${symbolsToSchedule.join(", ")}.`,
       );
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Schedule failed");
+      setMessage(error instanceof Error ? error.message : t.ai.scheduleFailed);
     }
   }
 
   async function cancelSchedule(id: string) {
     try {
-      await apiRequest(`/pipeline/schedules/${id}`, { method: "DELETE" });
-      await client.invalidateQueries({ queryKey: ["pipeline-schedules"] });
+      await cancelScheduleMutation.mutateAsync(id);
       setMessage("Schedule cancelled.");
     } catch (error) {
       setMessage(
-        error instanceof Error ? error.message : "Cancellation failed",
+        error instanceof Error ? error.message : t.ai.cancellationFailed,
       );
     }
   }
@@ -112,25 +82,22 @@ export default function PipelinePage() {
     <div className="space-y-6">
       <div className="flex items-end justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Pipeline automation</h1>
-          <p className="mt-1 text-muted-foreground">
-            Automated research and decision generation. Trading execution
-            remains disabled.
-          </p>
+          <h1 className="text-3xl font-bold">{t.ai.pipelineTitle}</h1>
+          <p className="mt-1 text-muted-foreground">{t.ai.pipelineSubtitle}</p>
         </div>
-        <Link className="text-primary hover:underline" href="/ai/pipeline-runs">
-          Run history →
+        <Link className="text-primary hover:underline" href={ROUTES.ai.pipelineRuns}>
+          {t.ai.runHistory}
         </Link>
       </div>
       <section className="grid gap-4 md:grid-cols-4">
         {[
-          ["System", health.data?.status ?? "Loading"],
+          [t.ai.system, health.data?.status ?? t.ai.loadingStatus],
           [
-            "Scheduler",
-            health.data?.scheduler.enabled ? "Enabled" : "Disabled",
+            t.ai.scheduler,
+            health.data?.scheduler.enabled ? t.ai.enabled : t.ai.disabled,
           ],
-          ["Queue depth", String(health.data?.queueDepth ?? "—")],
-          ["Failure streak", String(health.data?.failureStreak ?? "—")],
+          [t.ai.queueDepth, String(health.data?.queueDepth ?? "—")],
+          [t.ai.failureStreak, String(health.data?.failureStreak ?? "—")],
         ].map(([label, value]) => (
           <div className="rounded-lg border bg-card p-4" key={label}>
             <p className="text-xs uppercase text-muted-foreground">{label}</p>
@@ -144,12 +111,10 @@ export default function PipelinePage() {
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="font-semibold text-emerald-300">
-              Optimal Quota Allocation (500 Requests/Day Limit)
+              {t.ai.optimalQuotaTitle}
             </p>
             <p className="mt-1 text-emerald-200/80">
-              15-minute interval across 4 pairs (BTC, ETH, SOL, BNB) uses 384
-              requests/day, leaving 116 requests/day safety buffer for manual
-              triggers and replay analyses.
+              {t.ai.optimalQuotaDescription}
             </p>
           </div>
           <button
@@ -164,13 +129,13 @@ export default function PipelinePage() {
             }
             type="button"
           >
-            Create Optimal 15-min Schedule (4 Pairs)
+            {t.ai.createOptimalSchedule}
           </button>
         </div>
       </section>
 
       <section className="rounded-lg border bg-card p-5">
-        <h2 className="text-lg font-semibold">Manual trigger & schedule setup</h2>
+        <h2 className="text-lg font-semibold">{t.ai.manualTriggerTitle}</h2>
         <div className="mt-4 flex flex-wrap gap-3">
           <select
             className="min-w-0 flex-1 rounded border bg-background px-3 py-2 sm:flex-none"
@@ -194,21 +159,21 @@ export default function PipelinePage() {
             onClick={() => void run()}
             type="button"
           >
-            Run analysis now
+            {t.ai.runAnalysisNow}
           </button>
           <button
             className="rounded border border-border px-4 py-2 font-medium hover:bg-muted"
             onClick={() => void addSchedule(15)}
             type="button"
           >
-            Schedule 15 min ({symbol})
+            {t.ai.schedule15m} ({symbol})
           </button>
           <button
             className="rounded border border-border px-4 py-2 text-muted-foreground hover:bg-muted"
             onClick={() => void addSchedule(5)}
             type="button"
           >
-            Schedule 5 min ({symbol})
+            {t.ai.schedule5m} ({symbol})
           </button>
         </div>
         {message && (
@@ -217,7 +182,7 @@ export default function PipelinePage() {
       </section>
 
       <section className="rounded-lg border bg-card p-5">
-        <h2 className="text-lg font-semibold">Active Schedules</h2>
+        <h2 className="text-lg font-semibold">{t.ai.activeSchedules}</h2>
         <div className="mt-3 space-y-2">
           {schedules.data?.length ? (
             schedules.data.map((item) => (
@@ -230,7 +195,7 @@ export default function PipelinePage() {
                     {item.symbols.join(", ")} · {item.provider}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {item.enabled ? "Enabled" : "Disabled"} ·{" "}
+                    {item.enabled ? t.ai.enabled : t.ai.disabled} ·{" "}
                     {item.mode === "CRON"
                       ? item.cron
                       : `${(item.intervalMs ?? 0) / 60000} min interval`}
@@ -241,13 +206,13 @@ export default function PipelinePage() {
                   onClick={() => void cancelSchedule(item.id)}
                   type="button"
                 >
-                  Cancel schedule
+                  {t.ai.cancelSchedule}
                 </button>
               </div>
             ))
           ) : (
             <p className="text-sm text-muted-foreground">
-              No schedules configured.
+              {t.ai.noSchedules}
             </p>
           )}
         </div>

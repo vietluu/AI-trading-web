@@ -1,23 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import type {
-  TechnicalAgentInput,
-  TechnicalAgentOutput,
-} from "@platform/shared";
-import { apiRequest } from "@/lib/api-client";
-
-interface TechnicalAnalysisRun {
-  id: string;
-  status: string;
-  output?: TechnicalAgentOutput;
-}
+import type { TechnicalAgentInput } from "@platform/shared";
+import { useAnalysisRunner, type TechnicalAnalysisResult } from "@/hooks/ai/useAiFeature";
+import { useTranslation } from "@/lib/i18n/i18n-context";
 
 const fieldClassName =
   "w-full rounded-md border border-border bg-background px-3 py-2 text-sm";
 
 export default function TechnicalAnalysisPage(): React.JSX.Element {
+  const { t } = useTranslation();
   const [symbol, setSymbol] =
     useState<TechnicalAgentInput["symbol"]>("BTC-USDT");
   const [provider, setProvider] =
@@ -25,32 +17,29 @@ export default function TechnicalAnalysisPage(): React.JSX.Element {
   const [interval, setInterval] =
     useState<TechnicalAgentInput["interval"]>("1h");
   const [lookbackCandles, setLookbackCandles] = useState(150);
-  const analysis = useMutation<TechnicalAnalysisRun, Error>({
-    mutationFn: () =>
-      apiRequest<TechnicalAnalysisRun>("/agents/TECHNICAL_ANALYST/runs", {
-        method: "POST",
-        body: JSON.stringify({
-          input: { symbol, provider, interval, lookbackCandles },
-        }),
-      }),
-  });
-  const output = analysis.data?.output;
+  const analysis = useAnalysisRunner("TECHNICAL");
+  const analysisInput: TechnicalAgentInput = {
+    symbol,
+    provider,
+    interval,
+    lookbackCandles,
+  };
+  const output = analysis.data?.output as TechnicalAnalysisResult | undefined;
 
   return (
     <div className="container mx-auto space-y-6 p-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">
-          Technical Analysis
+          {t.ai.technicalAnalysisTitle}
         </h1>
         <p className="mt-1 text-muted-foreground">
-          Indicator, momentum, divergence, and structure research only. No trade
-          recommendations or execution.
+          {t.ai.technicalAnalysisSubtitle}
         </p>
       </div>
 
       <section className="grid gap-4 rounded-lg border bg-card p-6 md:grid-cols-4">
         <Select
-          label="Symbol"
+          label={t.ai.symbol}
           value={symbol}
           onChange={(value) =>
             setSymbol(value as TechnicalAgentInput["symbol"])
@@ -58,7 +47,7 @@ export default function TechnicalAnalysisPage(): React.JSX.Element {
           options={["BTC-USDT", "ETH-USDT"]}
         />
         <Select
-          label="Exchange"
+          label={t.ai.exchange}
           value={provider}
           onChange={(value) =>
             setProvider(value as TechnicalAgentInput["provider"])
@@ -66,7 +55,7 @@ export default function TechnicalAnalysisPage(): React.JSX.Element {
           options={["BINANCE_FUTURES", "OKX_FUTURES"]}
         />
         <Select
-          label="Interval"
+          label={t.ai.interval}
           value={interval}
           onChange={(value) =>
             setInterval(value as TechnicalAgentInput["interval"])
@@ -74,7 +63,7 @@ export default function TechnicalAnalysisPage(): React.JSX.Element {
           options={["1m", "5m", "15m", "1h"]}
         />
         <label className="space-y-1 text-xs font-semibold text-muted-foreground">
-          Lookback candles
+          {t.ai.lookbackCandles}
           <input
             className={fieldClassName}
             type="number"
@@ -89,12 +78,12 @@ export default function TechnicalAnalysisPage(): React.JSX.Element {
           disabled={
             analysis.isPending || lookbackCandles < 1 || lookbackCandles > 500
           }
-          onClick={() => analysis.mutate()}
+          onClick={() => analysis.mutate(analysisInput)}
           type="button"
         >
           {analysis.isPending
-            ? "Analyzing technical conditions…"
-            : "Run technical analysis"}
+            ? t.ai.analyzingTechnical
+            : t.ai.runTechnicalAnalysis}
         </button>
         {analysis.isError ? (
           <p className="text-sm text-red-500 md:col-span-4" role="alert">
@@ -107,7 +96,7 @@ export default function TechnicalAnalysisPage(): React.JSX.Element {
         <section className="space-y-4" aria-label="Technical analysis result">
           <div className="rounded-lg border bg-card p-5">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-xl font-semibold">Summary</h2>
+              <h2 className="text-xl font-semibold">{t.ai.summary}</h2>
               <span className="rounded-full bg-muted px-3 py-1 text-xs font-semibold">
                 Data quality: {output.dataQuality}
               </span>
@@ -168,17 +157,17 @@ export default function TechnicalAnalysisPage(): React.JSX.Element {
           </div>
           <div className="rounded-lg border bg-card p-5">
             <h2 className="mb-3 text-lg font-semibold">
-              Technical observations
+              {t.ai.technicalObservations}
             </h2>
             {output.signals.length ? (
               <ul className="list-inside list-disc space-y-1 text-sm">
-                {output.signals.map((item) => (
+                {output.signals.map((item: string) => (
                   <li key={item}>{item}</li>
                 ))}
               </ul>
             ) : (
               <p className="text-sm text-muted-foreground">
-                No notable observations.
+                {t.ai.noObservations}
               </p>
             )}
           </div>

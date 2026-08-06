@@ -1,10 +1,9 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
 import { Activity, Database, RefreshCw, Server } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { fetchHealth } from "@/lib/health-client";
+import { useHealthStatus } from "@/hooks/health/useHealthStatus";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 
 function StatusDot({ isUp }: { isUp: boolean }): React.JSX.Element {
@@ -20,11 +19,7 @@ function StatusDot({ isUp }: { isUp: boolean }): React.JSX.Element {
 
 export function HealthStatus(): React.JSX.Element {
   const { t } = useTranslation();
-  const healthQuery = useQuery({
-    queryKey: ["platform-health"],
-    queryFn: ({ signal }) => fetchHealth(signal),
-    refetchInterval: 30_000,
-  });
+  const healthQuery = useHealthStatus();
 
   if (healthQuery.isPending) {
     return (

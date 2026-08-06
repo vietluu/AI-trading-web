@@ -4,42 +4,47 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 
+import { ROUTES } from "@/constants/routes";
 import { apiRequest } from "@/lib/api-client";
+import { useTranslation } from "@/lib/i18n/i18n-context";
 
 function Verification(): React.JSX.Element {
+  const { t } = useTranslation();
   const token = useSearchParams().get("token");
-  const [message, setMessage] = useState("Verifying your email...");
+  const [message, setMessage] = useState(t.auth.verifyingEmail);
   useEffect(() => {
     if (!token) {
-      setMessage("Verification token is missing.");
+      setMessage(t.auth.verificationTokenMissing);
       return;
     }
     void apiRequest("/auth/verify-email", {
       method: "POST",
       body: JSON.stringify({ token }),
     }).then(
-      () => setMessage("Email verified. You can sign in now."),
+      () => setMessage(t.auth.emailVerified),
       (error: unknown) =>
         setMessage(
-          error instanceof Error ? error.message : "Verification failed",
+          error instanceof Error ? error.message : t.auth.verificationFailed,
         ),
     );
-  }, [token]);
+  }, [token, t.auth.emailVerified, t.auth.verificationFailed, t.auth.verificationTokenMissing]);
   return <p className="mt-4 text-sm text-muted-foreground">{message}</p>;
 }
 
 export default function VerifyEmailPage(): React.JSX.Element {
+  const { t } = useTranslation();
+
   return (
     <section className="mx-auto max-w-md">
-      <h1 className="text-3xl font-semibold">Email verification</h1>
+      <h1 className="text-3xl font-semibold">{t.auth.verifyEmailTitle}</h1>
       <Suspense fallback={<p className="mt-4">Loading...</p>}>
         <Verification />
       </Suspense>
       <Link
         className="mt-6 inline-block text-sm text-emerald-300"
-        href="/login"
+        href={ROUTES.login}
       >
-        Return to sign in
+        {t.auth.returnToSignIn}
       </Link>
     </section>
   );

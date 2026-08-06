@@ -1,43 +1,12 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/api-client";
-
-interface AgentDefinition {
-  type: string;
-  version: number;
-  displayName: string;
-  description: string;
-  status: string;
-  executionMode: string;
-  promptId: string;
-  promptVersion: number;
-  allowedToolNames: string[];
-  requiredCapabilities: string[];
-}
-
-interface AgentHealth {
-  agentType: string;
-  version: number;
-  status: string;
-  healthStatus: string;
-  reasons: string[];
-  avgLatencyMs: number;
-  successRatePct: number;
-  totalRuns: number;
-  activeRuns: number;
-}
+import { useAgentHealth, useAgents } from "@/hooks/ai/useAiFeature";
+import { useTranslation } from "@/lib/i18n/i18n-context";
 
 export default function AgentRegistryPage() {
-  const { data: agents = [], isLoading: loadingAgents } = useQuery<AgentDefinition[]>({
-    queryKey: ["agents"],
-    queryFn: () => apiRequest<AgentDefinition[]>("/agents"),
-  });
-
-  const { data: healthList = [], isLoading: loadingHealth, refetch: refetchHealth } = useQuery<AgentHealth[]>({
-    queryKey: ["agents-health"],
-    queryFn: () => apiRequest<AgentHealth[]>("/agents/health"),
-  });
+  const { t } = useTranslation();
+  const { data: agents = [], isLoading: loadingAgents } = useAgents();
+  const { data: healthList = [], isLoading: loadingHealth, refetch: refetchHealth } = useAgentHealth();
 
   const getHealthForAgent = (type: string) => {
     return healthList.find((h) => h.agentType === type);
@@ -47,24 +16,22 @@ export default function AgentRegistryPage() {
     <div className="container mx-auto p-6 space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">AI Multi-Agent Framework</h1>
-          <p className="text-muted-foreground mt-1">
-            Registered agent definitions, capability bounds, and health diagnostics
-          </p>
+          <h1 className="text-3xl font-bold tracking-tight">{t.ai.agentsTitle}</h1>
+          <p className="text-muted-foreground mt-1">{t.ai.agentsSubtitle}</p>
         </div>
         <button
           onClick={() => refetchHealth()}
           className="px-4 py-2 bg-primary text-primary-foreground text-sm font-medium rounded-md hover:bg-primary/90 transition-colors"
         >
-          Refresh Health
+          {t.ai.refreshHealth}
         </button>
       </div>
 
       {loadingAgents || loadingHealth ? (
-        <div className="p-8 text-center text-muted-foreground">Loading registered agents...</div>
+        <div className="p-8 text-center text-muted-foreground">{t.ai.loadingAgents}</div>
       ) : agents.length === 0 ? (
         <div className="p-8 text-center border border-dashed rounded-lg text-muted-foreground">
-          No agent definitions registered yet.
+          {t.ai.noAgents}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -102,24 +69,24 @@ export default function AgentRegistryPage() {
 
                   <div className="mt-4 space-y-2 border-t pt-3 text-xs">
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Execution Mode:</span>
+                      <span className="text-muted-foreground">{t.ai.executionMode}</span>
                       <span className="font-medium font-mono">{agent.executionMode}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Prompt Template:</span>
+                      <span className="text-muted-foreground">{t.ai.promptTemplate}</span>
                       <span className="font-medium font-mono">
                         {agent.promptId} (v{agent.promptVersion})
                       </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Allowed Tools:</span>
+                      <span className="text-muted-foreground">{t.ai.allowedTools}</span>
                       <span className="font-medium">{agent.allowedToolNames.length} tools</span>
                     </div>
                   </div>
 
                   {agent.allowedToolNames.length > 0 && (
                     <div className="mt-3">
-                      <p className="text-xs font-semibold text-muted-foreground mb-1">Allowed Tools:</p>
+                      <p className="text-xs font-semibold text-muted-foreground mb-1">{t.ai.allowedTools}</p>
                       <div className="flex flex-wrap gap-1">
                         {agent.allowedToolNames.map((t) => (
                           <span
@@ -136,13 +103,13 @@ export default function AgentRegistryPage() {
 
                 <div className="border-t pt-3 flex justify-between text-xs text-muted-foreground">
                   <div>
-                    <span>Success Rate: </span>
+                    <span>{t.ai.successRate}</span>
                     <span className="font-semibold text-foreground">
                       {health ? `${health.successRatePct}%` : "N/A"}
                     </span>
                   </div>
                   <div>
-                    <span>Avg Latency: </span>
+                    <span>{t.ai.avgLatency}</span>
                     <span className="font-semibold text-foreground">
                       {health ? `${health.avgLatencyMs}ms` : "N/A"}
                     </span>

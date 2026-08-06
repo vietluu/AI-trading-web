@@ -1,37 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/api-client";
-
-interface DiagnosticResult {
-  id: string;
-  agentType: string;
-  status: string;
-  output?: {
-    summary: string;
-    observations: string[];
-    dataQuality: string;
-    usedTools: string[];
-    generatedAt: string;
-  };
-  durationMs?: number;
-  inputTokens: number;
-  outputTokens: number;
-}
+import { useSystemDiagnostic, type DiagnosticRunResult } from "@/hooks/ai/useAiFeature";
 
 export default function SystemDiagnosticPage() {
   const [symbol, setSymbol] = useState("BTC-USDT");
   const [provider, setProvider] = useState("OPENAI");
 
-  const runMutation = useMutation<DiagnosticResult, Error, void>({
-    mutationFn: () =>
-      apiRequest<DiagnosticResult>("/agents/system-diagnostic/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol, provider }),
-      }),
-  });
+  const runMutation = useSystemDiagnostic(symbol, provider);
+  const runData: DiagnosticRunResult | undefined = runMutation.data;
 
   const errorMessage = runMutation.error instanceof Error ? runMutation.error.message : "Diagnostic run failed";
 
@@ -72,7 +49,7 @@ export default function SystemDiagnosticPage() {
         </div>
 
         <button
-          onClick={() => runMutation.mutate()}
+          onClick={() => runMutation.mutate(undefined)}
           disabled={runMutation.isPending}
           className="w-full py-2.5 bg-primary text-primary-foreground text-sm font-medium rounded-md hover:bg-primary/90 transition-colors"
         >
@@ -86,47 +63,47 @@ export default function SystemDiagnosticPage() {
         )}
       </div>
 
-      {runMutation.isSuccess && runMutation.data && (
+      {runMutation.isSuccess && runData && (
         <div className="border rounded-lg p-6 bg-card space-y-4">
           <div className="flex items-center justify-between border-b pb-3">
             <h2 className="text-lg font-semibold">Diagnostic Execution Result</h2>
             <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded bg-green-500/15 text-green-600">
-              {runMutation.data.status}
+              {runData.status}
             </span>
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs font-mono bg-muted p-3 rounded">
             <div>
               <span className="text-muted-foreground block">Run ID</span>
-              <span className="font-semibold">{runMutation.data.id.slice(0, 8)}...</span>
+              <span className="font-semibold">{runData.id.slice(0, 8)}...</span>
             </div>
             <div>
               <span className="text-muted-foreground block">Duration</span>
-              <span className="font-semibold">{runMutation.data.durationMs}ms</span>
+              <span className="font-semibold">{runData.durationMs}ms</span>
             </div>
             <div>
               <span className="text-muted-foreground block">Tokens</span>
               <span className="font-semibold">
-                {runMutation.data.inputTokens + runMutation.data.outputTokens}
+                {runData.inputTokens + runData.outputTokens}
               </span>
             </div>
             <div>
               <span className="text-muted-foreground block">Data Quality</span>
-              <span className="font-semibold">{runMutation.data.output?.dataQuality || "N/A"}</span>
+              <span className="font-semibold">{runData.output?.dataQuality || "N/A"}</span>
             </div>
           </div>
 
-          {runMutation.data.output && (
+          {runData.output && (
             <div className="space-y-4 pt-2">
               <div>
                 <h3 className="text-sm font-semibold text-muted-foreground mb-1">Executive Summary</h3>
-                <p className="text-sm border p-3 rounded bg-background">{runMutation.data.output.summary}</p>
+                <p className="text-sm border p-3 rounded bg-background">{runData.output.summary}</p>
               </div>
 
               <div>
                 <h3 className="text-sm font-semibold text-muted-foreground mb-1">Key Observations</h3>
                 <ul className="list-disc list-inside text-sm space-y-1 border p-3 rounded bg-background">
-                  {runMutation.data.output.observations.map((obs, idx) => (
+                  {runData.output.observations.map((obs, idx) => (
                     <li key={idx}>{obs}</li>
                   ))}
                 </ul>
@@ -135,7 +112,7 @@ export default function SystemDiagnosticPage() {
               <div>
                 <h3 className="text-sm font-semibold text-muted-foreground mb-1">Tools Invoked</h3>
                 <div className="flex flex-wrap gap-1.5 border p-3 rounded bg-background">
-                  {runMutation.data.output.usedTools.map((tool) => (
+                  {runData.output.usedTools.map((tool) => (
                     <span key={tool} className="text-xs font-mono bg-accent px-2 py-0.5 rounded">
                       {tool}
                     </span>

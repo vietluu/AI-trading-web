@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiRequest } from "@/lib/api-client";
 import { useTranslation } from "@/lib/i18n/i18n-context";
+import { getRecommendations, reviewRecommendation } from "@/services/quant.service";
 import { ShieldCheck, Check, X, Inbox } from "lucide-react";
 
 interface RecommendationItem {
@@ -28,7 +28,7 @@ export default function RecommendationsPage() {
   useEffect(() => {
     async function loadRecommendations() {
       try {
-        const data = await apiRequest<RecommendationItem[]>("/quant-intelligence/recommendations");
+        const data = await getRecommendations();
         setRecommendations(data);
       } catch {
         setRecommendations([]);
@@ -42,10 +42,7 @@ export default function RecommendationsPage() {
   async function handleReview(id: string, action: "APPROVE" | "REJECT") {
     setActioningId(id);
     try {
-      await apiRequest(`/quant-intelligence/recommendations/${id}/review`, {
-        method: "POST",
-        body: JSON.stringify({ action }),
-      });
+      await reviewRecommendation(id, action);
       setRecommendations((prev) =>
         prev.map((r) => (r.id === id ? { ...r, status: action === "APPROVE" ? "APPROVED" : "REJECTED" } : r))
       );

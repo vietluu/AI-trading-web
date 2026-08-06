@@ -1,15 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import type { NewsAgentOutput, NewsSentimentInput } from "@platform/shared";
-import { apiRequest } from "@/lib/api-client";
-
-interface NewsAnalysisRun {
-  id: string;
-  status: string;
-  output?: NewsAgentOutput;
-}
+import type { NewsSentimentInput } from "@platform/shared";
+import { useAnalysisRunner, type NewsAnalysisResult } from "@/hooks/ai/useAiFeature";
 
 const fieldClassName =
   "w-full rounded-md border border-border bg-background px-3 py-2 text-sm";
@@ -18,14 +11,13 @@ export default function NewsAnalysisPage(): React.JSX.Element {
   const [symbol, setSymbol] = useState<NewsSentimentInput["symbol"]>("BTC");
   const [lookbackHours, setLookbackHours] = useState(6);
   const [maxItems, setMaxItems] = useState(20);
-  const analysis = useMutation<NewsAnalysisRun, Error>({
-    mutationFn: () =>
-      apiRequest<NewsAnalysisRun>("/agents/NEWS_ANALYST/runs", {
-        method: "POST",
-        body: JSON.stringify({ input: { symbol, lookbackHours, maxItems } }),
-      }),
-  });
-  const output = analysis.data?.output;
+  const analysis = useAnalysisRunner("NEWS");
+  const analysisInput: NewsSentimentInput = {
+    symbol,
+    lookbackHours,
+    maxItems,
+  };
+  const output = analysis.data?.output as NewsAnalysisResult | undefined;
 
   return (
     <div className="container mx-auto space-y-6 p-6">
@@ -45,7 +37,7 @@ export default function NewsAnalysisPage(): React.JSX.Element {
         onSymbol={setSymbol}
         onLookback={setLookbackHours}
         onMaxItems={setMaxItems}
-        onRun={() => analysis.mutate()}
+        onRun={() => analysis.mutate(analysisInput)}
       />
       {output ? (
         <section className="space-y-4" aria-label="News analysis result">
@@ -68,7 +60,7 @@ export default function NewsAnalysisPage(): React.JSX.Element {
           <Card title="Key events">
             {output.keyEvents.length ? (
               <div className="space-y-3">
-                {output.keyEvents.map((event, index) => (
+                {output.keyEvents.map((event: { title: string; impact: string; importance: number }, index: number) => (
                   <div
                     className="rounded-md border p-3 text-sm"
                     key={`${event.title}-${index}`}

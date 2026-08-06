@@ -99,7 +99,7 @@ export default function StrategyLabPage() {
       {simulationResult && (
         <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-5 space-y-2">
           <div className="flex items-center gap-2 font-bold text-emerald-500">
-            <CheckCircle className="h-5 w-5" /> {t.quant.simulationResult}: {simulationResult.passedCriteria ? "PASSED" : "FAILED"}
+            <CheckCircle className="h-5 w-5" /> {t.quant.simulationResult}: {simulationResult.passedCriteria ? t.quant.passed : t.quant.failed}
           </div>
           <p className="text-sm font-medium">{simulationResult.summary}</p>
           <div className="flex gap-4 text-xs font-semibold pt-1">
@@ -112,20 +112,20 @@ export default function StrategyLabPage() {
       {/* Discovered Strategies */}
       <div className="rounded-2xl border border-border bg-card p-6 space-y-4">
         <h2 className="text-lg font-semibold flex items-center gap-2">
-          <Award className="h-5 w-5 text-primary" /> Discovered Strategy Candidates (Module 2)
+          <Award className="h-5 w-5 text-primary" /> {t.quant.discoveredStrategyCandidates}
         </h2>
         <div className="grid gap-4 sm:grid-cols-2">
           {strategies.map((s) => (
             <div key={s.key} className="rounded-xl border border-border p-4 space-y-2">
               <div className="flex justify-between items-center">
                 <h3 className="font-bold">{s.name}</h3>
-                <span className="text-xs font-bold text-primary px-2 py-0.5 rounded bg-primary/10">Score: {s.score}/100</span>
+                <span className="text-xs font-bold text-primary px-2 py-0.5 rounded bg-primary/10">{t.quant.score}: {s.score}/100</span>
               </div>
               <div className="grid grid-cols-4 gap-2 text-center text-xs pt-1">
-                <div><span className="text-muted-foreground">EV</span><p className="font-bold text-emerald-500">+{s.expectedValue}</p></div>
-                <div><span className="text-muted-foreground">PF</span><p className="font-bold">{s.profitFactor}</p></div>
-                <div><span className="text-muted-foreground">Sharpe</span><p className="font-bold">{s.sharpeRatio}</p></div>
-                <div><span className="text-muted-foreground">Max DD</span><p className="font-bold text-rose-500">{s.maxDrawdown}%</p></div>
+                <div><span className="text-muted-foreground">{t.quant.expectedValue}</span><p className="font-bold text-emerald-500">+{s.expectedValue}</p></div>
+                <div><span className="text-muted-foreground">{t.quant.profitFactor}</span><p className="font-bold">{s.profitFactor}</p></div>
+                <div><span className="text-muted-foreground">{t.quant.sharpe}</span><p className="font-bold">{s.sharpeRatio}</p></div>
+                <div><span className="text-muted-foreground">{t.quant.maxDrawdown}</span><p className="font-bold text-rose-500">{s.maxDrawdown}%</p></div>
               </div>
             </div>
           ))}

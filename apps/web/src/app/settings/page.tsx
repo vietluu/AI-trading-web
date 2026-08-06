@@ -1,7 +1,5 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { settingsViewSchema } from "@platform/shared";
 import { useState, type FormEvent } from "react";
 
 import { AccountNav } from "@/components/account-nav";
@@ -11,7 +9,8 @@ import {
   Field,
   SelectField,
 } from "@/components/form-controls";
-import { apiRequest, apiRequestValidated } from "@/lib/api-client";
+import { useAppSettings } from "@/hooks/settings/useSettings";
+import { useTranslation } from "@/lib/i18n/i18n-context";
 
 function formString(form: FormData, name: string): string {
   const value = form.get(name);
@@ -19,15 +18,12 @@ function formString(form: FormData, name: string): string {
 }
 
 export default function SettingsPage(): React.JSX.Element {
-  const client = useQueryClient();
+  const { t } = useTranslation();
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
-  const settings = useQuery({
-    queryKey: ["settings"],
-    queryFn: () => apiRequestValidated("/settings", settingsViewSchema),
-    retry: false,
-  });
+  const { settingsQuery, saveMutation } = useAppSettings();
+  const settings = settingsQuery;
   async function save(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     setBusy(true);
@@ -35,9 +31,8 @@ export default function SettingsPage(): React.JSX.Element {
     setMessage(undefined);
     const form = new FormData(event.currentTarget);
     try {
-      await apiRequest("/settings", {
-        method: "PUT",
-        body: JSON.stringify({
+      setMessage(t.settings.settingsSaved);
+      await saveMutation.mutateAsync({
           theme: form.get("theme"),
           timezone: form.get("timezone"),
           preferredExchange: form.get("preferredExchange"),
@@ -56,12 +51,9 @@ export default function SettingsPage(): React.JSX.Element {
             ? Number(formString(form, "defaultLeverage"))
             : undefined,
           riskPreference: form.get("riskPreference"),
-        }),
-      });
-      setMessage("Settings saved.");
-      await client.invalidateQueries({ queryKey: ["settings"] });
+        });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Save failed");
+      setError(caught instanceof Error ? caught.message : t.settings.saveFailed);
     } finally {
       setBusy(false);
     }
@@ -69,7 +61,7 @@ export default function SettingsPage(): React.JSX.Element {
   return (
     <section>
       <AccountNav />
-      <h1 className="text-3xl font-semibold">Settings</h1>
+      <h1 className="text-3xl font-semibold">{t.settings.title}</h1>
       {settings.data && (
         <form
           className="mt-6 grid max-w-2xl gap-4 rounded-xl border border-border bg-card p-6 md:grid-cols-2"
@@ -78,21 +70,21 @@ export default function SettingsPage(): React.JSX.Element {
         >
           <SelectField
             defaultValue={settings.data.theme}
-            label="Theme"
+            label={t.settings.theme}
             name="theme"
           >
-            <option value="dark">Dark</option>
-            <option value="light">Light</option>
-            <option value="system">System</option>
+            <option value="dark">{t.settings.dark}</option>
+            <option value="light">{t.settings.light}</option>
+            <option value="system">{t.settings.system}</option>
           </SelectField>
           <Field
             defaultValue={settings.data.timezone}
-            label="Timezone"
+            label={t.settings.timezone}
             name="timezone"
           />
           <SelectField
             defaultValue={settings.data.preferredExchange ?? "BINANCE"}
-            label="Preferred exchange"
+            label={t.settings.preferredExchange}
             name="preferredExchange"
           >
             <option>BINANCE</option>
@@ -100,17 +92,17 @@ export default function SettingsPage(): React.JSX.Element {
           </SelectField>
           <Field
             defaultValue={settings.data.preferredSymbols.join(", ")}
-            label="Symbols (comma-separated)"
+            label={t.settings.symbols}
             name="preferredSymbols"
           />
           <Field
             defaultValue={settings.data.preferredTimeframes.join(", ")}
-            label="Timeframes (comma-separated)"
+            label={t.settings.timeframes}
             name="preferredTimeframes"
           />
           <Field
             defaultValue={settings.data.aiDailyBudget}
-            label="AI daily budget"
+            label={t.settings.aiDailyBudget}
             min="0"
             name="aiDailyBudget"
             step="0.01"
@@ -118,7 +110,7 @@ export default function SettingsPage(): React.JSX.Element {
           />
           <Field
             defaultValue={settings.data.defaultLeverage}
-            label="Default leverage"
+            label={t.settings.defaultLeverage}
             max="125"
             min="1"
             name="defaultLeverage"
@@ -126,16 +118,16 @@ export default function SettingsPage(): React.JSX.Element {
           />
           <SelectField
             defaultValue={settings.data.riskPreference}
-            label="Risk preference"
+            label={t.settings.riskPreference}
             name="riskPreference"
           >
-            <option>CONSERVATIVE</option>
-            <option>MODERATE</option>
-            <option>AGGRESSIVE</option>
+            <option>{t.settings.conservative}</option>
+            <option>{t.settings.moderate}</option>
+            <option>{t.settings.aggressive}</option>
           </SelectField>
           <div className="flex items-end gap-3">
             <button className={buttonClass} disabled={busy}>
-              {busy ? "Saving…" : "Save settings"}
+              {busy ? t.settings.saving : t.settings.saveSettings}
             </button>
             <Feedback error={error} success={message} />
           </div>

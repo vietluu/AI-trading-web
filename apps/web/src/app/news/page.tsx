@@ -1,34 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { AccountNav } from "@/components/account-nav";
 import { LoadingButton } from "@/components/loading-button";
-import { apiRequest } from "@/lib/api-client";
+import { useNewsFeed } from "@/hooks/news/useNews";
+import { useTranslation } from "@/lib/i18n/i18n-context";
 import { useExternalDataSocket } from "@/lib/use-external-data-socket";
 
-interface NewsItem {
-  id: string;
-  sourceId: string;
-  title: string;
-  summary?: string;
-  canonicalUrl: string;
-  publishedAt: string;
-  reliabilityScore: number;
-  importanceScore: number;
-  duplicateCount: number;
-  symbols: string[];
-  topics: string[];
-  userState?: {
-    isRead: boolean;
-    isSaved: boolean;
-    isHidden: boolean;
-  };
-}
-
 export default function NewsPage() {
-  const queryClient = useQueryClient();
+  const { t } = useTranslation();
   const [symbolFilter, setSymbolFilter] = useState("");
   const [minImportance, setMinImportance] = useState<number>(0);
   const [savedOnly, setSavedOnly] = useState(false);
@@ -47,52 +28,20 @@ export default function NewsPage() {
     (event, data) => {
       if (event === "HIGH_IMPORTANCE_NEWS_DETECTED") {
         setHighImportanceAlert({
-          title: typeof data.title === "string" ? data.title : "High Importance Event",
+          title: typeof data.title === "string" ? data.title : t.news.highImportance,
           summary: typeof data.summary === "string" ? data.summary : undefined,
         });
       }
-      void queryClient.invalidateQueries({ queryKey: ["news"] });
     },
   );
 
-  const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ["news", symbolFilter, minImportance, savedOnly, unreadOnly],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      if (symbolFilter) params.set("symbol", symbolFilter);
-      if (minImportance > 0) params.set("minImportance", minImportance.toString());
-      if (savedOnly) params.set("saved", "true");
-      if (unreadOnly) params.set("unread", "true");
-
-      return apiRequest<{ items: NewsItem[]; pagination: unknown }>(
-        `/external-data/news?${params.toString()}`,
-      );
-    },
+  const { query, saveMutation, readMutation } = useNewsFeed({
+    symbolFilter,
+    minImportance,
+    savedOnly,
+    unreadOnly,
   });
-
-  const saveMutation = useMutation({
-    mutationFn: async ({ id, isSaved }: { id: string; isSaved: boolean }) => {
-      await apiRequest(`/external-data/news/${id}/save`, {
-        method: "PATCH",
-        body: JSON.stringify({ isSaved }),
-      });
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["news"] });
-    },
-  });
-
-  const readMutation = useMutation({
-    mutationFn: async ({ id, isRead }: { id: string; isRead: boolean }) => {
-      await apiRequest(`/external-data/news/${id}/read`, {
-        method: "PATCH",
-        body: JSON.stringify({ isRead }),
-      });
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["news"] });
-    },
-  });
+  const { data, isLoading, isError, refetch } = query;
 
   return (
     <div className="container mx-auto max-w-6xl">
@@ -100,10 +49,8 @@ export default function NewsPage() {
 
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Cryptocurrency News & Market Events</h1>
-          <p className="text-sm text-muted-foreground">
-            Normalized, deduplicated, and ranked crypto news feeds with deterministic importance scores.
-          </p>
+          <h1 className="text-2xl font-bold tracking-tight">{t.news.title}</h1>
+          <p className="text-sm text-muted-foreground">{t.news.subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
           <span
@@ -112,13 +59,13 @@ export default function NewsPage() {
             }`}
           >
             <span className={`h-2 w-2 rounded-full ${isConnected ? "bg-emerald-500 animate-pulse" : "bg-zinc-500"}`} />
-            {isConnected ? "Live Stream Active" : "Disconnected"}
+            {isConnected ? t.news.liveStreamActive : t.news.disconnected}
           </span>
           <button
             onClick={() => { void refetch(); }}
             className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted"
           >
-            Refresh
+            {t.news.refresh}
           </button>
         </div>
       </div>
@@ -127,14 +74,14 @@ export default function NewsPage() {
         <div className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-amber-200">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 font-semibold">
-              <span className="rounded bg-amber-500 px-1.5 py-0.5 text-xs text-black font-bold">HIGH IMPORTANCE</span>
+              <span className="rounded bg-amber-500 px-1.5 py-0.5 text-xs text-black font-bold">{t.news.highImportance}</span>
               <span>{highImportanceAlert.title}</span>
             </div>
             <button
               onClick={() => setHighImportanceAlert(null)}
               className="text-xs hover:underline text-amber-300"
             >
-              Dismiss
+              {t.news.dismiss}
             </button>
           </div>
           {highImportanceAlert.summary && (
@@ -147,10 +94,10 @@ export default function NewsPage() {
       <div className="mb-6 rounded-lg border border-border bg-card p-4">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
           <div>
-            <label className="mb-1 block text-xs font-medium text-muted-foreground">Filter by Symbol</label>
+            <label className="mb-1 block text-xs font-medium text-muted-foreground">{t.news.filterBySymbol}</label>
             <input
               type="text"
-              placeholder="e.g. BTC-USDT"
+              placeholder={t.news.placeholderSymbol}
               value={symbolFilter}
               onChange={(e) => setSymbolFilter(e.target.value)}
               className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
@@ -158,7 +105,7 @@ export default function NewsPage() {
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-medium text-muted-foreground">Min Importance ({minImportance})</label>
+            <label className="mb-1 block text-xs font-medium text-muted-foreground">{t.news.minImportance} ({minImportance})</label>
             <input
               type="range"
               min="0"
@@ -178,7 +125,7 @@ export default function NewsPage() {
                 onChange={(e) => setSavedOnly(e.target.checked)}
                 className="rounded border-border"
               />
-              Saved Only
+              {t.news.savedOnly}
             </label>
 
             <label className="flex items-center gap-2 text-xs cursor-pointer">
@@ -188,7 +135,7 @@ export default function NewsPage() {
                 onChange={(e) => setUnreadOnly(e.target.checked)}
                 className="rounded border-border"
               />
-              Unread Only
+              {t.news.unreadOnly}
             </label>
           </div>
         </div>
@@ -196,11 +143,11 @@ export default function NewsPage() {
 
       {/* Articles Feed */}
       {isLoading ? (
-        <div className="py-12 text-center text-sm text-muted-foreground">Loading news items...</div>
+        <div className="py-12 text-center text-sm text-muted-foreground">{t.news.loading}</div>
       ) : isError ? (
-        <div className="py-12 text-center text-sm text-red-400">Failed to load news articles. Please try again.</div>
+        <div className="py-12 text-center text-sm text-red-400">{t.news.error}</div>
       ) : !data?.items || data.items.length === 0 ? (
-        <div className="py-12 text-center text-sm text-muted-foreground">No news articles found matching filter criteria.</div>
+        <div className="py-12 text-center text-sm text-muted-foreground">{t.news.empty}</div>
       ) : (
         <div className="space-y-4">
           {data.items.map((article) => {
@@ -244,7 +191,7 @@ export default function NewsPage() {
                       onClick={() => saveMutation.mutate({ id: article.id, isSaved: !isSaved })}
                       className={`text-xs hover:underline ${isSaved ? "text-amber-400 font-medium" : "text-muted-foreground"}`}
                     >
-                      {isSaved ? "★ Saved" : "☆ Save"}
+                      {isSaved ? `★ ${t.news.save}` : `☆ ${t.news.save}`}
                     </LoadingButton>
 
                     <LoadingButton
@@ -252,7 +199,7 @@ export default function NewsPage() {
                       onClick={() => readMutation.mutate({ id: article.id, isRead: !isRead })}
                       className="text-xs text-muted-foreground hover:underline"
                     >
-                      {isRead ? "Mark Unread" : "Mark Read"}
+                      {isRead ? t.news.markUnread : t.news.markRead}
                     </LoadingButton>
                   </div>
                 </div>

@@ -1,36 +1,30 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import type { DecisionOutput, FusionRunInput } from "@platform/shared";
-import { apiRequest } from "@/lib/api-client";
+import type { FusionRunInput } from "@platform/shared";
+import { useDecisionRunner } from "@/hooks/ai/useAiFeature";
+import { useTranslation } from "@/lib/i18n/i18n-context";
 
 const fieldClassName =
   "w-full rounded-md border border-border bg-background px-3 py-2 text-sm";
 
 export default function DecisionPage(): React.JSX.Element {
+  const { t } = useTranslation();
   const [symbol, setSymbol] = useState<FusionRunInput["symbol"]>("BTC-USDT");
   const [symbols] = useState<string[]>(["BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT", "XRP-USDT", "DOGE-USDT", "ADA-USDT", "AVAX-USDT", "LINK-USDT", "NEAR-USDT", "SUI-USDT"]);
   const [provider, setProvider] =
     useState<FusionRunInput["provider"]>("BINANCE_FUTURES");
   const [interval, setInterval] = useState<FusionRunInput["interval"]>("15m");
 
-  const decision = useMutation<DecisionOutput, Error>({
-    mutationFn: () =>
-      apiRequest<DecisionOutput>("/ai/decision", {
-        method: "POST",
-        body: JSON.stringify({
-          input: {
-            symbol,
-            provider,
-            interval,
-            lookbackCandles: 150,
-            lookbackHours: 6,
-            maxItems: 20,
-          },
-        }),
-      }),
-  });
+  const decision = useDecisionRunner();
+  const decisionInput: FusionRunInput = {
+    symbol,
+    provider,
+    interval,
+    lookbackCandles: 150,
+    lookbackHours: 6,
+    maxItems: 20,
+  };
 
   const output = decision.data;
   const badge =
@@ -43,34 +37,32 @@ export default function DecisionPage(): React.JSX.Element {
   return (
     <div className="container mx-auto space-y-6 p-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Decision & Consensus</h1>
-        <p className="mt-1 text-muted-foreground">
-          Weighted multi-agent research synthesis. Decisions are informational and never execute orders.
-        </p>
+        <h1 className="text-3xl font-bold tracking-tight">{t.ai.decisionTitle}</h1>
+        <p className="mt-1 text-muted-foreground">{t.ai.decisionSubtitle}</p>
       </div>
 
       <section className="grid gap-4 rounded-lg border bg-card p-6 md:grid-cols-3">
         <label className="space-y-1 text-xs font-semibold text-muted-foreground">
-          Symbol
+          {t.ai.symbol}
           <select className={fieldClassName} value={symbol} onChange={(event) => setSymbol(event.target.value)}>
             {symbols.map((value) => <option key={value} value={value}>{value}</option>)}
           </select>
         </label>
         <label className="space-y-1 text-xs font-semibold text-muted-foreground">
-          Exchange
+          {t.ai.exchange}
           <select className={fieldClassName} value={provider} onChange={(event) => setProvider(event.target.value as FusionRunInput["provider"])}>
             <option value="BINANCE_FUTURES">Binance Futures</option>
             <option value="OKX_FUTURES">OKX Futures</option>
           </select>
         </label>
         <label className="space-y-1 text-xs font-semibold text-muted-foreground">
-          Interval
+          {t.ai.interval}
           <select className={fieldClassName} value={interval} onChange={(event) => setInterval(event.target.value as FusionRunInput["interval"])}>
             {(["1m", "5m", "15m", "1h"] as const).map((value) => <option key={value}>{value}</option>)}
           </select>
         </label>
-        <button className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50 md:col-span-3" disabled={decision.isPending} onClick={() => decision.mutate()} type="button">
-          {decision.isPending ? "Running six-agent pipeline…" : "Generate decision"}
+        <button className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50 md:col-span-3" disabled={decision.isPending} onClick={() => decision.mutate(decisionInput)} type="button">
+          {decision.isPending ? t.ai.runningPipeline : t.ai.generateDecision}
         </button>
         {decision.isError ? <p className="text-sm text-red-500 md:col-span-3" role="alert">{decision.error.message}</p> : null}
       </section>
@@ -81,23 +73,23 @@ export default function DecisionPage(): React.JSX.Element {
             <div className="flex flex-wrap items-center justify-between gap-4">
               <span className={`rounded-full px-5 py-2 text-xl font-black ${badge}`}>{output.decision}</span>
               <div className="flex gap-6 text-sm">
-                <Metric label="Confidence" value={`${output.confidence}%`} />
-                <Metric label="Agreement" value={`${output.agreementScore}%`} />
-                <Metric label="Data" value={output.dataQuality} />
-                <Metric label="Regime" value={output.regime.type} />
-                <Metric label="Conflict" value={output.conflictLevel} />
+                <Metric label={t.ai.confidence} value={`${output.confidence}%`} />
+                <Metric label={t.ai.agreement} value={`${output.agreementScore}%`} />
+                <Metric label={t.ai.data} value={output.dataQuality} />
+                <Metric label={t.ai.regime} value={output.regime.type} />
+                <Metric label={t.ai.conflict} value={output.conflictLevel} />
               </div>
             </div>
             <p className="mt-5 text-sm leading-6">{output.reasoning}</p>
           </div>
           <div className="grid gap-4 md:grid-cols-2">
-            <FactorCard title="Bullish factors" items={output.signals.bullishFactors} empty="No bullish factors." />
-            <FactorCard title="Bearish factors" items={output.signals.bearishFactors} empty="No bearish factors." />
+            <FactorCard title={t.ai.bullishFactors} items={output.signals.bullishFactors} empty={t.ai.noBullish} />
+            <FactorCard title={t.ai.bearishFactors} items={output.signals.bearishFactors} empty={t.ai.noBearish} />
           </div>
           <div className="rounded-lg border bg-card p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="font-semibold">Adaptive weighting</h2>
-              <span className="text-xs text-muted-foreground">Volatility adjustment: {output.volatilityAdjustment}%</span>
+              <h2 className="font-semibold">{t.ai.adaptiveWeighting}</h2>
+              <span className="text-xs text-muted-foreground">{t.ai.volatilityAdjustment} {output.volatilityAdjustment}%</span>
             </div>
             <div className="mt-4 grid grid-cols-2 gap-3 text-sm md:grid-cols-6">
               {Object.entries(output.weighting).map(([name, weight]) => (
@@ -105,8 +97,8 @@ export default function DecisionPage(): React.JSX.Element {
               ))}
             </div>
           </div>
-          <FactorCard title="Overrides" items={output.overrides} empty="No overrides triggered." />
-          <FactorCard title="Risks" items={output.risks} empty="No additional risks detected." />
+          <FactorCard title={t.ai.overrides} items={output.overrides} empty={t.ai.noOverrides} />
+          <FactorCard title={t.ai.risks} items={output.risks} empty={t.ai.noRisks} />
         </section>
       ) : null}
     </div>

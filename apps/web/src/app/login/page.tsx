@@ -3,11 +3,11 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
-import { publicUserSchema } from "@platform/shared";
 
 import { buttonClass, Feedback, Field } from "@/components/form-controls";
-import { apiRequest, apiRequestValidated } from "@/lib/api-client";
+import { ROUTES } from "@/constants/routes";
 import { useTranslation } from "@/lib/i18n/i18n-context";
+import { checkCurrentUser, login } from "@/services/auth.service";
 
 export default function LoginPage(): React.JSX.Element {
   const router = useRouter();
@@ -23,9 +23,9 @@ export default function LoginPage(): React.JSX.Element {
 
   useEffect(() => {
     let active = true;
-    void apiRequestValidated("/auth/me", publicUserSchema)
+    void checkCurrentUser()
       .then(() => {
-        if (active) router.replace("/profile");
+        if (active) router.replace(ROUTES.profile);
       })
       .catch(() => undefined);
     return () => {
@@ -48,15 +48,7 @@ export default function LoginPage(): React.JSX.Element {
     const code = requiresTotp ? (typeof rawCode === "string" ? rawCode : undefined) : undefined;
 
     try {
-      const res = await apiRequest<{ requiresTotp?: boolean }>("/auth/login", {
-        method: "POST",
-        body: JSON.stringify({
-          identifier,
-          password,
-          rememberMe,
-          ...(code ? { code } : {}),
-        }),
-      });
+      const res = await login({ identifier, password, rememberMe, ...(code ? { code } : {}) });
 
       if (res.requiresTotp) {
         setRequiresTotp(true);
@@ -64,10 +56,10 @@ export default function LoginPage(): React.JSX.Element {
         return;
       }
 
-      router.push("/profile");
+      router.push(ROUTES.profile);
       router.refresh();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Login failed");
+      setError(caught instanceof Error ? caught.message : t.auth.loginFailed);
     } finally {
       setBusy(false);
     }
@@ -75,21 +67,19 @@ export default function LoginPage(): React.JSX.Element {
 
   return (
     <section className="mx-auto max-w-md">
-      <h1 className="text-3xl font-semibold">Welcome back</h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        Your session stays in a secure HttpOnly cookie.
-      </p>
+      <h1 className="text-3xl font-semibold">{t.auth.welcomeBack}</h1>
+      <p className="mt-2 text-sm text-muted-foreground">{t.auth.sessionHint}</p>
       <form
         className="mt-8 grid gap-4 rounded-xl border border-border bg-card p-6"
         onSubmit={(event) => void submit(event)}
       >
         {!requiresTotp ? (
           <>
-            <Field label="Email or username" name="identifier" required />
-            <Field label="Password" name="password" type="password" required />
+            <Field label={t.auth.emailOrUsername} name="identifier" required />
+            <Field label={t.auth.password} name="password" type="password" required />
             <label className="flex items-center gap-2 text-sm text-muted-foreground">
               <input className="h-4 w-4" name="rememberMe" type="checkbox" />
-              Remember this device for 30 days
+              {t.auth.rememberDevice}
             </label>
           </>
         ) : (
@@ -110,11 +100,11 @@ export default function LoginPage(): React.JSX.Element {
 
         <Feedback error={error} />
         <button className={buttonClass} disabled={busy}>
-          {busy ? "Signing in…" : requiresTotp ? "Verify 2FA Code" : "Sign in"}
+          {busy ? t.auth.signingIn : requiresTotp ? t.auth.verify2faButton : t.auth.signIn}
         </button>
         <div className="flex justify-between text-xs text-muted-foreground">
-          <Link href="/register">Create account</Link>
-          <Link href="/forgot-password">Forgot password?</Link>
+          <Link href={ROUTES.register}>{t.auth.createAccount}</Link>
+          <Link href={ROUTES.forgotPassword}>{t.auth.forgotPassword}</Link>
         </div>
       </form>
     </section>

@@ -1,14 +1,14 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { publicUserSchema } from "@platform/shared";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { AccountNav } from "@/components/account-nav";
 import { buttonClass } from "@/components/form-controls";
-import { apiRequest, apiRequestValidated } from "@/lib/api-client";
+import { ROUTES } from "@/constants/routes";
+import { useProfile } from "@/hooks/profile/useProfile";
 import { useTranslation } from "@/lib/i18n/i18n-context";
+import { logout as logoutUser, resendVerification as resendVerificationRequest } from "@/services/auth.service";
 
 export default function ProfilePage(): React.JSX.Element {
   const router = useRouter();
@@ -17,38 +17,27 @@ export default function ProfilePage(): React.JSX.Element {
   const [resendStatus, setResendStatus] = useState<string>();
   const [resending, setResending] = useState(false);
 
-  const user = useQuery({
-    queryKey: ["me"],
-    queryFn: () => apiRequestValidated("/auth/me", publicUserSchema),
-    retry: false,
-  });
+  const user = useProfile();
 
-  async function logout(): Promise<void> {
+  async function handleLogout(): Promise<void> {
     setLogoutError(undefined);
     try {
-      await apiRequest("/auth/logout", { method: "POST" });
-      router.push("/login");
+      await logoutUser();
+      router.push(ROUTES.login);
     } catch (caught) {
-      setLogoutError(
-        caught instanceof Error ? caught.message : "Logout failed",
-      );
+      setLogoutError(caught instanceof Error ? caught.message : t.profile.logoutFailed);
     }
   }
 
-  async function resendVerification(): Promise<void> {
+  async function handleResendVerification(): Promise<void> {
     if (!user.data?.email) return;
     setResending(true);
     setResendStatus(undefined);
     try {
-      await apiRequest("/auth/resend-verification", {
-        method: "POST",
-        body: JSON.stringify({ email: user.data.email }),
-      });
+      await resendVerificationRequest(user.data.email);
       setResendStatus(t.auth.verificationEmailRequested);
     } catch (caught) {
-      setResendStatus(
-        caught instanceof Error ? caught.message : "Request failed",
-      );
+      setResendStatus(caught instanceof Error ? caught.message : t.profile.requestFailed);
     } finally {
       setResending(false);
     }
@@ -57,32 +46,32 @@ export default function ProfilePage(): React.JSX.Element {
   return (
     <section>
       <AccountNav />
-      <h1 className="text-3xl font-semibold">Profile</h1>
-      {user.isLoading && <p className="mt-6 text-muted-foreground">Loading…</p>}
+      <h1 className="text-3xl font-semibold">{t.profile.title}</h1>
+      {user.isLoading && <p className="mt-6 text-muted-foreground">{t.profile.loading}</p>}
       {user.error && (
         <p className="mt-6 text-red-300">
           {user.error.message}.{" "}
-          <button onClick={() => router.push("/login")}>Sign in</button>
+          <button onClick={() => router.push(ROUTES.login)}>{t.profile.signIn}</button>
         </p>
       )}
       {user.data && (
         <div className="mt-6 grid max-w-xl gap-4 rounded-xl border border-border bg-card p-6">
           <div>
-            <p className="text-xs text-muted-foreground">Username</p>
+            <p className="text-xs text-muted-foreground">{t.profile.username}</p>
             <p className="font-semibold">{user.data.username}</p>
           </div>
           <div>
-            <p className="text-xs text-muted-foreground">Email</p>
+            <p className="text-xs text-muted-foreground">{t.profile.email}</p>
             <p className="font-semibold">{user.data.email}</p>
           </div>
           <div>
-            <p className="text-xs text-muted-foreground mb-1">Security & Verification</p>
+            <p className="text-xs text-muted-foreground mb-1">{t.profile.securityVerification}</p>
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${user.data.emailVerified ? "bg-emerald-500/15 text-emerald-500" : "bg-amber-500/15 text-amber-500"}`}>
                 {user.data.emailVerified ? `🟢 ${t.auth.verifyEmailVerified}` : `🔴 ${t.auth.verifyEmailNotVerified}`}
               </span>
               <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${user.data.totpEnabled ? "bg-emerald-500/15 text-emerald-500" : "bg-muted text-muted-foreground"}`}>
-                {user.data.totpEnabled ? "🟢 2FA Enabled" : "⚪ 2FA Disabled"}
+                {user.data.totpEnabled ? `🟢 ${t.profile.twoFactorEnabled}` : `⚪ ${t.profile.twoFactorDisabled}`}
               </span>
             </div>
             {!user.data.emailVerified && (
@@ -90,10 +79,10 @@ export default function ProfilePage(): React.JSX.Element {
                 <button
                   className="text-xs font-semibold text-primary hover:underline"
                   disabled={resending}
-                  onClick={() => void resendVerification()}
+                  onClick={() => void handleResendVerification()}
                   type="button"
                 >
-                  {resending ? "Sending..." : t.auth.resendVerificationEmail}
+                  {resending ? t.profile.sending : t.auth.resendVerificationEmail}
                 </button>
                 {resendStatus && (
                   <p className="mt-1 text-xs text-emerald-500 font-medium">{resendStatus}</p>
@@ -102,11 +91,11 @@ export default function ProfilePage(): React.JSX.Element {
             )}
           </div>
           <div>
-            <p className="text-xs text-muted-foreground">Member since</p>
+            <p className="text-xs text-muted-foreground">{t.profile.memberSince}</p>
             <p>{new Date(user.data.createdAt).toLocaleDateString()}</p>
           </div>
-          <button className={buttonClass} onClick={() => void logout()}>
-            Log out
+          <button className={buttonClass} onClick={() => void handleLogout()}>
+            {t.profile.logout}
           </button>
           {logoutError && <p className="text-sm text-red-300">{logoutError}</p>}
         </div>

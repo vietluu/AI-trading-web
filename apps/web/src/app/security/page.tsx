@@ -1,37 +1,32 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { sessionViewSchema } from "@platform/shared";
-import { publicUserSchema } from "@platform/shared";
-import { z } from "zod";
 import { useState, type FormEvent } from "react";
 
 import { AccountNav } from "@/components/account-nav";
 import { buttonClass, Feedback, Field } from "@/components/form-controls";
-import { apiRequest, apiRequestValidated } from "@/lib/api-client";
+import { ROUTES } from "@/constants/routes";
+import { useSecuritySessions, useSecurityUser } from "@/hooks/security/useSecurity";
 import { useTranslation } from "@/lib/i18n/i18n-context";
+import {
+  changePassword as changePasswordService,
+  confirmTotp as confirmTotpCode,
+  disableTotp as disableTotpService,
+  removeAllSessions,
+  removeSession,
+  setupTotp,
+} from "@/services/auth.service";
 
 export default function SecurityPage(): React.JSX.Element {
   const { t } = useTranslation();
-  const client = useQueryClient();
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
   const [totpSetup, setTotpSetup] = useState<{
     secret: string;
     otpauthUri: string;
   }>();
-  const me = useQuery({
-    queryKey: ["me"],
-    queryFn: () => apiRequestValidated("/auth/me", publicUserSchema),
-    retry: false,
-  });
-  const sessions = useQuery({
-    queryKey: ["sessions"],
-    queryFn: () =>
-      apiRequestValidated("/auth/sessions", z.array(sessionViewSchema)),
-    retry: false,
-  });
-  async function changePassword(
+  const me = useSecurityUser();
+  const sessions = useSecuritySessions();
+  async function handleChangePassword(
     event: FormEvent<HTMLFormElement>,
   ): Promise<void> {
     event.preventDefault();
@@ -39,93 +34,67 @@ export default function SecurityPage(): React.JSX.Element {
     const form = new FormData(formElement);
     setError(undefined);
     try {
-      await apiRequest("/auth/change-password", {
-        method: "POST",
-        body: JSON.stringify({
-          currentPassword: form.get("currentPassword"),
-          newPassword: form.get("newPassword"),
-        }),
+      await changePasswordService({
+        currentPassword: form.get("currentPassword"),
+        newPassword: form.get("newPassword"),
       });
       formElement.reset();
-      setMessage("Password changed; other devices were signed out.");
-      await client.invalidateQueries({ queryKey: ["sessions"] });
+      setMessage(t.security.passwordChanged);
     } catch (caught) {
-      setError(
-        caught instanceof Error ? caught.message : "Password change failed",
-      );
+      setError(caught instanceof Error ? caught.message : t.security.passwordChangeFailed);
     }
   }
-  async function remove(id: string): Promise<void> {
+  async function handleRemove(id: string): Promise<void> {
     setError(undefined);
     try {
-      await apiRequest(`/auth/sessions/${id}`, { method: "DELETE" });
+      await removeSession(id);
       if (sessions.data?.find((session) => session.id === id)?.current) {
-        window.location.assign("/login");
+        window.location.assign(ROUTES.login);
         return;
       }
-      await client.invalidateQueries({ queryKey: ["sessions"] });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Revoke failed");
+      setError(caught instanceof Error ? caught.message : t.security.revokeFailed);
     }
   }
   async function beginTotp(): Promise<void> {
     setError(undefined);
     try {
-      setTotpSetup(
-        await apiRequest<{ secret: string; otpauthUri: string }>(
-          "/auth/totp/setup",
-          { method: "POST" },
-        ),
-      );
+      setTotpSetup(await setupTotp());
     } catch (caught) {
-      setError(
-        caught instanceof Error ? caught.message : "Could not start 2FA setup",
-      );
+      setError(caught instanceof Error ? caught.message : t.security.totpSetupFailed);
     }
   }
-  async function confirmTotp(event: FormEvent<HTMLFormElement>): Promise<void> {
+  async function handleConfirmTotp(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     try {
-      await apiRequest("/auth/totp/confirm", {
-        method: "POST",
-        body: JSON.stringify({ code: form.get("code") }),
-      });
+      await confirmTotpCode(form.get("code"));
       setTotpSetup(undefined);
-      setMessage("Two-factor authentication enabled.");
-      await client.invalidateQueries({ queryKey: ["me"] });
+      setMessage(t.security.totpEnabled);
     } catch (caught) {
-      setError(
-        caught instanceof Error ? caught.message : "Could not enable 2FA",
-      );
+      setError(caught instanceof Error ? caught.message : t.security.totpEnableFailed);
     }
   }
-  async function disableTotp(event: FormEvent<HTMLFormElement>): Promise<void> {
+  async function handleDisableTotp(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     try {
-      await apiRequest("/auth/totp/disable", {
-        method: "POST",
-        body: JSON.stringify({
-          currentPassword: form.get("currentPassword"),
-          code: form.get("code"),
-        }),
+      await disableTotpService({
+        currentPassword: form.get("currentPassword"),
+        code: form.get("code"),
       });
-      setMessage("Two-factor authentication disabled.");
-      await client.invalidateQueries({ queryKey: ["me"] });
+      setMessage(t.security.totpDisabled);
     } catch (caught) {
-      setError(
-        caught instanceof Error ? caught.message : "Could not disable 2FA",
-      );
+      setError(caught instanceof Error ? caught.message : t.security.totpDisableFailed);
     }
   }
-  async function removeAll(): Promise<void> {
+  async function handleRemoveAll(): Promise<void> {
     setError(undefined);
     try {
-      await apiRequest("/auth/sessions", { method: "DELETE" });
-      window.location.assign("/login");
+      await removeAllSessions();
+      window.location.assign(ROUTES.login);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Logout failed");
+      setError(caught instanceof Error ? caught.message : t.security.logoutFailed);
     }
   }
   return (
@@ -135,7 +104,7 @@ export default function SecurityPage(): React.JSX.Element {
       <div className="mt-6 grid gap-6 lg:grid-cols-2 w-full">
         <form
           className="flex flex-col gap-4 rounded-xl border border-border bg-card p-6 w-full"
-          onSubmit={(event) => void changePassword(event)}
+          onSubmit={(event) => void handleChangePassword(event)}
         >
           <h2 className="font-semibold">{t.security.changePassword}</h2>
           <Field
@@ -159,7 +128,7 @@ export default function SecurityPage(): React.JSX.Element {
             <h2 className="font-semibold">{t.security.activeSessions}</h2>
             <button
               className="text-xs text-red-300"
-              onClick={() => void removeAll()}
+              onClick={() => void handleRemoveAll()}
               type="button"
             >
               {t.security.logOutAllDevices}
@@ -175,21 +144,21 @@ export default function SecurityPage(): React.JSX.Element {
                   <strong>
                     {session.current
                       ? t.security.thisDevice
-                      : (session.ip ?? "Unknown device")}
+                      : (session.ip ?? t.security.unknownDevice)}
                   </strong>
                   <button
                     className="text-red-300"
-                    onClick={() => void remove(session.id)}
+                    onClick={() => void handleRemove(session.id)}
                     type="button"
                   >
-                    Revoke
+                    {t.security.revoke}
                   </button>
                 </div>
                 <p className="mt-1 truncate text-muted-foreground">
-                  {session.userAgent ?? "Unknown browser"}
+                  {session.userAgent ?? t.security.unknownBrowser}
                 </p>
                 <p className="text-muted-foreground">
-                  Last active {new Date(session.lastActivity).toLocaleString()}
+                  {t.security.lastActive} {new Date(session.lastActivity).toLocaleString()}
                 </p>
                 <p className="text-muted-foreground">
                   {session.rememberMe ? "Remembered device" : "Browser session"}{" "}
@@ -213,7 +182,7 @@ export default function SecurityPage(): React.JSX.Element {
           {totpSetup && (
             <form
               className="mt-4 grid max-w-xl gap-4 rounded-xl border border-border bg-card p-5"
-              onSubmit={(event) => void confirmTotp(event)}
+              onSubmit={(event) => void handleConfirmTotp(event)}
             >
               <div className="flex flex-col sm:flex-row items-center gap-4 border-b border-border pb-4">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -244,7 +213,7 @@ export default function SecurityPage(): React.JSX.Element {
           {me.data?.totpEnabled && (
             <form
               className="mt-4 grid max-w-xl gap-3"
-              onSubmit={(event) => void disableTotp(event)}
+              onSubmit={(event) => void handleDisableTotp(event)}
             >
               <Field
                 label={t.security.currentPassword}

@@ -1,15 +1,6 @@
 "use client";
 
 import {
-  exchangeAccountSummarySchema,
-  exchangeBalanceSchema,
-  exchangeConnectionSchema,
-  exchangeConnectionTestSchema,
-  exchangeOrderSchema,
-  exchangePositionSchema,
-} from "@platform/shared";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
   ArrowLeft,
   CheckCircle2,
   Power,
@@ -19,10 +10,10 @@ import {
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
-import { z } from "zod";
-
 import { buttonClass, Feedback, Field } from "@/components/form-controls";
-import { apiRequest, apiRequestValidated } from "@/lib/api-client";
+import { ROUTES } from "@/constants/routes";
+import { useExchangeConnectionDetail } from "@/hooks/settings/useSettings";
+import { reauthenticate } from "@/services/auth.service";
 
 function formString(form: FormData, name: string): string {
   const value = form.get(name);
@@ -32,87 +23,35 @@ function formString(form: FormData, name: string): string {
 export default function ExchangeDetailPage(): React.JSX.Element {
   const id = String(useParams<{ id: string }>().id);
   const router = useRouter();
-  const queryClient = useQueryClient();
   const [error, setError] = useState<string>();
   const [message, setMessage] = useState<string>();
   const [busy, setBusy] = useState(false);
-  const connection = useQuery({
-    queryKey: ["exchange-connection", id],
-    queryFn: () =>
-      apiRequestValidated(
-        `/exchange-connections/${id}`,
-        exchangeConnectionSchema,
-      ),
-    retry: false,
-  });
+  const { connectionQuery, accountQuery, balancesQuery, positionsQuery, ordersQuery, toggleMutation, testMutation, updateMutation, replaceCredentialsMutation, deleteMutation } = useExchangeConnectionDetail(id);
+  const connection = connectionQuery;
+  const account = accountQuery;
+  const balances = balancesQuery;
+  const positions = positionsQuery;
+  const orders = ordersQuery;
   const privateEnabled = Boolean(
     connection.data?.isEnabled && connection.data.isVerified,
   );
-  const account = useQuery({
-    queryKey: ["exchange-account", id],
-    queryFn: () =>
-      apiRequestValidated(
-        `/exchange-connections/${id}/account`,
-        exchangeAccountSummarySchema,
-      ),
-    enabled: privateEnabled,
-    retry: false,
-  });
-  const balances = useQuery({
-    queryKey: ["exchange-balances", id],
-    queryFn: () =>
-      apiRequestValidated(
-        `/exchange-connections/${id}/balances`,
-        z.array(exchangeBalanceSchema),
-      ),
-    enabled: privateEnabled,
-    retry: false,
-  });
-  const positions = useQuery({
-    queryKey: ["exchange-positions", id],
-    queryFn: () =>
-      apiRequestValidated(
-        `/exchange-connections/${id}/positions`,
-        z.array(exchangePositionSchema),
-      ),
-    enabled: privateEnabled,
-    retry: false,
-  });
-  const orders = useQuery({
-    queryKey: ["exchange-open-orders", id],
-    queryFn: () =>
-      apiRequestValidated(
-        `/exchange-connections/${id}/orders/open`,
-        z.array(exchangeOrderSchema),
-      ),
-    enabled: privateEnabled,
-    retry: false,
-  });
 
   async function mutate(path: string, success: string): Promise<void> {
     setBusy(true);
     setError(undefined);
     setMessage(undefined);
+    const item = connection.data;
     try {
-      if (path.endsWith("/enable") && item.environment === "PRODUCTION") {
+      if (path.endsWith("/enable") && item?.environment === "PRODUCTION") {
         const password = window.prompt("Confirm your current password");
         if (!password) return;
-        await apiRequest("/auth/reauthenticate", {
-          method: "POST",
-          body: JSON.stringify({ password }),
-        });
+        await reauthenticate(password);
       }
       const totpCode = window.prompt(
         "2FA code (leave blank when 2FA is not enabled)",
       );
-      await apiRequest(path, {
-        method: "POST",
-        ...(totpCode ? { headers: { "X-TOTP-Code": totpCode } } : {}),
-      });
+      await toggleMutation.mutateAsync({ action: path.endsWith("/enable") ? "enable" : "disable", totpCode: totpCode ?? undefined });
       setMessage(success);
-      await queryClient.invalidateQueries({
-        queryKey: ["exchange-connection", id],
-      });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Action failed");
     } finally {
@@ -124,19 +63,12 @@ export default function ExchangeDetailPage(): React.JSX.Element {
     setBusy(true);
     setError(undefined);
     try {
-      const result = await apiRequestValidated(
-        `/exchange-connections/${id}/test`,
-        exchangeConnectionTestSchema,
-        { method: "POST" },
-      );
+      const result = await testMutation.mutateAsync();
       setMessage(
         result.success
           ? `Connection verified in ${result.latencyMs ?? 0} ms.`
           : (result.message ?? "Connection test failed"),
       );
-      await queryClient.invalidateQueries({
-        queryKey: ["exchange-connection", id],
-      });
     } catch (caught) {
       setError(
         caught instanceof Error ? caught.message : "Connection test failed",
@@ -155,15 +87,8 @@ export default function ExchangeDetailPage(): React.JSX.Element {
       const totpCode = window.prompt(
         "2FA code (leave blank when 2FA is not enabled)",
       );
-      await apiRequest(`/exchange-connections/${id}`, {
-        method: "PATCH",
-        ...(totpCode ? { headers: { "X-TOTP-Code": totpCode } } : {}),
-        body: JSON.stringify({ displayName: form.get("displayName") }),
-      });
+      await updateMutation.mutateAsync({ displayName: formString(form, "displayName") || null, totpCode: totpCode ?? undefined });
       setMessage("Connection name updated.");
-      await queryClient.invalidateQueries({
-        queryKey: ["exchange-connection", id],
-      });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Update failed");
     } finally {
@@ -180,29 +105,20 @@ export default function ExchangeDetailPage(): React.JSX.Element {
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     try {
-      await apiRequest("/auth/reauthenticate", {
-        method: "POST",
-        body: JSON.stringify({ password: form.get("password") }),
-      });
-      await apiRequest(`/exchange-connections/${id}`, {
-        method: "PATCH",
-        ...(formString(form, "totpCode")
-          ? { headers: { "X-TOTP-Code": formString(form, "totpCode") } }
-          : {}),
-        body: JSON.stringify({
+      await reauthenticate(formString(form, "password"));
+      await replaceCredentialsMutation.mutateAsync({
+        payload: {
           apiKey: form.get("apiKey"),
           apiSecret: form.get("apiSecret"),
           passphrase:
             connection.data?.provider === "OKX_FUTURES"
               ? form.get("passphrase")
               : undefined,
-        }),
+        },
+        totpCode: formString(form, "totpCode") || undefined,
       });
       formElement.reset();
       setMessage("Credentials replaced. Test the connection again.");
-      await queryClient.invalidateQueries({
-        queryKey: ["exchange-connection", id],
-      });
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -224,21 +140,9 @@ export default function ExchangeDetailPage(): React.JSX.Element {
     );
     setBusy(true);
     try {
-      await apiRequest("/auth/reauthenticate", {
-        method: "POST",
-        body: JSON.stringify({ password }),
-      });
-      await apiRequest(`/exchange-connections/${id}`, {
-        method: "DELETE",
-        ...(totpCode ? { headers: { "X-TOTP-Code": totpCode } } : {}),
-      });
-      queryClient.removeQueries({
-        predicate: (query) => query.queryKey.includes(id),
-      });
-      await queryClient.invalidateQueries({
-        queryKey: ["exchange-connections"],
-      });
-      router.replace("/settings/exchanges");
+      await reauthenticate(password);
+      await deleteMutation.mutateAsync({ totpCode: totpCode ?? undefined });
+      router.replace(ROUTES.settingsExchanges);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Delete failed");
       setBusy(false);
@@ -261,7 +165,7 @@ export default function ExchangeDetailPage(): React.JSX.Element {
       <div>
         <Link
           className="mb-5 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-          href="/settings/exchanges"
+          href={ROUTES.settingsExchanges}
         >
           <ArrowLeft className="h-4 w-4" /> Connections
         </Link>
