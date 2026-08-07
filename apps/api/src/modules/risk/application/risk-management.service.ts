@@ -1,8 +1,6 @@
 import { Injectable, Logger, Optional } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import type { DecisionOutput, RiskOutput } from "@platform/shared";
 import {
-  ExchangeEnvironment as PrismaExchangeEnvironment,
   type Prisma,
 } from "@prisma/client";
 import { PrismaService } from "../../../database/prisma.service";
@@ -39,7 +37,6 @@ export class RiskManagementService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: RiskConfigService,
-    private readonly environment: ConfigService,
     @Optional() private readonly connections?: ExchangeConnectionService,
   ) {}
 

@@ -404,10 +404,6 @@ export class LiveTradingService {
       return { outcome: "RISK_ASSESSMENT_MISSING" };
     if (!assessment.approved)
       return { outcome: "RISK_REJECTED", reason: assessment.reason };
-    const demoEnvironment: Record<ExchangeProvider, ExchangeEnvironment> = {
-      [ExchangeProvider.BINANCE_FUTURES]: ExchangeEnvironment.TESTNET,
-      [ExchangeProvider.OKX_FUTURES]: ExchangeEnvironment.DEMO,
-    };
     const connections = await this.connections.list(userId);
     const connection = connections.find(
       (item) => item.isEnabled && item.isVerified,

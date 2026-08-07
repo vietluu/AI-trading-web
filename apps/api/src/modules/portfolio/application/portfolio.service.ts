@@ -8,7 +8,6 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
-  ExchangeEnvironment as PrismaExchangeEnvironment,
   Prisma,
   StrategyKind,
   StrategyStatus,
@@ -492,11 +491,6 @@ export class PortfolioService {
   private async syncActiveConnections(userId: string): Promise<void> {
     if (!this.connections) return;
     try {
-      const mode = this.environment?.get<"DEMO" | "LIVE">("TRADING_MODE") ?? "DEMO";
-      const environments =
-        mode === "LIVE"
-          ? [PrismaExchangeEnvironment.PRODUCTION]
-          : [PrismaExchangeEnvironment.DEMO, PrismaExchangeEnvironment.TESTNET];
       const activeConnections = await this.prisma.exchangeConnection.findMany({
         where: {
           userId,
