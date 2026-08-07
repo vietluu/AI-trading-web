@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import type { ExchangeAdapter } from "../../domain/exchange.adapter";
 import { ExchangeError, ExchangeErrorCode } from "../../domain/exchange.error";
+import { normalizeClientOrderId } from "../client-order-id";
 import {
   ExchangeEnvironment,
   ExchangeProvider,
@@ -560,7 +561,7 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
           side: command.side,
           type: "MARKET",
           quantity: command.quantity,
-          newClientOrderId: command.clientOrderId,
+          newClientOrderId: normalizeClientOrderId(command.clientOrderId),
           reduceOnly: command.reduceOnly,
           positionSide: command.positionSide,
           newOrderRespType: "RESULT",
@@ -588,7 +589,7 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
       await this.client.signedDelete("/fapi/v1/order", credentials, {
         symbol: toBinanceSymbol(command.symbol),
         orderId: command.orderId,
-        origClientOrderId: command.clientOrderId,
+        origClientOrderId: normalizeClientOrderId(command.clientOrderId),
       }),
     );
     return this.order(value);

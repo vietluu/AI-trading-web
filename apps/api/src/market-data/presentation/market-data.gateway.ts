@@ -9,6 +9,7 @@ import {
 } from "@nestjs/websockets";
 import { Logger } from "@nestjs/common";
 import { Server, Socket } from "socket.io";
+import { resolveSocketIoPath } from "../../common/utils/socket-io-path";
 import { MarketEventBus } from "../infrastructure/event-bus/market-event-bus";
 import { MarketEventType } from "../domain/market-data.enums";
 import type { NormalizedMarketEvent } from "../domain/market-data.types";
@@ -19,7 +20,7 @@ import type { NormalizedMarketEvent } from "../domain/market-data.types";
     credentials: true,
   },
   namespace: "/market",
-  path: "/api/socket.io/",
+  path: resolveSocketIoPath(),
 })
 export class MarketDataGateway
   implements OnGatewayConnection, OnGatewayDisconnect

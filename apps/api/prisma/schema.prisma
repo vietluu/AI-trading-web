@@ -74,6 +74,7 @@ model User {
   researchValidations    ResearchValidationRun[]
   benchmarkSuites        BenchmarkSuiteRun[]
   sensitivityHeatmaps    SensitivityHeatmap[]
+  selfLearningConfiguration SelfLearningConfiguration?
 
   @@map("users")
 }
@@ -2086,6 +2087,25 @@ model KnowledgeArchive {
 
   @@index([category])
   @@map("knowledge_archives")
+}
+
+model SelfLearningConfiguration {
+  id                    String    @id @default(uuid()) @db.Uuid
+  userId                String    @unique @db.Uuid
+  isEnabled             Boolean   @default(true)
+  confidenceThreshold   Float     @default(60.0)
+  volatilityPenalty     Float     @default(20.0)
+  weightsJson           Json?     // Dynamically optimized agent weights: Record<AnalystName, number>
+  shadowWeightsJson     Json?     // Candidate weights under shadow testing
+  shadowThreshold       Float?    // Candidate threshold under shadow testing
+  shadowEnabled         Boolean   @default(false)
+  shadowPerformance     Json?     // Telemetry for shadow testing (e.g. accuracy, profitFactor, tradesCount)
+  lastOptimizedAt       DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("self_learning_configurations")
 }
 
 

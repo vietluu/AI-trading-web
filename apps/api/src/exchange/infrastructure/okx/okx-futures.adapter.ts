@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import type { ExchangeAdapter } from "../../domain/exchange.adapter";
 import { ExchangeError, ExchangeErrorCode } from "../../domain/exchange.error";
+import { normalizeClientOrderId } from "../client-order-id";
 import {
   ExchangeEnvironment,
   ExchangeInterval,
@@ -590,7 +591,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         error: error instanceof Error ? error.message : String(error),
       });
     }
-    const clOrdId = this.normalizeClientOrderId(command.clientOrderId);
+    const clOrdId = normalizeClientOrderId(command.clientOrderId);
     let marketPrice: string | undefined = undefined;
     let ordType: "limit" | "market" = "limit";
     try {
@@ -796,8 +797,8 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
           {
             instId: toOkxSymbol(command.symbol),
             ...(command.orderId ? { ordId: command.orderId } : {}),
-            ...(this.normalizeClientOrderId(command.clientOrderId)
-              ? { clOrdId: this.normalizeClientOrderId(command.clientOrderId) }
+            ...(normalizeClientOrderId(command.clientOrderId)
+              ? { clOrdId: normalizeClientOrderId(command.clientOrderId) }
               : {}),
           },
         ),
@@ -913,21 +914,6 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     return fixed.includes(".")
       ? fixed.replace(/0+$/, "").replace(/\.$/, "")
       : fixed;
-  }
-
-  private normalizeClientOrderId(value?: string): string | undefined {
-    if (!value) return undefined;
-    const trimmed = value.trim();
-    if (!trimmed) return undefined;
-    const withoutDashes = this.removeHyphens(trimmed);
-    const alphanumeric = withoutDashes.replace(/[^A-Za-z0-9]/g, "");
-    if (!alphanumeric) return undefined;
-    if (alphanumeric.length <= 32) return alphanumeric;
-    return `${alphanumeric.slice(0, 30)}${alphanumeric.slice(-2)}`;
-  }
-
-  private removeHyphens(value: string): string {
-    return value.replace(/-/g, "");
   }
 
   private shouldRetryAsMarketOrder(

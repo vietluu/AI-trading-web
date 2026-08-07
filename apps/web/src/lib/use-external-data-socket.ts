@@ -46,7 +46,10 @@ export function useExternalDataSocket(
       : "";
 
     const socket = io(`${baseUrl}/external-data`, {
-      path: "/api/socket.io/",
+      path:
+        typeof window !== "undefined"
+          ? (window as Window & { __SOCKET_IO_PATH__?: string }).__SOCKET_IO_PATH__ ?? "/socket.io/"
+          : "/socket.io/",
       withCredentials: true,
       transports: ["websocket", "polling"],
       autoConnect: true,

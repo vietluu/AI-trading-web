@@ -8,6 +8,7 @@ import {
 import { Logger } from "@nestjs/common";
 import { ModuleRef } from "@nestjs/core";
 import { Server, Socket } from "socket.io";
+import { resolveSocketIoPath } from "../../../common/utils/socket-io-path";
 import { SessionService } from "../../../session/session.service";
 import { LiveTradingService } from "../application/live-trading.service";
 
@@ -17,6 +18,7 @@ import { LiveTradingService } from "../application/live-trading.service";
     credentials: true,
   },
   namespace: "/live-trading",
+  path: resolveSocketIoPath(),
 })
 export class LiveTradingGateway {
   private readonly logger = new Logger(LiveTradingGateway.name);

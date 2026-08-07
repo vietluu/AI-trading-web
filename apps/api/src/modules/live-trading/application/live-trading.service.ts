@@ -1431,8 +1431,8 @@ export class LiveTradingService {
 
   private derivedId(value: string, suffix: string): string {
     const normalized = this.normalizeClientOrderId(value);
-    const prefixLength = Math.max(0, 32 - suffix.length - 1);
-    return `${normalized.slice(0, prefixLength)}${prefixLength > 0 ? "-" : ""}${suffix}`;
+    const prefixLength = Math.max(0, 32 - suffix.length);
+    return `${normalized.slice(0, prefixLength)}${suffix}`;
   }
 
   private normalizeClientOrderId(value: string): string {

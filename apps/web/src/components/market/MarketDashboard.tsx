@@ -210,7 +210,10 @@ export function MarketDashboard({
 
   useEffect(() => {
     const socket = io(resolveMarketUrl(apiBaseUrl, "/market"), {
-      path: "/api/socket.io/",
+      path:
+        typeof window !== "undefined"
+          ? (window as Window & { __SOCKET_IO_PATH__?: string }).__SOCKET_IO_PATH__ ?? "/socket.io/"
+          : "/socket.io/",
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1_000,

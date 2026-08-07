@@ -1,4 +1,4 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Injectable, Logger, Inject, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AIOrchestratorService } from '../../../ai/application/ai-orchestrator.service';
 import { AgentRunRepository } from '../../infrastructure/persistence/agent-run.repository';
@@ -13,10 +13,11 @@ import { AgentIdempotencyService } from '../../infrastructure/redis/agent-idempo
 import { AgentQuotaService } from '../../infrastructure/redis/agent-quota.service';
 import { ToolLoopRunnerService } from '../../../ai-tools/application/tool-loop-runner.service';
 import type { AgentDefinition } from '../../domain/models/agent-definition.model';
-import { AgentInvocationSource, AgentRunState } from '../../domain/enums';
+import { AgentInvocationSource, AgentRunState, AgentType } from '../../domain/enums';
 import { AgentStateMachine } from '../../domain/state-machine/agent-state-machine';
 import { AgentError, AgentErrorCode } from '../../domain/errors/agent-errors';
 import { AgentRun, Prisma } from '@prisma/client';
+import { PrismaService } from '../../../../database/prisma.service';
 import type { AIProviderType, ToolCapability } from '@platform/shared';
 import { createHash, randomUUID } from 'node:crypto';
 import { getAgentOutputContract } from '../../domain/agent-output-contracts';
@@ -24,6 +25,10 @@ import { getAgentOutputContract } from '../../domain/agent-output-contracts';
 @Injectable()
 export class AgentRunnerService {
   private readonly logger = new Logger(AgentRunnerService.name);
+
+  @Inject(PrismaService)
+  @Optional()
+  private readonly prisma?: PrismaService;
 
   constructor(
     private readonly aiOrchestratorService: AIOrchestratorService,
@@ -342,6 +347,46 @@ export class AgentRunnerService {
         });
       }
 
+      let fewShotContext = "";
+      if (userId && this.prisma && (definition.type === AgentType.DECISION_SYNTHESIZER || definition.type === AgentType.MARKET_ANALYST || definition.type === AgentType.NEWS_ANALYST)) {
+        try {
+          type FewShotPerformanceRecord = Prisma.PerformanceRecordGetPayload<{
+            select: {
+              symbol: true;
+              decision: true;
+              confidence: true;
+              priceAtDecision: true;
+              priceAfter: true;
+              returnPct: true;
+            };
+          }>;
+
+          const successes: FewShotPerformanceRecord[] = await this.prisma.performanceRecord.findMany({
+            where: { userId, outcome: 'CORRECT' },
+            orderBy: { evaluatedAt: 'desc' },
+            take: 3,
+            select: {
+              symbol: true,
+              decision: true,
+              confidence: true,
+              priceAtDecision: true,
+              priceAfter: true,
+              returnPct: true,
+            },
+          });
+          if (successes.length > 0) {
+            fewShotContext = [
+              '',
+              '=== RECENT SUCCESSFUL DECISIONS (DYNAMIC FEW-SHOT EXAMPLES) ===',
+              ...successes.map((success) => `- Symbol: ${success.symbol}, Decision: ${success.decision}, Confidence: ${success.confidence}%, Price at decision: ${success.priceAtDecision.toString()}, Price after: ${success.priceAfter.toString()} (${success.returnPct.toFixed(2)}% return)`),
+              'Use these successful cases to adapt your reasoning and bias calibration.',
+            ].join('\n');
+          }
+        } catch {
+          // ignore
+        }
+      }
+
       let aiResponse;
       try {
         aiResponse = await this.aiOrchestratorService.execute({
@@ -349,7 +394,7 @@ export class AgentRunnerService {
           sessionId: params.sessionId,
           provider: requestedProvider,
           model: definition.modelPolicy.preferredModel,
-          systemPrompt: `${renderedPrompt.systemPrompt}\n\n${getAgentOutputContract(definition.type)}`,
+          systemPrompt: `${renderedPrompt.systemPrompt}${fewShotContext}\n\n${getAgentOutputContract(definition.type)}`,
           userPrompt: `${renderedPrompt.userPrompt}\n\nValidated tool results:\n${toolContext}`,
           temperature: definition.modelPolicy.defaultTemperature,
           maxTokens: definition.maxOutputTokens,

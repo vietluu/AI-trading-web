@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, Optional } from '@nestjs/common';
 import {
   DecisionInputSchema,
   DecisionOutputSchema,
@@ -23,6 +23,7 @@ import {
   QUALITY_FACTOR,
   REGIME_FACTOR,
 } from '../../domain/constants/decision.constants';
+import { PrismaService } from '../../../../database/prisma.service';
 
 export type {
   AnalystName,
@@ -36,23 +37,99 @@ export type {
 export class DecisionService {
   private readonly logger = new Logger(DecisionService.name);
 
-  constructor(private readonly fusionService: FusionService) {}
+  @Inject(PrismaService)
+  @Optional()
+  private readonly prisma?: PrismaService;
+
+  constructor(
+    private readonly fusionService: FusionService,
+  ) {}
 
   public async run(options: RunDecisionOptions): Promise<DecisionOutput> {
     const input = DecisionRunInputSchema.parse(options.input);
     const result = await this.fusionService.runDetailed({ ...options, input });
-    return this.decide({
+    
+    // Load Dynamic Self-Learning Configuration
+    const config = (options.userId && this.prisma)
+      ? await this.prisma.selfLearningConfiguration.findUnique({
+          where: { userId: options.userId },
+        })
+      : null;
+
+    const customWeights = config?.weightsJson
+      ? (config.weightsJson as Weighting)
+      : undefined;
+
+    const decisionOptions = config
+      ? {
+          weights: customWeights,
+          confidenceThreshold: config.confidenceThreshold,
+          volatilityPenalty: config.volatilityPenalty,
+        }
+      : undefined;
+
+    const decision = this.decide({
       symbol: input.symbol,
       fusionOutput: result.fusionOutput,
       ...result.analyses,
-    });
+    }, decisionOptions);
+
+    // Phase C: Shadow Mode Simulation Run
+    if (config?.shadowEnabled && options.userId && this.prisma) {
+      const shadowWeights = config.shadowWeightsJson
+        ? (config.shadowWeightsJson as Weighting)
+        : undefined;
+      const shadowThreshold = config.shadowThreshold ?? undefined;
+      
+      const shadowDecision = this.decide({
+        symbol: input.symbol,
+        fusionOutput: result.fusionOutput,
+        ...result.analyses,
+      }, {
+        weights: shadowWeights,
+        confidenceThreshold: shadowThreshold,
+        volatilityPenalty: config.volatilityPenalty,
+      });
+
+      if (shadowDecision.decision !== 'WAIT') {
+        let lastPrice = 0;
+        const lastCandle = await this.prisma.marketCandle.findFirst({
+          where: { symbol: input.symbol, provider: input.provider, isClosed: true },
+          orderBy: { closeTime: 'desc' },
+          select: { close: true },
+        });
+        if (lastCandle) lastPrice = Number(lastCandle.close);
+
+        await this.prisma.paperSignal.create({
+          data: {
+            userId: options.userId,
+            pipelineRunId: options.correlationId,
+            symbol: input.symbol,
+            decision: shadowDecision.decision,
+            confidence: shadowDecision.confidence,
+            mode: 'SHADOW',
+            referencePrice: lastPrice,
+            outcome: 'PENDING',
+          },
+        }).catch((err: unknown) => {
+          if (err instanceof Error) {
+            this.logger.warn(`Failed to record shadow signal: ${err.message}`);
+          }
+        });
+      }
+    }
+
+    return decision;
   }
 
-  public decide(rawInput: DecisionInput): DecisionOutput {
+  public decide(
+    rawInput: DecisionInput,
+    customOptions?: { weights?: Weighting; confidenceThreshold?: number; volatilityPenalty?: number },
+  ): DecisionOutput {
     const input = DecisionInputSchema.parse(rawInput);
     const names = Object.keys(BASE_WEIGHTS) as AnalystName[];
     const regime = this.detectRegime(input);
-    const weighting = this.dynamicWeights(regime.type);
+    const weighting = this.dynamicWeights(regime.type, customOptions?.weights);
     const active = names.filter((name) => {
       const output = input[name];
       return output !== undefined && output.dataQuality !== 'INSUFFICIENT';
@@ -117,7 +194,7 @@ export class DecisionService {
           : Math.max(bullishWeight, bearishWeight, neutralWeight);
     const baseScore = activeWeight ? (alignedWeight / activeWeight) * 100 : 0;
     const dataQuality = this.dataQuality(input, active);
-    const { adjustment: volatilityAdjustment, extreme } = this.volatilityFilter(input);
+    const { adjustment: volatilityAdjustment, extreme } = this.volatilityFilter(input, customOptions?.volatilityPenalty);
     if (volatilityAdjustment < 0) {
       overrides.push(`High volatility reduced confidence by ${Math.abs(volatilityAdjustment)}%.`);
     }
@@ -145,8 +222,9 @@ export class DecisionService {
     const rawConfidence = baseScore + coreBonus + convictionBonus - qualityDeduction - conflictDeduction - volDeduction;
     const confidence = candidate === 'WAIT' ? 0 : Math.round(this.clamp(rawConfidence, 0, 100));
 
-    if (confidence < DECISION_THRESHOLDS.MINIMUM_CONFIDENCE_THRESHOLD && candidate !== 'WAIT') {
-      overrides.push('Calibrated confidence below 60 forced WAIT.');
+    const minConfidence = customOptions?.confidenceThreshold ?? DECISION_THRESHOLDS.MINIMUM_CONFIDENCE_THRESHOLD;
+    if (confidence < minConfidence && candidate !== 'WAIT') {
+      overrides.push(`Calibrated confidence below ${minConfidence} forced WAIT.`);
     }
     if (dataQuality === 'INSUFFICIENT') overrides.push('Insufficient data forced WAIT.');
 
@@ -163,13 +241,14 @@ export class DecisionService {
     const riskScore = this.clamp(50 + (volatilityAdjustment * -0.4) + (conflictLevel === 'HIGH' ? 15 : conflictLevel === 'MEDIUM' ? 8 : 0) + Math.max(0, 100 - opportunityScore) * 0.2, 0, 100);
     const executionCost = this.estimateExecutionCost(input, opportunityScore, regime.type);
     const strongConviction = agreementScore >= 80 && opportunityScore >= 68 && expectedValue > 0.2;
+    const adaptiveThresholdValue = customOptions?.confidenceThreshold ?? adaptiveThreshold;
     const finalDecision: DecisionOutput['decision'] =
       dataQuality === 'INSUFFICIENT' ||
       conflictLevel === 'HIGH' ||
       extreme ||
-      (calibratedConfidence < adaptiveThreshold && !strongConviction) ||
+      (calibratedConfidence < adaptiveThresholdValue && !strongConviction) ||
       (expectedValue <= 0 && !strongConviction) ||
-      (opportunityScore < Math.max(55, adaptiveThreshold - 5) && !strongConviction)
+      (opportunityScore < Math.max(55, adaptiveThresholdValue - 5) && !strongConviction)
         ? 'WAIT'
         : candidate;
 
@@ -245,8 +324,8 @@ export class DecisionService {
     return { type: 'RANGING' };
   }
 
-  private dynamicWeights(regime: MarketRegime['type']): Weighting {
-    const weights = { ...BASE_WEIGHTS };
+  private dynamicWeights(regime: MarketRegime['type'], customWeights?: Weighting): Weighting {
+    const weights = { ...(customWeights || BASE_WEIGHTS) };
     if (regime === 'TRENDING') {
       weights.technical += 5;
       weights.news -= 5;
@@ -282,11 +361,12 @@ export class DecisionService {
     return 0;
   }
 
-  private volatilityFilter(input: DecisionInput): {
+  private volatilityFilter(input: DecisionInput, customPenalty?: number): {
     factor: number;
     adjustment: number;
     extreme: boolean;
   } {
+    const penalty = customPenalty ?? 20;
     const evidence = [
       input.market?.volatility.atr,
       ...(input.market?.anomalies ?? []),
@@ -297,8 +377,8 @@ export class DecisionService {
     if (!high) return { factor: 1, adjustment: 0, extreme: false };
     const extreme = /extreme|liquidation cascade|dislocation|violent|flash crash|parabolic spike/.test(evidence);
     return extreme
-      ? { factor: 0.7, adjustment: -30, extreme: true }
-      : { factor: 0.8, adjustment: -20, extreme: false };
+      ? { factor: 0.7, adjustment: -Math.round(penalty * 1.5), extreme: true }
+      : { factor: 0.8, adjustment: -Math.round(penalty), extreme: false };
   }
 
   private agreementFactor(
