@@ -12,6 +12,7 @@ type Tx = Prisma.TransactionClient;
 
 export interface AssessRiskInput {
   userId: string;
+  connectionId?: string;
   strategyId?: string;
   pipelineRunId: string;
   symbol: string;
@@ -78,10 +79,13 @@ export class RiskManagementService {
     const sanitizedExposurePct = safeFloat(evaluation.exposurePct, 0);
     const sanitizedDrawdownPct = safeFloat(evaluation.drawdownPct, 0);
 
+    const sanitizedConnectionId = safeUuid(input.connectionId);
+
     const row = await tx.riskAssessment.upsert({
       where: { pipelineRunId: input.pipelineRunId },
       update: {
         userId: input.userId,
+        connectionId: sanitizedConnectionId,
         strategyId: sanitizedStrategyId,
         symbol: input.symbol,
         decision: input.decision.decision,
@@ -100,6 +104,7 @@ export class RiskManagementService {
       },
       create: {
         userId: input.userId,
+        connectionId: sanitizedConnectionId,
         strategyId: sanitizedStrategyId,
         pipelineRunId: input.pipelineRunId,
         symbol: input.symbol,

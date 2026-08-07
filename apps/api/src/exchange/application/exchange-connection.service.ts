@@ -430,7 +430,7 @@ export class ExchangeConnectionService {
     userId: string,
     id: string,
     context: RequestMetadata,
-    symbols = ["BTC-USDT", "ETH-USDT"],
+    symbols?: string[],
   ): Promise<ExchangeOrder[]> {
     return this.privateCall(
       userId,

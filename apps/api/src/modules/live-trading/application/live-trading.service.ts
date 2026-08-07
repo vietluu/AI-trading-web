@@ -129,6 +129,7 @@ export class LiveTradingService {
         await this.supersedeEarlierEntry(tx, input, price);
         let risk = await this.risk.assess(tx, {
           userId: input.userId,
+          connectionId: connection.id,
           strategyId: strategy.id,
           pipelineRunId: input.pipelineRunId,
           symbol: input.symbol,
@@ -282,6 +283,7 @@ export class LiveTradingService {
       where: {
         userId,
         connectionId: dto.connectionId,
+        symbol: assessment.symbol,
         status: { not: "FAILED" },
       },
       orderBy: { createdAt: "desc" },
@@ -393,21 +395,28 @@ export class LiveTradingService {
     if (!settings.runtimeEnabled) return { outcome: "KILL_SWITCH_ACTIVE" };
     if (settings.mode !== "DEMO" && settings.mode !== "LIVE")
       return { outcome: "EXECUTION_MODE_INACTIVE" };
-    const [assessment, run] = await Promise.all([
-      this.prisma.riskAssessment.findUnique({ where: { pipelineRunId } }),
-      this.prisma.pipelineRun.findUnique({
-        where: { id: pipelineRunId },
-        select: { provider: true },
-      }),
-    ]);
+    const assessment = await this.prisma.riskAssessment.findUnique({ where: { pipelineRunId } });
     if (!assessment || assessment.userId !== userId)
       return { outcome: "RISK_ASSESSMENT_MISSING" };
     if (!assessment.approved)
       return { outcome: "RISK_REJECTED", reason: assessment.reason };
+
+    // Use the connection that was pinned during risk assessment, falling back
+    // to any eligible connection if the pinned one is unavailable.
     const connections = await this.connections.list(userId);
-    const connection = connections.find(
-      (item) => item.isEnabled && item.isVerified,
-    );
+    let connection = assessment.connectionId
+      ? connections.find(
+          (item) =>
+            item.id === assessment.connectionId &&
+            item.isEnabled &&
+            item.isVerified,
+        )
+      : undefined;
+    if (!connection) {
+      // Fallback: pick any eligible connection (preserves behaviour when
+      // connectionId was not recorded on older assessments).
+      connection = connections.find((item) => item.isEnabled && item.isVerified);
+    }
     if (!connection) return { outcome: "NO_ELIGIBLE_EXCHANGE_CONNECTION" };
     const clientOrderId = this.normalizeClientOrderId(
       `p9${this.removeHyphens(randomUUID()).slice(0, 28)}`,
@@ -543,14 +552,37 @@ export class LiveTradingService {
     const historyDue =
       !previousSnapshot ||
       Date.now() - previousSnapshot.syncedAt.getTime() >= 60_000;
-    const [account, positions, openOrders, orderHistory] = await Promise.all([
+    // Fetch positions first so we can pass their symbols to orderHistory
+    const [account, positions, openOrders] = await Promise.all([
       this.connections.account(userId, connectionId, context),
       this.connections.positions(userId, connectionId, context),
       this.connections.openOrders(userId, connectionId, context),
-      historyDue
-        ? this.connections.orderHistory(userId, connectionId, context)
-        : Promise.resolve([]),
     ]);
+    // Build symbol list from active positions plus any symbols already tracked
+    // in liveOrders. This ensures history is imported for all traded symbols.
+    const trackedSymbols = await this.prisma.liveOrder
+      .findMany({
+        where: { userId, connectionId },
+        select: { symbol: true },
+        distinct: ["symbol"],
+        orderBy: { createdAt: "desc" },
+        take: 20,
+      })
+      .then((rows) => rows.map((r) => r.symbol));
+    const positionSymbols = positions
+      .filter((p) => Number(p.quantity) > 0)
+      .map((p) => p.symbol);
+    const historySymbols = [
+      ...new Set([...positionSymbols, ...trackedSymbols]),
+    ];
+    const orderHistory = historyDue
+      ? await this.connections.orderHistory(
+          userId,
+          connectionId,
+          context,
+          historySymbols.length > 0 ? historySymbols : undefined,
+        )
+      : [];
     const syncedAt = new Date();
     await this.prisma.$transaction(async (tx) => {
       await tx.liveAccountSnapshot.create({
@@ -877,10 +909,16 @@ export class LiveTradingService {
     const persistedSnapshots = Array.from(this.realtimeSnapshots.entries()).filter(
       ([key]) => key.startsWith(`${userId}:`),
     );
+    // Fetch all connections once to resolve provider/environment from the key
+    const allConnections = await this.connections.list(userId);
+    const connectionMap = new Map(allConnections.map((c) => [c.id, c]));
     for (const [key, snapshot] of persistedSnapshots) {
       const connectionId = key.split(":").slice(1).join(":") ?? undefined;
       const account = (snapshot as { accounts?: Array<{ connectionId?: string; totalEquity?: number; availableBalance?: number; unrealizedPnl?: number; marginBalance?: number; syncedAt?: string }> }).accounts?.[0];
       if (!account || !connectionId) continue;
+      const conn = connectionMap.get(connectionId);
+      const provider = conn?.provider ?? "OKX_FUTURES";
+      const environment = conn?.environment ?? "DEMO";
       const latest = await this.prisma.liveAccountSnapshot.findFirst({
         where: { userId, connectionId },
         orderBy: { syncedAt: "desc" },
@@ -889,8 +927,8 @@ export class LiveTradingService {
         await this.prisma.liveAccountSnapshot.update({
           where: { id: latest.id },
           data: {
-            provider: "OKX_FUTURES",
-            environment: "DEMO",
+            provider,
+            environment,
             totalEquity: account.totalEquity ?? 0,
             availableBalance: account.availableBalance ?? 0,
             unrealizedPnl: account.unrealizedPnl ?? 0,
@@ -903,8 +941,8 @@ export class LiveTradingService {
           data: {
             userId,
             connectionId,
-            provider: "OKX_FUTURES",
-            environment: "DEMO",
+            provider,
+            environment,
             totalEquity: account.totalEquity ?? 0,
             availableBalance: account.availableBalance ?? 0,
             unrealizedPnl: account.unrealizedPnl ?? 0,
