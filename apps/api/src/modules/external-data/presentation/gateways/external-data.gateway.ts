@@ -8,6 +8,7 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
+import { resolveSocketIoPath } from '../../../../common/utils/socket-io-path';
 import { ExternalDataEventPublisher, ExternalDataEventPublisherGateway } from '../../application/services/external-data-event-publisher.service';
 
 interface ClientSubscription {
@@ -18,7 +19,7 @@ interface ClientSubscription {
 
 @WebSocketGateway({
   namespace: '/external-data',
-  path: '/api/socket.io/',
+  path: resolveSocketIoPath(),
   cors: {
     origin: (
       origin: string | undefined,

@@ -90,7 +90,11 @@ export default function LiveTradingPage(): React.JSX.Element {
         : "";
 
     const socket = io(`${baseUrl}/live-trading`, {
-      transports: ["websocket"],
+      path:
+        typeof window !== "undefined"
+          ? (window as Window & { __SOCKET_IO_PATH__?: string }).__SOCKET_IO_PATH__ ?? "/socket.io/"
+          : "/socket.io/",
+      transports: ["websocket", "polling"],
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 500,
