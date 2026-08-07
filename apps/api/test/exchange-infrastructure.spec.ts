@@ -3,6 +3,7 @@ import { createHmac } from "node:crypto";
 import { ConfigService } from "@nestjs/config";
 import { describe, expect, it, vi } from "vitest";
 
+import { ExchangeErrorCode } from "../src/exchange/domain/exchange.error";
 import {
   ExchangeEnvironment,
   ExchangeInterval,
@@ -17,6 +18,7 @@ import {
 } from "../src/exchange/infrastructure/exchange-interval";
 import { ExchangeRateLimitService } from "../src/exchange/infrastructure/exchange-rate-limit.service";
 import {
+  fromAssets,
   fromOkxSymbol,
   mapSymbol,
   normalizeSymbol,
@@ -57,14 +59,22 @@ describe("exchange infrastructure", () => {
 
   it("normalizes provider symbols without losing the quote separator", () => {
     expect(normalizeSymbol(" btc-usdt ")).toBe("BTC-USDT");
+    expect(normalizeSymbol("BTC - USDT")).toBe("BTC-USDT");
+    expect(normalizeSymbol("BTCUSDT")).toBe("BTC-USDT");
+    expect(fromAssets("BTC", "USDT")).toBe("BTC-USDT");
     expect(toBinanceSymbol("BTC-USDT")).toBe("BTCUSDT");
     expect(toOkxSymbol("BTC-USDT")).toBe("BTC-USDT-SWAP");
     expect(fromOkxSymbol("BTC-USDT-SWAP")).toBe("BTC-USDT");
-    expect(() => normalizeSymbol("BTCUSDT")).toThrow("BASE-QUOTE");
   });
 
   it("maps execution symbols for OKX and Binance safely", () => {
     expect(mapSymbol("BTC-USDT", ExchangeProvider.OKX_FUTURES)).toBe(
+      "BTC-USDT-SWAP",
+    );
+    expect(mapSymbol("BTC/USDT", ExchangeProvider.OKX_FUTURES)).toBe(
+      "BTC-USDT-SWAP",
+    );
+    expect(mapSymbol("BTC-USDT-SWAP", ExchangeProvider.OKX_FUTURES)).toBe(
       "BTC-USDT-SWAP",
     );
     expect(mapSymbol("BTC-USDT", ExchangeProvider.BINANCE_FUTURES)).toBe(
@@ -76,8 +86,8 @@ describe("exchange infrastructure", () => {
     expect(mapSymbol("BNB-USDT", ExchangeProvider.BINANCE_FUTURES)).toBe(
       "BNBUSDT",
     );
-    expect(() => mapSymbol("BTCUSDT", ExchangeProvider.BINANCE_FUTURES)).toThrow(
-      "BASE-QUOTE",
+    expect(mapSymbol("BTCUSDT", ExchangeProvider.BINANCE_FUTURES)).toBe(
+      "BTCUSDT",
     );
     expect(() => mapSymbol("", ExchangeProvider.OKX_FUTURES)).toThrow(
       "Symbol must not be empty",
@@ -96,6 +106,34 @@ describe("exchange infrastructure", () => {
     expect(isRetryableStatus(429)).toBe(true);
     expect(isRetryableStatus(503)).toBe(true);
     expect(isRetryableStatus(401)).toBe(false);
+  });
+
+  it("preserves the OKX rejection message from non-2xx response envelopes", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      headers: new Headers(),
+      json: () => Promise.resolve({ code: "50004", msg: "Order quantity exceeds limit" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const service = new (await import("../src/exchange/infrastructure/exchange-http.service")).ExchangeHttpService(
+        new ConfigService({}),
+      );
+      await expect(
+        service.request({
+          provider: ExchangeProvider.OKX_FUTURES,
+          operation: "/api/v5/trade/order",
+          url: "https://example.com/api/v5/trade/order",
+        }),
+      ).rejects.toMatchObject({
+        code: ExchangeErrorCode.INVALID_REQUEST,
+        message: "Order quantity exceeds limit",
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("uses globally shareable public cache keys", () => {

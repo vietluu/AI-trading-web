@@ -7,6 +7,7 @@ import { LiveTradingConfigService } from "./application/live-trading-config.serv
 import { LiveTradingSyncService } from "./application/live-trading-sync.service";
 import { LiveTradingService } from "./application/live-trading.service";
 import { LiveTradingController } from "./presentation/live-trading.controller";
+import { LiveTradingGateway } from "./presentation/live-trading.gateway";
 
 @Module({
   imports: [AuthModule, ExchangeModule, RiskModule, PortfolioModule],
@@ -15,6 +16,7 @@ import { LiveTradingController } from "./presentation/live-trading.controller";
     LiveTradingConfigService,
     LiveTradingService,
     LiveTradingSyncService,
+    LiveTradingGateway,
   ],
   exports: [LiveTradingService, LiveTradingConfigService],
 })

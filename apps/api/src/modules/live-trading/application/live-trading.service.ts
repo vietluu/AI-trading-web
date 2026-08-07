@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import type { DecisionOutput, RiskOutput } from "@platform/shared";
 import { AuditService } from "../../../audit/audit.service";
@@ -27,10 +28,12 @@ import type {
 import { RiskConfigService } from "../../risk/application/risk-config.service";
 import { RiskManagementService } from "../../risk/application/risk-management.service";
 import { PortfolioService } from "../../portfolio/application/portfolio.service";
+import { LiveTradingGateway } from "../presentation/live-trading.gateway";
 
 @Injectable()
 export class LiveTradingService {
   private readonly logger = new Logger(LiveTradingService.name);
+  private readonly realtimeSnapshots = new Map<string, unknown>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -41,6 +44,7 @@ export class LiveTradingService {
     private readonly risk: RiskManagementService,
     private readonly portfolio: PortfolioService,
     private readonly publicExchanges: PublicExchangeService,
+    private readonly gateway?: LiveTradingGateway,
   ) {}
 
   /** Build the execution approval exclusively from synchronized exchange data. */
@@ -122,6 +126,7 @@ export class LiveTradingService {
           }),
         ]);
         if (!snapshot) throw new Error("EXCHANGE_ACCOUNT_SNAPSHOT_UNAVAILABLE");
+        await this.supersedeEarlierEntry(tx, input, price);
         let risk = await this.risk.assess(tx, {
           userId: input.userId,
           strategyId: strategy.id,
@@ -241,6 +246,38 @@ export class LiveTradingService {
     });
     if (existingApproval)
       throw new ConflictException("Risk approval has already been consumed");
+    const existingOpenPosition = await this.prisma.livePosition.findFirst({
+      where: {
+        userId,
+        connectionId: dto.connectionId,
+        symbol: assessment.symbol,
+      },
+    });
+    if (
+      existingOpenPosition &&
+      existingOpenPosition.side === (assessment.decision as "LONG" | "SHORT")
+    ) {
+      throw new ConflictException(
+        "A position already exists in the approved direction",
+      );
+    }
+    const sameSignalOrder = await this.prisma.liveOrder.findFirst({
+      where: {
+        userId,
+        connectionId: dto.connectionId,
+        symbol: assessment.symbol,
+        purpose: { in: ["OPEN", "REVERSE"] },
+        status: { not: "FAILED" },
+        stopLoss: assessment.stopLoss,
+        takeProfit: assessment.takeProfit,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    if (sameSignalOrder) {
+      throw new ConflictException(
+        "An equivalent order for this symbol and protection levels already exists",
+      );
+    }
     const last = await this.prisma.liveOrder.findFirst({
       where: {
         userId,
@@ -264,7 +301,7 @@ export class LiveTradingService {
         symbol: assessment.symbol,
       },
     });
-    await this.assertExchangePortfolioRisk(
+    const sizing = await this.assertExchangePortfolioRisk(
       userId,
       dto.connectionId,
       assessment,
@@ -306,14 +343,25 @@ export class LiveTradingService {
     }
 
     const side: OrderSide = desiredSide === "LONG" ? "BUY" : "SELL";
+    this.logger.warn({
+      event: "execution_sizing",
+      userId,
+      connectionId: dto.connectionId,
+      symbol: assessment.symbol,
+      approvedPositionSize: assessment.positionSize,
+      approvedLeverage: assessment.leverage,
+      executionPositionSize: sizing.positionSize,
+      executionLeverage: sizing.leverage,
+      referencePrice: sizing.referencePrice,
+    });
     const result = await this.submit(
       userId,
       connection,
       {
         symbol: assessment.symbol,
         side,
-        quantity: String(assessment.positionSize),
-        leverage: assessment.leverage,
+        quantity: String(sizing.positionSize),
+        leverage: sizing.leverage,
         clientOrderId: this.normalizeClientOrderId(dto.clientOrderId),
         ...(configuration.positionMode === "HEDGE"
           ? { positionSide: desiredSide }
@@ -374,7 +422,7 @@ export class LiveTradingService {
     );
     if (!connection) return { outcome: "NO_ELIGIBLE_EXCHANGE_CONNECTION" };
     const clientOrderId = this.normalizeClientOrderId(
-      `p9-${pipelineRunId.replaceAll("-", "").slice(0, 32)}`,
+      `p9${this.removeHyphens(randomUUID()).slice(0, 28)}`,
     );
     try {
       const order = await this.execute(
@@ -393,8 +441,13 @@ export class LiveTradingService {
         event: "pipeline_order_failed",
         pipelineRunId,
         errorCode: safe.code,
+        errorMessage: safe.message,
       });
-      return { outcome: "EXECUTION_FAILED", errorCode: safe.code };
+      return {
+        outcome: "EXECUTION_FAILED",
+        errorCode: safe.code,
+        errorMessage: safe.message,
+      };
     }
   }
 
@@ -501,7 +554,7 @@ export class LiveTradingService {
     });
     const historyDue =
       !previousSnapshot ||
-      Date.now() - previousSnapshot.syncedAt.getTime() >= 300_000;
+      Date.now() - previousSnapshot.syncedAt.getTime() >= 60_000;
     const [account, positions, openOrders, orderHistory] = await Promise.all([
       this.connections.account(userId, connectionId, context),
       this.connections.positions(userId, connectionId, context),
@@ -511,57 +564,7 @@ export class LiveTradingService {
         : Promise.resolve([]),
     ]);
     const syncedAt = new Date();
-    const [previousPositions, ownershipOrders] = await Promise.all([
-      this.prisma.livePosition.findMany({ where: { userId, connectionId } }),
-      this.prisma.liveOrder.findMany({
-        where: {
-          userId,
-          connectionId,
-          strategyId: { not: null },
-          purpose: { in: ["OPEN", "REVERSE"] },
-          status: { not: "FAILED" },
-        },
-        orderBy: { createdAt: "desc" },
-      }),
-    ]);
     await this.prisma.$transaction(async (tx) => {
-      await tx.livePosition.deleteMany({ where: { userId, connectionId } });
-      if (positions.length) {
-        await tx.livePosition.createMany({
-          data: positions.map((position) => {
-            const previous = previousPositions.find(
-              (item) =>
-                item.symbol === position.symbol && item.side === position.side,
-            );
-            const source = ownershipOrders.find(
-              (item) =>
-                item.symbol === position.symbol &&
-                (item.side === "BUY" ? "LONG" : "SHORT") === position.side,
-            );
-            return this.positionData(
-              userId,
-              connectionId,
-              connection.environment,
-              position,
-              syncedAt,
-              previous?.strategyId ?? source?.strategyId,
-            );
-          }),
-        });
-      }
-      await tx.liveAccountSnapshot.create({
-        data: {
-          userId,
-          connectionId,
-          provider: connection.provider,
-          environment: connection.environment,
-          totalEquity: account.totalEquity,
-          availableBalance: account.availableBalance,
-          unrealizedPnl: account.totalUnrealizedPnl,
-          marginBalance: account.totalMarginBalance,
-          syncedAt,
-        },
-      });
       for (const order of openOrders) {
         await tx.liveOrder.updateMany({
           where: {
@@ -576,7 +579,7 @@ export class LiveTradingService {
           data: { status: order.status, averagePrice: order.averagePrice },
         });
       }
-      for (const order of orderHistory) {
+      for (const order of orderHistory.slice(0, 20)) {
         const clientOrderId =
           order.clientOrderId || `external-${order.exchangeOrderId}`;
         const matched = await tx.liveOrder.updateMany({
@@ -616,6 +619,11 @@ export class LiveTradingService {
         }
       }
     });
+    const persistedOrders = await this.prisma.liveOrder.findMany({
+      where: { userId, connectionId },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
     await this.monitorProtection(userId, connection, positions, context);
     this.logger.log({
       event: "live_state_synced",
@@ -624,15 +632,109 @@ export class LiveTradingService {
       positionCount: positions.length,
       openOrderCount: openOrders.length,
     });
-    return {
+    const summary = {
       syncedAt: syncedAt.toISOString(),
       positions: positions.length,
       openOrders: openOrders.length,
       importedOrders: orderHistory.length,
     };
+    const connections = await this.connections.list(userId);
+    const snapshot = {
+      mode: this.config.values.mode,
+      globalTradingEnabled: this.config.values.runtimeEnabled,
+      liveTradingEnabled: this.config.values.liveEnabled,
+      connections: connections.filter(
+        (item) => item.isEnabled && item.isVerified && (!connectionId || item.id === connectionId),
+      ),
+      accounts: [
+        {
+          connectionId,
+          provider: connection.provider,
+          environment: connection.environment,
+          totalEquity: Number(account.totalEquity),
+          availableBalance: Number(account.availableBalance),
+          unrealizedPnl: Number(account.totalUnrealizedPnl),
+          marginBalance: Number(account.totalMarginBalance),
+          syncedAt: syncedAt.toISOString(),
+        },
+      ],
+      positions: positions.map((position) => ({
+        id: `${connectionId}:${position.symbol}:${position.side}`,
+        connectionId,
+        provider: position.provider,
+        symbol: position.symbol,
+        side: position.side,
+        quantity: Number(position.quantity),
+        entryPrice: Number(position.entryPrice),
+        markPrice: position.markPrice ? Number(position.markPrice) : null,
+        liquidationPrice: position.liquidationPrice
+          ? Number(position.liquidationPrice)
+          : null,
+        leverage: position.leverage ? Number(position.leverage) : null,
+        unrealizedPnl: Number(position.unrealizedPnl),
+        realizedPnl: position.realizedPnl ? Number(position.realizedPnl) : null,
+        notional: position.notional ? Number(position.notional) : null,
+        syncedAt: syncedAt.toISOString(),
+      })),
+      orders: persistedOrders.map((row) =>
+        this.orderView({
+          id: row.id,
+          exchangeOrderId: row.exchangeOrderId,
+          clientOrderId: row.clientOrderId,
+          provider: row.provider,
+          environment: row.environment,
+          symbol: row.symbol,
+          side: row.side,
+          quantity: row.quantity,
+          averagePrice: row.averagePrice,
+          status: row.status,
+          purpose: row.purpose,
+          errorCode: row.errorCode,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        }),
+      ),
+    };
+    this.realtimeSnapshots.set(this.realtimeCacheKey(userId, connectionId), snapshot);
+    if (this.gateway) {
+      this.gateway.pushSnapshot(userId, snapshot);
+    }
+    return summary;
   }
 
   async dashboard(userId: string, connectionId?: string) {
+    return this.buildDashboardSnapshot(userId, connectionId);
+  }
+
+  private realtimeCacheKey(userId: string, connectionId?: string) {
+    return `${userId}:${connectionId ?? "all"}`;
+  }
+
+  private isValidUserId(userId?: string | null): userId is string {
+    if (!userId) return false;
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      userId,
+    );
+  }
+
+  private async buildDashboardSnapshot(userId: string, connectionId?: string) {
+    const cached = this.realtimeSnapshots.get(this.realtimeCacheKey(userId, connectionId));
+    if (cached) return cached;
+    if (!this.isValidUserId(userId)) {
+      this.logger.warn({
+        event: "dashboard_snapshot_skipped_invalid_user_id",
+        userId,
+      });
+      return {
+        mode: this.config.values.mode,
+        globalTradingEnabled: this.config.values.runtimeEnabled,
+        liveTradingEnabled: this.config.values.liveEnabled,
+        connections: [],
+        accounts: [],
+        positions: [],
+        orders: [],
+      };
+    }
     const where = { userId, ...(connectionId ? { connectionId } : {}) };
     const connections = await this.connections.list(userId);
     const eligible = connections.filter(
@@ -641,7 +743,7 @@ export class LiveTradingService {
         item.isVerified &&
         (!connectionId || item.id === connectionId),
     );
-    await Promise.all(
+    void Promise.allSettled(
       eligible.map((item) =>
         this.sync(userId, item.id, {}).catch((error: unknown) =>
           this.logger.warn({
@@ -703,6 +805,46 @@ export class LiveTradingService {
 
   async kill(userId: string, context: RequestMetadata) {
     this.config.kill();
+    const persistedSnapshots = Array.from(this.realtimeSnapshots.entries()).filter(
+      ([key]) => key.startsWith(`${userId}:`),
+    );
+    for (const [key, snapshot] of persistedSnapshots) {
+      const connectionId = key.split(":").slice(1).join(":") ?? undefined;
+      const account = (snapshot as { accounts?: Array<{ connectionId?: string; totalEquity?: number; availableBalance?: number; unrealizedPnl?: number; marginBalance?: number; syncedAt?: string }> }).accounts?.[0];
+      if (!account || !connectionId) continue;
+      const latest = await this.prisma.liveAccountSnapshot.findFirst({
+        where: { userId, connectionId },
+        orderBy: { syncedAt: "desc" },
+      });
+      if (latest) {
+        await this.prisma.liveAccountSnapshot.update({
+          where: { id: latest.id },
+          data: {
+            provider: "OKX_FUTURES",
+            environment: "DEMO",
+            totalEquity: account.totalEquity ?? 0,
+            availableBalance: account.availableBalance ?? 0,
+            unrealizedPnl: account.unrealizedPnl ?? 0,
+            marginBalance: account.marginBalance ?? 0,
+            syncedAt: new Date(account.syncedAt ?? Date.now()),
+          },
+        });
+      } else {
+        await this.prisma.liveAccountSnapshot.create({
+          data: {
+            userId,
+            connectionId,
+            provider: "OKX_FUTURES",
+            environment: "DEMO",
+            totalEquity: account.totalEquity ?? 0,
+            availableBalance: account.availableBalance ?? 0,
+            unrealizedPnl: account.unrealizedPnl ?? 0,
+            marginBalance: account.marginBalance ?? 0,
+            syncedAt: new Date(account.syncedAt ?? Date.now()),
+          },
+        });
+      }
+    }
     await this.audit.record("GLOBAL_TRADING_KILL_SWITCH", userId, context, {
       status: "DISABLED",
     });
@@ -818,6 +960,9 @@ export class LiveTradingService {
         orderId: row.id,
         symbol: command.symbol,
         errorCode: safe.code,
+        errorMessage: safe.message,
+        exchangeCode:
+          error instanceof ExchangeError ? error.exchangeCode : undefined,
       });
       throw error;
     }
@@ -969,7 +1114,7 @@ export class LiveTradingService {
       leverage: number | null;
       referencePrice: Prisma.Decimal;
     },
-  ): Promise<void> {
+  ): Promise<{ positionSize: number; leverage: number; referencePrice: number }> {
     if (!assessment.positionSize || !assessment.leverage) {
       throw new ForbiddenException(
         "Exchange preflight failed: incomplete risk approval",
@@ -997,6 +1142,20 @@ export class LiveTradingService {
     if (!Number.isFinite(equity) || equity <= 0) {
       throw new ForbiddenException(
         "Exchange preflight failed: account equity is unavailable",
+      );
+    }
+    const availableBalance = Number(snapshot.availableBalance);
+    const requestedPositionSize = Number(assessment.positionSize);
+    const requestedLeverage = assessment.leverage;
+    const requestedNotional = requestedPositionSize * Number(assessment.referencePrice);
+    const sizing = {
+      positionSize: requestedPositionSize,
+      leverage: requestedLeverage,
+      referencePrice: Number(assessment.referencePrice),
+    };
+    if (requestedNotional / requestedLeverage > availableBalance + 1e-8) {
+      throw new ForbiddenException(
+        "Exchange preflight failed: insufficient available margin",
       );
     }
     const drawdown =
@@ -1029,8 +1188,7 @@ export class LiveTradingService {
       );
       return sum + (explicit > 0 ? explicit : calculated);
     }, 0);
-    const orderNotional =
-      Number(assessment.positionSize) * Number(assessment.referencePrice);
+    const orderNotional = sizing.positionSize * sizing.referencePrice;
     const projectedExposure = retainedExposure + orderNotional;
     if (
       !Number.isFinite(projectedExposure) ||
@@ -1040,12 +1198,94 @@ export class LiveTradingService {
         "Exchange preflight failed: maximum portfolio exposure exceeded",
       );
     }
-    const requiredMargin = orderNotional / assessment.leverage;
-    if (requiredMargin > Number(snapshot.availableBalance) + 1e-8) {
+    const requiredMargin = orderNotional / sizing.leverage;
+    if (requiredMargin > availableBalance + 1e-8) {
       throw new ForbiddenException(
         "Exchange preflight failed: insufficient available margin",
       );
     }
+    return sizing;
+  }
+
+  private deriveExecutionSizing(
+    assessment: {
+      positionSize: number;
+      leverage: number;
+      referencePrice: number;
+    },
+    availableBalance: number,
+    maxLeverage: number,
+  ): { positionSize: number; leverage: number; referencePrice: number } {
+    const requestedNotional = assessment.positionSize * assessment.referencePrice;
+    const minLeverage = 1;
+    const maxAllowedLeverage = Math.min(assessment.leverage, maxLeverage);
+    const leverage = Math.max(minLeverage, Math.floor(maxAllowedLeverage));
+    if (!Number.isFinite(availableBalance) || availableBalance <= 0) {
+      return { ...assessment, positionSize: 0, leverage };
+    }
+    if (requestedNotional / leverage > availableBalance + 1e-8) {
+      return { ...assessment, positionSize: 0, leverage };
+    }
+    return {
+      positionSize: Number(assessment.positionSize.toFixed(12)),
+      leverage,
+      referencePrice: assessment.referencePrice,
+    };
+  }
+
+  private async supersedeEarlierEntry(
+    tx: Prisma.TransactionClient,
+    input: {
+      userId: string;
+      pipelineRunId: string;
+      symbol: string;
+      decision: DecisionOutput;
+    },
+    price: number,
+  ): Promise<void> {
+    if (input.decision.decision === "WAIT") return;
+    const candidates = await tx.riskAssessment.findMany({
+      where: {
+        userId: input.userId,
+        symbol: input.symbol,
+        approved: true,
+        decision: input.decision.decision,
+        pipelineRunId: { not: input.pipelineRunId },
+        positionSize: { not: null },
+        leverage: { not: null },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    const supersededIds = [] as string[];
+    for (const candidate of candidates) {
+      const hasActiveOrder = await tx.liveOrder.findFirst({
+        where: {
+          riskAssessmentId: candidate.id,
+          status: { not: "FAILED" },
+        },
+      });
+      if (hasActiveOrder) continue;
+      const referencePrice = Number(candidate.referencePrice);
+      const isBetterEntry =
+        input.decision.decision === "LONG"
+          ? Number.isFinite(referencePrice) && price < referencePrice
+          : input.decision.decision === "SHORT"
+            ? Number.isFinite(referencePrice) && price > referencePrice
+            : false;
+      if (isBetterEntry) supersededIds.push(candidate.id);
+    }
+    if (!supersededIds.length) return;
+    await tx.riskAssessment.updateMany({
+      where: { id: { in: supersededIds } },
+      data: {
+        approved: false,
+        reason: "SUPERSEDED_BY_BETTER_ENTRY",
+        positionSize: null,
+        leverage: null,
+        stopLoss: null,
+        takeProfit: null,
+      },
+    });
   }
 
   private orderView(row: {
@@ -1091,15 +1331,36 @@ export class LiveTradingService {
   private normalizeClientOrderId(value: string): string {
     const trimmed = value.trim();
     if (!trimmed) return "order";
-    return trimmed.length <= 32 ? trimmed : `${trimmed.slice(0, 29)}-${trimmed.slice(-2)}`;
+    const withoutDashes = this.removeHyphens(trimmed);
+    const alphanumeric = withoutDashes.replace(/[^A-Za-z0-9]/g, "");
+    if (!alphanumeric) return "order";
+    if (alphanumeric.length <= 32) return alphanumeric;
+    return `${alphanumeric.slice(0, 30)}${alphanumeric.slice(-2)}`;
+  }
+
+  private removeHyphens(value: string): string {
+    return value.replace(/-/g, "");
   }
 
   private safeError(error: unknown): { code: string; message: string } {
-    return error instanceof ExchangeError
-      ? { code: error.code, message: error.message.slice(0, 300) }
-      : {
-          code: "EXECUTION_FAILED",
-          message: "Exchange order execution failed",
-        };
+    if (error instanceof ExchangeError) {
+      const detail = [
+        error.message,
+        error.exchangeCode ? `exchangeCode=${error.exchangeCode}` : undefined,
+      ]
+        .filter(Boolean)
+        .join(" | ");
+      return { code: error.code, message: detail.slice(0, 300) };
+    }
+    if (error instanceof Error) {
+      return {
+        code: "EXECUTION_FAILED",
+        message: error.message.slice(0, 300),
+      };
+    }
+    return {
+      code: "EXECUTION_FAILED",
+      message: "Exchange order execution failed",
+    };
   }
 }

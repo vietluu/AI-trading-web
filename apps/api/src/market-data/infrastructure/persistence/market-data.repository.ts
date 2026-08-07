@@ -387,46 +387,67 @@ export class MarketDataRepository {
   async upsertCandleBatch(
     candles: NormalizedCandle[],
   ): Promise<NormalizedCandle[]> {
-    const rows = await this.prisma.$transaction(
-      candles.map((input) =>
-        this.prisma.marketCandle.upsert({
-          where: {
-            provider_symbol_interval_openTime: {
+    const chunkSize = 25;
+    const rows: Array<Awaited<ReturnType<PrismaService["marketCandle"]["upsert"]>>> = [];
+
+    for (let index = 0; index < candles.length; index += chunkSize) {
+      const chunk = candles.slice(index, index + chunkSize);
+      const chunkResults = [] as Array<Awaited<ReturnType<PrismaService["marketCandle"]["upsert"]>>>;
+
+      for (const input of chunk) {
+        try {
+          const row = await this.prisma.marketCandle.upsert({
+            where: {
+              provider_symbol_interval_openTime: {
+                provider: input.provider,
+                symbol: input.symbol,
+                interval: toDbInterval(input.interval),
+                openTime: input.openTime,
+              },
+            },
+            update: {
+              closeTime: input.closeTime,
+              open: toDecimal(input.open),
+              high: toDecimal(input.high),
+              low: toDecimal(input.low),
+              close: toDecimal(input.close),
+              volume: toDecimal(input.volume),
+              quoteVolume: toOptionalDecimal(input.quoteVolume),
+              tradeCount: input.tradeCount,
+              isClosed: input.isClosed,
+            },
+            create: {
               provider: input.provider,
               symbol: input.symbol,
               interval: toDbInterval(input.interval),
               openTime: input.openTime,
+              closeTime: input.closeTime,
+              open: toDecimal(input.open),
+              high: toDecimal(input.high),
+              low: toDecimal(input.low),
+              close: toDecimal(input.close),
+              volume: toDecimal(input.volume),
+              quoteVolume: toOptionalDecimal(input.quoteVolume),
+              tradeCount: input.tradeCount,
+              isClosed: input.isClosed,
             },
-          },
-          update: {
-            closeTime: input.closeTime,
-            open: toDecimal(input.open),
-            high: toDecimal(input.high),
-            low: toDecimal(input.low),
-            close: toDecimal(input.close),
-            volume: toDecimal(input.volume),
-            quoteVolume: toOptionalDecimal(input.quoteVolume),
-            tradeCount: input.tradeCount,
-            isClosed: input.isClosed,
-          },
-          create: {
-            provider: input.provider,
+          });
+          chunkResults.push(row);
+        } catch (error) {
+          this.logger.warn({
+            event: "market_candle_upsert_failed",
             symbol: input.symbol,
-            interval: toDbInterval(input.interval),
-            openTime: input.openTime,
-            closeTime: input.closeTime,
-            open: toDecimal(input.open),
-            high: toDecimal(input.high),
-            low: toDecimal(input.low),
-            close: toDecimal(input.close),
-            volume: toDecimal(input.volume),
-            quoteVolume: toOptionalDecimal(input.quoteVolume),
-            tradeCount: input.tradeCount,
-            isClosed: input.isClosed,
-          },
-        }),
-      ),
-    );
+            interval: input.interval,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      rows.push(...chunkResults);
+      if (chunk.length >= chunkSize) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
 
     return rows.map(mapCandleRow);
   }

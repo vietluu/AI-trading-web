@@ -65,8 +65,27 @@ export class RiskManagementService {
       },
       this.config.values,
     );
-    const row = await tx.riskAssessment.create({
-      data: {
+    const row = await tx.riskAssessment.upsert({
+      where: { pipelineRunId: input.pipelineRunId },
+      update: {
+        userId: input.userId,
+        strategyId: input.strategyId,
+        symbol: input.symbol,
+        decision: input.decision.decision,
+        confidence: input.decision.confidence,
+        approved: evaluation.approved,
+        reason: evaluation.reason,
+        positionSize: evaluation.positionSize,
+        leverage: evaluation.leverage,
+        stopLoss: evaluation.stopLoss,
+        takeProfit: evaluation.takeProfit,
+        riskScore: evaluation.riskScore,
+        referencePrice: input.price,
+        volatility: input.volatility,
+        exposurePct: evaluation.exposurePct,
+        drawdownPct: evaluation.drawdownPct,
+      },
+      create: {
         userId: input.userId,
         strategyId: input.strategyId,
         pipelineRunId: input.pipelineRunId,

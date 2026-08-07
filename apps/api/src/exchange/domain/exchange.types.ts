@@ -134,6 +134,7 @@ export interface ExchangeOrderBook {
   bids: ExchangeOrderBookLevel[];
   asks: ExchangeOrderBookLevel[];
   timestamp: Date;
+  depth?: number;
 }
 
 export interface ExchangeTrade {
@@ -247,6 +248,7 @@ export interface ExchangeAccountConfiguration {
 
 export interface InstrumentQuery {
   status?: ExchangeInstrumentStatus;
+  symbol?: string;
 }
 export interface KlineQuery {
   symbol: string;

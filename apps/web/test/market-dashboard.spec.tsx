@@ -151,7 +151,7 @@ describe("MarketDashboard", () => {
     await waitFor(() => {
       expect(vi.mocked(fetch)).toHaveBeenCalledWith(
         expect.stringContaining(
-          "/api/market/candles/BINANCE_FUTURES/ETH-USDT?interval=15m",
+          "/api/market/candles/OKX_FUTURES/ETH-USDT?interval=15m",
         ),
         expect.any(Object),
       );
@@ -163,7 +163,7 @@ describe("MarketDashboard", () => {
     await screen.findByTestId("trading-chart");
 
     socket.handlers.get("candle")?.({
-      provider: "BINANCE_FUTURES",
+      provider: "OKX_FUTURES",
       symbol: "BTC-USDT",
       interval: "1h",
       openTime: "2026-08-01T01:00:00.000Z",

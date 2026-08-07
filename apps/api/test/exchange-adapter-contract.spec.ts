@@ -1,15 +1,92 @@
+import { Logger } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
 
+import { ExchangeError, ExchangeErrorCode } from "../src/exchange/domain/exchange.error";
 import {
   ExchangeEnvironment,
   ExchangeInterval,
+  ExchangeProvider,
 } from "../src/exchange/domain/exchange.types";
 import { BinanceFuturesAdapter } from "../src/exchange/infrastructure/binance/binance-futures.adapter";
+import { normalizeSymbol } from "../src/exchange/infrastructure/exchange-symbol";
 import type { BinanceFuturesClient } from "../src/exchange/infrastructure/binance/binance-futures.client";
 import { OkxFuturesAdapter } from "../src/exchange/infrastructure/okx/okx-futures.adapter";
-import type { OkxFuturesClient } from "../src/exchange/infrastructure/okx/okx-futures.client";
+import { OkxFuturesClient } from "../src/exchange/infrastructure/okx/okx-futures.client";
 
 describe("exchange adapter normalization contract", () => {
+  it("normalizes compact quote symbols into base-quote format", () => {
+    expect(normalizeSymbol("BNBUSDT")).toBe("BNB-USDT");
+    expect(normalizeSymbol("ETHUSDT")).toBe("ETH-USDT");
+    expect(normalizeSymbol("SOLUSDT")).toBe("SOL-USDT");
+  });
+
+  it("requests the specific OKX instrument metadata for the requested symbol", async () => {
+    const publicGet = vi.fn().mockResolvedValue([
+      {
+        instId: "ETH-USDT-SWAP",
+        instType: "SWAP",
+        state: "live",
+        settleCcy: "USDT",
+        ctVal: "0.1",
+        tickSz: "0.1",
+        lotSz: "1",
+        minSz: "1",
+      },
+    ]);
+    const adapter = new OkxFuturesAdapter({
+      publicGet,
+    } as unknown as OkxFuturesClient);
+
+    const instruments = await adapter.getInstruments({ symbol: "ETH-USDT" });
+
+    expect(publicGet).toHaveBeenCalledWith(
+      "/api/v5/public/instruments",
+      expect.objectContaining({ instType: "SWAP", instId: "ETH-USDT-SWAP" }),
+    );
+    expect(instruments[0]?.contractSize).toBe("0.1");
+  });
+
+  it("surfaces the specific OKX order rejection from envelope details", async () => {
+    const client = new OkxFuturesClient(
+      {
+        request: vi.fn().mockResolvedValue({
+          data: {
+            code: "1",
+            msg: "All operations failed",
+            data: [{ sCode: "1", sMsg: "Position size exceeds max" }],
+          },
+          correlationId: "corr-1",
+        }),
+      } as never,
+      {
+        sign: vi.fn().mockReturnValue("signature"),
+      },
+      {
+        offset: vi.fn().mockResolvedValue(0),
+        invalidate: vi.fn(),
+      } as never,
+      {
+        getOrThrow: vi.fn().mockReturnValue("https://example.test"),
+      } as never,
+    );
+
+    await expect(
+      client.signedPost(
+        "/api/v5/trade/order",
+        {
+          apiKey: "demo-key",
+          apiSecret: "demo-secret",
+          passphrase: "demo-passphrase",
+          environment: ExchangeEnvironment.DEMO,
+        },
+        { instId: "BTC-USDT-SWAP" },
+      ),
+    ).rejects.toMatchObject({
+      message: "Position size exceeds max",
+      exchangeCode: "1",
+    });
+  });
+
   it("preserves Binance ticker decimals as strings", async () => {
     const publicGet = vi.fn((path: string) =>
       Promise.resolve(
@@ -166,6 +243,335 @@ describe("exchange adapter normalization contract", () => {
     expect(account.totalUnrealizedPnl).toBe("125.50");
   });
 
+  it("logs the requested quantity alongside the converted OKX contract quantity", async () => {
+    const signedPost = vi
+      .fn()
+      .mockResolvedValueOnce([{ lever: "3" }])
+      .mockResolvedValueOnce([
+        { ordId: "123", clOrdId: "phase9-order", sCode: "0", sMsg: "" },
+      ]);
+    const publicGet = vi
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          instId: "BTC-USDT-SWAP",
+          instType: "SWAP",
+          state: "live",
+          settleCcy: "USDT",
+          ctVal: "0.01",
+          tickSz: "0.1",
+          lotSz: "1",
+          minSz: "1",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          instId: "BTC-USDT-SWAP",
+          last: "67233.12345678",
+          bidPx: "67233.10000000",
+          askPx: "67233.20000000",
+          high24h: "68000.00000000",
+          low24h: "65000.00000000",
+          vol24h: "12345.67890000",
+          volCcy24h: "829999999.12345678",
+          open24h: "67100.00000000",
+          ts: "1700000000000",
+        },
+      ]);
+    const adapter = new OkxFuturesAdapter({
+      publicGet,
+      signedPost,
+    } as unknown as OkxFuturesClient);
+    const warnSpy = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+
+    await adapter.placeOrder(
+      {
+        apiKey: "demo-key",
+        apiSecret: "demo-secret",
+        passphrase: "demo-passphrase",
+        environment: ExchangeEnvironment.DEMO,
+      },
+      {
+        symbol: "BTC-USDT",
+        side: "BUY",
+        quantity: "8.19409863277",
+        leverage: 3,
+        clientOrderId: "phase9-order",
+      } as never,
+    );
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "okx_order_request",
+        requestedQuantity: "8.19409863277",
+        contractQuantity: "819",
+      }),
+    );
+  });
+
+  it("forwards stop-loss and take-profit values to OKX as trigger fields", async () => {
+    const signedPost = vi
+      .fn()
+      .mockResolvedValueOnce([{ lever: "3" }])
+      .mockResolvedValueOnce([
+        { ordId: "123", clOrdId: "phase9-order", sCode: "0", sMsg: "" },
+      ]);
+    const publicGet = vi
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          instId: "BTC-USDT-SWAP",
+          instType: "SWAP",
+          state: "live",
+          settleCcy: "USDT",
+          ctVal: "0.01",
+          tickSz: "0.1",
+          lotSz: "1",
+          minSz: "1",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          instId: "BTC-USDT-SWAP",
+          last: "67233.12345678",
+          bidPx: "67233.10000000",
+          askPx: "67233.20000000",
+          high24h: "68000.00000000",
+          low24h: "65000.00000000",
+          vol24h: "12345.67890000",
+          volCcy24h: "829999999.12345678",
+          open24h: "67100.00000000",
+          ts: "1700000000000",
+        },
+      ]);
+    const adapter = new OkxFuturesAdapter({
+      publicGet,
+      signedPost,
+    } as unknown as OkxFuturesClient);
+
+    await adapter.placeOrder(
+      {
+        apiKey: "demo-key",
+        apiSecret: "demo-secret",
+        passphrase: "demo-passphrase",
+        environment: ExchangeEnvironment.DEMO,
+      },
+      {
+        symbol: "BTC-USDT",
+        side: "BUY",
+        quantity: "0.03",
+        leverage: 3,
+        clientOrderId: "phase9-order",
+        stopLoss: "65000",
+        takeProfit: "68000",
+      },
+    );
+
+    const body = signedPost.mock.calls[1]?.[2] as Record<string, unknown>;
+    expect(body.slTriggerPx).toBe("65000");
+    expect(body.slOrdPx).toBe("-1");
+    expect(body.tpTriggerPx).toBe("68000");
+    expect(body.tpOrdPx).toBe("-1");
+  });
+
+  it("removes hyphens from UUID-style client order ids before OKX submission", async () => {
+    const signedPost = vi
+      .fn()
+      .mockResolvedValueOnce([{ lever: "3" }])
+      .mockResolvedValueOnce([
+        { ordId: "123", clOrdId: "phase9-order", sCode: "0", sMsg: "" },
+      ]);
+    const publicGet = vi
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          instId: "BTC-USDT-SWAP",
+          instType: "SWAP",
+          state: "live",
+          settleCcy: "USDT",
+          ctVal: "0.01",
+          tickSz: "0.1",
+          lotSz: "1",
+          minSz: "1",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          instId: "BTC-USDT-SWAP",
+          last: "67233.12345678",
+          bidPx: "67233.10000000",
+          askPx: "67233.20000000",
+          high24h: "68000.00000000",
+          low24h: "65000.00000000",
+          vol24h: "12345.67890000",
+          volCcy24h: "829999999.12345678",
+          open24h: "67100.00000000",
+          ts: "1700000000000",
+        },
+      ]);
+    const adapter = new OkxFuturesAdapter({
+      publicGet,
+      signedPost,
+    } as unknown as OkxFuturesClient);
+
+    await adapter.placeOrder(
+      {
+        apiKey: "demo-key",
+        apiSecret: "demo-secret",
+        passphrase: "demo-passphrase",
+        environment: ExchangeEnvironment.DEMO,
+      },
+      {
+        symbol: "BTC-USDT",
+        side: "BUY",
+        quantity: "0.03",
+        leverage: 3,
+        clientOrderId: "550e8400-e29b-41d4-a716-446655440000",
+      },
+    );
+
+    const body = signedPost.mock.calls[1]?.[2] as Record<string, unknown>;
+    expect(String(body.clOrdId)).not.toContain("-");
+    expect(String(body.clOrdId)).toBe("550e8400e29b41d4a716446655440000");
+  });
+
+  it("uses whole-contract sizes for OKX futures orders", async () => {
+    const signedPost = vi
+      .fn()
+      .mockResolvedValueOnce([{ lever: "3" }])
+      .mockResolvedValueOnce([
+        { ordId: "123", clOrdId: "phase9-order", sCode: "0", sMsg: "" },
+      ]);
+    const publicGet = vi
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          instId: "BTC-USDT-SWAP",
+          instType: "SWAP",
+          state: "live",
+          settleCcy: "USDT",
+          ctVal: "0.01",
+          tickSz: "0.1",
+          lotSz: "0.01",
+          minSz: "1",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          instId: "BTC-USDT-SWAP",
+          last: "67233.12345678",
+          bidPx: "67233.10000000",
+          askPx: "67233.20000000",
+          high24h: "68000.00000000",
+          low24h: "65000.00000000",
+          vol24h: "12345.67890000",
+          volCcy24h: "829999999.12345678",
+          open24h: "67100.00000000",
+          ts: "1700000000000",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          instId: "BTC-USDT-SWAP",
+          markPx: "67234.12345678",
+          ts: "1700000000000",
+        },
+      ]);
+    const adapter = new OkxFuturesAdapter({
+      publicGet,
+      signedPost,
+    } as unknown as OkxFuturesClient);
+
+    await adapter.placeOrder(
+      {
+        apiKey: "demo-key",
+        apiSecret: "demo-secret",
+        passphrase: "demo-passphrase",
+        environment: ExchangeEnvironment.DEMO,
+      },
+      {
+        symbol: "BTC-USDT",
+        side: "BUY",
+        quantity: "0.0483",
+        leverage: 3,
+        clientOrderId: "phase9-order",
+      },
+    );
+
+    expect(signedPost).toHaveBeenCalledWith(
+      "/api/v5/trade/order",
+      expect.anything(),
+      expect.objectContaining({ sz: "5" }),
+    );
+  });
+
+  it("uses a real market price for OKX limit orders", async () => {
+    const signedPost = vi
+      .fn()
+      .mockResolvedValueOnce([{ lever: "3" }])
+      .mockResolvedValueOnce([
+        { ordId: "123", clOrdId: "phase9-order", sCode: "0", sMsg: "" },
+      ]);
+    const publicGet = vi
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          instId: "BTC-USDT-SWAP",
+          instType: "SWAP",
+          state: "live",
+          settleCcy: "USDT",
+          ctVal: "0.01",
+          tickSz: "0.1",
+          lotSz: "1",
+          minSz: "1",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          instId: "BTC-USDT-SWAP",
+          last: "67233.12345678",
+          bidPx: "67233.10000000",
+          askPx: "67233.20000000",
+          high24h: "68000.00000000",
+          low24h: "65000.00000000",
+          vol24h: "12345.67890000",
+          volCcy24h: "829999999.12345678",
+          open24h: "67100.00000000",
+          ts: "1700000000000",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          instId: "BTC-USDT-SWAP",
+          markPx: "67234.12345678",
+          ts: "1700000000000",
+        },
+      ]);
+    const adapter = new OkxFuturesAdapter({
+      publicGet,
+      signedPost,
+    } as unknown as OkxFuturesClient);
+
+    await adapter.placeOrder(
+      {
+        apiKey: "demo-key",
+        apiSecret: "demo-secret",
+        passphrase: "demo-passphrase",
+        environment: ExchangeEnvironment.DEMO,
+      },
+      {
+        symbol: "BTC-USDT",
+        side: "BUY",
+        quantity: "0.03",
+        leverage: 3,
+        clientOrderId: "phase9-order",
+      },
+    );
+
+    const body = signedPost.mock.calls[1]?.[2] as Record<string, unknown>;
+    expect(body.px).toBe("67233.20000000");
+  });
+
   it("converts base-asset risk size to OKX contract size", async () => {
     const signedPost = vi
       .fn()
@@ -213,6 +619,198 @@ describe("exchange adapter normalization contract", () => {
     );
   });
 
+  it("caps OKX market order quantity to the instrument maximum size", async () => {
+    const signedPost = vi
+      .fn()
+      .mockResolvedValueOnce([{ lever: "3" }])
+      .mockResolvedValueOnce([
+        { ordId: "123", clOrdId: "phase9-order", sCode: "0", sMsg: "" },
+      ]);
+    const adapter = new OkxFuturesAdapter({
+      publicGet: vi.fn().mockResolvedValue([
+        {
+          instId: "BTC-USDT-SWAP",
+          instType: "SWAP",
+          state: "live",
+          settleCcy: "USDT",
+          ctVal: "0.01",
+          tickSz: "0.1",
+          lotSz: "1",
+          minSz: "1",
+          maxMktSz: "3",
+        },
+      ]),
+      signedPost,
+    } as unknown as OkxFuturesClient);
+
+    await adapter.placeOrder(
+      {
+        apiKey: "demo-key",
+        apiSecret: "demo-secret",
+        passphrase: "demo-passphrase",
+        environment: ExchangeEnvironment.DEMO,
+      },
+      {
+        symbol: "BTC-USDT",
+        side: "BUY",
+        quantity: "0.05",
+        leverage: 3,
+        clientOrderId: "phase9-order",
+      },
+    );
+
+    expect(signedPost).toHaveBeenNthCalledWith(
+      2,
+      "/api/v5/trade/order",
+      expect.anything(),
+      expect.objectContaining({ sz: "3" }),
+    );
+  });
+
+  it("retries an OKX order as a market order when the limit order is rejected", async () => {
+    const signedPost = vi
+      .fn()
+      .mockResolvedValueOnce([{ lever: "3" }])
+      .mockResolvedValueOnce([
+        { ordId: "123", clOrdId: "phase9-order", sCode: "1", sMsg: "All operations failed" },
+      ])
+      .mockResolvedValueOnce([
+        { ordId: "456", clOrdId: "phase9-order", sCode: "0", sMsg: "" },
+      ]);
+    const adapter = new OkxFuturesAdapter({
+      publicGet: vi.fn().mockResolvedValue([
+        {
+          instId: "BTC-USDT-SWAP",
+          instType: "SWAP",
+          state: "live",
+          settleCcy: "USDT",
+          ctVal: "0.01",
+          tickSz: "0.1",
+          lotSz: "1",
+          minSz: "1",
+        },
+      ]),
+      signedPost,
+    } as unknown as OkxFuturesClient);
+
+    const order = await adapter.placeOrder(
+      {
+        apiKey: "demo-key",
+        apiSecret: "demo-secret",
+        passphrase: "demo-passphrase",
+        environment: ExchangeEnvironment.DEMO,
+      },
+      {
+        symbol: "BTC-USDT",
+        side: "BUY",
+        quantity: "0.03",
+        leverage: 3,
+        clientOrderId: "phase9-order",
+      },
+    );
+
+    expect(order.exchangeOrderId).toBe("456");
+    const fallbackBody = signedPost.mock.calls[2]?.[2] as Record<string, unknown>;
+    expect(fallbackBody.ordType).toBe("market");
+    expect(fallbackBody.px).toBeUndefined();
+  });
+
+  it("retries an OKX order as a market order when the exchange envelope rejects the limit order", async () => {
+    const signedPost = vi
+      .fn()
+      .mockResolvedValueOnce([{ lever: "3" }])
+      .mockRejectedValueOnce(
+        new ExchangeError(
+          ExchangeErrorCode.INVALID_REQUEST,
+          ExchangeProvider.OKX_FUTURES,
+          false,
+          400,
+          "All operations failed",
+          "1",
+        ),
+      )
+      .mockResolvedValueOnce([
+        { ordId: "456", clOrdId: "phase9-order", sCode: "0", sMsg: "" },
+      ]);
+    const adapter = new OkxFuturesAdapter({
+      publicGet: vi.fn().mockResolvedValue([
+        {
+          instId: "BTC-USDT-SWAP",
+          instType: "SWAP",
+          state: "live",
+          settleCcy: "USDT",
+          ctVal: "0.01",
+          tickSz: "0.1",
+          lotSz: "1",
+          minSz: "1",
+        },
+      ]),
+      signedPost,
+    } as unknown as OkxFuturesClient);
+
+    const order = await adapter.placeOrder(
+      {
+        apiKey: "demo-key",
+        apiSecret: "demo-secret",
+        passphrase: "demo-passphrase",
+        environment: ExchangeEnvironment.DEMO,
+      },
+      {
+        symbol: "BTC-USDT",
+        side: "BUY",
+        quantity: "0.03",
+        leverage: 3,
+        clientOrderId: "phase9-order",
+      },
+    );
+
+    expect(order.exchangeOrderId).toBe("456");
+    const fallbackBody = signedPost.mock.calls[2]?.[2] as Record<string, unknown>;
+    expect(fallbackBody.ordType).toBe("market");
+  });
+
+  it("continues placing an OKX order if leverage setup fails", async () => {
+    const signedPost = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("leverage setup failed"))
+      .mockResolvedValueOnce([
+        { ordId: "123", clOrdId: "phase9-order", sCode: "0", sMsg: "" },
+      ]);
+    const adapter = new OkxFuturesAdapter({
+      publicGet: vi.fn().mockResolvedValue([
+        {
+          instId: "BTC-USDT-SWAP",
+          instType: "SWAP",
+          state: "live",
+          settleCcy: "USDT",
+          ctVal: "0.01",
+          tickSz: "0.1",
+          lotSz: "1",
+          minSz: "1",
+        },
+      ]),
+      signedPost,
+    } as unknown as OkxFuturesClient);
+
+    await expect(
+      adapter.placeOrder(
+        {
+          apiKey: "demo-key",
+          apiSecret: "demo-secret",
+          passphrase: "demo-passphrase",
+          environment: ExchangeEnvironment.DEMO,
+        },
+        {
+          symbol: "BTC-USDT",
+          side: "BUY",
+          quantity: "0.03",
+          leverage: 3,
+          clientOrderId: "phase9-order",
+        },
+      ),
+    ).resolves.toMatchObject({ exchangeOrderId: "123" });
+  });
+
   it("caps OKX client order ids to the supported length", async () => {
     const signedPost = vi
       .fn()
@@ -255,5 +853,6 @@ describe("exchange adapter normalization contract", () => {
     const body = signedPost.mock.calls[1]?.[2] as Record<string, unknown>;
     expect(body.clOrdId).toBeDefined();
     expect(String(body.clOrdId).length).toBeLessThanOrEqual(32);
+    expect(String(body.clOrdId)).toMatch(/^[A-Za-z0-9]+$/);
   });
 });

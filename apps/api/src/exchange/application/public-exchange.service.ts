@@ -17,6 +17,7 @@ import { ExchangeCacheService } from "../infrastructure/exchange-cache.service";
 import { ExchangeRateLimitService } from "../infrastructure/exchange-rate-limit.service";
 import { normalizeSymbol } from "../infrastructure/exchange-symbol";
 import { ExchangeAdapterFactory } from "./exchange-adapter.factory";
+import { ExchangeRealtimeService } from "./exchange-realtime.service";
 
 export interface ExchangeProviderMetadata {
   provider: ExchangeProvider;
@@ -33,6 +34,7 @@ export class PublicExchangeService {
     private readonly factory: ExchangeAdapterFactory,
     private readonly rateLimit: ExchangeRateLimitService,
     private readonly cache: ExchangeCacheService,
+    private readonly realtime: ExchangeRealtimeService,
   ) {}
 
   providers(): ExchangeProviderMetadata[] {
@@ -120,6 +122,10 @@ export class PublicExchangeService {
     symbol: string,
   ): Promise<ExchangeTicker> {
     const normalized = normalizeSymbol(symbol);
+    const realtimeTicker = await this.realtime.getTicker(provider, normalized);
+    if (realtimeTicker) {
+      return realtimeTicker;
+    }
     await this.limit(provider);
     return this.cache.remember(
       this.cache.tickerKey(provider, normalized),
@@ -147,10 +153,19 @@ export class PublicExchangeService {
     symbol: string,
     depth?: number,
   ): Promise<ExchangeOrderBook> {
+    const normalized = normalizeSymbol(symbol);
+    const realtimeOrderBook = await this.realtime.getOrderBook(
+      provider,
+      normalized,
+      depth ?? 5,
+    );
+    if (realtimeOrderBook) {
+      return realtimeOrderBook;
+    }
     await this.limit(provider);
     return this.factory
       .get(provider)
-      .getOrderBook(normalizeSymbol(symbol), depth)
+      .getOrderBook(normalized, depth)
       .catch((caught: unknown) => {
         if (
           provider === ExchangeProvider.BINANCE_FUTURES &&
@@ -158,7 +173,7 @@ export class PublicExchangeService {
         ) {
           return this.factory
             .get(ExchangeProvider.OKX_FUTURES)
-            .getOrderBook(normalizeSymbol(symbol), depth);
+            .getOrderBook(normalized, depth);
         }
         throw caught;
       });
@@ -169,10 +184,15 @@ export class PublicExchangeService {
     symbol: string,
     limit?: number,
   ): Promise<ExchangeTrade[]> {
+    const normalized = normalizeSymbol(symbol);
+    const realtimeTrades = await this.realtime.getTrades(provider, normalized);
+    if (realtimeTrades) {
+      return limit ? realtimeTrades.slice(0, limit) : realtimeTrades;
+    }
     await this.limit(provider);
     return this.factory
       .get(provider)
-      .getRecentTrades(normalizeSymbol(symbol), limit)
+      .getRecentTrades(normalized, limit)
       .catch((caught: unknown) => {
         if (
           provider === ExchangeProvider.BINANCE_FUTURES &&
@@ -180,7 +200,7 @@ export class PublicExchangeService {
         ) {
           return this.factory
             .get(ExchangeProvider.OKX_FUTURES)
-            .getRecentTrades(normalizeSymbol(symbol), limit);
+            .getRecentTrades(normalized, limit);
         }
         throw caught;
       });

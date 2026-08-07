@@ -139,7 +139,7 @@ export function MarketDashboard({
   defaultSymbol = "BTC-USDT",
   defaultInterval = "1h",
 }: MarketDashboardProps): React.JSX.Element {
-  const [provider, setProvider] = useState<MarketProvider>("BINANCE_FUTURES");
+  const [provider, setProvider] = useState<MarketProvider>("OKX_FUTURES");
   const [symbol, setSymbol] = useState(defaultSymbol);
   const [interval, setIntervalValue] = useState(defaultInterval);
   const [ticker, setTicker] = useState<TickerData | null>(null);
@@ -210,7 +210,7 @@ export function MarketDashboard({
 
   useEffect(() => {
     const socket = io(resolveMarketUrl(apiBaseUrl, "/market"), {
-      path: "/socket.io/",
+      path: "/api/socket.io/",
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1_000,

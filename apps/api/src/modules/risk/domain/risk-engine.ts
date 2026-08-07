@@ -37,15 +37,13 @@ export function calculateProtectivePrices(
   riskRewardRatio: number,
 ): { stopLoss: number; takeProfit: number } {
   const stopDistance = entryPrice * stopLossPct;
-  return side === "LONG"
-    ? {
-        stopLoss: rounded(entryPrice - stopDistance),
-        takeProfit: rounded(entryPrice + stopDistance * riskRewardRatio),
-      }
-    : {
-        stopLoss: rounded(entryPrice + stopDistance),
-        takeProfit: rounded(entryPrice - stopDistance * riskRewardRatio),
-      };
+  const stopLoss = side === "LONG"
+    ? rounded(entryPrice - stopDistance)
+    : rounded(entryPrice + stopDistance);
+  const takeProfit = side === "LONG"
+    ? rounded(entryPrice + stopDistance * riskRewardRatio)
+    : rounded(entryPrice - stopDistance * riskRewardRatio);
+  return { stopLoss, takeProfit };
 }
 
 export function calculatePositionSize(
@@ -166,10 +164,15 @@ export function evaluateRisk(
   )
     return reject("TRADE_COOLDOWN_ACTIVE");
 
+  const stopLossPct = clamp(
+    limits.stopLossPct * Math.max(1, 1 - marketData.volatility / limits.highVolatility),
+    0.002,
+    Math.max(limits.stopLossPct, 0.05),
+  );
   const { stopLoss, takeProfit } = calculateProtectivePrices(
     decision.decision,
     marketData.price,
-    limits.stopLossPct,
+    stopLossPct,
     limits.riskRewardRatio,
   );
   const rewardToRisk = Math.abs(takeProfit - marketData.price) / Math.abs(marketData.price - stopLoss);
@@ -187,9 +190,14 @@ export function evaluateRisk(
       positionSize * limits.highVolatilitySizeFactor,
       RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
     );
+  const idealNotional = Math.max(positionSize * marketData.price, 0);
+  const leverageBudget = Math.min(
+    limits.maxLeverage,
+    Math.max(1, Math.floor(idealNotional / Math.max(account.equity * 0.25, 1))),
+  );
   const leverage = highVolatility
-    ? Math.max(1, Math.floor(limits.maxLeverage / 2))
-    : limits.maxLeverage;
+    ? Math.max(1, Math.min(leverageBudget, Math.floor(limits.maxLeverage / 2)))
+    : leverageBudget;
 
   const retainedExposure = retainedPositions.reduce(
     (sum, position) => sum + Math.abs(position.size * position.markPrice),

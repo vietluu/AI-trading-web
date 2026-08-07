@@ -116,6 +116,7 @@ export class ExchangeHttpService {
     body: unknown,
   ): ExchangeError {
     const exchangeCode = this.exchangeCode(body);
+    const message = this.exchangeMessage(body);
     const vendorCode = this.vendorCode(provider, exchangeCode);
     if (vendorCode) {
       return new ExchangeError(
@@ -123,7 +124,7 @@ export class ExchangeHttpService {
         provider,
         vendorCode.retryable,
         vendorCode.statusCode,
-        vendorCode.message,
+        message ?? vendorCode.message,
         exchangeCode,
         correlationId,
       );
@@ -134,7 +135,7 @@ export class ExchangeHttpService {
         provider,
         true,
         429,
-        "Exchange rate limit exceeded",
+        message ?? "Exchange rate limit exceeded",
         undefined,
         correlationId,
       );
@@ -145,7 +146,7 @@ export class ExchangeHttpService {
         provider,
         false,
         401,
-        "Exchange authentication failed",
+        message ?? "Exchange authentication failed",
         undefined,
         correlationId,
       );
@@ -156,7 +157,7 @@ export class ExchangeHttpService {
         provider,
         false,
         403,
-        "Exchange permission denied",
+        message ?? "Exchange permission denied",
         undefined,
         correlationId,
       );
@@ -168,9 +169,10 @@ export class ExchangeHttpService {
       provider,
       isRetryableStatus(status),
       status >= 500 ? 503 : status,
-      status === 404
-        ? "Exchange resource not found"
-        : "Exchange request failed",
+      message ??
+        (status === 404
+          ? "Exchange resource not found"
+          : "Exchange request failed"),
       undefined,
       correlationId,
     );
@@ -182,6 +184,12 @@ export class ExchangeHttpService {
     return typeof value === "string" || typeof value === "number"
       ? String(value)
       : undefined;
+  }
+
+  private exchangeMessage(body: unknown): string | undefined {
+    if (!body || typeof body !== "object") return undefined;
+    const value = "msg" in body ? body.msg : undefined;
+    return typeof value === "string" ? value : undefined;
   }
 
   private vendorCode(
@@ -208,6 +216,29 @@ export class ExchangeHttpService {
       provider === ExchangeProvider.BINANCE_FUTURES
         ? ["-1121"]
         : ["51001", "51008"];
+    const invalidRequestCodes =
+      provider === ExchangeProvider.BINANCE_FUTURES
+        ? ["-2010", "-2011", "-2013", "-2014", "-2015"]
+        : [
+            "50004",
+            "51000",
+            "51002",
+            "51003",
+            "51004",
+            "51005",
+            "51006",
+            "51009",
+            "51010",
+            "51011",
+            "51012",
+            "51013",
+            "51014",
+            "51015",
+            "51016",
+            "51017",
+            "51018",
+            "51019",
+          ];
     if (timestampCodes.includes(code)) {
       return {
         code: ExchangeErrorCode.TIMESTAMP_INVALID,
@@ -238,6 +269,14 @@ export class ExchangeHttpService {
         retryable: false,
         statusCode: 400,
         message: "Exchange symbol is invalid or unavailable",
+      };
+    }
+    if (invalidRequestCodes.includes(code)) {
+      return {
+        code: ExchangeErrorCode.INVALID_REQUEST,
+        retryable: false,
+        statusCode: 400,
+        message: "Exchange rejected the request",
       };
     }
     return undefined;

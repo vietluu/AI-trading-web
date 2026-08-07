@@ -4,6 +4,7 @@ import { AuthModule } from "../auth/auth.module";
 import { CredentialModule } from "../credentials/credential.module";
 import { ExchangeAdapterFactory } from "./application/exchange-adapter.factory";
 import { ExchangeConnectionRepository } from "./application/exchange-connection.repository";
+import { ExchangeRealtimeService } from "./application/exchange-realtime.service";
 import { ExchangeConnectionService } from "./application/exchange-connection.service";
 import { PublicExchangeService } from "./application/public-exchange.service";
 import { BinanceFuturesAdapter } from "./infrastructure/binance/binance-futures.adapter";
@@ -18,15 +19,17 @@ import { OkxFuturesClient } from "./infrastructure/okx/okx-futures.client";
 import { OkxSignatureService } from "./infrastructure/okx/okx-signature.service";
 import { ExchangeConnectionsController } from "./presentation/exchange-connections.controller";
 import { PublicExchangesController } from "./presentation/public-exchanges.controller";
+import { MarketStreamsModule } from "../market-data/market-streams.module";
 
 @Module({
-  imports: [AuthModule, CredentialModule],
+  imports: [AuthModule, CredentialModule, MarketStreamsModule],
   controllers: [ExchangeConnectionsController, PublicExchangesController],
   providers: [
     ExchangeAdapterFactory,
     ExchangeConnectionRepository,
     ExchangeConnectionService,
     PublicExchangeService,
+    ExchangeRealtimeService,
     ExchangeHttpService,
     ExchangeTimeService,
     ExchangeRateLimitService,
@@ -38,6 +41,6 @@ import { PublicExchangesController } from "./presentation/public-exchanges.contr
     OkxFuturesClient,
     OkxFuturesAdapter,
   ],
-  exports: [PublicExchangeService, ExchangeConnectionService],
+  exports: [PublicExchangeService, ExchangeConnectionService, ExchangeRealtimeService],
 })
 export class ExchangeModule {}

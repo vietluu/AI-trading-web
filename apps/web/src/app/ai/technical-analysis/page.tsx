@@ -2,7 +2,11 @@
 
 import { useState } from "react";
 import type { TechnicalAgentInput } from "@platform/shared";
-import { useAnalysisRunner, type TechnicalAnalysisResult } from "@/hooks/ai/useAiFeature";
+import {
+  useAnalysisRunner,
+  type AnalysisRunResult,
+  type TechnicalAnalysisResult,
+} from "@/hooks/ai/useAiFeature";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 
 const fieldClassName =
@@ -24,7 +28,8 @@ export default function TechnicalAnalysisPage(): React.JSX.Element {
     interval,
     lookbackCandles,
   };
-  const output = analysis.data?.output as TechnicalAnalysisResult | undefined;
+  const output = analysis.data?.output;
+  const technicalOutput = isTechnicalAnalysisResult(output) ? output : undefined;
 
   return (
     <div className="container mx-auto space-y-6 p-6">
@@ -41,25 +46,19 @@ export default function TechnicalAnalysisPage(): React.JSX.Element {
         <Select
           label={t.ai.symbol}
           value={symbol}
-          onChange={(value) =>
-            setSymbol(value)
-          }
+          onChange={(value) => setSymbol(value)}
           options={["BTC-USDT", "ETH-USDT"]}
         />
         <Select
           label={t.ai.exchange}
           value={provider}
-          onChange={(value) =>
-            setProvider(value as TechnicalAgentInput["provider"])
-          }
+          onChange={(value) => setProvider(value as TechnicalAgentInput["provider"])}
           options={["OKX_FUTURES", "BINANCE_FUTURES"]}
         />
         <Select
           label={t.ai.interval}
           value={interval}
-          onChange={(value) =>
-            setInterval(value as TechnicalAgentInput["interval"])
-          }
+          onChange={(value) => setInterval(value as TechnicalAgentInput["interval"])}
           options={["1m", "5m", "15m", "1h"]}
         />
         <label className="space-y-1 text-xs font-semibold text-muted-foreground">
@@ -92,66 +91,66 @@ export default function TechnicalAnalysisPage(): React.JSX.Element {
         ) : null}
       </section>
 
-      {output ? (
+      {technicalOutput ? (
         <section className="space-y-4" aria-label="Technical analysis result">
           <div className="rounded-lg border bg-card p-5">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-xl font-semibold">{t.ai.summary}</h2>
               <span className="rounded-full bg-muted px-3 py-1 text-xs font-semibold">
-                Data quality: {output.dataQuality}
+                Data quality: {technicalOutput.dataQuality}
               </span>
             </div>
-            <p className="text-sm leading-6">{output.summary}</p>
+            <p className="text-sm leading-6">{technicalOutput.summary}</p>
           </div>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             <Card title="RSI">
-              <Metric label="Value" value={output.momentum.rsi} />
-              <Metric label="State" value={output.momentum.rsiState} />
+              <Metric label="Value" value={technicalOutput.momentum.rsi} />
+              <Metric label="State" value={technicalOutput.momentum.rsiState} />
             </Card>
             <Card title="MACD">
-              <Metric label="Trend" value={output.momentum.macd.trend} />
+              <Metric label="Trend" value={technicalOutput.momentum.macd.trend} />
               <Metric
                 label="Crossover"
-                value={output.momentum.macd.crossover}
+                value={technicalOutput.momentum.macd.crossover}
               />
             </Card>
             <Card title="Moving averages">
               <Metric
                 label="Alignment"
-                value={output.movingAverages.alignment}
+                value={technicalOutput.movingAverages.alignment}
               />
               <Metric
                 label="Price position"
-                value={output.movingAverages.pricePosition}
+                value={technicalOutput.movingAverages.pricePosition}
               />
             </Card>
             <Card title="Divergence">
-              <Metric label="RSI" value={output.divergence.rsiDivergence} />
-              <Metric label="MACD" value={output.divergence.macdDivergence} />
+              <Metric label="RSI" value={technicalOutput.divergence.rsiDivergence} />
+              <Metric label="MACD" value={technicalOutput.divergence.macdDivergence} />
             </Card>
             <Card title="Structure">
               <Metric
                 label="Market structure"
-                value={output.structure.marketStructure}
+                value={technicalOutput.structure.marketStructure}
               />
               <Metric
                 label="Breakout"
                 value={
-                  output.structure.breakout === undefined
+                  technicalOutput.structure.breakout === undefined
                     ? undefined
-                    : String(output.structure.breakout)
+                    : String(technicalOutput.structure.breakout)
                 }
               />
             </Card>
             <Card title="Volatility">
-              <Metric label="ATR" value={output.volatility.atr} />
+              <Metric label="ATR" value={technicalOutput.volatility.atr} />
               <Metric
                 label="Bollinger position"
-                value={output.volatility.bollinger.position}
+                value={technicalOutput.volatility.bollinger.position}
               />
               <Metric
                 label="Squeeze"
-                value={String(output.volatility.bollinger.squeeze)}
+                value={String(technicalOutput.volatility.bollinger.squeeze)}
               />
             </Card>
           </div>
@@ -159,9 +158,9 @@ export default function TechnicalAnalysisPage(): React.JSX.Element {
             <h2 className="mb-3 text-lg font-semibold">
               {t.ai.technicalObservations}
             </h2>
-            {output.signals.length ? (
+            {technicalOutput.signals.length ? (
               <ul className="list-inside list-disc space-y-1 text-sm">
-                {output.signals.map((item: string) => (
+                {technicalOutput.signals.map((item: string) => (
                   <li key={item}>{item}</li>
                 ))}
               </ul>
@@ -175,6 +174,12 @@ export default function TechnicalAnalysisPage(): React.JSX.Element {
       ) : null}
     </div>
   );
+}
+
+function isTechnicalAnalysisResult(
+  value: AnalysisRunResult["output"],
+): value is TechnicalAnalysisResult {
+  return Boolean(value) && typeof value === "object" && "momentum" in value && "movingAverages" in value && "divergence" in value && "structure" in value && "volatility" in value && "signals" in value;
 }
 
 function Select({
