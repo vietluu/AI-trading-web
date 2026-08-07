@@ -212,4 +212,48 @@ describe("exchange adapter normalization contract", () => {
       expect.objectContaining({ sz: "3" }),
     );
   });
+
+  it("caps OKX client order ids to the supported length", async () => {
+    const signedPost = vi
+      .fn()
+      .mockResolvedValueOnce([{ lever: "3" }])
+      .mockResolvedValueOnce([
+        { ordId: "123", clOrdId: "phase9-order", sCode: "0", sMsg: "" },
+      ]);
+    const adapter = new OkxFuturesAdapter({
+      publicGet: vi.fn().mockResolvedValue([
+        {
+          instId: "BTC-USDT-SWAP",
+          instType: "SWAP",
+          state: "live",
+          settleCcy: "USDT",
+          ctVal: "0.01",
+          tickSz: "0.1",
+          lotSz: "1",
+          minSz: "1",
+        },
+      ]),
+      signedPost,
+    } as unknown as OkxFuturesClient);
+
+    await adapter.placeOrder(
+      {
+        apiKey: "demo-key",
+        apiSecret: "demo-secret",
+        passphrase: "demo-passphrase",
+        environment: ExchangeEnvironment.DEMO,
+      },
+      {
+        symbol: "BTC-USDT",
+        side: "BUY",
+        quantity: "0.03",
+        leverage: 3,
+        clientOrderId: "p9-fa86427ec6fb4254b8b2d6cefa32518b",
+      },
+    );
+
+    const body = signedPost.mock.calls[1]?.[2] as Record<string, unknown>;
+    expect(body.clOrdId).toBeDefined();
+    expect(String(body.clOrdId).length).toBeLessThanOrEqual(32);
+  });
 });

@@ -577,13 +577,14 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         ? { posSide: command.positionSide.toLowerCase() }
         : {}),
     });
+    const clOrdId = this.normalizeClientOrderId(command.clientOrderId);
     const body: Record<string, unknown> = {
       instId,
       tdMode: "cross",
       side: command.side.toLowerCase(),
       ordType: "market",
       sz: contractQuantity,
-      clOrdId: command.clientOrderId,
+      ...(clOrdId ? { clOrdId } : {}),
       reduceOnly: command.reduceOnly ?? false,
       ...(command.positionSide
         ? { posSide: command.positionSide.toLowerCase() }
@@ -655,8 +656,8 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
           {
             instId: toOkxSymbol(command.symbol),
             ...(command.orderId ? { ordId: command.orderId } : {}),
-            ...(command.clientOrderId
-              ? { clOrdId: command.clientOrderId }
+            ...(this.normalizeClientOrderId(command.clientOrderId)
+              ? { clOrdId: this.normalizeClientOrderId(command.clientOrderId) }
               : {}),
           },
         ),
@@ -768,6 +769,14 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     return fixed.includes(".")
       ? fixed.replace(/0+$/, "").replace(/\.$/, "")
       : fixed;
+  }
+
+  private normalizeClientOrderId(value?: string): string | undefined {
+    if (!value) return undefined;
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    if (trimmed.length <= 32) return trimmed;
+    return `${trimmed.slice(0, 29)}-${trimmed.slice(-2)}`;
   }
 
   private intervalMilliseconds(interval: ExchangeInterval): number {
