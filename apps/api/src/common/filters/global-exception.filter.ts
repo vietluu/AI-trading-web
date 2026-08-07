@@ -93,7 +93,9 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const response = context.getResponse<Response>();
     const statusCode =
       exception instanceof ExchangeError
-        ? exception.statusCode
+        ? exception.statusCode === 401
+          ? HttpStatus.BAD_REQUEST
+          : exception.statusCode
         : exception instanceof AgentError
           ? agentErrorStatus(exception.code)
         : exception instanceof HttpException

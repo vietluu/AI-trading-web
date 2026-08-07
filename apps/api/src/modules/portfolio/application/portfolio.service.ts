@@ -2,15 +2,20 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import {
+  ExchangeEnvironment as PrismaExchangeEnvironment,
   Prisma,
   StrategyKind,
   StrategyStatus,
   StrategyType,
 } from "@prisma/client";
 import { PrismaService } from "../../../database/prisma.service";
+import { ExchangeConnectionService } from "../../../exchange/application/exchange-connection.service";
 import {
   aggregatePositions,
   assessPortfolioRisk,
@@ -64,9 +69,13 @@ const defaults: Array<{
 
 @Injectable()
 export class PortfolioService {
+  private readonly logger = new Logger(PortfolioService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: PortfolioConfigService,
+    @Optional() private readonly connections?: ExchangeConnectionService,
+    @Optional() private readonly environment?: ConfigService,
   ) {}
 
   async ensureDefaults(userId: string): Promise<void> {
@@ -133,10 +142,16 @@ export class PortfolioService {
       where: { id: input.strategyId, userId: input.userId },
       include: { allocation: true },
     });
+    const activeConnections = await tx.exchangeConnection.findMany({
+      where: { userId: input.userId, isEnabled: true, isVerified: true },
+      select: { id: true },
+    });
+    const activeConnectionIds = activeConnections.map((c) => c.id);
     const snapshots: StrategyPositionSnapshot[] = (
       await tx.livePosition.findMany({
         where: {
           userId: input.userId,
+          connectionId: { in: activeConnectionIds },
           environment: { in: this.exchangeEnvironments() },
         },
       })
@@ -377,11 +392,19 @@ export class PortfolioService {
         },
       });
     });
-    const refreshPayload = strategies.map((strategy) => ({
-      ...strategy,
-      livePositions: (strategy as { livePositions?: Array<{ unrealizedPnl?: Prisma.Decimal | number | null; realizedPnl?: Prisma.Decimal | number | null }> }).livePositions ?? [],
-    }));
-    await this.refreshQuantRecommendations(userId, refreshPayload);
+    try {
+      const refreshPayload = strategies.map((strategy) => ({
+        ...strategy,
+        livePositions: (strategy as { livePositions?: Array<{ unrealizedPnl?: Prisma.Decimal | number | null; realizedPnl?: Prisma.Decimal | number | null }> }).livePositions ?? [],
+      }));
+      await this.refreshQuantRecommendations(userId, refreshPayload);
+    } catch (error) {
+      this.logger.warn({
+        event: "portfolio_recommendations_refresh_failed",
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     return allocations;
   }
 
@@ -466,8 +489,106 @@ export class PortfolioService {
     await this.rebalance(userId, "PERFORMANCE_UPDATE");
   }
 
+  private async syncActiveConnections(userId: string): Promise<void> {
+    if (!this.connections) return;
+    try {
+      const mode = this.environment?.get<"DEMO" | "LIVE">("TRADING_MODE") ?? "DEMO";
+      const environments =
+        mode === "LIVE"
+          ? [PrismaExchangeEnvironment.PRODUCTION]
+          : [PrismaExchangeEnvironment.DEMO, PrismaExchangeEnvironment.TESTNET];
+      const activeConnections = await this.prisma.exchangeConnection.findMany({
+        where: {
+          userId,
+          isEnabled: true,
+          isVerified: true,
+        },
+      });
+      await Promise.allSettled(
+        activeConnections.map(async (conn) => {
+          const [account, positions] = await Promise.all([
+            this.connections!.account(userId, conn.id, {}),
+            this.connections!.positions(userId, conn.id, {}),
+          ]);
+          const syncedAt = new Date();
+          await this.prisma.$transaction(async (tx) => {
+            await tx.liveAccountSnapshot.create({
+              data: {
+                userId,
+                connectionId: conn.id,
+                provider: conn.provider,
+                environment: conn.environment,
+                totalEquity: account.totalEquity,
+                availableBalance: account.availableBalance,
+                unrealizedPnl: account.totalUnrealizedPnl,
+                marginBalance: account.totalMarginBalance,
+                syncedAt,
+              },
+            });
+            const activeSymbolSides = new Set(
+              positions
+                .filter((pos) => Number(pos.quantity) > 0)
+                .map((pos) => `${pos.symbol}:${pos.side}`),
+            );
+            for (const pos of positions) {
+              if (Number(pos.quantity) <= 0) continue;
+              await tx.livePosition.upsert({
+                where: {
+                  connectionId_symbol_side: {
+                    connectionId: conn.id,
+                    symbol: pos.symbol,
+                    side: pos.side,
+                  },
+                },
+                update: {
+                  quantity: pos.quantity,
+                  entryPrice: pos.entryPrice,
+                  markPrice: pos.markPrice,
+                  liquidationPrice: pos.liquidationPrice,
+                  leverage: pos.leverage ? Number(pos.leverage) : undefined,
+                  unrealizedPnl: pos.unrealizedPnl,
+                  realizedPnl: pos.realizedPnl,
+                  notional: pos.notional,
+                  syncedAt,
+                },
+                create: {
+                  userId,
+                  connectionId: conn.id,
+                  provider: conn.provider,
+                  environment: conn.environment,
+                  symbol: pos.symbol,
+                  side: pos.side,
+                  quantity: pos.quantity,
+                  entryPrice: pos.entryPrice,
+                  markPrice: pos.markPrice,
+                  liquidationPrice: pos.liquidationPrice,
+                  leverage: pos.leverage ? Number(pos.leverage) : undefined,
+                  unrealizedPnl: pos.unrealizedPnl,
+                  realizedPnl: pos.realizedPnl,
+                  notional: pos.notional,
+                  syncedAt,
+                },
+              });
+            }
+            const currentPositions = await tx.livePosition.findMany({
+              where: { connectionId: conn.id },
+            });
+            for (const cp of currentPositions) {
+              if (!activeSymbolSides.has(`${cp.symbol}:${cp.side}`)) {
+                await tx.livePosition.delete({ where: { id: cp.id } });
+              }
+            }
+          });
+        }),
+      );
+    } catch {
+      // Fallback silently if exchange API is offline
+    }
+  }
+
   async dashboard(userId: string): Promise<Record<string, unknown>> {
     await this.ensureDefaults(userId);
+    await this.syncActiveConnections(userId);
     const [live, strategies, riskEvents, rebalances, liveOrders] =
       await Promise.all([
         this.liveState(userId),
@@ -671,25 +792,28 @@ export class PortfolioService {
         });
       });
 
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
     const quantRecommendationModel = this.prisma.quantRecommendation;
-    if (quantRecommendationModel) {
+    if (quantRecommendationModel && isUuid) {
       await quantRecommendationModel.deleteMany({ where: { userId } });
-      await quantRecommendationModel.createMany({
-        data: recommendations.map((item) => ({
-          userId,
-          title: item.title,
-          moduleSource: item.moduleSource,
-          problemStatement: item.problemStatement,
-          evidenceText: item.evidenceText,
-          historicalResult: item.historicalResult as Prisma.InputJsonValue,
-          expectedBenefit: item.expectedBenefit,
-          estimatedRisk: item.estimatedRisk,
-          priority: item.priority,
-          implementationCost: item.implementationCost,
-          rollbackPlan: item.rollbackPlan,
-          status: "PENDING_APPROVAL",
-        })),
-      });
+      if (recommendations.length > 0) {
+        await quantRecommendationModel.createMany({
+          data: recommendations.map((item) => ({
+            userId,
+            title: item.title,
+            moduleSource: item.moduleSource,
+            problemStatement: item.problemStatement,
+            evidenceText: item.evidenceText,
+            historicalResult: item.historicalResult as Prisma.InputJsonValue,
+            expectedBenefit: item.expectedBenefit,
+            estimatedRisk: item.estimatedRisk,
+            priority: item.priority,
+            implementationCost: item.implementationCost,
+            rollbackPlan: item.rollbackPlan,
+            status: "PENDING_APPROVAL",
+          })),
+        });
+      }
     }
   }
 
@@ -737,7 +861,6 @@ export class PortfolioService {
   }
 
   private async liveState(userId: string) {
-    const environments = this.exchangeEnvironments();
     const connections = await this.prisma.exchangeConnection.findMany({
       where: { userId, isEnabled: true, isVerified: true },
       select: { id: true },
@@ -748,24 +871,32 @@ export class PortfolioService {
         where: {
           userId,
           connectionId: { in: connectionIds },
-          environment: { in: environments },
         },
       }),
       this.prisma.liveAccountSnapshot.findMany({
         where: {
           userId,
           connectionId: { in: connectionIds },
-          environment: { in: environments },
         },
         orderBy: { syncedAt: "desc" },
         take: 5_000,
       }),
     ]);
-    const latest = [
-      ...new Map(
-        snapshots.map((snapshot) => [snapshot.connectionId, snapshot]),
-      ).values(),
-    ];
+    const now = Date.now();
+    const STALE_TTL_MS = 10 * 60 * 1000;
+    const freshSnapshots = snapshots.filter(
+      (s) => !s.syncedAt || now - new Date(s.syncedAt).getTime() < STALE_TTL_MS,
+    );
+    const freshPositions = positions.filter(
+      (p) => !p.syncedAt || now - new Date(p.syncedAt).getTime() < STALE_TTL_MS,
+    );
+    const latestMap = new Map<string, (typeof freshSnapshots)[number]>();
+    for (const snapshot of freshSnapshots) {
+      if (!latestMap.has(snapshot.connectionId)) {
+        latestMap.set(snapshot.connectionId, snapshot);
+      }
+    }
+    const latest = Array.from(latestMap.values());
     const peaks = new Map<string, number>();
     for (const snapshot of snapshots)
       peaks.set(
@@ -797,11 +928,11 @@ export class PortfolioService {
           (sum, snapshot) => sum + Number(snapshot.unrealizedPnl),
           0,
         ) +
-        positions.reduce(
+        freshPositions.reduce(
           (sum, position) => sum + Number(position.realizedPnl ?? 0),
           0,
         ),
-      positions,
+      positions: freshPositions,
     };
   }
 }

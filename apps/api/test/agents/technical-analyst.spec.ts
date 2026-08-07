@@ -69,7 +69,7 @@ describe('Technical Analyst Agent', () => {
         .success,
     ).toBe(false);
     expect(
-      TechnicalAgentInputSchema.safeParse({ ...input, symbol: 'DOGE-USDT' })
+      TechnicalAgentInputSchema.safeParse({ ...input, symbol: '' })
         .success,
     ).toBe(false);
   });

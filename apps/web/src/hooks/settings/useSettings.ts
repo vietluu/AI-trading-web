@@ -94,11 +94,23 @@ export function useDataSourcesSettings() {
 }
 
 export function useExchangeConnections() {
-  return useQuery({
+  const queryClient = useQueryClient();
+
+  const connectionsQuery = useQuery({
     queryKey: queryKeys.settings.exchangeConnections(),
     queryFn: getExchangeConnections,
     retry: false,
   });
+
+  const toggleMutation = useMutation({
+    mutationFn: ({ id, action, totpCode }: { id: string; action: "enable" | "disable"; totpCode?: string }) =>
+      toggleExchangeConnection(id, action, totpCode),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.settings.exchangeConnections() });
+    },
+  });
+
+  return { ...connectionsQuery, toggleMutation };
 }
 
 interface MacroEvent {

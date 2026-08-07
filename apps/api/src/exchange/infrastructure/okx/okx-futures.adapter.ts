@@ -623,19 +623,29 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       ...(command.positionSide
         ? { posSide: command.positionSide.toLowerCase() }
         : {}),
-      ...(command.stopLoss && ordType === "limit"
-        ? {
-            slTriggerPx: String(command.stopLoss),
-            slOrdPx: "-1",
-          }
-        : {}),
-      ...(command.takeProfit && ordType === "limit"
-        ? {
-            tpTriggerPx: String(command.takeProfit),
-            tpOrdPx: "-1",
-          }
-        : {}),
     };
+    const hasSl =
+      Number.isFinite(Number(command.stopLoss)) && Number(command.stopLoss) > 0;
+    const hasTp =
+      Number.isFinite(Number(command.takeProfit)) && Number(command.takeProfit) > 0;
+    if (hasSl || hasTp) {
+      body.attachAlgoOrds = [
+        {
+          ...(hasSl
+            ? {
+                slTriggerPx: String(command.stopLoss),
+                slOrdPx: "-1",
+              }
+            : {}),
+          ...(hasTp
+            ? {
+                tpTriggerPx: String(command.takeProfit),
+                tpOrdPx: "-1",
+              }
+            : {}),
+        },
+      ];
+    }
     this.logger.warn({
       event: "okx_order_request",
       exchange: this.provider,

@@ -1,13 +1,14 @@
 import { Module } from "@nestjs/common";
 import { DatabaseModule } from "../../database/database.module";
 import { SessionModule } from "../../session/session.module";
+import { ExchangeModule } from "../../exchange/exchange.module";
 import { PortfolioConfigService } from "./application/portfolio-config.service";
 import { PortfolioRebalanceScheduler } from "./application/portfolio-rebalance.scheduler";
 import { PortfolioService } from "./application/portfolio.service";
 import { PortfolioController } from "./presentation/portfolio.controller";
 
 @Module({
-  imports: [DatabaseModule, SessionModule],
+  imports: [DatabaseModule, SessionModule, ExchangeModule],
   controllers: [PortfolioController],
   providers: [
     PortfolioConfigService,

@@ -410,15 +410,7 @@ export class LiveTradingService {
     };
     const connections = await this.connections.list(userId);
     const connection = connections.find(
-      (item) =>
-        item.isEnabled &&
-        item.isVerified &&
-        (item.provider === run?.provider ||
-          item.provider === ExchangeProvider.OKX_FUTURES) &&
-        item.environment ===
-          (settings.mode === "LIVE"
-            ? ExchangeEnvironment.PRODUCTION
-            : demoEnvironment[item.provider]),
+      (item) => item.isEnabled && item.isVerified,
     );
     if (!connection) return { outcome: "NO_ELIGIBLE_EXCHANGE_CONNECTION" };
     const clientOrderId = this.normalizeClientOrderId(
@@ -565,6 +557,76 @@ export class LiveTradingService {
     ]);
     const syncedAt = new Date();
     await this.prisma.$transaction(async (tx) => {
+      await tx.liveAccountSnapshot.create({
+        data: {
+          userId,
+          connectionId,
+          provider: connection.provider,
+          environment: connection.environment,
+          totalEquity: account.totalEquity,
+          availableBalance: account.availableBalance,
+          unrealizedPnl: account.totalUnrealizedPnl,
+          marginBalance: account.totalMarginBalance,
+          syncedAt,
+        },
+      });
+
+      const activePositions = positions.filter((p) => Number(p.quantity) > 0);
+      const activeKeysSet = new Set(
+        activePositions.map((pos) => `${pos.symbol}:${pos.side}`),
+      );
+
+      const currentDbPositions = await tx.livePosition.findMany({
+        where: { connectionId },
+      });
+      for (const dbPos of currentDbPositions) {
+        if (!activeKeysSet.has(`${dbPos.symbol}:${dbPos.side}`)) {
+          await tx.livePosition.delete({ where: { id: dbPos.id } });
+        }
+      }
+
+      for (const pos of activePositions) {
+        await tx.livePosition.upsert({
+          where: {
+            connectionId_symbol_side: {
+              connectionId,
+              symbol: pos.symbol,
+              side: pos.side,
+            },
+          },
+          update: {
+            provider: pos.provider,
+            environment: connection.environment,
+            quantity: pos.quantity,
+            entryPrice: pos.entryPrice,
+            markPrice: pos.markPrice,
+            liquidationPrice: pos.liquidationPrice,
+            leverage: pos.leverage ? Number(pos.leverage) : undefined,
+            unrealizedPnl: pos.unrealizedPnl,
+            realizedPnl: pos.realizedPnl,
+            notional: pos.notional,
+            syncedAt,
+          },
+          create: {
+            userId,
+            connectionId,
+            provider: pos.provider,
+            environment: connection.environment,
+            symbol: pos.symbol,
+            side: pos.side,
+            quantity: pos.quantity,
+            entryPrice: pos.entryPrice,
+            markPrice: pos.markPrice,
+            liquidationPrice: pos.liquidationPrice,
+            leverage: pos.leverage ? Number(pos.leverage) : undefined,
+            unrealizedPnl: pos.unrealizedPnl,
+            realizedPnl: pos.realizedPnl,
+            notional: pos.notional,
+            syncedAt,
+          },
+        });
+      }
+
       for (const order of openOrders) {
         await tx.liveOrder.updateMany({
           where: {
@@ -579,7 +641,7 @@ export class LiveTradingService {
           data: { status: order.status, averagePrice: order.averagePrice },
         });
       }
-      for (const order of orderHistory.slice(0, 20)) {
+      for (const order of orderHistory.slice(0, 50)) {
         const clientOrderId =
           order.clientOrderId || `external-${order.exchangeOrderId}`;
         const matched = await tx.liveOrder.updateMany({
@@ -696,6 +758,7 @@ export class LiveTradingService {
       ),
     };
     this.realtimeSnapshots.set(this.realtimeCacheKey(userId, connectionId), snapshot);
+    this.realtimeSnapshots.delete(this.realtimeCacheKey(userId, undefined));
     if (this.gateway) {
       this.gateway.pushSnapshot(userId, snapshot);
     }
@@ -735,7 +798,6 @@ export class LiveTradingService {
         orders: [],
       };
     }
-    const where = { userId, ...(connectionId ? { connectionId } : {}) };
     const connections = await this.connections.list(userId);
     const eligible = connections.filter(
       (item) =>
@@ -743,7 +805,14 @@ export class LiveTradingService {
         item.isVerified &&
         (!connectionId || item.id === connectionId),
     );
-    void Promise.allSettled(
+    const eligibleIds = eligible.map((item) => item.id);
+    const where = {
+      userId,
+      connectionId: {
+        in: connectionId ? [connectionId] : eligibleIds,
+      },
+    };
+    await Promise.allSettled(
       eligible.map((item) =>
         this.sync(userId, item.id, {}).catch((error: unknown) =>
           this.logger.warn({
@@ -770,9 +839,13 @@ export class LiveTradingService {
         take: 100,
       }),
     ]);
-    const latest = [
-      ...new Map(snapshots.map((item) => [item.connectionId, item])).values(),
-    ];
+    const latestMap = new Map<string, (typeof snapshots)[number]>();
+    for (const item of snapshots) {
+      if (!latestMap.has(item.connectionId)) {
+        latestMap.set(item.connectionId, item);
+      }
+    }
+    const latest = Array.from(latestMap.values());
     return {
       mode: this.config.values.mode,
       globalTradingEnabled: this.config.values.runtimeEnabled,

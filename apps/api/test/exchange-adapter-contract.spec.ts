@@ -367,11 +367,19 @@ describe("exchange adapter normalization contract", () => {
       },
     );
 
-    const body = signedPost.mock.calls[1]?.[2] as Record<string, unknown>;
-    expect(body.slTriggerPx).toBe("65000");
-    expect(body.slOrdPx).toBe("-1");
-    expect(body.tpTriggerPx).toBe("68000");
-    expect(body.tpOrdPx).toBe("-1");
+    const body = signedPost.mock.calls[1]?.[2] as {
+      attachAlgoOrds?: Array<{
+        slTriggerPx?: string;
+        slOrdPx?: string;
+        tpTriggerPx?: string;
+        tpOrdPx?: string;
+      }>;
+    };
+    const algo = body.attachAlgoOrds?.[0];
+    expect(algo?.slTriggerPx).toBe("65000");
+    expect(algo?.slOrdPx).toBe("-1");
+    expect(algo?.tpTriggerPx).toBe("68000");
+    expect(algo?.tpOrdPx).toBe("-1");
   });
 
   it("removes hyphens from UUID-style client order ids before OKX submission", async () => {

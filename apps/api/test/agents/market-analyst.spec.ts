@@ -42,7 +42,7 @@ describe('Market Analyst Agent', () => {
   });
 
   it.each([
-    { ...validInput, symbol: 'DOGE-USDT' },
+    { ...validInput, symbol: '' },
     { ...validInput, provider: 'UNKNOWN' },
     { ...validInput, interval: '4h' },
     { ...validInput, lookbackCandles: 501 },

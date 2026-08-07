@@ -545,9 +545,13 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
   ): Promise<ExchangeOrder> {
     const normalizedSymbol = mapSymbol(command.symbol, this.provider);
     const symbol = normalizedSymbol;
+    const leverage = Math.max(
+      1,
+      Math.min(125, Math.round(Number(command.leverage) || 1)),
+    );
     await this.client.signedPost("/fapi/v1/leverage", credentials, {
       symbol,
-      leverage: command.leverage,
+      leverage,
     });
     try {
       const value = orderSchema.parse(

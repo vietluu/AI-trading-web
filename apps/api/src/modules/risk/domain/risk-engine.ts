@@ -71,15 +71,26 @@ export function calculateRiskScore(
     "highVolatility" | "maxLeverage" | "maxExposure" | "maxDrawdown"
   >,
 ): number {
-  const volatilityRisk = clamp(volatility / limits.highVolatility, 0, 2) / 2;
-  const leverageRisk = clamp(leverage / limits.maxLeverage, 0, 1);
-  const exposureRisk = clamp(exposurePct / limits.maxExposure, 0, 1);
-  const drawdownRisk = clamp(drawdown / limits.maxDrawdown, 0, 1);
-  return rounded(
+  const safeVol = Number.isFinite(volatility) ? Math.max(0, volatility) : 0;
+  const safeLev = Number.isFinite(leverage) ? Math.max(1, leverage) : 1;
+  const safeExp = Number.isFinite(exposurePct) ? Math.max(0, exposurePct) : 0;
+  const safeDd = Number.isFinite(drawdown) ? Math.max(0, drawdown) : 0;
+
+  const highVol = limits.highVolatility > 0 ? limits.highVolatility : 0.05;
+  const maxLev = limits.maxLeverage > 0 ? limits.maxLeverage : 50;
+  const maxExp = limits.maxExposure > 0 ? limits.maxExposure : 0.4;
+  const maxDd = limits.maxDrawdown > 0 ? limits.maxDrawdown : 0.15;
+
+  const volatilityRisk = clamp(safeVol / highVol, 0, 2) / 2;
+  const leverageRisk = clamp(safeLev / maxLev, 0, 1);
+  const exposureRisk = clamp(safeExp / maxExp, 0, 1);
+  const drawdownRisk = clamp(safeDd / maxDd, 0, 1);
+  const score = rounded(
     (volatilityRisk + leverageRisk + exposureRisk + drawdownRisk) *
       RISK_ENGINE_CONSTANTS.RISK_SCORE_CATEGORY_WEIGHT,
     2,
   );
+  return Number.isFinite(score) ? score : 50;
 }
 
 export function evaluateRisk(

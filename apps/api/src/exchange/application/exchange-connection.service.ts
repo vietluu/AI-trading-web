@@ -286,12 +286,28 @@ export class ExchangeConnectionService {
     context: RequestMetadata,
   ): Promise<ExchangeConnectionView> {
     const existing = await this.owned(id, userId);
-    if (enabled && existing.environment === PrismaEnvironment.PRODUCTION) {
-      this.assertProductionEnabled();
-      await this.assertRecent(userId, sessionRecordId);
+    if (enabled) {
+      if (existing.environment === PrismaEnvironment.PRODUCTION) {
+        this.assertProductionEnabled();
+        await this.assertRecent(userId, sessionRecordId);
+      }
+      const testResult = await this.test(userId, id, context);
+      if (!testResult.success) {
+        await this.repository.updateOwnedAtomic(id, userId, {
+          isEnabled: false,
+          isVerified: false,
+          verifiedAt: null,
+          lastErrorCode: testResult.errorCode ?? "ACTIVATION_TEST_FAILED",
+          lastErrorAt: new Date(),
+        });
+        throw new BadRequestException(
+          `Cannot set '${existing.displayName ?? existing.provider}' as active: exchange connection test failed (${testResult.message ?? testResult.errorCode}). Please check API credentials and permissions.`,
+        );
+      }
     }
     const updated = await this.repository.updateOwnedAtomic(id, userId, {
       isEnabled: enabled,
+      ...(enabled ? { isVerified: true, verifiedAt: new Date() } : {}),
     });
     if (!updated) throw new NotFoundException("Exchange connection not found");
     await this.audit.record(

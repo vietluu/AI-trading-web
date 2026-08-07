@@ -49,6 +49,10 @@ export class ExchangeConnectionRepository {
     credential: CredentialWrite;
   }): Promise<ConnectionWithCredential> {
     return this.prisma.$transaction(async (transaction) => {
+      await transaction.exchangeConnection.updateMany({
+        where: { userId: data.userId },
+        data: { isEnabled: false },
+      });
       const credential = await transaction.encryptedCredential.create({
         data: { userId: data.userId, ...data.credential },
       });
@@ -58,6 +62,7 @@ export class ExchangeConnectionRepository {
           provider: data.provider,
           environment: data.environment,
           credentialId: credential.id,
+          isEnabled: true,
           ...(data.displayName ? { displayName: data.displayName } : {}),
         },
         include: { credential: true },
@@ -76,6 +81,12 @@ export class ExchangeConnectionRepository {
         where: { id, userId },
       });
       if (!existing) return null;
+      if (connectionData.isEnabled === true) {
+        await transaction.exchangeConnection.updateMany({
+          where: { userId, NOT: { id } },
+          data: { isEnabled: false },
+        });
+      }
       if (credentialData) {
         await transaction.encryptedCredential.updateMany({
           where: { id: existing.credentialId, userId },
@@ -109,6 +120,18 @@ export class ExchangeConnectionRepository {
       await transaction.encryptedCredential.deleteMany({
         where: { id: existing.credentialId, userId },
       });
+      if (existing.isEnabled) {
+        const remaining = await transaction.exchangeConnection.findFirst({
+          where: { userId },
+          orderBy: { createdAt: "desc" },
+        });
+        if (remaining) {
+          await transaction.exchangeConnection.update({
+            where: { id: remaining.id },
+            data: { isEnabled: true },
+          });
+        }
+      }
       return true;
     });
   }
