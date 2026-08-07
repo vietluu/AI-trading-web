@@ -13,7 +13,7 @@ export default function MarketAnalysisPage(): React.JSX.Element {
   const { t } = useTranslation();
   const [symbol, setSymbol] = useState<MarketAgentInput["symbol"]>("BTC-USDT");
   const [provider, setProvider] =
-    useState<MarketAgentInput["provider"]>("BINANCE_FUTURES");
+    useState<MarketAgentInput["provider"]>("OKX_FUTURES");
   const [interval, setInterval] = useState<MarketAgentInput["interval"]>("1h");
   const [lookbackCandles, setLookbackCandles] = useState(100);
 
@@ -37,7 +37,7 @@ export default function MarketAnalysisPage(): React.JSX.Element {
       <section className="grid gap-4 rounded-lg border bg-card p-6 md:grid-cols-4">
         <label className="space-y-1 text-xs font-semibold text-muted-foreground">
           {t.ai.symbol}
-          <select className={fieldClassName} value={symbol} onChange={(event) => setSymbol(event.target.value as MarketAgentInput["symbol"])}>
+          <select className={fieldClassName} value={symbol} onChange={(event) => setSymbol(event.target.value)}>
             <option value="BTC-USDT">BTC-USDT</option>
             <option value="ETH-USDT">ETH-USDT</option>
           </select>
@@ -45,8 +45,8 @@ export default function MarketAnalysisPage(): React.JSX.Element {
         <label className="space-y-1 text-xs font-semibold text-muted-foreground">
           {t.ai.exchange}
           <select className={fieldClassName} value={provider} onChange={(event) => setProvider(event.target.value as MarketAgentInput["provider"])}>
-            <option value="BINANCE_FUTURES">Binance Futures</option>
             <option value="OKX_FUTURES">OKX Futures</option>
+            <option value="BINANCE_FUTURES">Binance Futures</option>
           </select>
         </label>
         <label className="space-y-1 text-xs font-semibold text-muted-foreground">

@@ -63,19 +63,30 @@ export class LiveTradingService {
         : input.provider === ExchangeProvider.BINANCE_FUTURES
           ? ExchangeEnvironment.TESTNET
           : ExchangeEnvironment.DEMO;
-    const connection = (await this.connections.list(input.userId)).find(
+    const userConnections = await this.connections.list(input.userId);
+    let connection = userConnections.find(
       (item) =>
         item.provider === input.provider &&
         item.environment === targetEnvironment &&
         item.isEnabled &&
         item.isVerified,
     );
+    let effectiveProvider = input.provider;
+    if (!connection) {
+      const fallback = userConnections.find(
+        (item) => item.isEnabled && item.isVerified,
+      );
+      if (fallback) {
+        connection = fallback;
+        effectiveProvider = fallback.provider;
+      }
+    }
     if (!connection)
       return { outcome: "NO_ELIGIBLE_EXCHANGE_CONNECTION", price: 0 };
 
     await this.sync(input.userId, connection.id, {});
     const ticker = await this.publicExchanges.ticker(
-      input.provider,
+      effectiveProvider,
       input.symbol,
     );
     const price = Number(ticker.markPrice ?? ticker.lastPrice);
@@ -354,7 +365,8 @@ export class LiveTradingService {
       (item) =>
         item.isEnabled &&
         item.isVerified &&
-        item.provider === run?.provider &&
+        (item.provider === run?.provider ||
+          item.provider === ExchangeProvider.OKX_FUTURES) &&
         item.environment ===
           (settings.mode === "LIVE"
             ? ExchangeEnvironment.PRODUCTION

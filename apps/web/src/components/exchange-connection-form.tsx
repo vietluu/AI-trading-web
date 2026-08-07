@@ -23,8 +23,8 @@ export function ExchangeConnectionForm({
 }: {
   onCreated: (id: string) => void;
 }): React.JSX.Element {
-  const [provider, setProvider] = useState<Provider>("BINANCE_FUTURES");
-  const [environment, setEnvironment] = useState("TESTNET");
+  const [provider, setProvider] = useState<Provider>("OKX_FUTURES");
+  const [environment, setEnvironment] = useState("DEMO");
   const [visible, setVisible] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();

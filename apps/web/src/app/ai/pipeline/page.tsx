@@ -27,7 +27,7 @@ const AVAILABLE_SYMBOLS = [
 export default function PipelinePage() {
   const { t } = useTranslation();
   const [symbol, setSymbol] = useState("BTC-USDT");
-  const [provider, setProvider] = useState("BINANCE_FUTURES");
+  const [provider, setProvider] = useState("OKX_FUTURES");
   const [message, setMessage] = useState("");
   const health = usePipelineDashboard();
   const schedules = usePipelineSchedules();
@@ -151,8 +151,8 @@ export default function PipelinePage() {
             value={provider}
             onChange={(e) => setProvider(e.target.value)}
           >
-            <option value="BINANCE_FUTURES">Binance Futures</option>
             <option value="OKX_FUTURES">OKX Futures</option>
+            <option value="BINANCE_FUTURES">Binance Futures</option>
           </select>
           <button
             className="rounded bg-primary px-4 py-2 font-medium text-primary-foreground hover:bg-primary/90"

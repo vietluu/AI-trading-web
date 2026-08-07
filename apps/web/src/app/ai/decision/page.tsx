@@ -13,7 +13,7 @@ export default function DecisionPage(): React.JSX.Element {
   const [symbol, setSymbol] = useState<FusionRunInput["symbol"]>("BTC-USDT");
   const [symbols] = useState<string[]>(["BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT", "XRP-USDT", "DOGE-USDT", "ADA-USDT", "AVAX-USDT", "LINK-USDT", "NEAR-USDT", "SUI-USDT"]);
   const [provider, setProvider] =
-    useState<FusionRunInput["provider"]>("BINANCE_FUTURES");
+    useState<FusionRunInput["provider"]>("OKX_FUTURES");
   const [interval, setInterval] = useState<FusionRunInput["interval"]>("15m");
 
   const decision = useDecisionRunner();
@@ -51,8 +51,8 @@ export default function DecisionPage(): React.JSX.Element {
         <label className="space-y-1 text-xs font-semibold text-muted-foreground">
           {t.ai.exchange}
           <select className={fieldClassName} value={provider} onChange={(event) => setProvider(event.target.value as FusionRunInput["provider"])}>
-            <option value="BINANCE_FUTURES">Binance Futures</option>
             <option value="OKX_FUTURES">OKX Futures</option>
+            <option value="BINANCE_FUTURES">Binance Futures</option>
           </select>
         </label>
         <label className="space-y-1 text-xs font-semibold text-muted-foreground">

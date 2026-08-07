@@ -108,7 +108,7 @@ function AnalysisForm(props: {
           className={fieldClassName}
           value={props.symbol}
           onChange={(event) =>
-            props.onSymbol(event.target.value as NewsSentimentInput["symbol"])
+            props.onSymbol(event.target.value)
           }
         >
           <option value="BTC">BTC</option>

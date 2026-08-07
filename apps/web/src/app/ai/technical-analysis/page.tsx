@@ -13,7 +13,7 @@ export default function TechnicalAnalysisPage(): React.JSX.Element {
   const [symbol, setSymbol] =
     useState<TechnicalAgentInput["symbol"]>("BTC-USDT");
   const [provider, setProvider] =
-    useState<TechnicalAgentInput["provider"]>("BINANCE_FUTURES");
+    useState<TechnicalAgentInput["provider"]>("OKX_FUTURES");
   const [interval, setInterval] =
     useState<TechnicalAgentInput["interval"]>("1h");
   const [lookbackCandles, setLookbackCandles] = useState(150);
@@ -42,7 +42,7 @@ export default function TechnicalAnalysisPage(): React.JSX.Element {
           label={t.ai.symbol}
           value={symbol}
           onChange={(value) =>
-            setSymbol(value as TechnicalAgentInput["symbol"])
+            setSymbol(value)
           }
           options={["BTC-USDT", "ETH-USDT"]}
         />
@@ -52,7 +52,7 @@ export default function TechnicalAnalysisPage(): React.JSX.Element {
           onChange={(value) =>
             setProvider(value as TechnicalAgentInput["provider"])
           }
-          options={["BINANCE_FUTURES", "OKX_FUTURES"]}
+          options={["OKX_FUTURES", "BINANCE_FUTURES"]}
         />
         <Select
           label={t.ai.interval}

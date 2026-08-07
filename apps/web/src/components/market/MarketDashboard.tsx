@@ -78,8 +78,8 @@ interface MarketDashboardProps {
 }
 
 const PROVIDERS: Array<{ value: MarketProvider; label: string }> = [
-  { value: "BINANCE_FUTURES", label: "Binance Futures" },
   { value: "OKX_FUTURES", label: "OKX Futures" },
+  { value: "BINANCE_FUTURES", label: "Binance Futures" },
 ];
 const SYMBOLS = [
   "BTC-USDT",

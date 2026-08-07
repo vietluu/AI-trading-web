@@ -127,8 +127,6 @@ export function evaluateRisk(
   if (decision.confidence < limits.minimumConfidence)
     return reject("CONFIDENCE_BELOW_THRESHOLD");
   if (decision.conflictLevel === "HIGH") return reject("HIGH_SIGNAL_CONFLICT");
-  if (decision.confidence < RISK_ENGINE_CONSTANTS.MINIMUM_CONFIDENCE_THRESHOLD)
-    return reject("CONFIDENCE_BELOW_THRESHOLD");
   if (marketData.volatility >= limits.abnormalVolatility)
     return reject("ABNORMAL_VOLATILITY");
   if (drawdownPct >= limits.maxDrawdown) return reject("MAX_DRAWDOWN_EXCEEDED");
@@ -175,7 +173,7 @@ export function evaluateRisk(
     limits.riskRewardRatio,
   );
   const rewardToRisk = Math.abs(takeProfit - marketData.price) / Math.abs(marketData.price - stopLoss);
-  if (rewardToRisk < RISK_ENGINE_CONSTANTS.MINIMUM_REWARD_TO_RISK_RATIO)
+  if (rewardToRisk < limits.riskRewardRatio - 1e-6)
     return reject("RISK_REWARD_NOT_MET");
   let positionSize = calculatePositionSize(
     account.balance,

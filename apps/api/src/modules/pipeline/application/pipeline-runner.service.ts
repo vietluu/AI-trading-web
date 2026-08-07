@@ -247,6 +247,9 @@ export class PipelineRunnerService {
             ? { volatilityAtr }
             : {}),
         });
+        if (riskAssessment.outcome === "NO_ELIGIBLE_EXCHANGE_CONNECTION") {
+          throw new Error("NO_ELIGIBLE_EXCHANGE_CONNECTION: Active verified exchange connection is required to run live risk assessment.");
+        }
         liveExecution = await this.liveTrading.executePipeline(
           job.userId,
           runId,
@@ -300,6 +303,8 @@ export class PipelineRunnerService {
       const cancelled = error instanceof PipelineCancelledError;
       const timedOut =
         error instanceof Error && error.message === "PIPELINE_TIMEOUT";
+      const isNoConnection =
+        error instanceof Error && error.message.includes("NO_ELIGIBLE_EXCHANGE_CONNECTION");
       await this.repository.updateRun(runId, {
         status: cancelled ? "CANCELLED" : timedOut ? "TIMEOUT" : "FAILED",
         completedAt,
@@ -308,7 +313,9 @@ export class PipelineRunnerService {
           ? "CANCELLED_BY_USER"
           : timedOut
             ? "PIPELINE_TIMEOUT"
-            : "PIPELINE_EXECUTION_FAILED",
+            : isNoConnection
+              ? "NO_ELIGIBLE_EXCHANGE_CONNECTION"
+              : "PIPELINE_EXECUTION_FAILED",
         safeErrorMessage:
           error instanceof Error
             ? error.message.slice(0, 300)

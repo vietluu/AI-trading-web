@@ -447,7 +447,7 @@ const environmentSchema = z
     TRADING_MODE: z.enum(["DEMO", "LIVE"]).default("DEMO"),
     GLOBAL_TRADING_ENABLED: z
       .enum(["true", "false"])
-      .default("false")
+      .default("true")
       .transform((v) => v === "true"),
     LIVE_TRADING_ENABLED: z
       .enum(["true", "false"])

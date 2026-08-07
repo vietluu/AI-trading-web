@@ -38,7 +38,7 @@ export default function SentimentAnalysisPage(): React.JSX.Element {
             className={fieldClassName}
             value={symbol}
             onChange={(event) =>
-              setSymbol(event.target.value as NewsSentimentInput["symbol"])
+              setSymbol(event.target.value)
             }
           >
             <option value="BTC">BTC</option>
