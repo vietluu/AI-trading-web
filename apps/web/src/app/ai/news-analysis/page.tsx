@@ -2,7 +2,11 @@
 
 import { useState } from "react";
 import type { NewsSentimentInput } from "@platform/shared";
-import { useAnalysisRunner, type NewsAnalysisResult } from "@/hooks/ai/useAiFeature";
+import {
+  useAnalysisRunner,
+  type AnalysisRunResult,
+  type NewsAnalysisResult,
+} from "@/hooks/ai/useAiFeature";
 
 const fieldClassName =
   "w-full rounded-md border border-border bg-background px-3 py-2 text-sm";
@@ -17,7 +21,8 @@ export default function NewsAnalysisPage(): React.JSX.Element {
     lookbackHours,
     maxItems,
   };
-  const output = analysis.data?.output as NewsAnalysisResult | undefined;
+  const output = analysis.data?.output;
+  const newsOutput = isNewsAnalysisResult(output) ? output : undefined;
 
   return (
     <div className="container mx-auto space-y-6 p-6">
@@ -39,28 +44,28 @@ export default function NewsAnalysisPage(): React.JSX.Element {
         onMaxItems={setMaxItems}
         onRun={() => analysis.mutate(analysisInput)}
       />
-      {output ? (
+      {newsOutput ? (
         <section className="space-y-4" aria-label="News analysis result">
-          <Summary summary={output.summary} quality={output.dataQuality} />
+          <Summary summary={newsOutput.summary} quality={newsOutput.dataQuality} />
           <div className="grid gap-4 md:grid-cols-3">
             <Card title="Impact">
-              <Metric label="Level" value={output.impact.level} />
-              <Metric label="Direction" value={output.impact.direction} />
+              <Metric label="Level" value={newsOutput.impact.level} />
+              <Metric label="Direction" value={newsOutput.impact.direction} />
             </Card>
             <Card title="Themes">
-              <Tags items={output.themes} empty="No themes detected." />
+              <Tags items={newsOutput.themes} empty="No themes detected." />
             </Card>
             <Card title="Risk signals">
               <Tags
-                items={output.riskSignals}
+                items={newsOutput.riskSignals}
                 empty="No risk signals detected."
               />
             </Card>
           </div>
           <Card title="Key events">
-            {output.keyEvents.length ? (
+            {newsOutput.keyEvents.length ? (
               <div className="space-y-3">
-                {output.keyEvents.map((event: { title: string; impact: string; importance: number }, index: number) => (
+                {newsOutput.keyEvents.map((event: { title: string; impact: string; importance: number }, index: number) => (
                   <div
                     className="rounded-md border p-3 text-sm"
                     key={`${event.title}-${index}`}
@@ -82,6 +87,12 @@ export default function NewsAnalysisPage(): React.JSX.Element {
       ) : null}
     </div>
   );
+}
+
+function isNewsAnalysisResult(
+  value: AnalysisRunResult["output"],
+): value is NewsAnalysisResult {
+  return Boolean(value) && typeof value === "object" && "impact" in value && "themes" in value && "riskSignals" in value && "keyEvents" in value;
 }
 
 function AnalysisForm(props: {
@@ -107,9 +118,7 @@ function AnalysisForm(props: {
         <select
           className={fieldClassName}
           value={props.symbol}
-          onChange={(event) =>
-            props.onSymbol(event.target.value)
-          }
+          onChange={(event) => props.onSymbol(event.target.value)}
         >
           <option value="BTC">BTC</option>
           <option value="ETH">ETH</option>

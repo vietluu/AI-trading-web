@@ -2,6 +2,9 @@ import { ExchangeError } from "../domain/exchange.error";
 import { ExchangeProvider } from "../domain/exchange.types";
 
 const normalizedPattern = /^[A-Z0-9]{2,15}-[A-Z0-9]{2,15}$/;
+const slashPattern = /^[A-Z0-9]{2,15}\/[A-Z0-9]{2,15}$/;
+const swapPattern = /^[A-Z0-9]{2,15}-[A-Z0-9]{2,15}-SWAP$/;
+const compactQuotePattern = /^([A-Z0-9]{2,15})(USDT|USDC|USD|BTC|ETH|BNB|BUSD|FDUSD|EUR|GBP|JPY)$/;
 
 export type ExchangeLike = ExchangeProvider | "OKX" | "BINANCE";
 
@@ -28,13 +31,26 @@ export function normalizeSymbol(
     throw ExchangeError.invalidRequest(provider, "Symbol must not be empty");
   }
   const normalized = trimmed.toUpperCase();
-  if (!normalizedPattern.test(normalized)) {
+  const collapsed = normalized.replace(/\s+/gu, "");
+  const candidate = collapsed.replace(/[/_.-]+/gu, "-");
+  const withSlash = candidate.replace(/\//gu, "-");
+  const candidate2 = withSlash.replace(/[/_.-]+/gu, "-");
+  const withoutSwap = candidate.replace(/-SWAP$/u, "");
+  const compactMatch = withoutSwap.match(compactQuotePattern);
+  const normalizedCandidate = compactMatch
+    ? `${compactMatch[1]}-${compactMatch[2]}`
+    : candidate2.replace(/-+/gu, "-");
+  if (
+    !normalizedPattern.test(normalizedCandidate) &&
+    !slashPattern.test(normalized) &&
+    !swapPattern.test(normalized)
+  ) {
     throw ExchangeError.invalidRequest(
       provider,
       "Symbol must use normalized BASE-QUOTE format",
     );
   }
-  return normalized;
+  return normalizedCandidate;
 }
 
 function isOkxExchange(exchange: ExchangeLike): boolean {

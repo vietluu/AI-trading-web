@@ -8,6 +8,8 @@ interface ApiErrorToastDetail {
 
 export interface ApiErrorBody {
   message?: string | string[];
+  error?: string;
+  code?: string;
 }
 
 export class ApiRequestError extends Error {
@@ -29,11 +31,14 @@ export async function apiRequestValidated<T>(
 }
 
 export function resolveApiUrl(path: string): string {
-  const baseUrl = publicEnvironment.NEXT_PUBLIC_API_BASE_URL.trim();
+  let baseUrl = publicEnvironment.NEXT_PUBLIC_API_BASE_URL.trim().replace(/\/$/, "");
+  if (baseUrl.endsWith("/api")) {
+    baseUrl = baseUrl.slice(0, -4);
+  }
   const normalizedPath = path.startsWith("/api")
     ? path
     : `/api${path.startsWith("/") ? path : `/${path}`}`;
-  return baseUrl ? `${baseUrl.replace(/\/$/, "")}${normalizedPath}` : normalizedPath;
+  return baseUrl ? `${baseUrl}${normalizedPath}` : normalizedPath;
 }
 
 export async function apiRequest<T>(
@@ -68,8 +73,13 @@ export async function apiRequest<T>(
       message ?? `Request failed (${response.status})`,
       response.status,
     );
+    const isExchangeError =
+      (typeof body.error === "string" && body.error.startsWith("EXCHANGE_")) ||
+      (typeof body.code === "string" && body.code.startsWith("EXCHANGE_"));
+
     if (
       response.status === 401 &&
+      !isExchangeError &&
       typeof window !== "undefined" &&
       window.location.pathname !== "/login"
     ) {

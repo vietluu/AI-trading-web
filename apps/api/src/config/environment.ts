@@ -480,8 +480,8 @@ const environmentSchema = z
     STOP_LOSS_PCT: z.coerce.number().positive().max(1).default(0.02),
     TAKE_PROFIT_PCT: z.coerce.number().positive().max(10).default(0.04),
     // Phase 8: mandatory pre-execution portfolio risk controls
-    MAX_POSITIONS: z.coerce.number().int().min(1).max(20).default(3),
-    MAX_LEVERAGE: z.coerce.number().int().min(1).max(20).default(3),
+    MAX_POSITIONS: z.coerce.number().int().min(1).max(20).default(10),
+    MAX_LEVERAGE: z.coerce.number().int().min(1).max(125).default(5),
     MAX_DRAWDOWN: z.coerce.number().positive().max(1).default(0.15),
     MAX_EXPOSURE: z.coerce.number().positive().max(1).default(0.6),
     RISK_REWARD_RATIO: z.coerce.number().min(1).max(10).default(2),

@@ -1,14 +1,51 @@
 "use client";
 
-import { ArrowRight, Plus, ServerCog } from "lucide-react";
+import { ArrowRight, Plus, Power, ServerCog } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
 
 import { AccountNav } from "@/components/account-nav";
+import { Feedback } from "@/components/form-controls";
 import { ROUTES } from "@/constants/routes";
 import { useExchangeConnections } from "@/hooks/settings/useSettings";
+import { reauthenticate } from "@/services/auth.service";
 
 export default function ExchangesPage(): React.JSX.Element {
   const connections = useExchangeConnections();
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string>();
+  const [message, setMessage] = useState<string>();
+
+  async function handleToggle(id: string, currentEnabled: boolean, environment: string) {
+    setBusyId(id);
+    setError(undefined);
+    setMessage(undefined);
+    try {
+      if (!currentEnabled && environment === "PRODUCTION") {
+        const password = window.prompt("Confirm your current password");
+        if (!password) return;
+        await reauthenticate(password);
+      }
+      const totpCode = window.prompt(
+        "2FA code (leave blank when 2FA is not enabled)",
+      );
+      await connections.toggleMutation.mutateAsync({
+        id,
+        action: currentEnabled ? "disable" : "enable",
+        totpCode: totpCode ?? undefined,
+      });
+      setMessage(
+        currentEnabled
+          ? "Exchange connection deactivated."
+          : "Exchange connection activated as primary active exchange.",
+      );
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Activation failed");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <section>
       <AccountNav />
@@ -26,7 +63,12 @@ export default function ExchangesPage(): React.JSX.Element {
           <Plus className="h-4 w-4" /> New connection
         </Link>
       </div>
-      <div className="mt-8 divide-y divide-border border-y border-border">
+
+      <div className="mt-4">
+        <Feedback error={error} success={message} />
+      </div>
+
+      <div className="mt-6 divide-y divide-border border-y border-border">
         {connections.isLoading && (
           <p className="py-8 text-sm text-muted-foreground">
             Loading connections...
@@ -44,41 +86,65 @@ export default function ExchangesPage(): React.JSX.Element {
           </div>
         )}
         {connections.data?.map((connection) => (
-          <Link
-            className="grid gap-3 py-5 hover:bg-muted/20 sm:grid-cols-[1fr_auto_auto] sm:items-center sm:px-3"
-            href={ROUTES.settingsExchangeDetail(connection.id)}
+          <div
+            className="grid gap-3 py-5 sm:grid-cols-[1fr_auto_auto_auto] sm:items-center sm:px-3 hover:bg-muted/10 transition-colors"
             key={connection.id}
           >
-            <div>
-              <p className="font-medium">
+            <Link
+              className="group"
+              href={ROUTES.settingsExchangeDetail(connection.id)}
+            >
+              <p className="font-medium group-hover:text-primary transition-colors">
                 {connection.displayName ??
                   connection.provider.replaceAll("_", " ")}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
                 {connection.environment} · {connection.maskedApiKey}
               </p>
-            </div>
-            <div className="text-xs">
+            </Link>
+            <div className="text-xs flex items-center gap-2">
               <span
                 className={
-                  connection.isVerified ? "text-emerald-300" : "text-amber-300"
+                  connection.isVerified ? "text-emerald-300 font-medium" : "text-amber-300"
                 }
               >
                 {connection.isVerified ? "Verified" : "Not verified"}
               </span>
-              <span className="mx-2 text-border">|</span>
-              <span
-                className={
-                  connection.isEnabled
-                    ? "text-foreground"
-                    : "text-muted-foreground"
-                }
-              >
-                {connection.isEnabled ? "Enabled" : "Disabled"}
-              </span>
             </div>
-            <ArrowRight className="h-4 w-4 text-muted-foreground" />
-          </Link>
+
+            <button
+              aria-label={
+                connection.isEnabled ? "Deactivate exchange" : "Set active exchange"
+              }
+              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-all ${
+                connection.isEnabled
+                  ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25"
+                  : "bg-muted text-muted-foreground border border-border hover:bg-muted/80 hover:text-foreground"
+              }`}
+              disabled={busyId === connection.id}
+              onClick={() =>
+                void handleToggle(
+                  connection.id,
+                  connection.isEnabled,
+                  connection.environment,
+                )
+              }
+              title={
+                connection.isEnabled ? "Deactivate exchange" : "Set active exchange"
+              }
+            >
+              <Power className={`h-3.5 w-3.5 ${connection.isEnabled ? "text-emerald-400" : "text-muted-foreground"}`} />
+              <span>{connection.isEnabled ? "ACTIVE" : "Set Active"}</span>
+            </button>
+
+            <Link
+              className="p-1 hover:text-primary transition-colors"
+              href={ROUTES.settingsExchangeDetail(connection.id)}
+              title="View detail"
+            >
+              <ArrowRight className="h-4 w-4 text-muted-foreground" />
+            </Link>
+          </div>
         ))}
       </div>
     </section>

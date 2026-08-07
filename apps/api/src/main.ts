@@ -7,6 +7,7 @@ import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 
 import { AppModule } from "./app.module";
 import { GlobalExceptionFilter } from "./common/filters/global-exception.filter";
+import { getAvailablePort } from "./common/utils/port.utils";
 
 async function bootstrap(): Promise<void> {
   const structuredLogger = new ConsoleLogger({
@@ -19,8 +20,9 @@ async function bootstrap(): Promise<void> {
     logger: structuredLogger,
   });
   const configService = app.get(ConfigService);
-  const port = configService.getOrThrow<number>("API_PORT");
+  const requestedPort = configService.getOrThrow<number>("API_PORT");
   const allowedOrigins = configService.getOrThrow<string[]>("CORS_ORIGINS");
+  const port = await getAvailablePort(requestedPort).catch(() => requestedPort);
 
   app.useLogger(structuredLogger);
   app.setGlobalPrefix("api");

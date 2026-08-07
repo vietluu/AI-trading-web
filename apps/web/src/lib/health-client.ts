@@ -4,18 +4,14 @@ import {
   type HealthResponse,
 } from "@platform/shared";
 
-import { publicEnvironment } from "./environment";
-
+import { resolveApiUrl } from "./api-client";
 export async function fetchHealth(
   signal?: AbortSignal,
 ): Promise<HealthResponse> {
-  const response = await fetch(
-    `${publicEnvironment.NEXT_PUBLIC_API_BASE_URL}/api/health`,
-    {
-      headers: { Accept: "application/json" },
-      signal: signal ?? null,
-    },
-  );
+  const response = await fetch(resolveApiUrl("/health"), {
+    headers: { Accept: "application/json" },
+    signal: signal ?? null,
+  });
   const body: unknown = await response.json();
 
   if (!response.ok) {

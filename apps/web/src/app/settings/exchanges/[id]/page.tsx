@@ -191,23 +191,28 @@ export default function ExchangeDetailPage(): React.JSX.Element {
             </button>
             <button
               aria-label={
-                item.isEnabled ? "Disable connection" : "Enable connection"
+                item.isEnabled ? "Deactivate exchange" : "Set active exchange"
               }
-              className="rounded-lg border border-border p-2 hover:bg-muted"
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold ${
+                item.isEnabled
+                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                  : "border-border hover:bg-muted"
+              }`}
               disabled={busy}
               onClick={() =>
                 void mutate(
                   `/exchange-connections/${id}/${item.isEnabled ? "disable" : "enable"}`,
                   item.isEnabled
-                    ? "Connection disabled."
-                    : "Connection enabled.",
+                    ? "Exchange connection deactivated."
+                    : "Exchange connection activated as primary active exchange.",
                 )
               }
               title={
-                item.isEnabled ? "Disable connection" : "Enable connection"
+                item.isEnabled ? "Deactivate exchange" : "Set active exchange"
               }
             >
               <Power className="h-4 w-4" />
+              {item.isEnabled ? "Active Exchange" : "Set Active"}
             </button>
             <button
               aria-label="Delete connection"

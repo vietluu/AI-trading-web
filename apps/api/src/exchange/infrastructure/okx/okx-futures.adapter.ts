@@ -244,10 +244,12 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
   }
 
   async getInstruments(query?: InstrumentQuery): Promise<ExchangeInstrument[]> {
+    const params: Record<string, string> = { instType: "SWAP" };
+    if (query?.symbol) {
+      params.instId = toOkxSymbol(query.symbol);
+    }
     const values = z.array(instrumentSchema).parse(
-      await this.client.publicGet("/api/v5/public/instruments", {
-        instType: "SWAP",
-      }),
+      await this.client.publicGet("/api/v5/public/instruments", params),
     );
     return values
       .map((item) => this.instrument(item))
@@ -551,12 +553,13 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     const normalizedSymbol = mapSymbol(command.symbol, this.provider);
     const instId = normalizedSymbol;
     const searchSymbol = command.symbol.toUpperCase().replace("/", "-");
-    const instrument = (await this.getInstruments()).find(
+    const instruments = await this.getInstruments({ symbol: command.symbol });
+    const instrument = instruments.find(
       (candidate) =>
         candidate.symbol === searchSymbol ||
         candidate.symbol === command.symbol ||
         mapSymbol(candidate.symbol, this.provider) === instId,
-    );
+    ) ?? instruments[0];
     if (!instrument?.contractSize) {
       throw ExchangeError.invalidRequest(
         this.provider,
@@ -568,62 +571,199 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       instrument.contractSize,
       instrument.stepSize,
       instrument.quantityPrecision,
+      instrument.maxQuantity,
     );
-    await this.client.signedPost("/api/v5/account/set-leverage", credentials, {
-      instId,
-      lever: String(command.leverage),
-      mgnMode: "cross",
-      ...(command.positionSide
-        ? { posSide: command.positionSide.toLowerCase() }
-        : {}),
-    });
+    try {
+      await this.client.signedPost("/api/v5/account/set-leverage", credentials, {
+        instId,
+        lever: String(command.leverage),
+        mgnMode: "cross",
+        ...(command.positionSide
+          ? { posSide: command.positionSide.toLowerCase() }
+          : {}),
+      });
+    } catch (error) {
+      this.logger.warn({
+        event: "okx_leverage_setup_failed",
+        exchange: this.provider,
+        symbol: command.symbol,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     const clOrdId = this.normalizeClientOrderId(command.clientOrderId);
+    let marketPrice: string | undefined = undefined;
+    let ordType: "limit" | "market" = "limit";
+    try {
+      const ticker = await this.getTicker(command.symbol);
+      const selectedPrice =
+        command.side.toUpperCase() === "BUY"
+          ? ticker.askPrice
+          : ticker.bidPrice;
+      const numericPrice = Number(selectedPrice);
+      if (Number.isFinite(numericPrice) && numericPrice > 0) {
+        marketPrice = selectedPrice;
+        ordType = "limit";
+      }
+    } catch (error) {
+      this.logger.warn({
+        event: "okx_order_price_lookup_failed",
+        exchange: this.provider,
+        symbol: command.symbol,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     const body: Record<string, unknown> = {
       instId,
       tdMode: "cross",
       side: command.side.toLowerCase(),
-      ordType: "market",
+      ordType,
+      ...(ordType === "limit" && marketPrice ? { px: marketPrice } : {}),
       sz: contractQuantity,
       ...(clOrdId ? { clOrdId } : {}),
-      reduceOnly: command.reduceOnly ?? false,
       ...(command.positionSide
         ? { posSide: command.positionSide.toLowerCase() }
         : {}),
     };
-    if (command.stopLoss || command.takeProfit) {
+    const hasSl =
+      Number.isFinite(Number(command.stopLoss)) && Number(command.stopLoss) > 0;
+    const hasTp =
+      Number.isFinite(Number(command.takeProfit)) && Number(command.takeProfit) > 0;
+    if (hasSl || hasTp) {
       body.attachAlgoOrds = [
         {
-          ...(command.takeProfit
-            ? { tpTriggerPx: command.takeProfit, tpOrdPx: "-1", tpTriggerPxType: "last" }
+          ...(hasSl
+            ? {
+                slTriggerPx: String(command.stopLoss),
+                slOrdPx: "-1",
+              }
             : {}),
-          ...(command.stopLoss
-            ? { slTriggerPx: command.stopLoss, slOrdPx: "-1", slTriggerPxType: "last" }
+          ...(hasTp
+            ? {
+                tpTriggerPx: String(command.takeProfit),
+                tpOrdPx: "-1",
+              }
             : {}),
         },
       ];
     }
-    const ack = z
-      .array(orderAckSchema)
-      .min(1)
-      .parse(
-        await this.client.signedPost("/api/v5/trade/order", credentials, body),
-      )[0]!;
+    this.logger.warn({
+      event: "okx_order_request",
+      exchange: this.provider,
+      originalSymbol: command.symbol,
+      normalizedSymbol,
+      instId,
+      requestedQuantity: command.quantity,
+      contractQuantity,
+      leverage: command.leverage,
+      marketPrice,
+      body,
+    });
+    const placeOrderAttempt = async (
+      requestBody: Record<string, unknown>,
+    ): Promise<unknown> => {
+      try {
+        return await this.client.signedPost(
+          "/api/v5/trade/order",
+          credentials,
+          requestBody,
+        );
+      } catch (error) {
+        const exchangeError =
+          error instanceof ExchangeError
+            ? error
+            : new ExchangeError(
+                ExchangeErrorCode.UNKNOWN,
+                this.provider,
+                false,
+                502,
+                error instanceof Error ? error.message : "OKX rejected the order",
+              );
+        this.logger.error({
+          event: "exchange_order_rejected",
+          exchange: this.provider,
+          originalSymbol: command.symbol,
+          normalizedSymbol,
+          instId,
+          requestBody,
+          responseCode: exchangeError.exchangeCode,
+          reason: exchangeError.message,
+        });
+        throw exchangeError;
+      }
+    };
+
+    let ackPayload: unknown;
+    try {
+      ackPayload = await placeOrderAttempt(body);
+    } catch (error) {
+      if (
+        body.ordType === "limit" &&
+        this.shouldRetryAsMarketOrder(error, body)
+      ) {
+        const fallbackBody = {
+          ...body,
+          ordType: "market",
+        } as Record<string, unknown>;
+        delete fallbackBody.px;
+        this.logger.warn({
+          event: "okx_order_retrying_as_market",
+          exchange: this.provider,
+          originalSymbol: command.symbol,
+          normalizedSymbol,
+          instId,
+          reason:
+            error instanceof Error
+              ? error.message
+              : "OKX rejected the order",
+          fallbackBody,
+        });
+        ackPayload = await placeOrderAttempt(fallbackBody);
+      } else {
+        throw error;
+      }
+    }
+    let ack = z.array(orderAckSchema).min(1).parse(ackPayload)[0]!;
     if (ack.sCode !== "0") {
-      this.logger.warn({
-        event: "exchange_order_rejected",
-        exchange: this.provider,
-        originalSymbol: command.symbol,
-        normalizedSymbol,
-        response: ack,
-      });
-      throw new ExchangeError(
-        ExchangeErrorCode.INVALID_REQUEST,
-        this.provider,
-        false,
-        400,
-        ack.sMsg || "OKX rejected the order",
-        ack.sCode,
-      );
+      if (
+        body.ordType === "limit" &&
+        this.shouldRetryAsMarketOrder(ack, body)
+      ) {
+        const fallbackBody = {
+          ...body,
+          ordType: "market",
+        } as Record<string, unknown>;
+        delete fallbackBody.px;
+        this.logger.warn({
+          event: "okx_order_retrying_as_market",
+          exchange: this.provider,
+          originalSymbol: command.symbol,
+          normalizedSymbol,
+          instId,
+          reason: ack.sMsg,
+          fallbackBody,
+        });
+        ackPayload = await placeOrderAttempt(fallbackBody);
+        ack = z.array(orderAckSchema).min(1).parse(ackPayload)[0]!;
+      }
+      if (ack.sCode !== "0") {
+        this.logger.warn({
+          event: "exchange_order_rejected",
+          exchange: this.provider,
+          originalSymbol: command.symbol,
+          normalizedSymbol,
+          instId,
+          requestBody: body,
+          response: ack,
+        });
+        throw new ExchangeError(
+          ExchangeErrorCode.INVALID_REQUEST,
+          this.provider,
+          false,
+          400,
+          ack.sMsg || "OKX rejected the order",
+          ack.sCode,
+        );
+      }
     }
     return {
       provider: this.provider,
@@ -739,6 +879,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     contractSize: string,
     lotSize: string,
     precision: number,
+    maxQuantity?: string,
   ): string {
     const raw = Number(baseQuantity) / Number(contractSize);
     const lot = Number(lotSize);
@@ -753,15 +894,18 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         "Invalid OKX order quantity",
       );
     }
-    const lots = Math.max(1, Math.round((raw + Number.EPSILON) / lot));
-    const quantity = lots * lot;
-    if (quantity <= 0) {
+    const cappedRaw =
+      maxQuantity !== undefined && maxQuantity !== ""
+        ? Math.min(raw, Number(maxQuantity))
+        : raw;
+    const contractCount = Math.max(1, Math.round(cappedRaw + Number.EPSILON));
+    if (contractCount <= 0) {
       throw ExchangeError.invalidRequest(
         this.provider,
         `Order size is below the OKX minimum contract lot (${lotSize})`,
       );
     }
-    return this.decimalString(quantity, precision);
+    return this.decimalString(contractCount, 0);
   }
 
   private decimalString(value: number, precision: number): string {
@@ -775,8 +919,34 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     if (!value) return undefined;
     const trimmed = value.trim();
     if (!trimmed) return undefined;
-    if (trimmed.length <= 32) return trimmed;
-    return `${trimmed.slice(0, 29)}-${trimmed.slice(-2)}`;
+    const withoutDashes = this.removeHyphens(trimmed);
+    const alphanumeric = withoutDashes.replace(/[^A-Za-z0-9]/g, "");
+    if (!alphanumeric) return undefined;
+    if (alphanumeric.length <= 32) return alphanumeric;
+    return `${alphanumeric.slice(0, 30)}${alphanumeric.slice(-2)}`;
+  }
+
+  private removeHyphens(value: string): string {
+    return value.replace(/-/g, "");
+  }
+
+  private shouldRetryAsMarketOrder(
+    ackOrError: unknown,
+    body: Record<string, unknown>,
+  ): boolean {
+    if (body.ordType !== "limit") return false;
+    if (ackOrError instanceof ExchangeError) {
+      const message = (ackOrError.message ?? "").toLowerCase();
+      return (
+        ackOrError.exchangeCode === "1" ||
+        message.includes("all operations failed")
+      );
+    }
+    if (!ackOrError || typeof ackOrError !== "object") return false;
+    const ack = ackOrError as Partial<z.infer<typeof orderAckSchema>>;
+    if (ack.sCode === "1") return true;
+    const message = (ack.sMsg ?? "").toLowerCase();
+    return message.includes("all operations failed");
   }
 
   private intervalMilliseconds(interval: ExchangeInterval): number {

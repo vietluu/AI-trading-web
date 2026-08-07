@@ -545,9 +545,13 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
   ): Promise<ExchangeOrder> {
     const normalizedSymbol = mapSymbol(command.symbol, this.provider);
     const symbol = normalizedSymbol;
+    const leverage = Math.max(
+      1,
+      Math.min(125, Math.round(Number(command.leverage) || 1)),
+    );
     await this.client.signedPost("/fapi/v1/leverage", credentials, {
       symbol,
-      leverage: command.leverage,
+      leverage,
     });
     try {
       const value = orderSchema.parse(
@@ -594,6 +598,12 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
     const price = item.filters.find(
       (filter) => filter.filterType === "PRICE_FILTER",
     );
+    let symbol = `${item.baseAsset}-${item.quoteAsset}`;
+    try {
+      symbol = fromAssets(item.baseAsset, item.quoteAsset);
+    } catch {
+      symbol = `${item.baseAsset}-${item.quoteAsset}`;
+    }
     const lot = item.filters.find((filter) => filter.filterType === "LOT_SIZE");
     const notional = item.filters.find(
       (filter) =>
@@ -609,7 +619,7 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
           : "SUSPENDED";
     return {
       provider: this.provider,
-      symbol: fromAssets(item.baseAsset, item.quoteAsset),
+      symbol,
       baseAsset: item.baseAsset,
       quoteAsset: item.quoteAsset,
       settlementAsset: item.marginAsset,

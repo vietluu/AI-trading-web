@@ -3,7 +3,11 @@
 import { useState } from "react";
 import type { MarketAgentInput } from "@platform/shared";
 
-import { useAnalysisRunner, type MarketAnalysisResult } from "@/hooks/ai/useAiFeature";
+import {
+  useAnalysisRunner,
+  type AnalysisRunResult,
+  type MarketAnalysisResult,
+} from "@/hooks/ai/useAiFeature";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 
 const fieldClassName =
@@ -25,7 +29,8 @@ export default function MarketAnalysisPage(): React.JSX.Element {
     lookbackCandles,
   };
 
-  const output = analysis.data?.output as MarketAnalysisResult | undefined;
+  const output = analysis.data?.output;
+  const marketOutput = isMarketAnalysisResult(output) ? output : undefined;
 
   return (
     <div className="container mx-auto space-y-6 p-6">
@@ -72,47 +77,53 @@ export default function MarketAnalysisPage(): React.JSX.Element {
         ) : null}
       </section>
 
-      {output ? (
+      {marketOutput ? (
         <section className="space-y-4" aria-label="Market analysis result">
           <div className="rounded-lg border bg-card p-5">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-xl font-semibold">{t.ai.summary}</h2>
-              <span className="rounded-full bg-muted px-3 py-1 text-xs font-semibold">Data quality: {output.dataQuality}</span>
+              <span className="rounded-full bg-muted px-3 py-1 text-xs font-semibold">Data quality: {marketOutput.dataQuality}</span>
             </div>
-            <p className="text-sm leading-6">{output.summary}</p>
+            <p className="text-sm leading-6">{marketOutput.summary}</p>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <ResultCard title={t.ai.trend}>
-              <Metric label="Direction" value={output.trend.direction} />
-              <Metric label="Strength" value={output.trend.strength} />
+              <Metric label="Direction" value={marketOutput.trend.direction} />
+              <Metric label="Strength" value={marketOutput.trend.strength} />
             </ResultCard>
             <ResultCard title={t.ai.volatility}>
-              <Metric label="Level" value={output.volatility.level} />
-              <Metric label="ATR" value={output.volatility.atr} />
+              <Metric label="Level" value={marketOutput.volatility.level} />
+              <Metric label="ATR" value={marketOutput.volatility.atr} />
             </ResultCard>
             <ResultCard title={t.ai.liquidity}>
-              <Metric label="Bid/ask spread" value={output.liquidity.bidAskSpread} />
-              <Metric label="Depth imbalance" value={output.liquidity.depthImbalance} />
+              <Metric label="Bid/ask spread" value={marketOutput.liquidity.bidAskSpread} />
+              <Metric label="Depth imbalance" value={marketOutput.liquidity.depthImbalance} />
             </ResultCard>
             <ResultCard title={t.ai.derivatives}>
-              <Metric label="Funding rate" value={output.derivatives.fundingRate} />
-              <Metric label="Funding trend" value={output.derivatives.fundingTrend} />
-              <Metric label="Open interest" value={output.derivatives.openInterest} />
-              <Metric label="OI trend" value={output.derivatives.oiTrend} />
+              <Metric label="Funding rate" value={marketOutput.derivatives.fundingRate} />
+              <Metric label="Funding trend" value={marketOutput.derivatives.fundingTrend} />
+              <Metric label="Open interest" value={marketOutput.derivatives.openInterest} />
+              <Metric label="OI trend" value={marketOutput.derivatives.oiTrend} />
             </ResultCard>
           </div>
 
           <div className="rounded-lg border bg-card p-5">
             <h2 className="mb-3 text-lg font-semibold">{t.ai.anomalies}</h2>
-            {output.anomalies.length ? (
-              <ul className="list-inside list-disc space-y-1 text-sm">{output.anomalies.map((item: string) => <li key={item}>{item}</li>)}</ul>
+            {marketOutput.anomalies.length ? (
+              <ul className="list-inside list-disc space-y-1 text-sm">{marketOutput.anomalies.map((item: string) => <li key={item}>{item}</li>)}</ul>
             ) : <p className="text-sm text-muted-foreground">{t.ai.noAnomalies}</p>}
           </div>
         </section>
       ) : null}
     </div>
   );
+}
+
+function isMarketAnalysisResult(
+  value: AnalysisRunResult["output"],
+): value is MarketAnalysisResult {
+  return Boolean(value) && typeof value === "object" && "trend" in value && "volatility" in value && "liquidity" in value && "derivatives" in value;
 }
 
 function ResultCard({ title, children }: { title: string; children: React.ReactNode }): React.JSX.Element {

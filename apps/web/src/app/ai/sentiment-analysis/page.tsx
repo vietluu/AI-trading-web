@@ -2,7 +2,11 @@
 
 import { useState } from "react";
 import type { NewsSentimentInput } from "@platform/shared";
-import { useAnalysisRunner, type SentimentAnalysisResult } from "@/hooks/ai/useAiFeature";
+import {
+  useAnalysisRunner,
+  type AnalysisRunResult,
+  type SentimentAnalysisResult,
+} from "@/hooks/ai/useAiFeature";
 const fieldClassName =
   "w-full rounded-md border border-border bg-background px-3 py-2 text-sm";
 
@@ -16,7 +20,8 @@ export default function SentimentAnalysisPage(): React.JSX.Element {
     lookbackHours,
     maxItems,
   };
-  const output = analysis.data?.output as SentimentAnalysisResult | undefined;
+  const output = analysis.data?.output;
+  const sentimentOutput = isSentimentAnalysisResult(output) ? output : undefined;
   const invalid =
     lookbackHours < 1 || lookbackHours > 24 || maxItems < 1 || maxItems > 50;
 
@@ -37,9 +42,7 @@ export default function SentimentAnalysisPage(): React.JSX.Element {
           <select
             className={fieldClassName}
             value={symbol}
-            onChange={(event) =>
-              setSymbol(event.target.value)
-            }
+            onChange={(event) => setSymbol(event.target.value)}
           >
             <option value="BTC">BTC</option>
             <option value="ETH">ETH</option>
@@ -75,39 +78,39 @@ export default function SentimentAnalysisPage(): React.JSX.Element {
           </p>
         ) : null}
       </section>
-      {output ? (
+      {sentimentOutput ? (
         <section className="space-y-4" aria-label="Sentiment analysis result">
           <div className="rounded-lg border bg-card p-5">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-xl font-semibold">Summary</h2>
               <span className="rounded-full bg-muted px-3 py-1 text-xs font-semibold">
-                Data quality: {output.dataQuality}
+                Data quality: {sentimentOutput.dataQuality}
               </span>
             </div>
-            <p className="text-sm leading-6">{output.summary}</p>
+            <p className="text-sm leading-6">{sentimentOutput.summary}</p>
           </div>
           <div className="grid gap-4 md:grid-cols-3">
             <Card title="Sentiment">
-              <Metric label="Overall" value={output.sentiment.overall} />
-              <Metric label="Intensity" value={output.sentiment.intensity} />
+              <Metric label="Overall" value={sentimentOutput.sentiment.overall} />
+              <Metric label="Intensity" value={sentimentOutput.sentiment.intensity} />
             </Card>
             <Card title="Crowd behavior">
-              <Flag label="FOMO" value={output.crowdBehavior.fomo} />
-              <Flag label="Panic" value={output.crowdBehavior.panic} />
-              <Flag label="Euphoria" value={output.crowdBehavior.euphoria} />
+              <Flag label="FOMO" value={sentimentOutput.crowdBehavior.fomo} />
+              <Flag label="Panic" value={sentimentOutput.crowdBehavior.panic} />
+              <Flag label="Euphoria" value={sentimentOutput.crowdBehavior.euphoria} />
             </Card>
             <Card title="Sources">
-              <Metric label="Social" value={output.sources.social} />
+              <Metric label="Social" value={sentimentOutput.sources.social} />
               <Metric
                 label="Market index"
-                value={output.sources.marketSentimentIndex}
+                value={sentimentOutput.sources.marketSentimentIndex}
               />
             </Card>
           </div>
           <Card title="Anomalies">
-            {output.anomalies.length ? (
+            {sentimentOutput.anomalies.length ? (
               <ul className="list-inside list-disc space-y-1 text-sm">
-                {output.anomalies.map((item: string) => (
+                {sentimentOutput.anomalies.map((item: string) => (
                   <li key={item}>{item}</li>
                 ))}
               </ul>
@@ -121,6 +124,12 @@ export default function SentimentAnalysisPage(): React.JSX.Element {
       ) : null}
     </div>
   );
+}
+
+function isSentimentAnalysisResult(
+  value: AnalysisRunResult["output"],
+): value is SentimentAnalysisResult {
+  return Boolean(value) && typeof value === "object" && "sentiment" in value && "crowdBehavior" in value && "sources" in value && "anomalies" in value;
 }
 
 function NumberField({

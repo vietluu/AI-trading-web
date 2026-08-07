@@ -214,6 +214,7 @@ export function usePortfolioDashboard() {
   return useQuery<Awaited<ReturnType<typeof getPortfolioDashboard>>>({
     queryKey: queryKeys.ai.portfolio(),
     queryFn: getPortfolioDashboard,
+    refetchInterval: 5000,
   });
 }
 
@@ -278,6 +279,7 @@ export function useRiskDashboard() {
   return useQuery<Awaited<ReturnType<typeof getRiskDashboard>>>({
     queryKey: queryKeys.ai.risk(),
     queryFn: getRiskDashboard,
+    refetchInterval: 5000,
   });
 }
 

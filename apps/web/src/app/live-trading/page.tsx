@@ -1,6 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import { io } from "socket.io-client";
 import { useTranslation } from "@/lib/i18n/i18n-context";
+import { publicEnvironment } from "@/lib/environment";
 import {
   useLiveTradingActions,
   useLiveTradingDashboard,
@@ -65,11 +68,48 @@ const money = new Intl.NumberFormat("en-US", {
 export default function LiveTradingPage(): React.JSX.Element {
   const { t } = useTranslation();
   const query = useLiveTradingDashboard();
-  const { syncMutation, killMutation, enableMutation } =
+  const [liveData, setLiveData] = useState<Dashboard | null>(null);
+  const {killMutation, enableMutation } =
     useLiveTradingActions();
-  const sync = syncMutation;
   const kill = killMutation;
   const enable = enableMutation;
+  useEffect(() => {
+    if (query.data) {
+      setLiveData(query.data);
+    }
+  }, [query.data]);
+
+  useEffect(() => {
+    const rawApiUrl = publicEnvironment.NEXT_PUBLIC_API_BASE_URL.trim();
+    const baseUrl = rawApiUrl
+      ? rawApiUrl.replace(/\/$/, "")
+      : typeof window !== "undefined"
+        ? window.location.port === "3000"
+          ? `${window.location.protocol}//${window.location.hostname}:3001`
+          : window.location.origin
+        : "";
+
+    const socket = io(`${baseUrl}/live-trading`, {
+      transports: ["websocket"],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 500,
+      withCredentials: true,
+    });
+
+    socket.on("connect", () => {
+      socket.emit("subscribe", {});
+    });
+
+    socket.on("snapshot", (payload: Dashboard) => {
+      setLiveData(payload);
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
+
   if (query.isLoading)
     return <p className="text-muted-foreground">{t.ai.loadingStatus}…</p>;
   if (query.isError)
@@ -78,7 +118,7 @@ export default function LiveTradingPage(): React.JSX.Element {
         {query.error.message}
       </p>
     );
-  const data = query.data;
+  const data = liveData ?? query.data;
   if (!data)
     return <p className="text-muted-foreground">{t.ai.configureConnection}</p>;
   const totals = data.accounts.reduce(
@@ -144,46 +184,7 @@ export default function LiveTradingPage(): React.JSX.Element {
           </div>
         ))}
       </div>
-      <section>
-        <h2 className="mb-3 text-lg font-semibold">{t.ai.connections}</h2>
-        <div className="grid gap-3 md:grid-cols-2">
-          {data.connections.map((connection) => (
-            <div
-              className="flex items-center justify-between rounded-lg border bg-card p-4"
-              key={connection.id}
-            >
-              <div>
-                <p className="font-semibold">
-                  {connection.displayName ?? connection.provider}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {connection.environment} ·{" "}
-                  {connection.isVerified ? t.ai.verified : t.ai.notVerified} ·{" "}
-                  {connection.isEnabled
-                    ? t.ai.enabledStatus
-                    : t.ai.disabledStatus}
-                </p>
-              </div>
-              <button
-                className="rounded-md border px-3 py-2 text-sm disabled:opacity-50"
-                disabled={
-                  !connection.isEnabled ||
-                  !connection.isVerified ||
-                  sync.isPending
-                }
-                onClick={() => sync.mutate(connection.id)}
-              >
-                {t.ai.sync}
-              </button>
-            </div>
-          ))}
-        </div>
-        {!data.connections.length && (
-          <p className="rounded-lg border p-6 text-center text-muted-foreground">
-            {t.ai.configureConnection}
-          </p>
-        )}
-      </section>
+
       <Table
         title={t.ai.positions}
         headings={[
@@ -241,10 +242,10 @@ export default function LiveTradingPage(): React.JSX.Element {
           <OrderRow order={order} key={order.id} />
         ))}
       </Table>
-      {(syncMutation.error || killMutation.error || enableMutation.error) && (
+      {(killMutation.error || enableMutation.error) && (
         <p className="text-sm text-red-400" role="alert">
           {
-            (syncMutation.error ?? killMutation.error ?? enableMutation.error)
+            (killMutation.error ?? enableMutation.error)
               ?.message
           }
         </p>

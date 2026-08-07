@@ -187,16 +187,46 @@ export class OkxFuturesClient {
         correlationId,
       );
     }
-    const envelope = value as { code: unknown; data?: unknown };
+    const envelope = value as {
+      code: unknown;
+      data?: unknown;
+      msg?: unknown;
+    };
     if (envelope.code !== "0") {
       const code =
-        typeof envelope.code === "string" ? envelope.code : undefined;
-      throw this.okxError(code, correlationId);
+        typeof envelope.code === "string" || typeof envelope.code === "number"
+          ? String(envelope.code)
+          : undefined;
+      const message = this.extractOrderMessage(envelope.data, envelope.msg);
+      throw this.okxError(code, correlationId, message);
     }
     return envelope.data;
   }
 
-  private okxError(code?: string, correlationId?: string): ExchangeError {
+  private extractOrderMessage(data: unknown, fallback?: unknown): string | undefined {
+    if (Array.isArray(data) && data.length > 0) {
+      const first = data[0] as unknown;
+      if (first && typeof first === "object") {
+        const candidate = first as { sMsg?: unknown; msg?: unknown };
+        if (typeof candidate.sMsg === "string" && candidate.sMsg.trim()) {
+          return candidate.sMsg;
+        }
+        if (typeof candidate.msg === "string" && candidate.msg.trim()) {
+          return candidate.msg;
+        }
+      }
+    }
+    if (typeof fallback === "string" && fallback.trim()) {
+      return fallback;
+    }
+    return undefined;
+  }
+
+  private okxError(
+    code?: string,
+    correlationId?: string,
+    message?: string,
+  ): ExchangeError {
     if (code === "50102")
       return new ExchangeError(
         ExchangeErrorCode.TIMESTAMP_INVALID,
@@ -237,12 +267,55 @@ export class OkxFuturesClient {
         code,
         correlationId,
       );
+    if (code === "1") {
+      return new ExchangeError(
+        ExchangeErrorCode.INVALID_REQUEST,
+        this.provider,
+        false,
+        400,
+        message ?? "OKX rejected the request",
+        code,
+        correlationId,
+      );
+    }
+    if (
+      [
+        "50004",
+        "51000",
+        "51002",
+        "51003",
+        "51004",
+        "51005",
+        "51006",
+        "51009",
+        "51010",
+        "51011",
+        "51012",
+        "51013",
+        "51014",
+        "51015",
+        "51016",
+        "51017",
+        "51018",
+        "51019",
+      ].includes(code ?? "")
+    ) {
+      return new ExchangeError(
+        ExchangeErrorCode.INVALID_REQUEST,
+        this.provider,
+        false,
+        400,
+        message ?? "OKX rejected the request",
+        code,
+        correlationId,
+      );
+    }
     return new ExchangeError(
       ExchangeErrorCode.UNKNOWN,
       this.provider,
       false,
       502,
-      "OKX rejected the request",
+      message ?? "OKX rejected the request",
       code,
       correlationId,
     );
