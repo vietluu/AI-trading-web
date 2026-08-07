@@ -314,7 +314,7 @@ export class LiveTradingService {
         side,
         quantity: String(assessment.positionSize),
         leverage: assessment.leverage,
-        clientOrderId: dto.clientOrderId,
+        clientOrderId: this.normalizeClientOrderId(dto.clientOrderId),
         ...(configuration.positionMode === "HEDGE"
           ? { positionSide: desiredSide }
           : {}),
@@ -373,7 +373,9 @@ export class LiveTradingService {
             : demoEnvironment[item.provider]),
     );
     if (!connection) return { outcome: "NO_ELIGIBLE_EXCHANGE_CONNECTION" };
-    const clientOrderId = `p9-${pipelineRunId.replaceAll("-", "").slice(0, 32)}`;
+    const clientOrderId = this.normalizeClientOrderId(
+      `p9-${pipelineRunId.replaceAll("-", "").slice(0, 32)}`,
+    );
     try {
       const order = await this.execute(
         userId,
@@ -445,7 +447,7 @@ export class LiveTradingService {
         side: position.side === "LONG" ? "SELL" : "BUY",
         quantity: String(position.quantity),
         leverage: position.leverage ?? assessment.leverage,
-        clientOrderId: dto.clientOrderId,
+        clientOrderId: this.normalizeClientOrderId(dto.clientOrderId),
         reduceOnly: true,
         ...(configuration.positionMode === "HEDGE"
           ? { positionSide: position.side as "LONG" | "SHORT" }
@@ -1081,7 +1083,15 @@ export class LiveTradingService {
   }
 
   private derivedId(value: string, suffix: string): string {
-    return `${value.slice(0, 36 - suffix.length - 1)}-${suffix}`;
+    const normalized = this.normalizeClientOrderId(value);
+    const prefixLength = Math.max(0, 32 - suffix.length - 1);
+    return `${normalized.slice(0, prefixLength)}${prefixLength > 0 ? "-" : ""}${suffix}`;
+  }
+
+  private normalizeClientOrderId(value: string): string {
+    const trimmed = value.trim();
+    if (!trimmed) return "order";
+    return trimmed.length <= 32 ? trimmed : `${trimmed.slice(0, 29)}-${trimmed.slice(-2)}`;
   }
 
   private safeError(error: unknown): { code: string; message: string } {
