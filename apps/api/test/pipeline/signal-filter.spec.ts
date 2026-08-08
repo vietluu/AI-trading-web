@@ -6,6 +6,7 @@ describe("signal filter", () => {
 
   it("skips sideways low-volatility regimes before any AI analysis", () => {
     const result = service.evaluate({
+      symbol: "MEME-USDT",
       rsi: 50,
       atr: 20,
       volumeChangePercent: 0.4,

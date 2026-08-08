@@ -43,7 +43,7 @@ export default function PipelineRunsPage() {
                 "Run",
                 "Status",
                 "Decision",
-                "Confidence",
+                "Confidence score",
                 "Trigger",
                 "Duration",
                 "Created",
@@ -71,7 +71,7 @@ export default function PipelineRunsPage() {
                 <td className="p-3 font-semibold">{run.status}</td>
                 <td className="p-3">{run.decision ?? "—"}</td>
                 <td className="p-3">
-                  {run.confidence == null ? "—" : `${run.confidence}%`}
+                  {run.confidence == null ? "—" : `${run.confidence}/100`}
                 </td>
                 <td className="p-3">{run.trigger}</td>
                 <td className="p-3">

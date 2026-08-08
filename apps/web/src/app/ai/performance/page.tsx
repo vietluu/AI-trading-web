@@ -109,7 +109,7 @@ export default function PerformancePage() {
                 <td className="p-3 font-semibold">
                   {record.decision}
                   <div className="text-xs text-muted-foreground">
-                    {record.confidence}%
+                    score {record.confidence}/100
                   </div>
                 </td>
                 <td className="p-3 font-medium">{record.symbol}</td>

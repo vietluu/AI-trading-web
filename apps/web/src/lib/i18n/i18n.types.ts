@@ -480,6 +480,8 @@ export interface Dictionary {
     noOverrides: string;
     noRisks: string;
     confidence: string;
+    calibratedProbability: string;
+    brierScore: string;
     agreement: string;
     data: string;
     regime: string;

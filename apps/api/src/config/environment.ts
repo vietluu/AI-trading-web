@@ -250,6 +250,12 @@ const environmentSchema = z
       .min(5)
       .max(300)
       .default(30),
+    MARKET_STREAM_LEADER_LEASE_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(15)
+      .max(300)
+      .default(30),
     MARKET_RECONNECT_BASE_DELAY_MS: z.coerce
       .number()
       .int()
@@ -444,6 +450,16 @@ const environmentSchema = z
       .min(0)
       .max(100)
       .default(50),
+    SELF_LEARNING_MIN_SHADOW_TRADES: z.coerce.number().int().min(100).max(500).default(100),
+    SELF_LEARNING_REJECT_AFTER_TRADES: z.coerce.number().int().min(100).max(2000).default(300),
+    SELF_LEARNING_MIN_ACCURACY_LIFT_PCT: z.coerce.number().min(0).max(25).default(3),
+    SELF_LEARNING_MIN_PROFIT_FACTOR: z.coerce.number().min(1).max(5).default(1.2),
+    SELF_LEARNING_MIN_SHARPE_RATIO: z.coerce.number().min(0).max(5).default(0.5),
+    SELF_LEARNING_MAX_DRAWDOWN_PCT: z.coerce.number().positive().max(100).default(10),
+    SELF_LEARNING_MAX_SHADOW_DAYS: z.coerce.number().int().min(7).max(180).default(30),
+    SELF_LEARNING_CANARY_PERCENT: z.coerce.number().int().min(1).max(50).default(10),
+    SELF_LEARNING_MIN_CANARY_TRADES: z.coerce.number().int().min(100).max(500).default(100),
+    SELF_LEARNING_MAX_CANARY_DAYS: z.coerce.number().int().min(3).max(60).default(14),
     TRADING_MODE: z.enum(["DEMO", "LIVE"]).default("DEMO"),
     GLOBAL_TRADING_ENABLED: z
       .enum(["true", "false"])

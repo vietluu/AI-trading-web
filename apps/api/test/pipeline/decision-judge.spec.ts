@@ -33,4 +33,20 @@ describe('DecisionJudgeService', () => {
     expect(result).toEqual(expect.objectContaining({ approved: false, verdict: 'REJECT' }));
     expect(result.reasons).toContain('EXPECTED_VALUE_TOO_LOW');
   });
+
+  it('requests fresh source data when the underlying candle is stale for its timeframe', () => {
+    const now = Date.parse('2026-08-08T12:00:00.000Z');
+    const good = { dataQuality: 'GOOD', generatedAt: new Date(now).toISOString() };
+    const result = judge.evaluate({
+      decision: 'LONG', dataQuality: 'GOOD', conflictLevel: 'LOW', confidence: 80,
+      expectedValue: 0.8, profitFactorEstimate: 1.8, riskScore: 30,
+    } as never, {
+      market: good, technical: good, news: good, sentiment: good, macro: good, onchain: good,
+    } as never, {
+      symbol: 'BTC-USDT', timeframe: '1m', sourceTimestamp: '2026-08-08T11:55:00.000Z',
+    }, now);
+
+    expect(result).toEqual(expect.objectContaining({ approved: false, verdict: 'REQUEST_MORE_DATA' }));
+    expect(result.reasons).toContain('STALE_SOURCE_DATA');
+  });
 });

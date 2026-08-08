@@ -44,6 +44,9 @@ export class ReflectionSchedulerService implements OnApplicationBootstrap, OnMod
           try {
             // Phase C: Evaluate shadow mode performance & promote if qualified
             await this.selfLearning.evaluateShadowSignals(userId);
+            await this.selfLearning.evaluateCanary(userId);
+            const rolledBack = await this.selfLearning.evaluateLiveRollback(userId);
+            if (rolledBack) continue;
             // Phase A: Auto-tune decision thresholds
             await this.selfLearning.tuneParameters(userId);
             // Phase B: Auto-tune agent weights (creates shadow candidate config)

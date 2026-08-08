@@ -105,7 +105,7 @@ export default function RiskPage(): React.JSX.Element {
                   <td className="p-3 font-semibold">
                     {item.symbol}
                     <div className="text-xs text-muted-foreground">
-                      {item.decision} · {item.confidence}%
+                      {item.decision} · score {item.confidence}/100
                     </div>
                   </td>
                   <td

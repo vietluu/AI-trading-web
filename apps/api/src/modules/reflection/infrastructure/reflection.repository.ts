@@ -22,7 +22,7 @@ export class ReflectionRepository {
           { performanceRecords: { none: { horizon: 'LONG' } } },
         ],
       },
-      select: { id: true, userId: true, symbol: true, provider: true, decision: true, confidence: true, completedAt: true, storedContext: true, performanceRecords: { select: { horizon: true } } },
+      select: { id: true, userId: true, symbol: true, provider: true, decision: true, confidence: true, marketRegime: true, configurationVersion: true, learningStage: true, completedAt: true, storedContext: true, performanceRecords: { select: { horizon: true } } },
       orderBy: { completedAt: 'asc' },
       take: 1000,
     });

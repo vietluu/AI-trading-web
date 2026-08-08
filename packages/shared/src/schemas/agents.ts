@@ -510,6 +510,19 @@ export const DecisionOutputSchema = z
   .object({
     decision: DecisionSchema,
     confidence: z.number().min(0).max(100),
+    confidenceKind: z.literal('COMPOSITE_SCORE').optional(),
+    confidenceCalibration: z.object({
+      status: z.enum(['CALIBRATED', 'INSUFFICIENT_HISTORY']),
+      rawScore: z.number().min(0).max(100),
+      empiricalProbability: z.number().min(0).max(1).nullable(),
+      sampleSize: z.number().int().nonnegative(),
+      bucketSampleSize: z.number().int().nonnegative(),
+      brierScore: z.number().min(0).max(1).nullable(),
+    }).strict().optional(),
+    learningConfiguration: z.object({
+      version: z.number().int().positive(),
+      stage: z.enum(['LIVE', 'CANARY']),
+    }).strict().optional(),
     reasoning: z.string().min(1),
     signals: z
       .object({

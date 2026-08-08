@@ -1,16 +1,41 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../database/prisma.service';
 import { Prisma } from '@prisma/client';
 import { BASE_WEIGHTS } from '../../agents/domain/constants/decision.constants';
 import type { AnalystName } from '../../agents/domain/types/decision-service.types';
 import { evaluateDecision } from '../domain/performance-calculator';
+import { createHash } from 'node:crypto';
 
 export interface ShadowPerformance {
   tradesCount: number;
   correctCount: number;
   accuracy: number;
   totalReturn: number;
+  grossProfit: number;
+  grossLoss: number;
+  profitFactor: number;
+  currentEquity: number;
+  equityPeak: number;
+  maxDrawdown: number;
+  returnSumSquares: number;
+  sharpeRatio: number;
 }
+
+export const EMPTY_SHADOW_PERFORMANCE: ShadowPerformance = {
+  tradesCount: 0,
+  correctCount: 0,
+  accuracy: 0,
+  totalReturn: 0,
+  grossProfit: 0,
+  grossLoss: 0,
+  profitFactor: 0,
+  currentEquity: 0,
+  equityPeak: 0,
+  maxDrawdown: 0,
+  returnSumSquares: 0,
+  sharpeRatio: 0,
+};
 
 interface AgentAnalysisSnapshot {
   dataQuality?: string;
@@ -26,12 +51,35 @@ interface StoredContextPayload {
   analyses?: Record<string, AgentAnalysisSnapshot | undefined>;
 }
 
+interface LearningRun {
+  completedAt: Date | null;
+  confidence: number | null;
+  storedContext: Prisma.JsonValue | null;
+  performanceRecords: Array<{
+    horizon: string;
+    outcome: string;
+    decision: string;
+  }>;
+}
+
+const MIN_TUNING_DIRECTIONAL_RECORDS = 30;
+const MIN_WEIGHT_OPTIMIZATION_RUNS = 30;
+const MIN_AGENT_OBSERVATIONS = 20;
+
 function toShadowPerformanceJson(value: ShadowPerformance): Prisma.InputJsonObject {
   return {
     tradesCount: value.tradesCount,
     correctCount: value.correctCount,
     accuracy: value.accuracy,
     totalReturn: value.totalReturn,
+    grossProfit: value.grossProfit,
+    grossLoss: value.grossLoss,
+    profitFactor: value.profitFactor,
+    currentEquity: value.currentEquity,
+    equityPeak: value.equityPeak,
+    maxDrawdown: value.maxDrawdown,
+    returnSumSquares: value.returnSumSquares,
+    sharpeRatio: value.sharpeRatio,
   };
 }
 
@@ -43,14 +91,93 @@ function parseShadowPerformance(value: Prisma.JsonValue | null | undefined): Sha
       correctCount: typeof candidate.correctCount === 'number' ? candidate.correctCount : 0,
       accuracy: typeof candidate.accuracy === 'number' ? candidate.accuracy : 0,
       totalReturn: typeof candidate.totalReturn === 'number' ? candidate.totalReturn : 0,
+      grossProfit: typeof candidate.grossProfit === 'number' ? candidate.grossProfit : 0,
+      grossLoss: typeof candidate.grossLoss === 'number' ? candidate.grossLoss : 0,
+      profitFactor: typeof candidate.profitFactor === 'number' ? candidate.profitFactor : 0,
+      currentEquity: typeof candidate.currentEquity === 'number' ? candidate.currentEquity : 0,
+      equityPeak: typeof candidate.equityPeak === 'number' ? candidate.equityPeak : 0,
+      maxDrawdown: typeof candidate.maxDrawdown === 'number' ? candidate.maxDrawdown : 0,
+      returnSumSquares: typeof candidate.returnSumSquares === 'number' ? candidate.returnSumSquares : 0,
+      sharpeRatio: typeof candidate.sharpeRatio === 'number' ? candidate.sharpeRatio : 0,
     };
   }
 
+  return { ...EMPTY_SHADOW_PERFORMANCE };
+}
+
+export function addShadowReturn(
+  current: ShadowPerformance,
+  returnPct: number,
+  isCorrect: boolean,
+): ShadowPerformance {
+  const tradesCount = current.tradesCount + 1;
+  const correctCount = current.correctCount + (isCorrect ? 1 : 0);
+  const grossProfit = current.grossProfit + Math.max(0, returnPct);
+  const grossLoss = current.grossLoss + Math.abs(Math.min(0, returnPct));
+  const currentEquity = current.currentEquity + returnPct;
+  const equityPeak = Math.max(current.equityPeak, currentEquity);
+  const maxDrawdown = Math.max(current.maxDrawdown, equityPeak - currentEquity);
+  const totalReturn = current.totalReturn + returnPct;
+  const returnSumSquares = current.returnSumSquares + returnPct * returnPct;
+  const meanReturn = totalReturn / tradesCount;
+  const variance = tradesCount > 1
+    ? Math.max(0, (returnSumSquares - tradesCount * meanReturn * meanReturn) / (tradesCount - 1))
+    : 0;
+  const standardDeviation = Math.sqrt(variance);
   return {
-    tradesCount: 0,
-    correctCount: 0,
-    accuracy: 0,
-    totalReturn: 0,
+    tradesCount,
+    correctCount,
+    accuracy: tradesCount > 0 ? (correctCount / tradesCount) * 100 : 0,
+    totalReturn,
+    grossProfit,
+    grossLoss,
+    profitFactor: grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 99 : 0,
+    currentEquity,
+    equityPeak,
+    maxDrawdown,
+    returnSumSquares,
+    sharpeRatio: standardDeviation > 0 ? (meanReturn / standardDeviation) * Math.sqrt(tradesCount) : 0,
+  };
+}
+
+export function accuracyZScore(aCorrect: number, aTotal: number, bCorrect: number, bTotal: number): number {
+  if (aTotal <= 0 || bTotal <= 0) return 0;
+  const pooled = (aCorrect + bCorrect) / (aTotal + bTotal);
+  const standardError = Math.sqrt(pooled * (1 - pooled) * (1 / aTotal + 1 / bTotal));
+  return standardError > 0 ? (aCorrect / aTotal - bCorrect / bTotal) / standardError : 0;
+}
+
+export function evaluateShadowPromotion(
+  shadow: ShadowPerformance,
+  live: ShadowPerformance,
+  rules: {
+    minTrades: number;
+    minAccuracyLift: number;
+    minProfitFactor: number;
+    minSharpeRatio: number;
+    maxDrawdown: number;
+  },
+): { promote: boolean; accuracyZScore: number } {
+  const zScore = accuracyZScore(
+    shadow.correctCount,
+    shadow.tradesCount,
+    live.correctCount,
+    live.tradesCount,
+  );
+  const shadowAverageReturn = shadow.tradesCount > 0 ? shadow.totalReturn / shadow.tradesCount : 0;
+  const liveAverageReturn = live.tradesCount > 0 ? live.totalReturn / live.tradesCount : 0;
+  const hasComparableLiveSample = live.tradesCount >= rules.minTrades;
+  return {
+    promote:
+      shadow.tradesCount >= rules.minTrades &&
+      hasComparableLiveSample &&
+      shadow.accuracy >= live.accuracy + rules.minAccuracyLift &&
+      zScore >= 1.645 &&
+      shadowAverageReturn > Math.max(0, liveAverageReturn) &&
+      shadow.profitFactor >= rules.minProfitFactor &&
+      shadow.sharpeRatio >= Math.max(rules.minSharpeRatio, live.sharpeRatio) &&
+      shadow.maxDrawdown <= Math.min(rules.maxDrawdown, live.maxDrawdown || rules.maxDrawdown),
+    accuracyZScore: zScore,
   };
 }
 
@@ -58,7 +185,19 @@ function parseShadowPerformance(value: Prisma.JsonValue | null | undefined): Sha
 export class SelfLearningService {
   private readonly logger = new Logger(SelfLearningService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
+
+  listExperiments(userId: string) {
+    return this.prisma.selfLearningExperiment.findMany({
+      where: { userId },
+      include: { events: { orderBy: { createdAt: 'asc' } } },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+  }
 
   /**
    * Get or create self-learning configuration for a user.
@@ -77,12 +216,16 @@ export class SelfLearningService {
           shadowWeightsJson: BASE_WEIGHTS,
           shadowThreshold: 60.0,
           shadowEnabled: false,
-          shadowPerformance: toShadowPerformanceJson({
-            tradesCount: 0,
-            correctCount: 0,
-            accuracy: 0,
-            totalReturn: 0,
-          }),
+          shadowPerformance: toShadowPerformanceJson(EMPTY_SHADOW_PERFORMANCE),
+        },
+      });
+    } else if (config.shadowEnabled && config.shadowVersion === null) {
+      config = await this.prisma.selfLearningConfiguration.update({
+        where: { userId },
+        data: {
+          shadowVersion: config.liveVersion + 1,
+          shadowStartedAt: config.shadowStartedAt ?? new Date(),
+          shadowPerformance: toShadowPerformanceJson(EMPTY_SHADOW_PERFORMANCE),
         },
       });
     }
@@ -95,17 +238,17 @@ export class SelfLearningService {
    */
   async tuneParameters(userId: string): Promise<void> {
     const config = await this.getOrCreateConfig(userId);
-    if (!config.isEnabled || config.shadowEnabled) return;
+    if (!config.isEnabled || config.shadowEnabled || config.canaryEnabled) return;
 
-    // Fetch last 50 performance records (MID/LONG horizons represent true outcomes)
+    // Use one fixed horizon so the same decision is not counted twice.
     const records = await this.prisma.performanceRecord.findMany({
-      where: { userId, horizon: { in: ['MID', 'LONG'] } },
+      where: { userId, horizon: 'MID', decision: { in: ['LONG', 'SHORT'] } },
       orderBy: { evaluatedAt: 'desc' },
-      take: 50,
+      take: 100,
     });
 
-    if (records.length < 10) {
-      this.logger.log(`Skipping auto-tuning for user ${userId}: not enough history (${records.length}/10 records).`);
+    if (records.length < MIN_TUNING_DIRECTIONAL_RECORDS) {
+      this.logger.log(`Skipping auto-tuning for user ${userId}: not enough directional MID history (${records.length}/${MIN_TUNING_DIRECTIONAL_RECORDS}).`);
       return;
     }
 
@@ -136,12 +279,12 @@ export class SelfLearningService {
       this.logger.log(`Tuning: Volatility accuracy is low (${volatileAccuracy.toFixed(1)}%). Keeping the live volatility penalty unchanged until a shadow field is available.`);
     }
 
-    // Never mutate live parameters directly. The candidate threshold is tested
-    // by the same shadow promotion gate as candidate weights.
+    // Record that tuning was evaluated, but do not construct a candidate from
+    // this recent window. Candidate thresholds are selected only from the
+    // non-overlapping training window in optimizeAgentWeights().
     await this.prisma.selfLearningConfiguration.update({
       where: { userId },
       data: {
-        shadowThreshold: nextThreshold,
         lastOptimizedAt: new Date(),
       },
     });
@@ -155,7 +298,7 @@ export class SelfLearningService {
     const config = await this.getOrCreateConfig(userId);
     // A shadow experiment is immutable. Mixing decisions from several
     // candidates would make its performance statistically meaningless.
-    if (!config.isEnabled || config.shadowEnabled) return;
+    if (!config.isEnabled || config.shadowEnabled || config.canaryEnabled) return;
 
     // Fetch recent completed runs with stored contexts to retrieve individual agent votes
     const runs = await this.prisma.pipelineRun.findMany({
@@ -168,10 +311,15 @@ export class SelfLearningService {
         performanceRecords: true,
       },
       orderBy: { completedAt: 'desc' },
-      take: 30,
+      take: 200,
     });
 
-    if (runs.length < 5) return;
+    if (runs.length < MIN_WEIGHT_OPTIMIZATION_RUNS) return;
+    const chronologicalRuns = [...runs].reverse();
+    const splitIndex = Math.floor(chronologicalRuns.length * 0.7);
+    const trainingRuns = chronologicalRuns.slice(0, splitIndex);
+    const validationRuns = chronologicalRuns.slice(splitIndex);
+    if (trainingRuns.length < MIN_WEIGHT_OPTIMIZATION_RUNS || validationRuns.length < 20) return;
 
     const agentScores: Record<AnalystName, { correct: number; total: number }> = {
       market: { correct: 0, total: 0 },
@@ -182,44 +330,15 @@ export class SelfLearningService {
       onchain: { correct: 0, total: 0 },
     };
 
-    for (const run of runs) {
-      const stored = run.storedContext as StoredContextPayload | null;
-      if (!stored?.analyses) continue;
-
-      // Find actual outcome (MID or LONG horizon preferred, fallback to SHORT)
-      const record = run.performanceRecords.find((r) => r.horizon === 'LONG') ||
-                     run.performanceRecords.find((r) => r.horizon === 'MID') ||
-                     run.performanceRecords.find((r) => r.horizon === 'SHORT');
-      if (!record || record.outcome === 'NEUTRAL') continue;
-
-      // Actual direction is matching decision if CORRECT, or opposite if WRONG
-      const actualDirection = record.outcome === 'CORRECT'
-        ? record.decision
-        : (record.decision === 'LONG' ? 'SHORT' : 'LONG');
-
+    for (const run of trainingRuns) {
+      const observation = this.learningObservation(run);
+      if (!observation) continue;
       const agents = Object.keys(agentScores) as AnalystName[];
       for (const agent of agents) {
-        const analysis = stored.analyses[agent];
-        if (!analysis || analysis.dataQuality === 'INSUFFICIENT') continue;
-
-        let agentVote: 'LONG' | 'SHORT' | 'WAIT' = 'WAIT';
-        if (agent === 'market' || agent === 'technical') {
-          agentVote = analysis.trend?.direction === 'UP' ? 'LONG' : analysis.trend?.direction === 'DOWN' ? 'SHORT' : 'WAIT';
-        } else if (agent === 'news') {
-          agentVote = analysis.focusDirection === 'BULLISH' || analysis.impact?.direction === 'POSITIVE' ? 'LONG' : analysis.focusDirection === 'BEARISH' || analysis.impact?.direction === 'NEGATIVE' ? 'SHORT' : 'WAIT';
-        } else if (agent === 'sentiment') {
-          const overall = analysis.sentiment?.overall;
-          agentVote = overall === 'BULLISH' ? 'LONG' : overall === 'BEARISH' ? 'SHORT' : 'WAIT';
-        } else if (agent === 'macro') {
-          agentVote = analysis.macroTrend === 'RISK_ON' ? 'LONG' : analysis.macroTrend === 'RISK_OFF' ? 'SHORT' : 'WAIT';
-        } else if (agent === 'onchain') {
-          const activity = analysis.activity;
-          agentVote = activity === 'HIGH' ? 'LONG' : activity === 'LOW' ? 'SHORT' : 'WAIT';
-        }
-
+        const agentVote = observation.votes[agent];
         if (agentVote !== 'WAIT') {
           agentScores[agent].total++;
-          if (agentVote === actualDirection) {
+          if (agentVote === observation.actualDirection) {
             agentScores[agent].correct++;
           }
         }
@@ -233,10 +352,11 @@ export class SelfLearningService {
 
     const computedWeights = agents.reduce((acc, agent) => {
       const score = agentScores[agent];
-      const accuracy = score.total > 0 ? score.correct / score.total : 0.5; // default 50%
-      // Modulate weight: base weight scale factor based on performance
-      const performanceMultiplier = 0.5 + accuracy; // range [0.5, 1.5]
-      const rawWeight = BASE_WEIGHTS[agent] * performanceMultiplier;
+      // Keep the base weight until the agent has enough observations. Once
+      // eligible, apply Beta-prior shrinkage to reduce small-sample overfit.
+      const rawWeight = score.total >= MIN_AGENT_OBSERVATIONS
+        ? BASE_WEIGHTS[agent] * (0.75 + ((score.correct + 10) / (score.total + 20)) * 0.5)
+        : BASE_WEIGHTS[agent];
       totalAdjusted += rawWeight;
       acc[agent] = rawWeight;
       return acc;
@@ -255,22 +375,79 @@ export class SelfLearningService {
 
     this.logger.log(`Optimized agent weights: ${JSON.stringify(newWeights)}`);
 
+    const candidateValidation = this.scoreWeights(validationRuns, newWeights);
+    const baselineValidation = this.scoreWeights(validationRuns, BASE_WEIGHTS);
+    const latestExperiment = await this.prisma.selfLearningExperiment.findFirst({
+      where: { userId },
+      orderBy: { version: 'desc' },
+      select: { version: true },
+    });
+    const candidateVersion = Math.max(config.liveVersion + 1, (latestExperiment?.version ?? 0) + 1);
+    const candidateThreshold = this.selectThreshold(trainingRuns, config.confidenceThreshold);
+    const candidateThresholdValidation = this.scoreThreshold(validationRuns, candidateThreshold);
+    const baselineThresholdValidation = this.scoreThreshold(validationRuns, config.confidenceThreshold);
+    const trainStartedAt = trainingRuns[0]?.completedAt ?? new Date();
+    const trainEndedAt = trainingRuns.at(-1)?.completedAt ?? new Date();
+    const validationStartedAt = validationRuns[0]?.completedAt ?? new Date();
+    const validationEndedAt = validationRuns.at(-1)?.completedAt ?? new Date();
+    const reproducibleHash = createHash('sha256').update(JSON.stringify({
+      userId,
+      candidateVersion,
+      baseVersion: config.liveVersion,
+      newWeights,
+      candidateThreshold,
+      trainStartedAt: trainStartedAt.toISOString(),
+      trainEndedAt: trainEndedAt.toISOString(),
+      validationStartedAt: validationStartedAt.toISOString(),
+      validationEndedAt: validationEndedAt.toISOString(),
+    })).digest('hex');
+    const experiment = await this.prisma.selfLearningExperiment.create({
+      data: {
+        userId,
+        version: candidateVersion,
+        baseVersion: config.liveVersion,
+        candidateWeightsJson: newWeights,
+        candidateThreshold,
+        trainStartedAt,
+        trainEndedAt,
+        validationStartedAt,
+        validationEndedAt,
+        trainMetricsJson: { runs: trainingRuns.length, agentScores },
+        validationMetricsJson: {
+          candidate: candidateValidation,
+          baseline: baselineValidation,
+          candidateThreshold: candidateThresholdValidation,
+          baselineThreshold: baselineThresholdValidation,
+        },
+        reproducibleHash,
+      },
+    });
+    const validationPassed = candidateValidation.total >= 20 &&
+      candidateValidation.accuracy >= baselineValidation.accuracy &&
+      candidateThresholdValidation.total >= 10 &&
+      candidateThresholdValidation.accuracy >= baselineThresholdValidation.accuracy;
+    await this.appendExperimentEvent(
+      experiment.id,
+      validationPassed ? 'VALIDATION_PASSED_SHADOW_STARTED' : 'VALIDATION_REJECTED',
+      { candidate: candidateValidation, baseline: baselineValidation, candidateThreshold: candidateThresholdValidation, baselineThreshold: baselineThresholdValidation },
+    );
+    if (!validationPassed) return;
+
     // Phase C: Shadow Mode Setup
     // Save new configuration as a candidate (shadow) config instead of replacing live weights immediately
+    await this.prisma.paperSignal.updateMany({
+      where: { userId, mode: 'SHADOW', outcome: 'PENDING' },
+      data: { outcome: 'SUPERSEDED' },
+    });
     await this.prisma.selfLearningConfiguration.update({
       where: { userId },
       data: {
         shadowWeightsJson: newWeights,
-        shadowThreshold: config.shadowThreshold ?? config.confidenceThreshold,
+        shadowThreshold: candidateThreshold,
         shadowEnabled: true,
-        shadowVersion: config.liveVersion + 1,
+        shadowVersion: candidateVersion,
         shadowStartedAt: new Date(),
-        shadowPerformance: toShadowPerformanceJson({
-          tradesCount: 0,
-          correctCount: 0,
-          accuracy: 0,
-          totalReturn: 0,
-        }),
+        shadowPerformance: toShadowPerformanceJson(EMPTY_SHADOW_PERFORMANCE),
       },
     });
   }
@@ -283,18 +460,30 @@ export class SelfLearningService {
     const config = await this.getOrCreateConfig(userId);
     if (!config.shadowEnabled) return;
 
+    const candidateVersion = config.shadowVersion ?? config.liveVersion + 1;
+    const minTrades = this.config.get<number>('SELF_LEARNING_MIN_SHADOW_TRADES', 100);
+    const rejectAfterTrades = Math.max(
+      minTrades,
+      this.config.get<number>('SELF_LEARNING_REJECT_AFTER_TRADES', 300),
+    );
+    const minAccuracyLift = this.config.get<number>('SELF_LEARNING_MIN_ACCURACY_LIFT_PCT', 3);
+    const minProfitFactor = this.config.get<number>('SELF_LEARNING_MIN_PROFIT_FACTOR', 1.2);
+    const minSharpeRatio = this.config.get<number>('SELF_LEARNING_MIN_SHARPE_RATIO', 0.5);
+    const maxDrawdown = this.config.get<number>('SELF_LEARNING_MAX_DRAWDOWN_PCT', 10);
+    const maxShadowDays = this.config.get<number>('SELF_LEARNING_MAX_SHADOW_DAYS', 30);
+
     const pendingSignals = await this.prisma.paperSignal.findMany({
-      where: { userId, mode: 'SHADOW', outcome: 'PENDING' },
+      where: {
+        userId,
+        mode: 'SHADOW',
+        outcome: 'PENDING',
+        configurationVersion: candidateVersion,
+      },
       orderBy: { createdAt: 'asc' },
+      take: 500,
     });
 
-    if (pendingSignals.length === 0) return;
-
-    let evaluatedCount = 0;
-    let correctCount = 0;
-    let totalReturn = 0;
-
-    const shadowPerf = parseShadowPerformance(config.shadowPerformance);
+    let updatedPerf = parseShadowPerformance(config.shadowPerformance);
 
     for (const signal of pendingSignals) {
       // Find historical candle at completion to see actual outcome
@@ -328,86 +517,437 @@ export class SelfLearningService {
         0.1,
       );
 
-      evaluatedCount++;
-      if (evalRes.outcome === 'CORRECT') correctCount++;
-      totalReturn += evalRes.returnPct;
+      updatedPerf = addShadowReturn(
+        updatedPerf,
+        evalRes.returnPct,
+        evalRes.outcome === 'CORRECT',
+      );
 
       await this.prisma.paperSignal.update({
         where: { id: signal.id },
-        data: { outcome: evalRes.outcome },
+        data: { outcome: evalRes.outcome, returnPct: evalRes.returnPct },
       });
     }
 
-    if (evaluatedCount > 0) {
-      const nextTradesCount = shadowPerf.tradesCount + evaluatedCount;
-      const nextCorrectCount = shadowPerf.correctCount + correctCount;
-      const nextAccuracy = nextTradesCount > 0 ? (nextCorrectCount / nextTradesCount) * 100 : 0;
-      const nextTotalReturn = shadowPerf.totalReturn + totalReturn;
-
-      const updatedPerf: ShadowPerformance = {
-        tradesCount: nextTradesCount,
-        correctCount: nextCorrectCount,
-        accuracy: nextAccuracy,
-        totalReturn: nextTotalReturn,
-      };
-
-      // Auto-Promote check:
-      // Promotion requires a useful sample, positive virtual return, and a
-      // measurable improvement over directional live decisions.
-      const liveRecords = await this.prisma.performanceRecord.findMany({
-        where: { userId, horizon: 'MID' },
+    const liveRecords = await this.prisma.performanceRecord.findMany({
+      where: {
+        userId,
+        horizon: 'MID',
+        decision: { in: ['LONG', 'SHORT'] },
+        outcome: { in: ['CORRECT', 'WRONG'] },
+      },
+      orderBy: { evaluatedAt: 'desc' },
+      take: Math.min(500, Math.max(minTrades, updatedPerf.tradesCount)),
+    });
+    const livePerf = liveRecords.reduce(
+      (performance, record) => addShadowReturn(
+        performance,
+        Number(record.returnPct),
+        record.outcome === 'CORRECT',
+      ),
+      { ...EMPTY_SHADOW_PERFORMANCE },
+    );
+    const promotion = evaluateShadowPromotion(updatedPerf, livePerf, {
+      minTrades,
+      minAccuracyLift,
+      minProfitFactor,
+      minSharpeRatio,
+      maxDrawdown,
+    });
+    const [shadowRegimeSignals, liveRegimeRecords] = await Promise.all([
+      this.prisma.paperSignal.findMany({
+        where: {
+          userId,
+          mode: 'SHADOW',
+          configurationVersion: candidateVersion,
+          outcome: { in: ['CORRECT', 'WRONG'] },
+          returnPct: { not: null },
+          marketRegime: { not: null },
+        },
+        select: { marketRegime: true, outcome: true, returnPct: true },
+        take: 2_000,
+      }),
+      this.prisma.performanceRecord.findMany({
+        where: {
+          userId,
+          horizon: 'MID',
+          decision: { in: ['LONG', 'SHORT'] },
+          outcome: { in: ['CORRECT', 'WRONG'] },
+          marketRegime: { not: null },
+        },
+        select: { marketRegime: true, outcome: true, returnPct: true },
         orderBy: { evaluatedAt: 'desc' },
-        take: 30,
+        take: 2_000,
+      }),
+    ]);
+    const shadowByRegime = this.performanceByRegime(shadowRegimeSignals);
+    const liveByRegime = this.performanceByRegime(liveRegimeRecords);
+    const comparableRegimes = Object.keys(shadowByRegime).filter((regime) =>
+      shadowByRegime[regime]!.tradesCount >= 20 && (liveByRegime[regime]?.tradesCount ?? 0) >= 20);
+    const regimeGatePassed = comparableRegimes.length >= 2 && comparableRegimes.every((regime) => {
+      const shadow = shadowByRegime[regime]!;
+      const live = liveByRegime[regime]!;
+      return shadow.accuracy >= live.accuracy &&
+        shadow.totalReturn / shadow.tradesCount >= live.totalReturn / live.tradesCount;
+    });
+    const shouldPromote = promotion.promote && regimeGatePassed;
+    const shadowExpired = Boolean(
+      config.shadowStartedAt &&
+      Date.now() - config.shadowStartedAt.getTime() >= maxShadowDays * 24 * 60 * 60_000,
+    );
+    const shouldReject = !shouldPromote &&
+      (updatedPerf.tradesCount >= rejectAfterTrades || shadowExpired);
+
+    if (shouldPromote) {
+      this.logger.log({
+        event: 'shadow_configuration_advanced_to_canary',
+        userId,
+        candidateVersion,
+        shadow: updatedPerf,
+        live: livePerf,
+        accuracyZScore: promotion.accuracyZScore,
       });
-
-      const liveDirectional = liveRecords.filter((r) => r.decision !== 'WAIT' && r.outcome !== 'NEUTRAL');
-      const liveCorrect = liveDirectional.filter((r) => r.outcome === 'CORRECT').length;
-      const liveAccuracy = liveDirectional.length > 0 ? (liveCorrect / liveDirectional.length) * 100 : 60;
-
-      const shouldPromote = nextTradesCount >= 50 && nextAccuracy > liveAccuracy + 3.0 && nextTotalReturn > 0;
-      const shouldReject = nextTradesCount >= 200 && !shouldPromote;
-
-      if (shouldPromote) {
-        this.logger.log(`Auto-Promoting shadow config to Live! Shadow accuracy: ${nextAccuracy.toFixed(1)}% vs Live: ${liveAccuracy.toFixed(1)}%`);
-        await this.prisma.selfLearningConfiguration.update({
-          where: { userId },
-          data: {
-            weightsJson: config.shadowWeightsJson ?? BASE_WEIGHTS,
-            confidenceThreshold: config.shadowThreshold ?? config.confidenceThreshold,
-            shadowEnabled: false, // Turn off shadow testing until next optimization
-            liveVersion: config.shadowVersion ?? config.liveVersion + 1,
-            shadowVersion: null,
-            shadowStartedAt: null,
-            lastPromotionAt: new Date(),
-            shadowPerformance: toShadowPerformanceJson({
-              tradesCount: 0,
-              correctCount: 0,
-              accuracy: 0,
-              totalReturn: 0,
-            }),
-          },
-        });
-      } else if (shouldReject) {
-        this.logger.warn(`Rejecting shadow config after ${nextTradesCount} trades without sufficient improvement.`);
-        await this.prisma.selfLearningConfiguration.update({
-          where: { userId },
-          data: {
-            shadowEnabled: false,
-            shadowVersion: null,
-            shadowStartedAt: null,
-            shadowWeightsJson: config.weightsJson ?? BASE_WEIGHTS,
-            shadowThreshold: config.confidenceThreshold,
-            shadowPerformance: toShadowPerformanceJson({ tradesCount: 0, correctCount: 0, accuracy: 0, totalReturn: 0 }),
-          },
-        });
-      } else {
-        await this.prisma.selfLearningConfiguration.update({
-          where: { userId },
-          data: {
-            shadowPerformance: toShadowPerformanceJson(updatedPerf),
-          },
-        });
-      }
+      const experiment = await this.prisma.selfLearningExperiment.findUnique({
+        where: { userId_version: { userId, version: candidateVersion } },
+        select: { id: true },
+      });
+      await this.prisma.selfLearningConfiguration.update({
+        where: { userId },
+        data: {
+          shadowEnabled: false,
+          shadowVersion: null,
+          shadowStartedAt: null,
+          canaryEnabled: true,
+          canaryVersion: candidateVersion,
+          canaryWeightsJson: config.shadowWeightsJson ?? BASE_WEIGHTS,
+          canaryThreshold: config.shadowThreshold ?? config.confidenceThreshold,
+          canaryStartedAt: new Date(),
+          previousWeightsJson: config.weightsJson ?? BASE_WEIGHTS,
+          previousThreshold: config.confidenceThreshold,
+          previousVersion: config.liveVersion,
+          shadowPerformance: toShadowPerformanceJson(EMPTY_SHADOW_PERFORMANCE),
+        },
+      });
+      if (experiment) await this.prisma.selfLearningExperimentEvent.create({
+        data: {
+          experimentId: experiment.id,
+          eventType: 'SHADOW_PASSED_CANARY_STARTED',
+          payloadJson: { shadow: toShadowPerformanceJson(updatedPerf), live: toShadowPerformanceJson(livePerf), shadowByRegime, liveByRegime } as unknown as Prisma.InputJsonObject,
+        },
+      });
+    } else if (shouldReject) {
+      this.logger.warn({
+        event: 'shadow_configuration_rejected',
+        userId,
+        candidateVersion,
+        tradesCount: updatedPerf.tradesCount,
+        shadowExpired,
+        accuracyZScore: promotion.accuracyZScore,
+      });
+      await this.prisma.paperSignal.updateMany({
+        where: {
+          userId,
+          mode: 'SHADOW',
+          outcome: 'PENDING',
+          configurationVersion: candidateVersion,
+        },
+        data: { outcome: 'SUPERSEDED' },
+      });
+      await this.prisma.selfLearningConfiguration.update({
+        where: { userId },
+        data: {
+          shadowEnabled: false,
+          shadowVersion: null,
+          shadowStartedAt: null,
+          shadowWeightsJson: config.weightsJson ?? BASE_WEIGHTS,
+          shadowThreshold: config.confidenceThreshold,
+          shadowPerformance: toShadowPerformanceJson(EMPTY_SHADOW_PERFORMANCE),
+        },
+      });
+      const experiment = await this.prisma.selfLearningExperiment.findUnique({
+        where: { userId_version: { userId, version: candidateVersion } },
+        select: { id: true },
+      });
+      if (experiment) await this.prisma.selfLearningExperimentEvent.create({
+        data: {
+          experimentId: experiment.id,
+          eventType: 'SHADOW_REJECTED',
+          payloadJson: { shadow: toShadowPerformanceJson(updatedPerf), shadowExpired, regimeGatePassed },
+        },
+      });
+    } else {
+      await this.prisma.selfLearningConfiguration.update({
+        where: { userId },
+        data: { shadowPerformance: toShadowPerformanceJson(updatedPerf) },
+      });
     }
+  }
+
+  async evaluateCanary(userId: string): Promise<void> {
+    const config = await this.getOrCreateConfig(userId);
+    if (!config.canaryEnabled || !config.canaryVersion || !config.canaryStartedAt) return;
+    const minTrades = this.config.get<number>('SELF_LEARNING_MIN_CANARY_TRADES', 100);
+    const maxDays = this.config.get<number>('SELF_LEARNING_MAX_CANARY_DAYS', 14);
+    const maxDrawdown = this.config.get<number>('SELF_LEARNING_MAX_DRAWDOWN_PCT', 10);
+    const minSharpeRatio = this.config.get<number>('SELF_LEARNING_MIN_SHARPE_RATIO', 0.5);
+    const commonWhere: Prisma.PerformanceRecordWhereInput = {
+      userId,
+      horizon: 'MID' as const,
+      decision: { in: ['LONG', 'SHORT'] },
+      outcome: { in: ['CORRECT', 'WRONG'] },
+    };
+    const [canaryRows, liveRows] = await Promise.all([
+      this.prisma.performanceRecord.findMany({
+        where: {
+          ...commonWhere,
+          run: { configurationVersion: config.canaryVersion, learningStage: 'CANARY' },
+        },
+        orderBy: { evaluatedAt: 'desc' },
+        take: 500,
+      }),
+      this.prisma.performanceRecord.findMany({
+        where: {
+          ...commonWhere,
+          run: { configurationVersion: config.liveVersion, learningStage: 'LIVE' },
+        },
+        orderBy: { evaluatedAt: 'desc' },
+        take: 500,
+      }),
+    ]);
+    const canary = this.performanceFromRows(canaryRows);
+    const live = this.performanceFromRows(liveRows);
+    const canaryByRegime = this.performanceByRegime(canaryRows);
+    const liveByRegime = this.performanceByRegime(liveRows);
+    const regimes = Object.keys(canaryByRegime).filter((regime) =>
+      canaryByRegime[regime]!.tradesCount >= 10 && (liveByRegime[regime]?.tradesCount ?? 0) >= 10);
+    const regimeGate = regimes.length >= 2 && regimes.every((regime) => {
+      const candidate = canaryByRegime[regime]!;
+      const baseline = liveByRegime[regime]!;
+      return candidate.accuracy >= baseline.accuracy &&
+        candidate.totalReturn / candidate.tradesCount >= baseline.totalReturn / baseline.tradesCount;
+    });
+    const average = (value: ShadowPerformance) => value.tradesCount ? value.totalReturn / value.tradesCount : 0;
+    const canPromote = canary.tradesCount >= minTrades && live.tradesCount >= minTrades &&
+      canary.accuracy >= live.accuracy && average(canary) >= average(live) &&
+      canary.profitFactor >= Math.max(1.2, live.profitFactor) &&
+      canary.sharpeRatio >= Math.max(minSharpeRatio, live.sharpeRatio) &&
+      canary.maxDrawdown <= Math.min(maxDrawdown, live.maxDrawdown || maxDrawdown) && regimeGate;
+    const severeRegression = canary.tradesCount >= 20 && (
+      canary.accuracy < live.accuracy - 8 ||
+      canary.profitFactor < 0.8 ||
+      canary.sharpeRatio < -0.5 ||
+      canary.maxDrawdown > maxDrawdown * 1.25
+    );
+    const expired = Date.now() - config.canaryStartedAt.getTime() >= maxDays * 86_400_000;
+    const experiment = await this.prisma.selfLearningExperiment.findUnique({
+      where: { userId_version: { userId, version: config.canaryVersion } },
+      select: { id: true },
+    });
+
+    if (canPromote) {
+      await this.prisma.selfLearningConfiguration.update({
+        where: { userId },
+        data: {
+          weightsJson: config.canaryWeightsJson ?? config.weightsJson ?? BASE_WEIGHTS,
+          confidenceThreshold: config.canaryThreshold ?? config.confidenceThreshold,
+          liveVersion: config.canaryVersion,
+          canaryEnabled: false,
+          canaryVersion: null,
+          canaryWeightsJson: Prisma.DbNull,
+          canaryThreshold: null,
+          canaryStartedAt: null,
+          lastPromotionAt: new Date(),
+        },
+      });
+      if (experiment) await this.appendExperimentEvent(experiment.id, 'CANARY_PROMOTED_TO_LIVE', { canary, live, canaryByRegime, liveByRegime });
+    } else if (severeRegression || expired) {
+      await this.prisma.selfLearningConfiguration.update({
+        where: { userId },
+        data: {
+          canaryEnabled: false,
+          canaryVersion: null,
+          canaryWeightsJson: Prisma.DbNull,
+          canaryThreshold: null,
+          canaryStartedAt: null,
+          previousWeightsJson: Prisma.DbNull,
+          previousThreshold: null,
+          previousVersion: null,
+        },
+      });
+      if (experiment) await this.appendExperimentEvent(experiment.id, 'CANARY_ROLLED_BACK', { canary, live, severeRegression, expired });
+    }
+  }
+
+  async evaluateLiveRollback(userId: string): Promise<boolean> {
+    const config = await this.getOrCreateConfig(userId);
+    if (config.canaryEnabled || !config.previousVersion || !config.previousWeightsJson || !config.lastPromotionAt) return false;
+    const commonWhere: Prisma.PerformanceRecordWhereInput = {
+      userId,
+      horizon: 'MID' as const,
+      decision: { in: ['LONG', 'SHORT'] },
+      outcome: { in: ['CORRECT', 'WRONG'] },
+    };
+    const [currentRows, previousRows] = await Promise.all([
+      this.prisma.performanceRecord.findMany({
+        where: { ...commonWhere, evaluatedAt: { gte: config.lastPromotionAt }, run: { configurationVersion: config.liveVersion } },
+        orderBy: { evaluatedAt: 'desc' },
+        take: 200,
+      }),
+      this.prisma.performanceRecord.findMany({
+        where: { ...commonWhere, run: { configurationVersion: config.previousVersion } },
+        orderBy: { evaluatedAt: 'desc' },
+        take: 200,
+      }),
+    ]);
+    const current = this.performanceFromRows(currentRows);
+    const previous = this.performanceFromRows(previousRows);
+    if (current.tradesCount < 30 || previous.tradesCount < 30) return false;
+    const shouldRollback = current.accuracy < previous.accuracy - 8 ||
+      current.profitFactor < Math.max(0.8, previous.profitFactor * 0.7) ||
+      current.maxDrawdown > Math.max(10, previous.maxDrawdown * 1.5);
+    if (!shouldRollback) {
+      if (current.tradesCount >= 100) {
+        await this.prisma.selfLearningConfiguration.update({
+          where: { userId },
+          data: {
+            previousWeightsJson: Prisma.DbNull,
+            previousThreshold: null,
+            previousVersion: null,
+          },
+        });
+        const stableExperiment = await this.prisma.selfLearningExperiment.findUnique({
+          where: { userId_version: { userId, version: config.liveVersion } },
+          select: { id: true },
+        });
+        if (stableExperiment) await this.appendExperimentEvent(stableExperiment.id, 'LIVE_STABILIZED', { current, previous });
+      }
+      return false;
+    }
+
+    const failedVersion = config.liveVersion;
+    await this.prisma.selfLearningConfiguration.update({
+      where: { userId },
+      data: {
+        weightsJson: config.previousWeightsJson,
+        confidenceThreshold: config.previousThreshold ?? config.confidenceThreshold,
+        liveVersion: config.previousVersion,
+        previousWeightsJson: Prisma.DbNull,
+        previousThreshold: null,
+        previousVersion: null,
+      },
+    });
+    const experiment = await this.prisma.selfLearningExperiment.findUnique({
+      where: { userId_version: { userId, version: failedVersion } },
+      select: { id: true },
+    });
+    if (experiment) await this.appendExperimentEvent(experiment.id, 'LIVE_AUTO_ROLLED_BACK', { current, previous });
+    return true;
+  }
+
+  private learningObservation(run: LearningRun): {
+    actualDirection: 'LONG' | 'SHORT';
+    decision: 'LONG' | 'SHORT';
+    votes: Record<AnalystName, 'LONG' | 'SHORT' | 'WAIT'>;
+  } | undefined {
+    const stored = run.storedContext as StoredContextPayload | null;
+    if (!stored?.analyses) return undefined;
+    const record = run.performanceRecords.find((item) => item.horizon === 'LONG') ??
+      run.performanceRecords.find((item) => item.horizon === 'MID') ??
+      run.performanceRecords.find((item) => item.horizon === 'SHORT');
+    if (!record || record.outcome === 'NEUTRAL' || !['LONG', 'SHORT'].includes(record.decision)) return undefined;
+    const actualDirection = record.outcome === 'CORRECT'
+      ? record.decision as 'LONG' | 'SHORT'
+      : record.decision === 'LONG' ? 'SHORT' : 'LONG';
+    const agents = Object.keys(BASE_WEIGHTS) as AnalystName[];
+    const votes = Object.fromEntries(agents.map((agent) => [
+      agent,
+      this.agentVote(agent, stored.analyses?.[agent]),
+    ])) as Record<AnalystName, 'LONG' | 'SHORT' | 'WAIT'>;
+    return { actualDirection, decision: record.decision as 'LONG' | 'SHORT', votes };
+  }
+
+  private agentVote(agent: AnalystName, analysis?: AgentAnalysisSnapshot): 'LONG' | 'SHORT' | 'WAIT' {
+    if (!analysis || analysis.dataQuality === 'INSUFFICIENT') return 'WAIT';
+    if (agent === 'market' || agent === 'technical') {
+      return analysis.trend?.direction === 'UP' ? 'LONG' : analysis.trend?.direction === 'DOWN' ? 'SHORT' : 'WAIT';
+    }
+    if (agent === 'news') {
+      return analysis.focusDirection === 'BULLISH' || analysis.impact?.direction === 'POSITIVE'
+        ? 'LONG'
+        : analysis.focusDirection === 'BEARISH' || analysis.impact?.direction === 'NEGATIVE' ? 'SHORT' : 'WAIT';
+    }
+    if (agent === 'sentiment') {
+      return analysis.sentiment?.overall === 'BULLISH' ? 'LONG' : analysis.sentiment?.overall === 'BEARISH' ? 'SHORT' : 'WAIT';
+    }
+    if (agent === 'macro') {
+      return analysis.macroTrend === 'RISK_ON' ? 'LONG' : analysis.macroTrend === 'RISK_OFF' ? 'SHORT' : 'WAIT';
+    }
+    return analysis.activity === 'HIGH' ? 'LONG' : analysis.activity === 'LOW' ? 'SHORT' : 'WAIT';
+  }
+
+  private scoreWeights(runs: LearningRun[], weights: Record<AnalystName, number>): { total: number; correct: number; accuracy: number } {
+    let total = 0;
+    let correct = 0;
+    for (const run of runs) {
+      const observation = this.learningObservation(run);
+      if (!observation) continue;
+      const score = (Object.keys(weights) as AnalystName[]).reduce((sum, agent) => {
+        const vote = observation.votes[agent];
+        return sum + (vote === 'LONG' ? weights[agent] : vote === 'SHORT' ? -weights[agent] : 0);
+      }, 0);
+      if (score === 0) continue;
+      total++;
+      if ((score > 0 ? 'LONG' : 'SHORT') === observation.actualDirection) correct++;
+    }
+    return { total, correct, accuracy: total ? correct / total * 100 : 0 };
+  }
+
+  private scoreThreshold(runs: LearningRun[], threshold: number): { total: number; correct: number; accuracy: number } {
+    let total = 0;
+    let correct = 0;
+    for (const run of runs) {
+      if (run.confidence === null || run.confidence < threshold) continue;
+      const observation = this.learningObservation(run);
+      if (!observation) continue;
+      total++;
+      if (observation.decision === observation.actualDirection) correct++;
+    }
+    return { total, correct, accuracy: total ? correct / total * 100 : 0 };
+  }
+
+  private selectThreshold(trainingRuns: LearningRun[], liveThreshold: number): number {
+    const candidates = [55, 60, 65, 70, 75];
+    const eligible = candidates
+      .map((threshold) => ({ threshold, result: this.scoreThreshold(trainingRuns, threshold) }))
+      .filter(({ result }) => result.total >= 20)
+      .sort((a, b) => b.result.accuracy - a.result.accuracy || b.result.total - a.result.total);
+    return eligible[0]?.threshold ?? liveThreshold;
+  }
+
+  private performanceFromRows(rows: Array<{ outcome: string; returnPct: number }>): ShadowPerformance {
+    return rows.reduce((performance, row) => addShadowReturn(
+      performance,
+      Number(row.returnPct),
+      row.outcome === 'CORRECT',
+    ), { ...EMPTY_SHADOW_PERFORMANCE });
+  }
+
+  private appendExperimentEvent(experimentId: string, eventType: string, payload: unknown) {
+    return this.prisma.selfLearningExperimentEvent.create({
+      data: { experimentId, eventType, payloadJson: payload as Prisma.InputJsonObject },
+    });
+  }
+
+  private performanceByRegime(rows: Array<{ marketRegime: string | null; outcome: string; returnPct: number | null }>): Record<string, ShadowPerformance> {
+    const grouped: Record<string, ShadowPerformance> = {};
+    for (const row of rows) {
+      if (!row.marketRegime || row.returnPct === null || !['CORRECT', 'WRONG'].includes(row.outcome)) continue;
+      grouped[row.marketRegime] = addShadowReturn(
+        grouped[row.marketRegime] ?? EMPTY_SHADOW_PERFORMANCE,
+        Number(row.returnPct),
+        row.outcome === 'CORRECT',
+      );
+    }
+    return grouped;
   }
 }

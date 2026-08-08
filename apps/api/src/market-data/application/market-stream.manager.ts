@@ -1,4 +1,5 @@
 import { Injectable, Logger, type OnModuleInit, type OnModuleDestroy } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import * as crypto from 'node:crypto';
 import { MarketDataConfigService } from './market-data-config.service';
 import { MarketEventBus } from '../infrastructure/event-bus/market-event-bus';
@@ -8,6 +9,9 @@ import { ExchangeProvider } from '../../exchange/domain/exchange.types';
 import type { PublicMarketStreamAdapter } from '../domain/public-market-stream.adapter';
 import { MarketEventType } from '../domain/market-data.enums';
 import { MarketRedisCacheService } from '../infrastructure/redis/market-redis-cache.service';
+import { DistributedTaskLockService } from '../../redis/distributed-task-lock.service';
+
+class MarketStreamLeadershipLostError extends Error {}
 
 @Injectable()
 export class MarketStreamManager implements OnModuleInit, OnModuleDestroy {
@@ -15,21 +19,91 @@ export class MarketStreamManager implements OnModuleInit, OnModuleDestroy {
   private readonly adapters = new Map<ExchangeProvider, PublicMarketStreamAdapter>();
   private readonly unsubscribers: Array<() => void> = [];
   private statusRefreshTimer: ReturnType<typeof setInterval> | undefined;
+  private leadershipTimer: ReturnType<typeof setInterval> | undefined;
+  private leaderToken: string | undefined;
+  private leadershipCheckRunning = false;
+  private streamActive = false;
+  private readonly leaseSeconds: number;
+  private readonly leadershipCheckMs: number;
 
   constructor(
-    private readonly configService: MarketDataConfigService,
+    private readonly marketConfig: MarketDataConfigService,
     private readonly eventBus: MarketEventBus,
     private readonly binanceAdapter: BinancePublicStreamAdapter,
     private readonly okxAdapter: OkxPublicStreamAdapter,
     private readonly cache: MarketRedisCacheService,
-  ) {}
+    private readonly taskLock: DistributedTaskLockService,
+    config: ConfigService,
+  ) {
+    this.leaseSeconds = config.get<number>('MARKET_STREAM_LEADER_LEASE_SECONDS', 30);
+    this.leadershipCheckMs = Math.max(1_000, Math.floor(this.leaseSeconds * 1_000 / 3));
+  }
 
   async onModuleInit(): Promise<void> {
-    if (!this.configService.isEnabled()) {
-      return;
-    }
+    if (!this.marketConfig.isEnabled()) return;
 
-    const config = this.configService.getConfig();
+    await this.maintainLeadership();
+    this.leadershipTimer = setInterval(() => void this.maintainLeadership(), this.leadershipCheckMs);
+    this.leadershipTimer.unref();
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    if (this.leadershipTimer) clearInterval(this.leadershipTimer);
+    const token = this.leaderToken;
+    this.leaderToken = undefined;
+    await this.stopStreaming();
+    if (token) await this.taskLock.release('market-stream-leader', token).catch(() => false);
+  }
+
+  private async maintainLeadership(): Promise<void> {
+    if (this.leadershipCheckRunning) return;
+    this.leadershipCheckRunning = true;
+    try {
+      if (this.leaderToken) {
+        const renewed = await this.taskLock.renew('market-stream-leader', this.leaderToken, this.leaseSeconds);
+        if (renewed) return;
+
+        this.logger.warn({ event: 'market_stream_leadership_lost' });
+        this.leaderToken = undefined;
+        await this.stopStreaming();
+        return;
+      }
+
+      const token = await this.taskLock.acquire('market-stream-leader', this.leaseSeconds);
+      if (!token) return;
+
+      this.leaderToken = token;
+      this.logger.log({ event: 'market_stream_leadership_acquired', leaseSeconds: this.leaseSeconds });
+      try {
+        await this.startStreaming();
+      } catch (error) {
+        this.logger.error({
+          event: 'market_stream_leader_start_failed',
+          error: error instanceof Error ? error.message : String(error),
+        });
+        this.leaderToken = undefined;
+        await this.stopStreaming();
+        await this.taskLock.release('market-stream-leader', token).catch(() => false);
+      }
+    } catch (error) {
+      // Fail closed: a replica that cannot prove lease ownership must stop
+      // exchange streams before another replica is allowed to take over.
+      this.logger.error({
+        event: 'market_stream_leadership_check_failed',
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.leaderToken = undefined;
+      await this.stopStreaming();
+    } finally {
+      this.leadershipCheckRunning = false;
+    }
+  }
+
+  private async startStreaming(): Promise<void> {
+    if (this.streamActive) return;
+    this.streamActive = true;
+
+    const config = this.marketConfig.getConfig();
 
     if (config.providers.includes(ExchangeProvider.BINANCE_FUTURES)) {
       this.adapters.set(ExchangeProvider.BINANCE_FUTURES, this.binanceAdapter);
@@ -41,6 +115,7 @@ export class MarketStreamManager implements OnModuleInit, OnModuleDestroy {
     // Connect and subscribe for each adapter
     for (const [provider, adapter] of this.adapters.entries()) {
       try {
+        await this.ensureLeaseOwnership();
         // Forward events to event bus
         this.unsubscribers.push(
           adapter.onEvent((event) => {
@@ -99,8 +174,10 @@ export class MarketStreamManager implements OnModuleInit, OnModuleDestroy {
             await adapter.subscribeOrderBook(obSubs);
           }
         }
+        await this.ensureLeaseOwnership();
         await this.cache.setStreamStatus(provider, adapter.getStatus());
       } catch (error) {
+        if (error instanceof MarketStreamLeadershipLostError) throw error;
         this.logger.error({
           event: 'adapter_init_error',
           provider,
@@ -114,11 +191,25 @@ export class MarketStreamManager implements OnModuleInit, OnModuleDestroy {
         void this.cache.setStreamStatus(provider, adapter.getStatus());
       }
     }, 15_000);
+    this.statusRefreshTimer.unref();
   }
 
-  async onModuleDestroy(): Promise<void> {
+  private async ensureLeaseOwnership(): Promise<void> {
+    if (!this.leaderToken || !await this.taskLock.renew(
+      'market-stream-leader',
+      this.leaderToken,
+      this.leaseSeconds,
+    )) {
+      throw new MarketStreamLeadershipLostError('Market stream leader lease expired during startup');
+    }
+  }
+
+  private async stopStreaming(): Promise<void> {
+    if (!this.streamActive && this.adapters.size === 0 && this.unsubscribers.length === 0) return;
+    this.streamActive = false;
     if (this.statusRefreshTimer) {
       clearInterval(this.statusRefreshTimer);
+      this.statusRefreshTimer = undefined;
     }
     for (const unsub of this.unsubscribers) {
       unsub();

@@ -81,6 +81,9 @@ export class PipelineRunnerService {
 
       const signalFilter = this.signalFilter.evaluate({
         price: lastPrice,
+        symbol,
+        provider: job.provider,
+        timeframe: String(interval),
         rsi: Number(indicatorSnapshot?.values.rsi14),
         atr: Number(indicatorSnapshot?.values.atr14),
         volumeChangePercent: Number(indicatorSnapshot?.values.volumeChangePercent),
@@ -198,6 +201,7 @@ export class PipelineRunnerService {
       }, job.userId, {
         pipelineRunId: runId,
         provider: job.provider,
+        timeframe: String(interval),
         referencePrice: lastPrice,
       });
       const strategyKey =
@@ -210,9 +214,16 @@ export class PipelineRunnerService {
         analyses,
       );
       const decisionCompletedAt = new Date();
-      const thresholdFilter = this.threshold.evaluate(output);
-      const filter = this.riskPolicy.evaluate(output);
-      const judge = this.judge?.evaluate(output, analyses) ?? { verdict: 'APPROVE' as const, approved: true, reasons: [] };
+      const policyContext = { symbol, provider: job.provider, timeframe: String(interval), regime: output.regime.type };
+      const thresholdFilter = this.threshold.evaluate(output, policyContext);
+      const filter = this.riskPolicy.evaluate(output, policyContext);
+      const judge = this.judge?.evaluate(output, analyses, {
+        symbol,
+        provider: job.provider,
+        timeframe: String(interval),
+        referencePrice: lastPrice,
+        sourceTimestamp: indicatorSnapshot?.candleCloseTime ?? recentCandles[0]?.closeTime,
+      }) ?? { verdict: 'APPROVE' as const, approved: true, reasons: [] };
       const actionable = thresholdFilter.actionable && filter.actionable && judge.approved;
       const reason = thresholdFilter.reason ?? filter.reason ?? judge.reasons[0];
       await this.finishStep(runId, "decision", output, decisionCompletedAt);
@@ -268,6 +279,10 @@ export class PipelineRunnerService {
             decision: 'WAIT',
             confidence: output.confidence,
             dataQuality: output.dataQuality,
+            marketRegime: output.regime.type,
+            configurationVersion: output.learningConfiguration?.version,
+            learningStage: output.learningConfiguration?.stage,
+            timeframe: String(interval),
             skippedReason: 'EXECUTION_LOCK_BUSY',
             storedContext: { analyses, fusionOutput },
             result: { ...output, decision: 'WAIT' as const, actionable: false, skippedReason: 'EXECUTION_LOCK_BUSY' },
@@ -331,6 +346,10 @@ export class PipelineRunnerService {
         decision: executionDecision.decision,
         confidence: output.confidence,
         dataQuality: output.dataQuality,
+        marketRegime: output.regime.type,
+        configurationVersion: output.learningConfiguration?.version,
+        learningStage: output.learningConfiguration?.stage,
+        timeframe: String(interval),
         skippedReason: filter.reason,
         storedContext: { analyses, fusionOutput },
         result: {

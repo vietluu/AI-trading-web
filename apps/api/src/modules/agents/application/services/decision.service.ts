@@ -24,6 +24,9 @@ import {
   REGIME_FACTOR,
 } from '../../domain/constants/decision.constants';
 import { PrismaService } from '../../../../database/prisma.service';
+import { calibrateConfidence } from '../../../reflection/domain/confidence-calibration';
+import { ConfigService } from '@nestjs/config';
+import { createHash } from 'node:crypto';
 
 export type {
   AnalystName,
@@ -36,10 +39,12 @@ export type {
 @Injectable()
 export class DecisionService {
   private readonly logger = new Logger(DecisionService.name);
+  private readonly calibrationCache = new Map<string, { expiresAt: number; value: ReturnType<typeof calibrateConfidence> }>();
 
   constructor(
     private readonly fusionService: FusionService,
     @Optional() @Inject(PrismaService) private readonly prisma?: PrismaService,
+    @Optional() private readonly configService?: ConfigService,
   ) {}
 
   public async run(options: RunDecisionOptions): Promise<DecisionOutput> {
@@ -52,6 +57,7 @@ export class DecisionService {
     }, options.userId, {
       pipelineRunId: options.correlationId,
       provider: input.provider,
+      timeframe: input.interval,
     });
   }
 
@@ -59,19 +65,48 @@ export class DecisionService {
   public async decideForUser(
     rawInput: DecisionInput,
     userId?: string,
-    metadata: { pipelineRunId?: string; provider?: 'BINANCE_FUTURES' | 'OKX_FUTURES'; referencePrice?: number } = {},
+    metadata: { pipelineRunId?: string; provider?: 'BINANCE_FUTURES' | 'OKX_FUTURES'; timeframe?: string; referencePrice?: number } = {},
   ): Promise<DecisionOutput> {
     const config = userId && this.prisma
       ? await this.prisma.selfLearningConfiguration.findUnique({ where: { userId } })
       : null;
-    const liveWeights = this.validWeights(config?.weightsJson);
+    const canaryPercent = this.configService?.get<number>('SELF_LEARNING_CANARY_PERCENT', 10) ?? 10;
+    const canaryBucket = metadata.pipelineRunId
+      ? parseInt(createHash('sha256').update(metadata.pipelineRunId).digest('hex').slice(0, 8), 16) % 100
+      : 100;
+    const useCanary = Boolean(
+      config?.canaryEnabled &&
+      config.canaryVersion &&
+      canaryBucket < canaryPercent,
+    );
+    const liveWeights = this.validWeights(useCanary ? config?.canaryWeightsJson : config?.weightsJson);
     const decision = this.decide(rawInput, config
       ? {
           weights: liveWeights,
-          confidenceThreshold: config.confidenceThreshold,
+          confidenceThreshold: useCanary
+            ? config.canaryThreshold ?? config.confidenceThreshold
+            : config.confidenceThreshold,
           volatilityPenalty: config.volatilityPenalty,
         }
       : undefined);
+    const confidenceCalibration = await this.confidenceCalibration(
+      userId,
+      rawInput.symbol,
+      decision.confidence,
+      metadata.provider,
+      metadata.timeframe,
+      decision.regime.type,
+    );
+    const calibratedDecision: DecisionOutput = {
+      ...decision,
+      confidenceCalibration,
+      ...(config ? {
+        learningConfiguration: {
+          version: useCanary ? config.canaryVersion! : config.liveVersion,
+          stage: useCanary ? 'CANARY' as const : 'LIVE' as const,
+        },
+      } : {}),
+    };
 
     // Phase C: Shadow Mode Simulation Run
     if (config?.shadowEnabled && userId && this.prisma) {
@@ -104,6 +139,8 @@ export class DecisionService {
             decision: shadowDecision.decision,
             confidence: shadowDecision.confidence,
             mode: 'SHADOW',
+            configurationVersion: config.shadowVersion ?? config.liveVersion + 1,
+            marketRegime: shadowDecision.regime.type,
             referencePrice: lastPrice,
             outcome: 'PENDING',
           },
@@ -115,7 +152,45 @@ export class DecisionService {
       }
     }
 
-    return decision;
+    return calibratedDecision;
+  }
+
+  private async confidenceCalibration(
+    userId: string | undefined,
+    symbol: string,
+    rawScore: number,
+    provider?: 'BINANCE_FUTURES' | 'OKX_FUTURES',
+    timeframe?: string,
+    regime?: 'TRENDING' | 'RANGING' | 'HIGH_VOLATILITY',
+  ) {
+    if (!userId || !this.prisma) return calibrateConfidence(rawScore, []);
+    const key = `${userId}:${symbol}:${provider ?? 'ANY'}:${timeframe ?? 'ANY'}:${regime ?? 'ANY'}:${Math.floor(rawScore / 10)}`;
+    const cached = this.calibrationCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    const records = await this.prisma.performanceRecord.findMany({
+      where: {
+        userId,
+        symbol,
+        horizon: 'MID',
+        decision: { in: ['LONG', 'SHORT'] },
+        outcome: { in: ['CORRECT', 'WRONG'] },
+        ...(regime ? { marketRegime: regime } : {}),
+        run: {
+          ...(provider ? { provider } : {}),
+          ...(timeframe ? { timeframe } : {}),
+        },
+      },
+      select: { confidence: true, outcome: true },
+      orderBy: { evaluatedAt: 'desc' },
+      take: 500,
+    });
+    const value = calibrateConfidence(rawScore, records);
+    if (this.calibrationCache.size >= 500) {
+      const oldest = this.calibrationCache.keys().next().value;
+      if (oldest) this.calibrationCache.delete(oldest);
+    }
+    this.calibrationCache.set(key, { expiresAt: Date.now() + 5 * 60_000, value });
+    return value;
   }
 
   private validWeights(value: unknown): Weighting | undefined {
@@ -210,7 +285,7 @@ export class DecisionService {
     if (extreme) overrides.push('Extreme volatility forced WAIT.');
 
     if (conflictLevel === 'MEDIUM') {
-      overrides.push('Medium signal conflict reduced calibrated confidence by 10%.');
+      overrides.push('Medium signal conflict reduced the composite confidence score by 10 points.');
     }
     if (conflictLevel === 'HIGH') overrides.push('Strong signal conflict forced WAIT.');
 
@@ -221,7 +296,8 @@ export class DecisionService {
     const coreAgree = candidate !== 'WAIT' && marketBias === targetBias && techBias === targetBias;
     if (coreAgree) overrides.push('Market and Technical trend alignment boosted confidence by +10%.');
 
-    // Calibrated confidence calculation using weighted adjustments
+    // Composite confidence score. This is not a win probability; the separate
+    // confidenceCalibration field carries empirical probability when ready.
     const qualityDeduction = dataQuality === 'PARTIAL' ? DECISION_THRESHOLDS.QUALITY_PARTIAL_DEDUCTION : dataQuality === 'INSUFFICIENT' ? DECISION_THRESHOLDS.QUALITY_INSUFFICIENT_DEDUCTION : 0;
     const conflictDeduction = conflictLevel === 'MEDIUM' ? DECISION_THRESHOLDS.CONFLICT_MEDIUM_PENALTY : conflictLevel === 'HIGH' ? DECISION_THRESHOLDS.CONFLICT_HIGH_PENALTY : 0;
     const volDeduction = Math.abs(volatilityAdjustment);
@@ -233,7 +309,7 @@ export class DecisionService {
 
     const minConfidence = customOptions?.confidenceThreshold ?? DECISION_THRESHOLDS.MINIMUM_CONFIDENCE_THRESHOLD;
     if (confidence < minConfidence && candidate !== 'WAIT') {
-      overrides.push(`Calibrated confidence below ${minConfidence} forced WAIT.`);
+      overrides.push(`Composite confidence below ${minConfidence} forced WAIT.`);
     }
     if (dataQuality === 'INSUFFICIENT') overrides.push('Insufficient data forced WAIT.');
 
@@ -272,7 +348,8 @@ export class DecisionService {
     const output = DecisionOutputSchema.parse({
       decision: finalDecision,
       confidence: Math.round(calibratedConfidence),
-      reasoning: `${active.length} of 6 analysts supplied usable data. The ${regime.type.toLowerCase().replace('_', ' ')} regime produced a normalized ${weightedBias} bias of ${Math.round(directionalBias)}, ${agreementScore}% analyst agreement, and ${Math.round(baseScore)}% weighted alignment. Calibrated confidence is ${Math.round(calibratedConfidence)}% with ${dataQuality} data and ${conflictLevel} conflict.`,
+      confidenceKind: 'COMPOSITE_SCORE',
+      reasoning: `${active.length} of 6 analysts supplied usable data. The ${regime.type.toLowerCase().replace('_', ' ')} regime produced a normalized ${weightedBias} bias of ${Math.round(directionalBias)}, ${agreementScore}% analyst agreement, and ${Math.round(baseScore)}% weighted alignment. The composite confidence score is ${Math.round(calibratedConfidence)} with ${dataQuality} data and ${conflictLevel} conflict; it is not a win probability.`,
       signals,
       risks,
       agreementScore,

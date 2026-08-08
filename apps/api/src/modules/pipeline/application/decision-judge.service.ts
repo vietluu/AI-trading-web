@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { DecisionOutput, FusionInput } from '@platform/shared';
+import { adaptiveTradingPolicy, parseSpreadBps } from '../domain/adaptive-trading-policy';
 
 export interface JudgeDecision {
   verdict: 'APPROVE' | 'REJECT' | 'REQUEST_MORE_DATA';
@@ -7,11 +8,30 @@ export interface JudgeDecision {
   reasons: string[];
 }
 
+export interface JudgeContext {
+  symbol: string;
+  provider?: 'BINANCE_FUTURES' | 'OKX_FUTURES';
+  timeframe?: string;
+  referencePrice?: number;
+  sourceTimestamp?: Date | string;
+}
+
 /** Deterministic final validation gate. It never creates a trading signal. */
 @Injectable()
 export class DecisionJudgeService {
-  evaluate(decision: DecisionOutput, analyses: FusionInput, now = Date.now()): JudgeDecision {
+  evaluate(decision: DecisionOutput, analyses: FusionInput, context?: JudgeContext, now = Date.now()): JudgeDecision {
     const reasons: string[] = [];
+    const spreadBps = parseSpreadBps(
+      analyses.market?.liquidity?.bidAskSpread ?? analyses.market?.liquidity?.spread,
+      context?.referencePrice,
+    );
+    const policy = adaptiveTradingPolicy({
+      symbol: context?.symbol ?? 'BTC-USDT',
+      provider: context?.provider,
+      timeframe: context?.timeframe,
+      regime: decision.regime?.type ?? 'RANGING',
+      spreadBps,
+    });
     const usable = Object.values(analyses).filter((analysis) => analysis.dataQuality !== 'INSUFFICIENT');
     if (usable.length < 4) reasons.push('FEWER_THAN_FOUR_USABLE_ANALYSTS');
     if (decision.dataQuality === 'INSUFFICIENT') reasons.push('INSUFFICIENT_DECISION_DATA');
@@ -19,15 +39,34 @@ export class DecisionJudgeService {
 
     const stale = usable.some((analysis) => {
       const generatedAt = Date.parse(analysis.generatedAt);
-      return !Number.isFinite(generatedAt) || now - generatedAt > 10 * 60_000;
+      return !Number.isFinite(generatedAt) || now - generatedAt > policy.staleAfterMs;
     });
     if (stale) reasons.push('STALE_ANALYSIS');
 
-    if (decision.decision !== 'WAIT' && decision.expectedValue <= 0.1) reasons.push('EXPECTED_VALUE_TOO_LOW');
-    if (decision.decision !== 'WAIT' && decision.profitFactorEstimate < 1.2) reasons.push('PROFIT_FACTOR_TOO_LOW');
-    if (decision.riskScore >= 85) reasons.push('DECISION_RISK_TOO_HIGH');
+    if (context?.sourceTimestamp) {
+      const sourceTime = context.sourceTimestamp instanceof Date
+        ? context.sourceTimestamp.getTime()
+        : Date.parse(context.sourceTimestamp);
+      if (!Number.isFinite(sourceTime) || now - sourceTime > policy.staleAfterMs) {
+        reasons.push('STALE_SOURCE_DATA');
+      }
+    }
 
-    if (reasons.some((reason) => reason.includes('DATA') || reason.includes('STALE') || reason.includes('USABLE'))) {
+    if (decision.decision !== 'WAIT' && decision.expectedValue <= policy.minExpectedValue) reasons.push('EXPECTED_VALUE_TOO_LOW');
+    if (decision.decision !== 'WAIT' && decision.profitFactorEstimate < policy.minProfitFactor) reasons.push('PROFIT_FACTOR_TOO_LOW');
+    if (decision.riskScore >= policy.maxRiskScore) reasons.push('DECISION_RISK_TOO_HIGH');
+    if (spreadBps !== undefined && spreadBps > policy.maxSpreadBps) reasons.push('SPREAD_TOO_WIDE');
+    if (
+      decision.decision !== 'WAIT' &&
+      decision.confidenceCalibration?.status === 'CALIBRATED' &&
+      (decision.confidenceCalibration.empiricalProbability ?? 0) < policy.minCalibratedProbability
+    ) reasons.push('CALIBRATED_PROBABILITY_TOO_LOW');
+    if (
+      decision.confidenceCalibration?.status === 'CALIBRATED' &&
+      (decision.confidenceCalibration.brierScore ?? 0) > 0.3
+    ) reasons.push('CALIBRATION_UNRELIABLE');
+
+    if (reasons.some((reason) => reason.includes('DATA') || reason.includes('STALE') || reason.includes('USABLE') || reason.includes('CALIBRATION_UNRELIABLE'))) {
       return { verdict: 'REQUEST_MORE_DATA', approved: false, reasons };
     }
     if (reasons.length > 0) return { verdict: 'REJECT', approved: false, reasons };

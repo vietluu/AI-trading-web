@@ -4,6 +4,7 @@ import type { EvaluationHorizon, Prisma } from '@prisma/client';
 import type { PerformanceRecord } from '@platform/shared';
 import { evaluateDecision, calculatePerformanceMetrics, type Decision } from '../domain/performance-calculator';
 import { ReflectionRepository } from '../infrastructure/reflection.repository';
+import { buildReliabilityCurve } from '../domain/confidence-calibration';
 
 const FIXED_HORIZONS: Array<{ horizon: EvaluationHorizon; ms: number }> = [
   { horizon: 'MID', ms: 60 * 60_000 },
@@ -45,7 +46,7 @@ export class PerformanceService {
         await this.repository.createRecord({
           userId: run.userId, runId: run.id, symbol: run.symbol, horizon: item.horizon,
           decision: run.decision, confidence: run.confidence, priceAtDecision, priceAfter,
-          ...result, ...context,
+          ...result, ...context, marketRegime: run.marketRegime,
         });
         evaluated++;
         evaluatedUserIds.add(run.userId);
@@ -56,6 +57,13 @@ export class PerformanceService {
 
   async list(userId: string, horizon?: EvaluationHorizon, symbol?: string) { return (await this.repository.records(userId, horizon, 500, symbol)).map(toDto); }
   async metrics(userId: string, horizon?: EvaluationHorizon, symbol?: string) { return calculatePerformanceMetrics(await this.list(userId, horizon, symbol)); }
+  async calibration(userId: string, symbol?: string) {
+    const rows = await this.repository.records(userId, 'MID', 500, symbol);
+    return buildReliabilityCurve(rows.map((row) => ({
+      confidence: row.confidence,
+      outcome: row.outcome,
+    })));
+  }
   async alerts(userId: string, symbol?: string) {
     const records = await this.list(userId, undefined, symbol);
     const metrics = calculatePerformanceMetrics(records);

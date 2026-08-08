@@ -78,6 +78,18 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return Number(result) === 1;
   }
 
+  /** Renew a lease only while it is still owned by the supplied token. */
+  async compareAndExpire(key: string, token: string, ttlSeconds: number): Promise<boolean> {
+    const result = await this.client.eval(
+      "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('expire', KEYS[1], ARGV[2]) else return 0 end",
+      1,
+      key,
+      token,
+      ttlSeconds,
+    );
+    return Number(result) === 1;
+  }
+
   async acquireSemaphore(key: string, token: string, limit: number, ttlMs: number): Promise<{ acquired: boolean; current: number }> {
     const now = Date.now();
     const result = await this.client.eval(
