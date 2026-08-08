@@ -397,7 +397,7 @@ export class MarketDataRepository {
           gen_random_uuid(),
           ${input.provider}::"ExchangeProvider",
           ${input.symbol},
-          ${toDbInterval(input.interval)}::"MarketDataInterval",
+          ${input.interval}::"MarketDataInterval",
           ${input.openTime}, ${input.closeTime},
           ${input.open}::numeric, ${input.high}::numeric, ${input.low}::numeric,
           ${input.close}::numeric, ${input.volume}::numeric,
