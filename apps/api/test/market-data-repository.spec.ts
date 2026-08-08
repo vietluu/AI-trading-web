@@ -59,5 +59,7 @@ describe('MarketDataRepository candle freshness', () => {
     const sql = query.strings.join('?');
     expect(sql.match(/::numeric/g)).toHaveLength(6);
     expect(sql).toContain('::integer');
+    expect(query.values).toContain('1m');
+    expect(query.values).not.toContain('i1m');
   });
 });
