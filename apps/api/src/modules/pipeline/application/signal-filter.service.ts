@@ -14,6 +14,8 @@ export interface SignalFilterInput {
   provider?: "BINANCE_FUTURES" | "OKX_FUTURES";
   timeframe?: string;
   spreadBps?: number;
+  adx?: number;
+  efficiencyRatio?: number;
   marketRegime?: "TRENDING" | "RANGING" | "HIGH_VOLATILITY";
 }
 
@@ -41,6 +43,10 @@ export class SignalFilterService {
     const ema20 = input.ema20 === undefined ? NaN : Number(input.ema20);
     const ema50 = input.ema50 === undefined ? NaN : Number(input.ema50);
     const ema200 = input.ema200 === undefined ? NaN : Number(input.ema200);
+    const adx = input.adx === undefined ? NaN : Number(input.adx);
+    const efficiencyRatio = input.efficiencyRatio === undefined
+      ? NaN
+      : Number(input.efficiencyRatio);
 
     const hasAnyIndicatorData = [
       input.rsi,
@@ -49,6 +55,8 @@ export class SignalFilterService {
       input.ema20,
       input.ema50,
       input.ema200,
+      input.adx,
+      input.efficiencyRatio,
     ].some((value) => value !== undefined && Number.isFinite(Number(value)));
 
     const explicitPrice =
@@ -72,7 +80,15 @@ export class SignalFilterService {
       return { allowed: false, reason: "WIDE_SPREAD" };
     }
 
-    if (hasAnyIndicatorData && hasRsiNeutralZone && isLowAtr && lowVolume) {
+    const quantitativelyRanging =
+      (Number.isFinite(adx) && adx < 18) ||
+      (Number.isFinite(efficiencyRatio) && efficiencyRatio < 0.25);
+
+    if (
+      hasAnyIndicatorData &&
+      ((hasRsiNeutralZone && isLowAtr && lowVolume) ||
+        (quantitativelyRanging && hasRsiNeutralZone && lowVolume))
+    ) {
       return { allowed: false, reason: "NO_TRADE_ZONE" };
     }
 
@@ -85,6 +101,8 @@ export class SignalFilterService {
     }
 
     const hasTrend =
+      (Number.isFinite(adx) && adx >= 22 &&
+        Number.isFinite(efficiencyRatio) && efficiencyRatio >= 0.3) ||
       (Number.isFinite(ema20) && Number.isFinite(ema50) && Math.abs(ema20 - ema50) > 0.0001) ||
       (Number.isFinite(ema20) && Number.isFinite(ema200) && Math.abs(ema20 - ema200) > 0.0001) ||
       input.breakout === true;

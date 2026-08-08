@@ -6,6 +6,7 @@ import {
 import { PrismaService } from "../../../database/prisma.service";
 import { ExchangeConnectionService } from "../../../exchange/application/exchange-connection.service";
 import { evaluateRisk, type RiskPosition } from "../domain/risk-engine";
+import type { TradePlanMarketContext } from "../domain/trade-plan-engine";
 import { RiskConfigService } from "./risk-config.service";
 
 type Tx = Prisma.TransactionClient;
@@ -29,6 +30,7 @@ export interface AssessRiskInput {
   }>;
   price: number;
   volatility: number;
+  tradePlanContext?: TradePlanMarketContext;
   lastTradeAt?: Date;
 }
 
@@ -64,7 +66,11 @@ export class RiskManagementService {
           size: Number(position.size),
           markPrice: Number(position.markPrice),
         })),
-        marketData: { price: input.price, volatility: input.volatility },
+        marketData: {
+          price: input.price,
+          volatility: input.volatility,
+          tradePlanContext: input.tradePlanContext,
+        },
         lastTradeAt: input.lastTradeAt,
       },
       userLimits,

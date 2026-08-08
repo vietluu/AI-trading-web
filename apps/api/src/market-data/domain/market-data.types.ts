@@ -244,6 +244,8 @@ export interface IndicatorSnapshot {
       histogram: string;
     };
     atr14?: string;
+    adx14?: string;
+    efficiencyRatio20?: string;
     bollingerBands?: {
       upper: string;
       middle: string;

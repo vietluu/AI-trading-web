@@ -5,6 +5,8 @@ import {
   calculateRSI,
   calculateMACD,
   calculateATR,
+  calculateADX,
+  calculateEfficiencyRatio,
   calculateBollingerBands,
   calculateVolumeChangePercent,
   calculatePriceChangePercent,
@@ -112,6 +114,21 @@ describe("Technical Indicators", () => {
       const result = calculateATR(candles, 14);
       expect(result).toBeDefined();
       expect(result!).toBeGreaterThan(0);
+    });
+  });
+
+  describe("regime indicators", () => {
+    it("calculates ADX and efficiency ratio for directional candles", () => {
+      const candles = Array.from({ length: 40 }, (_, index) => ({
+        open: String(100 + index),
+        high: String(101 + index),
+        low: String(99.5 + index),
+        close: String(100.8 + index),
+        volume: "100",
+      }));
+
+      expect(calculateADX(candles, 14)).toBeGreaterThan(90);
+      expect(calculateEfficiencyRatio(candles.map((item) => Number(item.close)), 20)).toBe(1);
     });
   });
 

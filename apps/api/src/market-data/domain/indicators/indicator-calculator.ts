@@ -29,6 +29,8 @@ export interface CalculatedIndicators {
   rsi14?: string;
   macd?: MacdResult;
   atr14?: string;
+  adx14?: string;
+  efficiencyRatio20?: string;
   bollingerBands?: BollingerBandsResult;
   volumeChangePercent?: string;
   priceChangePercent?: string;
@@ -37,7 +39,7 @@ export interface CalculatedIndicators {
   volatility?: string;
 }
 
-export const CALCULATION_VERSION = 1;
+export const CALCULATION_VERSION = 2;
 
 function toDecimal(value: number, precision: number = 8): string {
   return value.toFixed(precision);
@@ -148,6 +150,65 @@ export function calculateATR(
   return atr;
 }
 
+export function calculateADX(
+  candles: CandleData[],
+  period: number = 14,
+): number | undefined {
+  if (candles.length < period * 2 + 1) return undefined;
+  const trueRanges: number[] = [];
+  const plusDm: number[] = [];
+  const minusDm: number[] = [];
+  for (let index = 1; index < candles.length; index++) {
+    const current = candles[index]!;
+    const previous = candles[index - 1]!;
+    const high = Number(current.high);
+    const low = Number(current.low);
+    const previousHigh = Number(previous.high);
+    const previousLow = Number(previous.low);
+    const previousClose = Number(previous.close);
+    if (![high, low, previousHigh, previousLow, previousClose].every(Number.isFinite)) return undefined;
+    const upMove = high - previousHigh;
+    const downMove = previousLow - low;
+    plusDm.push(upMove > downMove && upMove > 0 ? upMove : 0);
+    minusDm.push(downMove > upMove && downMove > 0 ? downMove : 0);
+    trueRanges.push(Math.max(high - low, Math.abs(high - previousClose), Math.abs(low - previousClose)));
+  }
+  let smoothedTr = trueRanges.slice(0, period).reduce((sum, value) => sum + value, 0);
+  let smoothedPlus = plusDm.slice(0, period).reduce((sum, value) => sum + value, 0);
+  let smoothedMinus = minusDm.slice(0, period).reduce((sum, value) => sum + value, 0);
+  const dx: number[] = [];
+  for (let index = period; index < trueRanges.length; index++) {
+    smoothedTr = smoothedTr - smoothedTr / period + trueRanges[index]!;
+    smoothedPlus = smoothedPlus - smoothedPlus / period + plusDm[index]!;
+    smoothedMinus = smoothedMinus - smoothedMinus / period + minusDm[index]!;
+    if (smoothedTr <= 0) continue;
+    const plusDi = (100 * smoothedPlus) / smoothedTr;
+    const minusDi = (100 * smoothedMinus) / smoothedTr;
+    const denominator = plusDi + minusDi;
+    if (denominator > 0) dx.push((100 * Math.abs(plusDi - minusDi)) / denominator);
+  }
+  if (dx.length < period) return undefined;
+  let adx = dx.slice(0, period).reduce((sum, value) => sum + value, 0) / period;
+  for (let index = period; index < dx.length; index++) {
+    adx = (adx * (period - 1) + dx[index]!) / period;
+  }
+  return adx;
+}
+
+export function calculateEfficiencyRatio(
+  closes: number[],
+  period: number = 20,
+): number | undefined {
+  if (closes.length < period + 1) return undefined;
+  const window = closes.slice(-(period + 1));
+  const direction = Math.abs(window[window.length - 1]! - window[0]!);
+  let movement = 0;
+  for (let index = 1; index < window.length; index++) {
+    movement += Math.abs(window[index]! - window[index - 1]!);
+  }
+  return movement > 0 ? direction / movement : 0;
+}
+
 export function calculateBollingerBands(
   closes: number[],
   period: number = 20,
@@ -255,6 +316,13 @@ export function calculateAllIndicators(candles: CandleData[]): CalculatedIndicat
 
   const atr = calculateATR(candles, 14);
   if (atr !== undefined) result.atr14 = toDecimal(atr);
+
+  const adx = calculateADX(candles, 14);
+  if (adx !== undefined) result.adx14 = toDecimal(adx, 2);
+
+  const efficiencyRatio = calculateEfficiencyRatio(closes, 20);
+  if (efficiencyRatio !== undefined)
+    result.efficiencyRatio20 = toDecimal(efficiencyRatio, 4);
 
   const bb = calculateBollingerBands(closes, 20, 2);
   if (bb) result.bollingerBands = bb;

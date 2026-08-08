@@ -29,6 +29,7 @@ import { RiskConfigService } from "../../risk/application/risk-config.service";
 import { RiskManagementService } from "../../risk/application/risk-management.service";
 import { PortfolioService } from "../../portfolio/application/portfolio.service";
 import { LiveTradingGateway } from "../presentation/live-trading.gateway";
+import type { TradePlanMarketContext } from "../../risk/domain/trade-plan-engine";
 
 @Injectable()
 export class LiveTradingService {
@@ -55,6 +56,7 @@ export class LiveTradingService {
     provider: ExchangeProvider;
     decision: DecisionOutput;
     volatilityAtr?: number;
+    tradePlanContext?: TradePlanMarketContext;
     strategyKey?: string;
   }): Promise<{ outcome: string; price: number; risk?: RiskOutput }> {
     const settings = this.config.values;
@@ -151,6 +153,12 @@ export class LiveTradingService {
               ? (input.volatilityAtr ?? 0) / price
               : 0,
           ),
+          tradePlanContext: {
+            ...input.tradePlanContext,
+            ...(Number.isFinite(input.volatilityAtr) && (input.volatilityAtr ?? 0) > 0
+              ? { atr: input.volatilityAtr }
+              : {}),
+          },
           lastTradeAt: latestOrder?.createdAt,
         });
         if (

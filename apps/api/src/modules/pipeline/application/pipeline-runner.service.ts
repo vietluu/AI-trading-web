@@ -90,6 +90,8 @@ export class PipelineRunnerService {
         ema20: Number(indicatorSnapshot?.values.ema20),
         ema50: Number(indicatorSnapshot?.values.ema50),
         ema200: Number(indicatorSnapshot?.values.ema200),
+        adx: Number(indicatorSnapshot?.values.adx14),
+        efficiencyRatio: Number(indicatorSnapshot?.values.efficiencyRatio20),
       });
       if (!signalFilter.allowed) {
         this.logger.log({
@@ -303,6 +305,32 @@ export class PipelineRunnerService {
             ...(Number.isFinite(volatilityAtr) && volatilityAtr >= 0
               ? { volatilityAtr }
               : {}),
+            tradePlanContext: {
+              ...(Number.isFinite(Number(indicatorSnapshot?.values.rollingLow))
+                ? { support: Number(indicatorSnapshot?.values.rollingLow) }
+                : {}),
+              ...(Number.isFinite(Number(indicatorSnapshot?.values.rollingHigh))
+                ? { resistance: Number(indicatorSnapshot?.values.rollingHigh) }
+                : {}),
+              ...(Number.isFinite(Number(indicatorSnapshot?.values.adx14))
+                ? { adx: Number(indicatorSnapshot?.values.adx14) }
+                : {}),
+              ...(Number.isFinite(Number(indicatorSnapshot?.values.efficiencyRatio20))
+                ? { efficiencyRatio: Number(indicatorSnapshot?.values.efficiencyRatio20) }
+                : {}),
+              ...(Number.isFinite(Number(indicatorSnapshot?.values.ema20))
+                ? { ema20: Number(indicatorSnapshot?.values.ema20) }
+                : {}),
+              ...(Number.isFinite(Number(indicatorSnapshot?.values.ema50))
+                ? { ema50: Number(indicatorSnapshot?.values.ema50) }
+                : {}),
+              ...(analyses.technical?.structure.breakout !== undefined
+                ? { breakout: analyses.technical.structure.breakout }
+                : {}),
+              ...(analyses.technical?.structure.marketStructure
+                ? { marketStructure: analyses.technical.structure.marketStructure }
+                : {}),
+            },
           });
           if (riskAssessment.outcome === "NO_ELIGIBLE_EXCHANGE_CONNECTION") {
             throw new Error("NO_ELIGIBLE_EXCHANGE_CONNECTION: Active verified exchange connection is required to run live risk assessment.");

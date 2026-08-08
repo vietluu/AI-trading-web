@@ -1,4 +1,5 @@
 import type { DecisionOutput, RiskOutput } from "@platform/shared";
+import type { TradePlanMarketContext } from "./trade-plan-engine";
 
 export interface RiskAccount {
   balance: number;
@@ -23,7 +24,11 @@ export interface RiskInput {
   decision: DecisionOutput;
   account: RiskAccount;
   currentPositions: RiskPosition[];
-  marketData: { price: number; volatility: number };
+  marketData: {
+    price: number;
+    volatility: number;
+    tradePlanContext?: TradePlanMarketContext;
+  };
   lastTradeAt?: Date;
   lastTrades?: LastTradeRecord[];
   now?: Date;

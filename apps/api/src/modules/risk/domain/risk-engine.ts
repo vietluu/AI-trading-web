@@ -7,6 +7,7 @@ import type {
   RiskPosition,
 } from "./risk-engine.types";
 import { RISK_ENGINE_CONSTANTS } from "./risk-engine.constants";
+import { buildAdaptiveTradePlan } from "./trade-plan-engine";
 
 export type {
   LastTradeRecord,
@@ -175,19 +176,24 @@ export function evaluateRisk(
   )
     return reject("TRADE_COOLDOWN_ACTIVE");
 
-  const stopLossPct = clamp(
-    limits.stopLossPct * Math.max(1, 1 - marketData.volatility / limits.highVolatility),
-    0.002,
-    Math.max(limits.stopLossPct, 0.05),
-  );
-  const { stopLoss, takeProfit } = calculateProtectivePrices(
-    decision.decision,
-    marketData.price,
-    stopLossPct,
-    limits.riskRewardRatio,
-  );
+  const plan = buildAdaptiveTradePlan({
+    side: decision.decision,
+    entryPrice: marketData.price,
+    decision,
+    market: marketData.tradePlanContext ?? {},
+    configuredStopLossPct: limits.stopLossPct,
+    configuredRiskRewardRatio: limits.riskRewardRatio,
+  });
+  if (!plan.approved || !plan.stopLoss || !plan.takeProfit)
+    return reject(plan.reason ?? "TRADE_PLAN_REJECTED");
+  const { stopLoss, takeProfit } = plan;
   const rewardToRisk = Math.abs(takeProfit - marketData.price) / Math.abs(marketData.price - stopLoss);
-  if (rewardToRisk < limits.riskRewardRatio - 1e-6)
+  const requiredRiskReward = plan.strategy === "RANGE_REVERSAL"
+    ? Math.min(limits.riskRewardRatio, 1.25)
+    : plan.strategy === "BREAKOUT_RETEST"
+      ? 1.5
+      : limits.riskRewardRatio;
+  if (rewardToRisk < requiredRiskReward - 1e-6)
     return reject("RISK_REWARD_NOT_MET");
   let positionSize = calculatePositionSize(
     account.balance,
