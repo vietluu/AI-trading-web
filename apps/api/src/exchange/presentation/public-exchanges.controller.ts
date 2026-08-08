@@ -20,6 +20,24 @@ export class PublicExchangesController {
     return this.exchanges.providers();
   }
 
+  @Get("symbols")
+  symbols() {
+    return this.exchanges.crossExchangeSymbols();
+  }
+
+  @Get("recommendations")
+  recommendations(
+    @Query("provider") provider?: ExchangeProvider,
+    @Query("limit") limit?: string,
+    @Query("commonOnly") commonOnly?: string,
+  ) {
+    return this.exchanges.recommendTopSymbols({
+      provider: provider ?? ExchangeProvider.BINANCE_FUTURES,
+      limit: limit ? Number(limit) : 10,
+      commonOnly: commonOnly === "true",
+    });
+  }
+
   @Get(":provider/time")
   time(
     @Param("provider", new ParseEnumPipe(ExchangeProvider))

@@ -6,41 +6,43 @@ describe('AgentIdempotencyService', () => {
   it('uses the configured short TTL for locks and successful results', async () => {
     const redis = {
       get: vi.fn().mockResolvedValue(null),
+      setNx: vi.fn().mockResolvedValue(true),
       setWithTtl: vi.fn().mockResolvedValue(undefined),
-      delete: vi.fn().mockResolvedValue(undefined),
+      compareAndDelete: vi.fn().mockResolvedValue(true),
     };
     const service = new AgentIdempotencyService(
       redis as never,
       new ConfigService({ AGENT_IDEMPOTENCY_TTL_SECONDS: 45 }),
     );
 
-    await expect(service.checkAndLock('fingerprint')).resolves.toEqual({
-      locked: true,
-    });
-    expect(redis.setWithTtl).toHaveBeenNthCalledWith(
-      1,
+    const lock = await service.checkAndLock('fingerprint');
+    expect(lock.locked).toBe(true);
+    expect(typeof lock.lockToken).toBe('string');
+    const lockToken = lock.lockToken!;
+    expect(redis.setNx).toHaveBeenCalledWith(
       'ai:agent:run-lock:fingerprint',
-      'locked',
+      lockToken,
       45,
     );
 
-    await service.setResult('fingerprint', 'run-id');
-    expect(redis.setWithTtl).toHaveBeenNthCalledWith(
-      2,
+    await service.setResult('fingerprint', 'run-id', lockToken);
+    expect(redis.setWithTtl).toHaveBeenCalledWith(
       'ai:agent:run-result:fingerprint',
       'run-id',
       45,
     );
-    expect(redis.delete).toHaveBeenCalledWith(
+    expect(redis.compareAndDelete).toHaveBeenCalledWith(
       'ai:agent:run-lock:fingerprint',
+      lockToken,
     );
   });
 
   it('returns a cached successful run without replacing it', async () => {
     const redis = {
       get: vi.fn().mockResolvedValueOnce('existing-run-id'),
+      setNx: vi.fn(),
       setWithTtl: vi.fn(),
-      delete: vi.fn(),
+      compareAndDelete: vi.fn(),
     };
     const service = new AgentIdempotencyService(
       redis as never,

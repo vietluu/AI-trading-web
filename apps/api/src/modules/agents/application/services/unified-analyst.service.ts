@@ -131,84 +131,100 @@ export class UnifiedAnalystService {
     const nowIso = new Date().toISOString();
     if (!analyses.market) {
       analyses.market = {
-        summary: `Market structure for ${symbol} indicates active trading volume on ${options.input.provider}.`,
-        trend: { direction: 'UP', strength: 'MODERATE' },
-        volatility: { level: 'MEDIUM', atr: '4.2' },
-        liquidity: { spread: '0.01', depthImbalance: 'BALANCED' },
-        derivatives: { fundingRate: '0.0001', fundingTrend: 'STABLE' },
-        anomalies: [],
-        dataQuality: 'GOOD',
+        summary: `Market analysis for ${symbol} is unavailable.`,
+        trend: { direction: 'SIDEWAYS', strength: 'WEAK' },
+        volatility: { level: 'MEDIUM' },
+        liquidity: {},
+        derivatives: {},
+        anomalies: ['Agent execution failed or returned invalid output.'],
+        dataQuality: 'INSUFFICIENT',
         usedTools: [],
         generatedAt: nowIso,
       };
     }
     if (!analyses.technical) {
       analyses.technical = {
-        summary: `Technical indicators for ${symbol}: RSI 58, EMA20 above EMA50, bullish momentum.`,
-        trend: { direction: 'UP', strength: 'MODERATE' },
+        summary: `Technical analysis for ${symbol} is unavailable.`,
+        trend: { direction: 'SIDEWAYS', strength: 'WEAK' },
         momentum: {
-          rsi: '58.5',
+          rsi: 'Unavailable',
           rsiState: 'NEUTRAL',
-          macd: { trend: 'BULLISH', crossover: 'BULLISH' },
+          macd: { trend: 'NEUTRAL' },
         },
-        movingAverages: { alignment: 'BULLISH', pricePosition: 'ABOVE' },
-        volatility: { atr: '4.2', bollinger: { position: 'UPPER', squeeze: false } },
-        structure: { marketStructure: 'HH_HL', breakout: false },
-        divergence: { rsiDivergence: 'NONE', macdDivergence: 'NONE' },
-        signals: ['BULLISH_EMA_ALIGNMENT'],
-        dataQuality: 'GOOD',
+        movingAverages: { alignment: 'MIXED', pricePosition: 'INSIDE' },
+        volatility: { bollinger: { position: 'MIDDLE', squeeze: false } },
+        structure: { marketStructure: 'RANGE' },
+        divergence: {},
+        signals: ['Agent execution failed or returned invalid output.'],
+        dataQuality: 'INSUFFICIENT',
         usedTools: [],
         generatedAt: nowIso,
       };
     }
     if (!analyses.news) {
       analyses.news = {
-        summary: `Latest narrative & news sentiment for ${asset} is neutral-positive.`,
-        impact: { level: 'MEDIUM', direction: 'POSITIVE' },
+        summary: `News analysis for ${asset} is unavailable.`,
+        impact: { level: 'LOW', direction: 'NEUTRAL' },
         keyEvents: [],
-        themes: ['crypto', 'market'],
-        riskSignals: [],
-        dataQuality: 'GOOD',
+        themes: [],
+        riskSignals: ['Agent execution failed or returned invalid output.'],
+        dataQuality: 'INSUFFICIENT',
         usedTools: [],
         generatedAt: nowIso,
       };
     }
     if (!analyses.sentiment) {
       analyses.sentiment = {
-        summary: `Social sentiment for ${asset} shows fear & greed index in greed territory.`,
-        sentiment: { overall: 'BULLISH', intensity: 'MEDIUM' },
+        summary: `Sentiment analysis for ${asset} is unavailable.`,
+        sentiment: { overall: 'NEUTRAL', intensity: 'LOW' },
         crowdBehavior: { fomo: false, panic: false, euphoria: false },
         sources: {},
-        anomalies: [],
-        dataQuality: 'GOOD',
+        anomalies: ['Agent execution failed or returned invalid output.'],
+        dataQuality: 'INSUFFICIENT',
         usedTools: [],
         generatedAt: nowIso,
       };
     }
     if (!analyses.macro) {
       analyses.macro = {
-        summary: 'Global macro conditions: Interest rate steady, neutral DXY risk-on environment.',
-        macroTrend: 'RISK_ON',
+        summary: 'Macro analysis is unavailable.',
+        macroTrend: 'NEUTRAL',
         keyEvents: [],
-        riskFactors: [],
-        dataQuality: 'GOOD',
+        riskFactors: ['Agent execution failed or returned invalid output.'],
+        dataQuality: 'INSUFFICIENT',
         generatedAt: nowIso,
       };
     }
     if (!analyses.onchain) {
       analyses.onchain = {
-        summary: `On-chain flow for ${asset}: Minor net exchange outflow, whale accumulation.`,
+        summary: `On-chain analysis for ${asset} is unavailable.`,
         activity: 'NORMAL',
-        flows: { exchangeInflow: '100', exchangeOutflow: '150' },
-        signals: ['NET_OUTFLOW'],
-        dataQuality: 'GOOD',
+        flows: {},
+        signals: ['No verified on-chain analysis is available.'],
+        dataQuality: 'INSUFFICIENT',
         generatedAt: nowIso,
       };
     }
 
     const parsedAnalyses = FusionInputSchema.parse(analyses);
+    const usable = Object.values(parsedAnalyses).filter(
+      (analysis) => analysis.dataQuality !== 'INSUFFICIENT',
+    );
+    const biases = [
+      parsedAnalyses.market.trend.direction === 'UP' ? 'BULLISH' : parsedAnalyses.market.trend.direction === 'DOWN' ? 'BEARISH' : 'NEUTRAL',
+      parsedAnalyses.technical.trend.direction === 'UP' ? 'BULLISH' : parsedAnalyses.technical.trend.direction === 'DOWN' ? 'BEARISH' : 'NEUTRAL',
+      parsedAnalyses.news.impact.direction === 'POSITIVE' ? 'BULLISH' : parsedAnalyses.news.impact.direction === 'NEGATIVE' ? 'BEARISH' : 'NEUTRAL',
+      parsedAnalyses.sentiment.sentiment.overall,
+      parsedAnalyses.macro.macroTrend === 'RISK_ON' ? 'BULLISH' : parsedAnalyses.macro.macroTrend === 'RISK_OFF' ? 'BEARISH' : 'NEUTRAL',
+      'NEUTRAL',
+    ] as const;
+    const usableBiases = biases.filter((_, index) => Object.values(parsedAnalyses)[index]?.dataQuality !== 'INSUFFICIENT');
+    const bullish = usableBiases.filter((bias) => bias === 'BULLISH').length;
+    const bearish = usableBiases.filter((bias) => bias === 'BEARISH').length;
+    const overallBias = bullish > usable.length / 2 ? 'BULLISH' : bearish > usable.length / 2 ? 'BEARISH' : 'NEUTRAL';
+    const agreement = usableBiases.length ? Math.max(bullish, bearish, usableBiases.length - bullish - bearish) : 0;
     const fusionOutput: FusionOutput = FusionOutputSchema.parse({
-      summary: `Unified multi-analyst analysis for ${symbol} is bullish with cross-agent agreement.`,
+      summary: `Unified multi-analyst analysis for ${symbol} is ${overallBias.toLowerCase()} with ${usable.length} usable sources.`,
       combinedAnalysis: {
         market: parsedAnalyses.market.summary,
         technical: parsedAnalyses.technical.summary,
@@ -217,10 +233,10 @@ export class UnifiedAnalystService {
         macro: parsedAnalyses.macro.summary,
         onchain: parsedAnalyses.onchain.summary,
       },
-      overallBias: 'BULLISH',
-      confidence: 83,
-      conflicts: [],
-      dataQuality: 'GOOD',
+      overallBias,
+      confidence: usableBiases.length ? Math.round((agreement / usableBiases.length) * 100) : 0,
+      conflicts: bullish > 0 && bearish > 0 ? ['Usable analysts disagree on market direction.'] : [],
+      dataQuality: usable.length === 6 ? 'GOOD' : usable.length === 0 ? 'INSUFFICIENT' : 'PARTIAL',
       generatedAt: nowIso,
     });
 

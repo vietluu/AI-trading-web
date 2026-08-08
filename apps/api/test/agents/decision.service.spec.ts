@@ -120,7 +120,7 @@ describe('DecisionService', () => {
     expect(output.overrides).toContain('Insufficient data forced WAIT.');
   });
 
-  it('allows a strong bullish conviction signal even when volatility lifts the guardrail', () => {
+  it('does not let strong conviction bypass a high-volatility guardrail', () => {
     const input = decisionInput();
     input.market!.volatility.level = 'HIGH';
     input.market!.trend.direction = 'UP';
@@ -134,10 +134,10 @@ describe('DecisionService', () => {
     input.market!.anomalies = ['Moderate volatility expansion.'];
     const output = new DecisionService({} as never).decide(input);
 
-    expect(output.decision).toBe('LONG');
+    expect(output.decision).toBe('WAIT');
     expect(output.confidence).toBeGreaterThanOrEqual(50);
     expect(output.opportunityScore).toBeGreaterThan(65);
-    expect(output.overrides).toEqual(expect.arrayContaining([expect.stringContaining('Strong conviction override')]));
+    expect(output.overrides).not.toEqual(expect.arrayContaining([expect.stringContaining('Strong conviction override')]));
   });
 
   it('reduces confidence in high volatility and detects major news events', () => {

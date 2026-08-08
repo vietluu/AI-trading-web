@@ -8,23 +8,28 @@ function generateCandles(basePrice: number, count: number): NormalizedCandle[] {
   const candles: NormalizedCandle[] = [];
   let price = basePrice;
   const startTime = new Date('2026-07-01T00:00:00Z').getTime();
+  let seed = Math.floor(basePrice) || 1;
+  const random = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 0x1_0000_0000;
+  };
 
   for (let i = 0; i < count; i += 1) {
     const openTime = new Date(startTime + i * 3600 * 1000);
     const closeTime = new Date(startTime + (i + 1) * 3600 * 1000 - 1);
 
-    let changePct = Math.sin(i / 10) * 0.008 + (Math.random() - 0.48) * 0.015;
+    let changePct = Math.sin(i / 10) * 0.008 + (random() - 0.48) * 0.015;
     if (i >= 150 && i <= 180) {
-      changePct = -0.012 + (Math.random() - 0.6) * 0.01;
+      changePct = -0.012 + (random() - 0.6) * 0.01;
     } else if (i >= 181 && i <= 210) {
-      changePct = 0.015 + (Math.random() - 0.4) * 0.01;
+      changePct = 0.015 + (random() - 0.4) * 0.01;
     }
 
     const open = price;
     price = Math.max(1, price * (1 + changePct));
-    const high = Math.max(open, price) * (1 + Math.random() * 0.005);
-    const low = Math.min(open, price) * (1 - Math.random() * 0.005);
-    const volume = 500 + Math.random() * 2000;
+    const high = Math.max(open, price) * (1 + random() * 0.005);
+    const low = Math.min(open, price) * (1 - random() * 0.005);
+    const volume = 500 + random() * 2000;
 
     candles.push({
       provider: ExchangeProvider.OKX_FUTURES,

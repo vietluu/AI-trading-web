@@ -4,12 +4,14 @@ import {
   Logger,
   OnModuleDestroy,
   OnModuleInit,
+  Optional,
 } from "@nestjs/common";
 import { PipelineScheduleInputSchema } from "@platform/shared";
 import { PrismaService } from "../../../database/prisma.service";
 import { cronMatches, validateCron } from "../domain/cron";
 import { PipelineService } from "./pipeline.service";
 import { PipelineConfigService } from "./pipeline-config.service";
+import { DistributedTaskLockService } from "../../../redis/distributed-task-lock.service";
 
 @Injectable()
 export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
@@ -22,6 +24,7 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly pipeline: PipelineService,
     private readonly config: PipelineConfigService,
+    @Optional() private readonly taskLock?: DistributedTaskLockService,
   ) {}
   onModuleInit() {
     if (this.config.enabled) this.scheduleNextTick();
@@ -109,6 +112,14 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
   private readonly activeSchedules = new Set<string>();
 
   async tick(now = new Date()) {
+    if (this.taskLock) {
+      await this.taskLock.run('pipeline-scheduler-tick', 30, () => this.tickOnce(now));
+      return;
+    }
+    await this.tickOnce(now);
+  }
+
+  private async tickOnce(now: Date) {
     if (this.running || !this.config.enabled) return;
     this.running = true;
     this.lastTickAt = now;

@@ -33,6 +33,7 @@ export interface AIExecuteOptions {
 export class AIOrchestratorService {
   private readonly logger = new Logger(AIOrchestratorService.name);
   private readonly promptCacheTtlSeconds = 30;
+  private readonly maxInMemoryPromptCacheEntries = 500;
   private readonly inMemoryPromptCache = new Map<string, { response: AIResponseDto; expiresAt: number }>();
   private readonly inFlightPromptCache = new Map<string, Promise<AIResponseDto>>();
 
@@ -309,6 +310,17 @@ export class AIOrchestratorService {
 
   private async setCachedResponse(cacheKey: string, response: AIResponseDto): Promise<void> {
     const expiresAt = Date.now() + this.promptCacheTtlSeconds * 1000;
+    if (this.inMemoryPromptCache.size >= this.maxInMemoryPromptCacheEntries) {
+      const now = Date.now();
+      for (const [key, entry] of this.inMemoryPromptCache) {
+        if (entry.expiresAt <= now) this.inMemoryPromptCache.delete(key);
+      }
+      while (this.inMemoryPromptCache.size >= this.maxInMemoryPromptCacheEntries) {
+        const oldestKey = this.inMemoryPromptCache.keys().next().value;
+        if (!oldestKey) break;
+        this.inMemoryPromptCache.delete(oldestKey);
+      }
+    }
     this.inMemoryPromptCache.set(cacheKey, { response, expiresAt });
 
     if (!this.redisService) {

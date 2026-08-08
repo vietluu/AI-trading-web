@@ -47,8 +47,8 @@ export class QuantIntelligenceController {
   }
 
   @Get('portfolio')
-  getPortfolio(@CurrentUser() user?: { id: string }, @Query('userId') userId?: string) {
-    return this.quantService.getPortfolioIntelligence(userId ?? user?.id);
+  getPortfolio(@CurrentUser() user: { id: string }) {
+    return this.quantService.getPortfolioIntelligence(user.id);
   }
 
   @Post('portfolio/strategies/:key/apply')
@@ -61,8 +61,8 @@ export class QuantIntelligenceController {
   }
 
   @Get('self-learning')
-  getSelfLearning() {
-    return this.quantService.getSelfLearningInsights();
+  getSelfLearning(@CurrentUser() user: { id: string }) {
+    return this.quantService.getSelfLearningInsights(user.id);
   }
 
   @Get('regime')
@@ -108,8 +108,8 @@ export class QuantIntelligenceController {
   }
 
   @Get('reports')
-  getReport(@Query('type') type?: ReportType) {
-    return this.quantService.getReport(type ?? 'DAILY');
+  getReport(@CurrentUser() user: { id: string }, @Query('type') type?: ReportType) {
+    return this.quantService.getReport(type ?? 'DAILY', user.id);
   }
 
   @Get('knowledge')

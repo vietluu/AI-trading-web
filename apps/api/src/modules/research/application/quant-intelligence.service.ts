@@ -51,7 +51,6 @@ import { evaluateFactors } from '../domain/factor-discovery.engine';
 import { runAutoBenchmark } from '../domain/auto-benchmark.engine';
 import { optimizeThresholds, optimizeWeights, type OptimizedWeightsResult } from '../domain/weight-threshold-optimizer.engine';
 import { analyzePortfolioIntelligence } from '../domain/portfolio-intelligence.engine';
-import { generateSelfLearningInsights } from '../domain/self-learning.engine';
 import { detectMarketRegimeIntelligence } from '../domain/regime-intelligence.engine';
 import { generateDefaultRecommendations } from '../domain/explainability-governance.engine';
 import { runSimulationExperiment, type SimulationRequest } from '../domain/simulation-lab.engine';
@@ -154,8 +153,12 @@ export class QuantIntelligenceService {
     );
   }
 
-  getSelfLearningInsights() {
-    return generateSelfLearningInsights();
+  async getSelfLearningInsights(userId: string) {
+    return this.prisma.selfLearningInsight.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
   }
 
   async getRegimeIntelligence(symbol = 'BTC-USDT') {
@@ -322,10 +325,10 @@ export class QuantIntelligenceService {
     if (isUuid) {
       try {
         const quantRecommendationModel = this.prisma.quantRecommendation;
-        const rec = await quantRecommendationModel.findUnique({ where: { id } });
+        const rec = await quantRecommendationModel.findFirst({ where: { id, ...(userId ? { userId } : { userId: null }) } });
         if (rec) {
           const updated = await quantRecommendationModel.update({
-            where: { id },
+            where: { id: rec.id },
             data: {
               status: action === 'APPROVE' ? 'APPROVED' : 'REJECTED',
               reviewedByUserId: userId ?? null,

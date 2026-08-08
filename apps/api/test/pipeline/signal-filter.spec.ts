@@ -43,10 +43,10 @@ describe("signal filter", () => {
     expect(result.reason).toBeUndefined();
   });
 
-  it("does not block when indicator data is unavailable", () => {
+  it("fails closed when indicator data is unavailable", () => {
     const result = service.evaluate({});
 
-    expect(result.allowed).toBe(true);
-    expect(result.reason).toBeUndefined();
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe("INSUFFICIENT_INDICATORS");
   });
 });

@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
-import { ConfigModule } from "@nestjs/config";
+import { ConfigModule, ConfigService } from "@nestjs/config";
 import { resolve } from "node:path";
+import { BullModule } from "@nestjs/bullmq";
 
 import { AuditModule } from "./audit/audit.module";
 import { AuthModule } from "./auth/auth.module";
@@ -34,6 +35,12 @@ import { ResearchModule } from "./modules/research/research.module";
       ],
       isGlobal: true,
       validate: validateEnvironment,
+    }),
+    BullModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        connection: { url: config.get<string>('REDIS_URL') ?? 'redis://localhost:6379' },
+      }),
     }),
     DatabaseModule,
     RedisModule,

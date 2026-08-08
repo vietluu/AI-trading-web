@@ -12,7 +12,7 @@ export class AgentIdempotencyService {
     private readonly configService: ConfigService,
   ) {}
 
-  async checkAndLock(fingerprint: string, ttlSeconds = this.ttlSeconds): Promise<{ locked: boolean; existingRunId?: string }> {
+  async checkAndLock(fingerprint: string, ttlSeconds = this.ttlSeconds): Promise<{ locked: boolean; existingRunId?: string; lockToken?: string }> {
     const lockKey = `ai:agent:run-lock:${fingerprint}`;
     const resultKey = `ai:agent:run-result:${fingerprint}`;
 
@@ -21,25 +21,22 @@ export class AgentIdempotencyService {
       return { locked: false, existingRunId: existingResult };
     }
 
-    const existingLock = await this.redisService.get(lockKey);
-    if (existingLock) {
-      return { locked: false, existingRunId: existingLock };
-    }
-
-    await this.redisService.setWithTtl(lockKey, 'locked', ttlSeconds);
-    return { locked: true };
+    const lockToken = crypto.randomUUID();
+    const acquired = await this.redisService.setNx(lockKey, lockToken, ttlSeconds);
+    if (!acquired) return { locked: false };
+    return { locked: true, lockToken };
   }
 
-  async setResult(fingerprint: string, runId: string, ttlSeconds = this.ttlSeconds): Promise<void> {
+  async setResult(fingerprint: string, runId: string, lockToken?: string, ttlSeconds = this.ttlSeconds): Promise<void> {
     const resultKey = `ai:agent:run-result:${fingerprint}`;
     await this.redisService.setWithTtl(resultKey, runId, ttlSeconds);
     
-    await this.unlock(fingerprint);
+    await this.unlock(fingerprint, lockToken);
   }
 
-  async unlock(fingerprint: string): Promise<void> {
+  async unlock(fingerprint: string, lockToken?: string): Promise<void> {
     const lockKey = `ai:agent:run-lock:${fingerprint}`;
-    await this.redisService.delete(lockKey);
+    if (lockToken) await this.redisService.compareAndDelete(lockKey, lockToken);
   }
 
   private get ttlSeconds(): number {

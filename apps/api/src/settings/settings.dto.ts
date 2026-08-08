@@ -64,6 +64,13 @@ export class UpdateSettingsDto {
 
   @ApiPropertyOptional({ enum: ["CONSERVATIVE", "MODERATE", "AGGRESSIVE"] })
   @IsOptional()
-  @IsIn(["CONSERVATIVE", "MODERATE", "AGGRESSIVE"])
+  @IsIn([
+    "CONSERVATIVE",
+    "MODERATE",
+    "AGGRESSIVE",
+    "conservative",
+    "moderate",
+    "aggressive",
+  ])
   riskPreference?: string;
 }

@@ -26,10 +26,6 @@ import { getAgentOutputContract } from '../../domain/agent-output-contracts';
 export class AgentRunnerService {
   private readonly logger = new Logger(AgentRunnerService.name);
 
-  @Inject(PrismaService)
-  @Optional()
-  private readonly prisma?: PrismaService;
-
   constructor(
     private readonly aiOrchestratorService: AIOrchestratorService,
     private readonly agentRunRepository: AgentRunRepository,
@@ -43,6 +39,7 @@ export class AgentRunnerService {
     private readonly agentIdempotencyService: AgentIdempotencyService,
     private readonly agentQuotaService: AgentQuotaService,
     private readonly toolLoopRunnerService: ToolLoopRunnerService,
+    @Optional() @Inject(PrismaService) private readonly prisma?: PrismaService,
     @Optional() private readonly configService?: ConfigService,
   ) {}
 
@@ -119,60 +116,65 @@ export class AgentRunnerService {
     }
 
     let runRecord: AgentRun;
-    if (params.existingRunId) {
-      const existingRun = await this.agentRunRepository.findById(
-        params.existingRunId,
-        userId,
-      );
-      if (!existingRun || existingRun.status !== AgentRunState.QUEUED) {
-        throw new AgentError(
-          AgentErrorCode.AGENT_EXECUTION_FAILED,
-          `Queued agent run ${params.existingRunId} was not found or is not executable`,
-          false,
+    try {
+      if (params.existingRunId) {
+        const existingRun = await this.agentRunRepository.findById(
+          params.existingRunId,
+          userId,
         );
+        if (!existingRun || existingRun.status !== AgentRunState.QUEUED) {
+          throw new AgentError(
+            AgentErrorCode.AGENT_EXECUTION_FAILED,
+            `Queued agent run ${params.existingRunId} was not found or is not executable`,
+            false,
+          );
+        }
+        runRecord = existingRun;
+      } else {
+        runRecord = await this.agentRunRepository.createRun({
+          userId,
+          agentType: definition.type,
+          agentVersion: definition.version,
+          invocationSource: params.invocationSource,
+          inputHash,
+          sanitizedInput: input as Prisma.InputJsonValue,
+          promptId: definition.promptId,
+          promptVersion: definition.promptVersion,
+          traceId: randomUUID(),
+          correlationId: params.correlationId,
+          parentRunId: params.parentRunId,
+          replayOfRunId: params.replayOfRunId,
+        });
       }
-      runRecord = existingRun;
-    } else {
-      runRecord = await this.agentRunRepository.createRun({
-        userId,
-        agentType: definition.type,
-        agentVersion: definition.version,
-        invocationSource: params.invocationSource,
-        inputHash,
-        sanitizedInput: input as Prisma.InputJsonValue,
-        promptId: definition.promptId,
-        promptVersion: definition.promptVersion,
-        traceId: randomUUID(),
-        correlationId: params.correlationId,
-        parentRunId: params.parentRunId,
-        replayOfRunId: params.replayOfRunId,
-      });
+    } catch (error) {
+      await this.agentIdempotencyService.unlock(idempotencyFingerprint, lockResult.lockToken);
+      throw error;
     }
 
-    let globalLock = false;
-    let userLock = false;
-    let typeLock = false;
+    let globalLockToken: string | undefined;
+    let userLockToken: string | undefined;
+    let typeLockToken: string | undefined;
 
     try {
       const gRes = await this.agentConcurrencyService.acquireGlobal();
       if (!gRes.acquired) {
         throw new AgentError(AgentErrorCode.AGENT_CONCURRENCY_EXCEEDED, 'Global concurrency limit reached', false);
       }
-      globalLock = true;
+      globalLockToken = gRes.token;
 
       if (userId) {
         const uRes = await this.agentConcurrencyService.acquireUser(userId);
         if (!uRes.acquired) {
           throw new AgentError(AgentErrorCode.AGENT_CONCURRENCY_EXCEEDED, 'User concurrency limit reached', false);
         }
-        userLock = true;
+        userLockToken = uRes.token;
       }
 
       const tRes = await this.agentConcurrencyService.acquireType(definition.type);
       if (!tRes.acquired) {
         throw new AgentError(AgentErrorCode.AGENT_CONCURRENCY_EXCEEDED, 'Agent type concurrency limit reached', false);
       }
-      typeLock = true;
+      typeLockToken = tRes.token;
 
       runRecord = await this.transitionState(runRecord.id, runRecord.status, AgentRunState.PREPARING_CONTEXT, 'Context preparation started');
 
@@ -187,17 +189,19 @@ export class AgentRunnerService {
 
       runRecord = await this.agentRunRepository.updateRun(runRecord.id, { contextSnapshotId: snapshotId });
 
+      const memories = (await this.agentMemoryResolverService.loadMemory({
+        userId,
+        memoryPolicy: definition.memoryPolicy,
+        agentType: definition.type,
+      })) ?? [];
+      const memoryContext = memories.length > 0
+        ? `\nRelevant governed memory:\n${JSON.stringify(memories)}`
+        : '';
       const { renderedPrompt } = this.agentPromptResolverService.resolve({
         promptId: definition.promptId,
         promptVersion: definition.promptVersion,
         variables: input,
-        contextString,
-      });
-
-      await this.agentMemoryResolverService.loadMemory({
-        userId,
-        memoryPolicy: definition.memoryPolicy,
-        agentType: definition.type,
+        contextString: `${contextString}${memoryContext}`,
       });
 
       runRecord = await this.transitionState(runRecord.id, runRecord.status, AgentRunState.READY, 'Context and prompt prepared');
@@ -358,13 +362,20 @@ export class AgentRunnerService {
               priceAtDecision: true;
               priceAfter: true;
               returnPct: true;
+              outcome: true;
+              horizon: true;
             };
           }>;
 
           const successes: FewShotPerformanceRecord[] = await this.prisma.performanceRecord.findMany({
-            where: { userId, outcome: 'CORRECT' },
+            where: {
+              userId,
+              outcome: { in: ['CORRECT', 'WRONG'] },
+              horizon: { in: ['MID', 'LONG'] },
+              ...(typeof validatedInput.symbol === 'string' ? { symbol: validatedInput.symbol } : {}),
+            },
             orderBy: { evaluatedAt: 'desc' },
-            take: 3,
+            take: 6,
             select: {
               symbol: true,
               decision: true,
@@ -372,14 +383,16 @@ export class AgentRunnerService {
               priceAtDecision: true,
               priceAfter: true,
               returnPct: true,
+              outcome: true,
+              horizon: true,
             },
           });
           if (successes.length > 0) {
             fewShotContext = [
               '',
-              '=== RECENT SUCCESSFUL DECISIONS (DYNAMIC FEW-SHOT EXAMPLES) ===',
-              ...successes.map((success) => `- Symbol: ${success.symbol}, Decision: ${success.decision}, Confidence: ${success.confidence}%, Price at decision: ${success.priceAtDecision.toString()}, Price after: ${success.priceAfter.toString()} (${success.returnPct.toFixed(2)}% return)`),
-              'Use these successful cases to adapt your reasoning and bias calibration.',
+              '=== RECENT EVALUATED DECISIONS (BALANCED FEEDBACK) ===',
+              ...successes.map((success) => `- ${success.outcome} at ${success.horizon}: Symbol ${success.symbol}, decision ${success.decision}, confidence ${success.confidence}%, price ${success.priceAtDecision.toString()} -> ${success.priceAfter.toString()} (${success.returnPct.toFixed(2)}% net virtual return)`),
+              'Use both wins and losses to calibrate reasoning. Do not copy their direction without current evidence.',
             ].join('\n');
           }
         } catch {
@@ -522,6 +535,7 @@ export class AgentRunnerService {
       await this.agentIdempotencyService.setResult(
         idempotencyFingerprint,
         runRecord.id,
+        lockResult.lockToken,
       );
       return runRecord;
     } catch (err: unknown) {
@@ -541,10 +555,10 @@ export class AgentRunnerService {
 
       throw err;
     } finally {
-      if (globalLock) await this.agentConcurrencyService.releaseGlobal();
-      if (userLock && userId) await this.agentConcurrencyService.releaseUser(userId);
-      if (typeLock) await this.agentConcurrencyService.releaseType(definition.type);
-      await this.agentIdempotencyService.unlock(idempotencyFingerprint);
+      if (globalLockToken) await this.agentConcurrencyService.releaseGlobal(globalLockToken);
+      if (userLockToken && userId) await this.agentConcurrencyService.releaseUser(userId, userLockToken);
+      if (typeLockToken) await this.agentConcurrencyService.releaseType(definition.type, typeLockToken);
+      await this.agentIdempotencyService.unlock(idempotencyFingerprint, lockResult.lockToken);
     }
   }
 

@@ -20,19 +20,11 @@ export const PipelineRunStatusSchema = z.enum([
   "TIMEOUT",
   "SKIPPED",
 ]);
-export const PipelineSymbolSchema = z.enum([
-  "BTC-USDT",
-  "ETH-USDT",
-  "SOL-USDT",
-  "BNB-USDT",
-  "XRP-USDT",
-  "DOGE-USDT",
-  "ADA-USDT",
-  "AVAX-USDT",
-  "LINK-USDT",
-  "NEAR-USDT",
-  "SUI-USDT",
-]);
+export const PipelineSymbolSchema = z
+  .string()
+  .min(3)
+  .max(20)
+  .regex(/^[A-Z0-9]+-[A-Z0-9]+$/, "Symbol must be in BASE-QUOTE format (e.g. BTC-USDT)");
 export type PipelineSymbol = z.infer<typeof PipelineSymbolSchema>;
 export const PortfolioStrategyKeySchema = z.enum([
   "ai-core",

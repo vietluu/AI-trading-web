@@ -164,25 +164,22 @@ describe("exchange infrastructure", () => {
   });
 
   it("only sets TTL on the first increment for a rate-limit counter", async () => {
-    const incr = vi
+    const evalCommand = vi
       .fn()
       .mockResolvedValueOnce(1)
       .mockResolvedValueOnce(2)
       .mockResolvedValueOnce(3);
-    const expire = vi.fn().mockResolvedValue(true);
     const redis = new RedisService(new ConfigService({ REDIS_URL: "redis://localhost:6379" }));
-    (redis as unknown as { client: { incr: typeof incr; expire: typeof expire } }).client = {
-      incr,
-      expire,
+    (redis as unknown as { client: { eval: typeof evalCommand } }).client = {
+      eval: evalCommand,
     };
 
     await expect(redis.incrementWithTtl("exchange:rate:test", 60)).resolves.toBe(1);
     await expect(redis.incrementWithTtl("exchange:rate:test", 60)).resolves.toBe(2);
     await expect(redis.incrementWithTtl("exchange:rate:test", 60)).resolves.toBe(3);
 
-    expect(incr).toHaveBeenCalledTimes(3);
-    expect(expire).toHaveBeenCalledTimes(1);
-    expect(expire).toHaveBeenCalledWith("exchange:rate:test", 60);
+    expect(evalCommand).toHaveBeenCalledTimes(3);
+    expect(evalCommand).toHaveBeenCalledWith(expect.any(String), 1, "exchange:rate:test", 60);
   });
 
   it("calculates and caches server time offset", async () => {

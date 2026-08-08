@@ -69,7 +69,7 @@ describe('Phase 6.6 pipeline runtime policies', () => {
       }),
     };
     const decision = {
-      decide: vi.fn().mockReturnValue({
+      decideForUser: vi.fn().mockResolvedValue({
         decision: 'LONG',
         confidence: 55,
         reasoning: 'too weak',
@@ -120,6 +120,7 @@ describe('Phase 6.6 pipeline runtime policies', () => {
       alerts as never,
       analytics as never,
       liveTrading as never,
+      { setNx: vi.fn().mockResolvedValue(true), delete: vi.fn().mockResolvedValue(undefined) } as never,
     );
 
     await service.run({

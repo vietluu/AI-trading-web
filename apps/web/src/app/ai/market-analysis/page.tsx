@@ -10,12 +10,15 @@ import {
 } from "@/hooks/ai/useAiFeature";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 
+import { useExchangeSymbols } from "@/hooks/useExchangeSymbols";
+
 const fieldClassName =
   "w-full rounded-md border border-border bg-background px-3 py-2 text-sm";
 
 export default function MarketAnalysisPage(): React.JSX.Element {
   const { t } = useTranslation();
-  const [symbol, setSymbol] = useState<MarketAgentInput["symbol"]>("BTC-USDT");
+  const { symbols } = useExchangeSymbols();
+  const [symbol, setSymbol] = useState<string>("BTC-USDT");
   const [provider, setProvider] =
     useState<MarketAgentInput["provider"]>("OKX_FUTURES");
   const [interval, setInterval] = useState<MarketAgentInput["interval"]>("1h");
@@ -43,8 +46,11 @@ export default function MarketAnalysisPage(): React.JSX.Element {
         <label className="space-y-1 text-xs font-semibold text-muted-foreground">
           {t.ai.symbol}
           <select className={fieldClassName} value={symbol} onChange={(event) => setSymbol(event.target.value)}>
-            <option value="BTC-USDT">BTC-USDT</option>
-            <option value="ETH-USDT">ETH-USDT</option>
+            {symbols.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
           </select>
         </label>
         <label className="space-y-1 text-xs font-semibold text-muted-foreground">

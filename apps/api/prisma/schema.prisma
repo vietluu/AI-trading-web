@@ -353,6 +353,7 @@ model PaperSignal {
   userId         String   @db.Uuid
   pipelineRunId  String?  @unique @db.Uuid
   symbol         String
+  provider       ExchangeProvider?
   decision       String
   confidence     Float
   mode           String
@@ -362,6 +363,7 @@ model PaperSignal {
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+  @@index([userId, mode, outcome, createdAt])
   @@map("paper_signals")
 }
 
@@ -551,6 +553,8 @@ model PipelineRun {
 
   @@index([userId, createdAt])
   @@index([status, createdAt])
+  @@index([status, completedAt])
+  @@index([userId, provider, symbol, status, createdAt])
   @@index([pipelineId, symbol, createdAt])
   @@index([correlationId])
   @@index([replayOfRunId])
@@ -608,6 +612,7 @@ model PerformanceRecord {
 
   @@unique([runId, horizon])
   @@index([userId, evaluatedAt])
+  @@index([userId, horizon, evaluatedAt])
   @@index([symbol, horizon, evaluatedAt])
   @@map("performance_records")
 }
@@ -852,7 +857,7 @@ model MarketCandle {
 
   @@unique([provider, symbol, interval, openTime])
   @@index([symbol, openTime])
-  @@index([provider, symbol, interval, openTime])
+  @@index([provider, symbol, isClosed, closeTime])
   @@map("market_candles")
 }
 
@@ -2021,6 +2026,7 @@ model MarketRegimeState {
   detectedAt       DateTime @default(now())
 
   @@index([symbol, regime])
+  @@index([symbol, detectedAt])
   @@map("market_regime_states")
 }
 
@@ -2100,6 +2106,10 @@ model SelfLearningConfiguration {
   shadowThreshold       Float?    // Candidate threshold under shadow testing
   shadowEnabled         Boolean   @default(false)
   shadowPerformance     Json?     // Telemetry for shadow testing (e.g. accuracy, profitFactor, tradesCount)
+  liveVersion           Int       @default(1)
+  shadowVersion         Int?
+  shadowStartedAt       DateTime?
+  lastPromotionAt       DateTime?
   lastOptimizedAt       DateTime?
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
@@ -2107,5 +2117,3 @@ model SelfLearningConfiguration {
 
   @@map("self_learning_configurations")
 }
-
-

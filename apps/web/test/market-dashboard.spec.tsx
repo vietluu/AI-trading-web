@@ -6,8 +6,20 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { MarketDashboard } from "../src/components/market/MarketDashboard";
+
+function renderDashboard() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MarketDashboard apiBaseUrl="http://localhost:3001" />
+    </QueryClientProvider>,
+  );
+}
 
 let staleStatus = false;
 
@@ -124,7 +136,7 @@ describe("MarketDashboard", () => {
   });
 
   it("renders market controls and Phase 4 metrics", async () => {
-    render(<MarketDashboard apiBaseUrl="http://localhost:3001" />);
+    renderDashboard();
 
     expect(screen.getByText("Realtime market")).toBeDefined();
     expect(screen.getByRole("combobox", { name: "Exchange" })).toBeDefined();
@@ -139,7 +151,7 @@ describe("MarketDashboard", () => {
   });
 
   it("reloads history when pair and timeframe change", async () => {
-    render(<MarketDashboard apiBaseUrl="http://localhost:3001" />);
+    renderDashboard();
 
     fireEvent.change(screen.getByRole("combobox", { name: "Trading pair" }), {
       target: { value: "ETH-USDT" },
@@ -159,7 +171,7 @@ describe("MarketDashboard", () => {
   });
 
   it("applies realtime candle events to the chart", async () => {
-    render(<MarketDashboard apiBaseUrl="http://localhost:3001" />);
+    renderDashboard();
     await screen.findByTestId("trading-chart");
 
     socket.handlers.get("candle")?.({
@@ -178,7 +190,7 @@ describe("MarketDashboard", () => {
 
   it("shows a warning when the provider stream is stale", async () => {
     staleStatus = true;
-    render(<MarketDashboard apiBaseUrl="http://localhost:3001" />);
+    renderDashboard();
 
     expect(await screen.findByText("Market stream is stale")).toBeDefined();
   });

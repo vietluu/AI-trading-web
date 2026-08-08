@@ -35,8 +35,8 @@ export default function PipelineRunsPage() {
           Automation →
         </Link>
       </div>
-      <div className="overflow-hidden rounded-lg border bg-card">
-        <table className="w-full text-left text-sm">
+      <div className="overflow-x-auto rounded-lg border bg-card">
+        <table className="w-full min-w-[640px] text-left text-sm">
           <thead className="bg-muted text-xs uppercase text-muted-foreground">
             <tr>
               {[

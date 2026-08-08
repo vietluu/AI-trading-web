@@ -134,11 +134,14 @@ function formatNumber(value?: string, maximumFractionDigits = 2): string {
   return number.toLocaleString("en-US", { maximumFractionDigits });
 }
 
+import { useExchangeSymbols } from "@/hooks/useExchangeSymbols";
+
 export function MarketDashboard({
   apiBaseUrl,
   defaultSymbol = "BTC-USDT",
   defaultInterval = "1h",
 }: MarketDashboardProps): React.JSX.Element {
+  const { symbols: dynamicSymbols } = useExchangeSymbols();
   const [provider, setProvider] = useState<MarketProvider>("OKX_FUTURES");
   const [symbol, setSymbol] = useState(defaultSymbol);
   const [interval, setIntervalValue] = useState(defaultInterval);
@@ -428,7 +431,7 @@ export function MarketDashboard({
                 onChange={(event) => setSymbol(event.target.value)}
                 value={symbol}
               >
-                {SYMBOLS.map((item) => (
+                {(dynamicSymbols.length > 0 ? dynamicSymbols : SYMBOLS).map((item) => (
                   <option key={item} value={item}>
                     {item}
                   </option>

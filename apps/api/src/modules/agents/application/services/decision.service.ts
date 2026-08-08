@@ -37,74 +37,70 @@ export type {
 export class DecisionService {
   private readonly logger = new Logger(DecisionService.name);
 
-  @Inject(PrismaService)
-  @Optional()
-  private readonly prisma?: PrismaService;
-
   constructor(
     private readonly fusionService: FusionService,
+    @Optional() @Inject(PrismaService) private readonly prisma?: PrismaService,
   ) {}
 
   public async run(options: RunDecisionOptions): Promise<DecisionOutput> {
     const input = DecisionRunInputSchema.parse(options.input);
     const result = await this.fusionService.runDetailed({ ...options, input });
-    
-    // Load Dynamic Self-Learning Configuration
-    const config = (options.userId && this.prisma)
-      ? await this.prisma.selfLearningConfiguration.findUnique({
-          where: { userId: options.userId },
-        })
-      : null;
-
-    const customWeights = config?.weightsJson
-      ? (config.weightsJson as Weighting)
-      : undefined;
-
-    const decisionOptions = config
-      ? {
-          weights: customWeights,
-          confidenceThreshold: config.confidenceThreshold,
-          volatilityPenalty: config.volatilityPenalty,
-        }
-      : undefined;
-
-    const decision = this.decide({
+    return this.decideForUser({
       symbol: input.symbol,
       fusionOutput: result.fusionOutput,
       ...result.analyses,
-    }, decisionOptions);
+    }, options.userId, {
+      pipelineRunId: options.correlationId,
+      provider: input.provider,
+    });
+  }
+
+  /** Apply the user's governed live configuration to already-computed analyses. */
+  public async decideForUser(
+    rawInput: DecisionInput,
+    userId?: string,
+    metadata: { pipelineRunId?: string; provider?: 'BINANCE_FUTURES' | 'OKX_FUTURES'; referencePrice?: number } = {},
+  ): Promise<DecisionOutput> {
+    const config = userId && this.prisma
+      ? await this.prisma.selfLearningConfiguration.findUnique({ where: { userId } })
+      : null;
+    const liveWeights = this.validWeights(config?.weightsJson);
+    const decision = this.decide(rawInput, config
+      ? {
+          weights: liveWeights,
+          confidenceThreshold: config.confidenceThreshold,
+          volatilityPenalty: config.volatilityPenalty,
+        }
+      : undefined);
 
     // Phase C: Shadow Mode Simulation Run
-    if (config?.shadowEnabled && options.userId && this.prisma) {
-      const shadowWeights = config.shadowWeightsJson
-        ? (config.shadowWeightsJson as Weighting)
-        : undefined;
+    if (config?.shadowEnabled && userId && this.prisma) {
+      const shadowWeights = this.validWeights(config.shadowWeightsJson);
       const shadowThreshold = config.shadowThreshold ?? undefined;
       
-      const shadowDecision = this.decide({
-        symbol: input.symbol,
-        fusionOutput: result.fusionOutput,
-        ...result.analyses,
-      }, {
+      const shadowDecision = this.decide(rawInput, {
         weights: shadowWeights,
         confidenceThreshold: shadowThreshold,
         volatilityPenalty: config.volatilityPenalty,
       });
 
       if (shadowDecision.decision !== 'WAIT') {
-        let lastPrice = 0;
-        const lastCandle = await this.prisma.marketCandle.findFirst({
-          where: { symbol: input.symbol, provider: input.provider, isClosed: true },
-          orderBy: { closeTime: 'desc' },
-          select: { close: true },
-        });
-        if (lastCandle) lastPrice = Number(lastCandle.close);
+        let lastPrice = metadata.referencePrice ?? 0;
+        if (!(lastPrice > 0) && metadata.provider) {
+          const lastCandle = await this.prisma.marketCandle.findFirst({
+            where: { symbol: rawInput.symbol, provider: metadata.provider, isClosed: true },
+            orderBy: { closeTime: 'desc' },
+            select: { close: true },
+          });
+          if (lastCandle) lastPrice = Number(lastCandle.close);
+        }
 
-        await this.prisma.paperSignal.create({
+        if (lastPrice > 0) await this.prisma.paperSignal.create({
           data: {
-            userId: options.userId,
-            pipelineRunId: options.correlationId,
-            symbol: input.symbol,
+            userId,
+            pipelineRunId: metadata.pipelineRunId,
+            symbol: rawInput.symbol,
+            provider: metadata.provider,
             decision: shadowDecision.decision,
             confidence: shadowDecision.confidence,
             mode: 'SHADOW',
@@ -120,6 +116,19 @@ export class DecisionService {
     }
 
     return decision;
+  }
+
+  private validWeights(value: unknown): Weighting | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const names = Object.keys(BASE_WEIGHTS) as AnalystName[];
+    const candidate = value as Record<string, unknown>;
+    if (!names.every((name) => typeof candidate[name] === 'number' && Number.isFinite(candidate[name]) && Number(candidate[name]) > 0)) {
+      this.logger.warn({ event: 'invalid_self_learning_weights_ignored' });
+      return undefined;
+    }
+    const total = names.reduce((sum, name) => sum + Number(candidate[name]), 0);
+    if (!(total > 0)) return undefined;
+    return Object.fromEntries(names.map((name) => [name, (Number(candidate[name]) / total) * 100])) as Weighting;
   }
 
   public decide(
@@ -236,24 +245,27 @@ export class DecisionService {
     const expectedWinProbability = this.clamp((calibratedConfidence / 100) * 0.75 + opportunityScore / 100 * 0.2, 0, 1);
     const expectedReward = this.clamp((opportunityScore / 100) * 3 + 0.5, 0.2, 5);
     const expectedLoss = this.clamp((100 - opportunityScore) / 100 * 1.4 + 0.4, 0.2, 3);
-    const expectedValue = this.clamp(expectedWinProbability * expectedReward - (1 - expectedWinProbability) * expectedLoss, -3, 3);
+    const grossExpectedValue = expectedWinProbability * expectedReward - (1 - expectedWinProbability) * expectedLoss;
     const profitFactorEstimate = this.clamp(expectedReward / Math.max(expectedLoss, 0.05), 0.1, 10);
     const riskScore = this.clamp(50 + (volatilityAdjustment * -0.4) + (conflictLevel === 'HIGH' ? 15 : conflictLevel === 'MEDIUM' ? 8 : 0) + Math.max(0, 100 - opportunityScore) * 0.2, 0, 100);
     const executionCost = this.estimateExecutionCost(input, opportunityScore, regime.type);
+    const expectedValue = this.clamp(grossExpectedValue - executionCost, -3, 3);
     const strongConviction = agreementScore >= 80 && opportunityScore >= 68 && expectedValue > 0.2;
-    const adaptiveThresholdValue = customOptions?.confidenceThreshold ?? adaptiveThreshold;
+    // A learned threshold may make the system more conservative, but must not
+    // weaken the regime-specific safety threshold.
+    const adaptiveThresholdValue = Math.max(customOptions?.confidenceThreshold ?? 0, adaptiveThreshold);
     const finalDecision: DecisionOutput['decision'] =
       dataQuality === 'INSUFFICIENT' ||
       conflictLevel === 'HIGH' ||
       extreme ||
-      (calibratedConfidence < adaptiveThresholdValue && !strongConviction) ||
+      calibratedConfidence < adaptiveThresholdValue ||
       (expectedValue <= 0 && !strongConviction) ||
       (opportunityScore < Math.max(55, adaptiveThresholdValue - 5) && !strongConviction)
         ? 'WAIT'
         : candidate;
 
-    if (strongConviction) {
-      overrides.push('Strong conviction override allowed the decision to proceed despite a higher guardrail threshold.');
+    if (strongConviction && finalDecision !== 'WAIT') {
+      overrides.push('Strong conviction satisfied the secondary opportunity guard while all confidence and safety thresholds remained enforced.');
     }
     const weightedBias =
       directionalBias > 0 ? 'bullish' : directionalBias < 0 ? 'bearish' : 'neutral';
@@ -337,6 +349,7 @@ export class DecisionService {
       weights.technical += 5;
       weights.market -= 5;
     }
+    for (const name of Object.keys(weights) as AnalystName[]) weights[name] = Math.max(1, weights[name]);
     const total = Object.values(weights).reduce((sum, value) => sum + value, 0);
     const normalized = {} as Weighting;
     const names = Object.keys(weights) as AnalystName[];
@@ -445,7 +458,7 @@ export class DecisionService {
     const riskReward = input.market?.volatility.level === 'LOW' ? 0.8 : 0.7;
     const executionCost = 0.72;
     const confidence = this.clamp((this.voteWeight(votes, weighting) / 100) * 0.95 + 0.05, 0, 1);
-    const score = (
+    const weightedScore = (
       trendStrength * 12 +
       momentum * 10 +
       volume * 8 +
@@ -464,7 +477,7 @@ export class DecisionService {
       executionCost * 6 +
       confidence * 10
     );
-    return this.clamp(score, 0, 100);
+    return this.clamp((weightedScore / 134) * 100, 0, 100);
   }
 
   private calculateAdaptiveThresholds(
@@ -492,8 +505,12 @@ export class DecisionService {
   }
 
   private voteWeight(votes: Map<AnalystName, Bias>, weighting: Weighting): number {
-    const total = [...votes.values()].reduce((sum, vote) => sum + (vote === 'BULLISH' ? weighting.market : vote === 'BEARISH' ? weighting.news : 0), 0);
-    return this.clamp(total, 0, 100);
+    const directionalWeight = [...votes.entries()].reduce(
+      (sum, [name, vote]) => sum + (vote === 'NEUTRAL' ? 0 : weighting[name]),
+      0,
+    );
+    const activeWeight = [...votes.keys()].reduce((sum, name) => sum + weighting[name], 0);
+    return activeWeight > 0 ? this.clamp((directionalWeight / activeWeight) * 100, 0, 100) : 0;
   }
 
   private bias(name: AnalystName, output: FusionInput[AnalystName]): Bias {

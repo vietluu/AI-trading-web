@@ -47,17 +47,37 @@ export class LiveTradingGateway {
   }
 
   private async resolveAuthenticatedUserId(client: Socket): Promise<string | undefined> {
-    const cookies = client.handshake.headers.cookie;
-    if (!cookies) return undefined;
+    let token: string | undefined;
 
-    const cookieHeader = Array.isArray(cookies) ? cookies.join(";") : cookies;
-    const tokenCookie = cookieHeader
-      .split(";")
-      .map((entry) => entry.trim())
-      .find((entry) => entry.startsWith(`${SessionService.cookieName}=`));
-    if (!tokenCookie) return undefined;
+    // 1. Try auth object (e.g. io(url, { auth: { token: "..." } }))
+    const authObj = client.handshake.auth as Record<string, unknown> | undefined;
+    if (typeof authObj?.token === "string" && authObj.token.trim()) {
+      token = authObj.token.trim();
+    }
 
-    const token = tokenCookie.slice(SessionService.cookieName.length + 1);
+    // 2. Try query param (e.g. io(url, { query: { token: "..." } }))
+    if (!token) {
+      const queryObj = client.handshake.query as Record<string, unknown> | undefined;
+      if (typeof queryObj?.token === "string" && queryObj.token.trim()) {
+        token = queryObj.token.trim();
+      }
+    }
+
+    // 3. Fallback to session cookie
+    if (!token) {
+      const cookies = client.handshake.headers.cookie;
+      if (cookies) {
+        const cookieHeader = Array.isArray(cookies) ? cookies.join(";") : cookies;
+        const tokenCookie = cookieHeader
+          .split(";")
+          .map((entry) => entry.trim())
+          .find((entry) => entry.startsWith(`${SessionService.cookieName}=`));
+        if (tokenCookie) {
+          token = tokenCookie.slice(SessionService.cookieName.length + 1);
+        }
+      }
+    }
+
     if (!token) return undefined;
 
     try {

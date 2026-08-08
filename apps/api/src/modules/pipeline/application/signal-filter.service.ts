@@ -13,7 +13,7 @@ export interface SignalFilterInput {
 
 export interface SignalFilterResult {
   allowed: boolean;
-  reason?: "NO_TRADE_ZONE" | "LOW_ATR" | "NO_TREND";
+  reason?: "NO_TRADE_ZONE" | "LOW_ATR" | "NO_TREND" | "INSUFFICIENT_INDICATORS";
 }
 
 @Injectable()
@@ -49,7 +49,7 @@ export class SignalFilterService {
 
     const effectiveMinAtr =
       explicitPrice !== undefined
-        ? Math.min(this.minAtrAbsolute, Math.max(0.1, explicitPrice * 0.005))
+        ? Math.min(this.minAtrAbsolute, Math.max(0.1, explicitPrice * (this.minAtrPercent / 100)))
         : this.minAtrAbsolute;
 
     const isLowAtr = Number.isFinite(atr) && atr < effectiveMinAtr;
@@ -68,7 +68,7 @@ export class SignalFilterService {
     }
 
     if (!hasAnyIndicatorData) {
-      return { allowed: true };
+      return { allowed: false, reason: "INSUFFICIENT_INDICATORS" };
     }
 
     const hasTrend =

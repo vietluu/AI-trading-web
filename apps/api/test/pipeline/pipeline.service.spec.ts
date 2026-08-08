@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { PipelineService } from '../../src/modules/pipeline/application/pipeline.service';
 
 describe('PipelineService', () => {
-  it('executes manual runs directly instead of leaving them queued', async () => {
+  it('queues manual runs so HTTP requests respect worker backpressure', async () => {
     const repository = {
       createRun: vi.fn().mockResolvedValue({ id: 'run-1' }),
       createSteps: vi.fn().mockResolvedValue(undefined),
@@ -11,7 +11,7 @@ describe('PipelineService', () => {
       latestForSymbol: vi.fn().mockResolvedValue(null),
     };
     const queue = {
-      enqueue: vi.fn().mockRejectedValue(new Error('redis down')),
+      enqueue: vi.fn().mockResolvedValue(undefined),
     };
     const config = {
       enabled: true,
@@ -35,8 +35,7 @@ describe('PipelineService', () => {
       'MANUAL',
     );
 
-    expect(queue.enqueue).not.toHaveBeenCalled();
-    expect(runner.run).toHaveBeenCalledWith(
+    expect(queue.enqueue).toHaveBeenCalledWith(
       expect.objectContaining({
         runId: 'run-1',
         pipelineId: 'FULL_ANALYSIS_DECISION',
@@ -44,6 +43,7 @@ describe('PipelineService', () => {
         provider: 'OKX_FUTURES',
       }),
     );
+    expect(runner.run).not.toHaveBeenCalled();
     expect(result).toMatchObject({ id: 'run-1' });
   });
 });

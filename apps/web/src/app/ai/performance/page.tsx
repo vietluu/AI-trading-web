@@ -6,23 +6,13 @@ import { ROUTES } from "@/constants/routes";
 import { usePerformanceDashboard } from "@/hooks/ai/useAiFeature";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 
+import { useExchangeSymbols } from "@/hooks/useExchangeSymbols";
+
 export default function PerformancePage() {
   const { t } = useTranslation();
+  const { symbols: dynamicSymbols } = useExchangeSymbols();
   const [selectedSymbol, setSelectedSymbol] = useState<string>("");
-  const symbols = [
-    "",
-    "BTC-USDT",
-    "ETH-USDT",
-    "SOL-USDT",
-    "BNB-USDT",
-    "XRP-USDT",
-    "DOGE-USDT",
-    "ADA-USDT",
-    "AVAX-USDT",
-    "LINK-USDT",
-    "NEAR-USDT",
-    "SUI-USDT",
-  ];
+  const symbols = ["", ...dynamicSymbols];
   const { metrics, records, alerts } = usePerformanceDashboard(selectedSymbol);
   const cards = [
     [t.ai.accuracy, `${metrics.data?.accuracy ?? 0}%`],

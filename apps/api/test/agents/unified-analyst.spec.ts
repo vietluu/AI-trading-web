@@ -4,8 +4,8 @@ import { AgentInvocationSource } from '../../src/modules/agents/domain/enums';
 import { ExchangeInterval, ExchangeProvider } from '../../src/exchange/domain/exchange.types';
 import type { AgentExecutionService } from '../../src/modules/agents/application/services/agent-execution.service';
 
-describe('UnifiedAnalystService (1-Prompt Multi-Analyst Consolidation)', () => {
-  it('consolidates 5 separate agent prompt requests into a single unified analysis', async () => {
+describe('UnifiedAnalystService safety fallback', () => {
+  it('marks invalid agent outputs insufficient instead of fabricating a bullish market', async () => {
     const mockAgentExecutionService = {
       executeSync: () => Promise.resolve({ output: {} }),
     } as unknown as AgentExecutionService;
@@ -24,10 +24,11 @@ describe('UnifiedAnalystService (1-Prompt Multi-Analyst Consolidation)', () => {
     });
 
     expect(result.analyses).toBeDefined();
-    expect(result.analyses.technical.trend.direction).toBe('UP');
-    expect(result.analyses.market.dataQuality).toBe('GOOD');
-    expect(result.analyses.macro.macroTrend).toBe('RISK_ON');
-    expect(result.fusionOutput.overallBias).toBe('BULLISH');
-    expect(result.fusionOutput.confidence).toBeGreaterThanOrEqual(70);
+    expect(result.analyses.technical.trend.direction).toBe('SIDEWAYS');
+    expect(result.analyses.market.dataQuality).toBe('INSUFFICIENT');
+    expect(result.analyses.macro.macroTrend).toBe('NEUTRAL');
+    expect(result.fusionOutput.overallBias).toBe('NEUTRAL');
+    expect(result.fusionOutput.confidence).toBe(0);
+    expect(result.fusionOutput.dataQuality).toBe('INSUFFICIENT');
   });
 });

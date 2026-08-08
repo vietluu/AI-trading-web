@@ -158,8 +158,9 @@ services:
       [
         "sh",
         "-c",
-        "pnpm --filter @platform/api db:push && pnpm --filter @platform/api start",
+        "pnpm --filter @platform/api db:migrate && pnpm --filter @platform/api start",
       ]
+    stop_grace_period: 30s
     healthcheck:
       test:
         [

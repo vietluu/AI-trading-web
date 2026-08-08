@@ -95,7 +95,7 @@ export class SelfLearningService {
    */
   async tuneParameters(userId: string): Promise<void> {
     const config = await this.getOrCreateConfig(userId);
-    if (!config.isEnabled) return;
+    if (!config.isEnabled || config.shadowEnabled) return;
 
     // Fetch last 50 performance records (MID/LONG horizons represent true outcomes)
     const records = await this.prisma.performanceRecord.findMany({
@@ -114,7 +114,6 @@ export class SelfLearningService {
     const accuracy = directionalCount > 0 ? (correctCount / directionalCount) * 100 : 100;
 
     let nextThreshold = config.confidenceThreshold;
-    let nextVolatilityPenalty = config.volatilityPenalty;
 
     // 1. Tune Confidence Threshold based on Accuracy
     if (accuracy < 55) {
@@ -134,18 +133,15 @@ export class SelfLearningService {
 
     if (volatileRecords.length >= 3 && volatileAccuracy < 50) {
       // Underperforming during volatility -> increase penalty (max 40)
-      nextVolatilityPenalty = Math.min(40, config.volatilityPenalty + 5);
-      this.logger.log(`Tuning: Volatility accuracy is low (${volatileAccuracy.toFixed(1)}%). Increasing volatility penalty from ${config.volatilityPenalty} to ${nextVolatilityPenalty}`);
-    } else if (volatileAccuracy >= 65) {
-      // Doing well in volatility -> ease penalty (min 15)
-      nextVolatilityPenalty = Math.max(15, config.volatilityPenalty - 2);
+      this.logger.log(`Tuning: Volatility accuracy is low (${volatileAccuracy.toFixed(1)}%). Keeping the live volatility penalty unchanged until a shadow field is available.`);
     }
 
+    // Never mutate live parameters directly. The candidate threshold is tested
+    // by the same shadow promotion gate as candidate weights.
     await this.prisma.selfLearningConfiguration.update({
       where: { userId },
       data: {
-        confidenceThreshold: nextThreshold,
-        volatilityPenalty: nextVolatilityPenalty,
+        shadowThreshold: nextThreshold,
         lastOptimizedAt: new Date(),
       },
     });
@@ -157,7 +153,9 @@ export class SelfLearningService {
    */
   async optimizeAgentWeights(userId: string): Promise<void> {
     const config = await this.getOrCreateConfig(userId);
-    if (!config.isEnabled) return;
+    // A shadow experiment is immutable. Mixing decisions from several
+    // candidates would make its performance statistically meaningless.
+    if (!config.isEnabled || config.shadowEnabled) return;
 
     // Fetch recent completed runs with stored contexts to retrieve individual agent votes
     const runs = await this.prisma.pipelineRun.findMany({
@@ -263,8 +261,16 @@ export class SelfLearningService {
       where: { userId },
       data: {
         shadowWeightsJson: newWeights,
-        shadowThreshold: config.confidenceThreshold, // keep tuned threshold
+        shadowThreshold: config.shadowThreshold ?? config.confidenceThreshold,
         shadowEnabled: true,
+        shadowVersion: config.liveVersion + 1,
+        shadowStartedAt: new Date(),
+        shadowPerformance: toShadowPerformanceJson({
+          tradesCount: 0,
+          correctCount: 0,
+          accuracy: 0,
+          totalReturn: 0,
+        }),
       },
     });
   }
@@ -299,6 +305,7 @@ export class SelfLearningService {
       const candle = await this.prisma.marketCandle.findFirst({
         where: {
           symbol: signal.symbol,
+          ...(signal.provider ? { provider: signal.provider } : {}),
           isClosed: true,
           closeTime: { gte: targetTime },
         },
@@ -318,6 +325,7 @@ export class SelfLearningService {
         decision,
         priceAtDecision,
         priceAfter,
+        0.1,
       );
 
       evaluatedCount++;
@@ -344,17 +352,20 @@ export class SelfLearningService {
       };
 
       // Auto-Promote check:
-      // If we have at least 10 shadow trades and shadow accuracy is > live accuracy + 5%
+      // Promotion requires a useful sample, positive virtual return, and a
+      // measurable improvement over directional live decisions.
       const liveRecords = await this.prisma.performanceRecord.findMany({
         where: { userId, horizon: 'MID' },
         orderBy: { evaluatedAt: 'desc' },
         take: 30,
       });
 
-      const liveCorrect = liveRecords.filter((r) => r.outcome === 'CORRECT').length;
-      const liveAccuracy = liveRecords.length > 0 ? (liveCorrect / liveRecords.length) * 100 : 60;
+      const liveDirectional = liveRecords.filter((r) => r.decision !== 'WAIT' && r.outcome !== 'NEUTRAL');
+      const liveCorrect = liveDirectional.filter((r) => r.outcome === 'CORRECT').length;
+      const liveAccuracy = liveDirectional.length > 0 ? (liveCorrect / liveDirectional.length) * 100 : 60;
 
-      const shouldPromote = nextTradesCount >= 10 && nextAccuracy > liveAccuracy + 5.0;
+      const shouldPromote = nextTradesCount >= 50 && nextAccuracy > liveAccuracy + 3.0 && nextTotalReturn > 0;
+      const shouldReject = nextTradesCount >= 200 && !shouldPromote;
 
       if (shouldPromote) {
         this.logger.log(`Auto-Promoting shadow config to Live! Shadow accuracy: ${nextAccuracy.toFixed(1)}% vs Live: ${liveAccuracy.toFixed(1)}%`);
@@ -364,12 +375,29 @@ export class SelfLearningService {
             weightsJson: config.shadowWeightsJson ?? BASE_WEIGHTS,
             confidenceThreshold: config.shadowThreshold ?? config.confidenceThreshold,
             shadowEnabled: false, // Turn off shadow testing until next optimization
+            liveVersion: config.shadowVersion ?? config.liveVersion + 1,
+            shadowVersion: null,
+            shadowStartedAt: null,
+            lastPromotionAt: new Date(),
             shadowPerformance: toShadowPerformanceJson({
               tradesCount: 0,
               correctCount: 0,
               accuracy: 0,
               totalReturn: 0,
             }),
+          },
+        });
+      } else if (shouldReject) {
+        this.logger.warn(`Rejecting shadow config after ${nextTradesCount} trades without sufficient improvement.`);
+        await this.prisma.selfLearningConfiguration.update({
+          where: { userId },
+          data: {
+            shadowEnabled: false,
+            shadowVersion: null,
+            shadowStartedAt: null,
+            shadowWeightsJson: config.weightsJson ?? BASE_WEIGHTS,
+            shadowThreshold: config.confidenceThreshold,
+            shadowPerformance: toShadowPerformanceJson({ tradesCount: 0, correctCount: 0, accuracy: 0, totalReturn: 0 }),
           },
         });
       } else {

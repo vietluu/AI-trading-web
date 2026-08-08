@@ -12,8 +12,18 @@ export class ReflectionRepository {
   allRecords(take = 5000) { return this.prisma.performanceRecord.findMany({ orderBy: { evaluatedAt: 'desc' }, take }); }
   completedRuns(cutoff: Date) {
     return this.prisma.pipelineRun.findMany({
-      where: { status: 'COMPLETED', completedAt: { lte: cutoff }, decision: { in: ['LONG', 'SHORT', 'WAIT'] } },
+      where: {
+        status: 'COMPLETED',
+        completedAt: { lte: cutoff },
+        decision: { in: ['LONG', 'SHORT', 'WAIT'] },
+        OR: [
+          { performanceRecords: { none: { horizon: 'SHORT' } } },
+          { performanceRecords: { none: { horizon: 'MID' } } },
+          { performanceRecords: { none: { horizon: 'LONG' } } },
+        ],
+      },
       select: { id: true, userId: true, symbol: true, provider: true, decision: true, confidence: true, completedAt: true, storedContext: true, performanceRecords: { select: { horizon: true } } },
+      orderBy: { completedAt: 'asc' },
       take: 1000,
     });
   }

@@ -297,4 +297,182 @@ export class PublicExchangeService {
   private limit(provider: ExchangeProvider): Promise<void> {
     return this.rateLimit.public(provider, ExchangeEnvironment.PRODUCTION);
   }
+
+  /**
+   * Discovers all active trading pairs across Binance Futures & OKX Perpetual Swaps.
+   * Identifies symbols available on Binance, OKX, or common to both.
+   */
+  async crossExchangeSymbols(): Promise<
+    Array<{
+      symbol: string;
+      baseAsset: string;
+      quoteAsset: string;
+      binanceSupported: boolean;
+      okxSupported: boolean;
+      isCommon: boolean;
+    }>
+  > {
+    const [binanceInsts, okxInsts] = await Promise.allSettled([
+      this.instruments(ExchangeProvider.BINANCE_FUTURES, "TRADING"),
+      this.instruments(ExchangeProvider.OKX_FUTURES, "TRADING"),
+    ]);
+
+    const binanceMap = new Set(
+      binanceInsts.status === "fulfilled"
+        ? binanceInsts.value.map((i) => i.symbol)
+        : [],
+    );
+    const okxMap = new Set(
+      okxInsts.status === "fulfilled" ? okxInsts.value.map((i) => i.symbol) : [],
+    );
+
+    const allSymbols = new Set([...binanceMap, ...okxMap]);
+    const results = [];
+
+    for (const symbol of allSymbols) {
+      const [baseAsset, quoteAsset] = symbol.split("-");
+      const binanceSupported = binanceMap.has(symbol);
+      const okxSupported = okxMap.has(symbol);
+      results.push({
+        symbol,
+        baseAsset: baseAsset ?? symbol,
+        quoteAsset: quoteAsset ?? "USDT",
+        binanceSupported,
+        okxSupported,
+        isCommon: binanceSupported && okxSupported,
+      });
+    }
+
+    return results.sort((a, b) => {
+      // Prioritize common symbols first, then alphabetical
+      if (a.isCommon !== b.isCommon) return a.isCommon ? -1 : 1;
+      return a.symbol.localeCompare(b.symbol);
+    });
+  }
+
+  /**
+   * Scans active market instruments and ranks the top N symbols offering the
+   * highest trading opportunity EV (volatility, 24h volume, momentum).
+   * Helps users optimize pipeline runs instead of blindly running on 300+ symbols.
+   */
+  async recommendTopSymbols(options?: {
+    provider?: ExchangeProvider;
+    limit?: number;
+    commonOnly?: boolean;
+  }): Promise<
+    Array<{
+      symbol: string;
+      provider: ExchangeProvider;
+      opportunityScore: number;
+      price: number;
+      volume24h: number;
+      change24hPct: number;
+      reasons: string[];
+      isCommon: boolean;
+    }>
+  > {
+    const provider = options?.provider ?? ExchangeProvider.BINANCE_FUTURES;
+    const limit = options?.limit ?? 10;
+
+    const [crossSymbols, instruments] = await Promise.all([
+      this.crossExchangeSymbols(),
+      this.instruments(provider, "TRADING").catch(() => []),
+    ]);
+
+    const commonSet = new Set(
+      crossSymbols.filter((s) => s.isCommon).map((s) => s.symbol),
+    );
+
+    let candidates = instruments;
+    if (options?.commonOnly) {
+      candidates = candidates.filter((inst) => commonSet.has(inst.symbol));
+    }
+
+    // Benchmark symbols to always include if available
+    const BENCHMARKS = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT"];
+
+    // Evaluate tickers in parallel batches for candidates
+    const tickers = await Promise.allSettled(
+      candidates.slice(0, 50).map(async (inst) => {
+        try {
+          const ticker = await this.ticker(provider, inst.symbol);
+          return { symbol: inst.symbol, ticker };
+        } catch {
+          return null;
+        }
+      }),
+    );
+
+    const scored: Array<{
+      symbol: string;
+      provider: ExchangeProvider;
+      opportunityScore: number;
+      price: number;
+      volume24h: number;
+      change24hPct: number;
+      reasons: string[];
+      isCommon: boolean;
+    }> = [];
+
+    for (const item of tickers) {
+      if (item.status !== "fulfilled" || !item.value) continue;
+      const { symbol, ticker } = item.value;
+      const price = Number(ticker.lastPrice ?? ticker.markPrice ?? 0);
+      const volume24h = Number(ticker.quoteVolume24h ?? ticker.volume24h ?? 0);
+      const change24hPct = Number(ticker.priceChangePercent24h ?? 0);
+
+      if (price <= 0) continue;
+
+      const reasons: string[] = [];
+      let score = 50; // Base score
+
+      // High volume booster (Liquidity)
+      if (volume24h > 500_000_000) {
+        score += 20;
+        reasons.push("Ultra-high liquidity ($500M+ 24h vol)");
+      } else if (volume24h > 100_000_000) {
+        score += 10;
+        reasons.push("Strong liquidity ($100M+ 24h vol)");
+      }
+
+      // Strong momentum / volatility booster (Profit opportunities)
+      const absChange = Math.abs(change24hPct);
+      if (absChange >= 5 && absChange <= 20) {
+        score += 25;
+        reasons.push(`High trading momentum (${change24hPct > 0 ? "+" : ""}${change24hPct.toFixed(1)}% 24h)`);
+      } else if (absChange > 20) {
+        score += 10; // Extreme volatility has higher risk
+        reasons.push(`Extreme price expansion (${change24hPct.toFixed(1)}% 24h)`);
+      }
+
+      // Cross-exchange compatibility bonus
+      const isCommon = commonSet.has(symbol);
+      if (isCommon) {
+        score += 10;
+        reasons.push("Supported on both Binance & OKX");
+      }
+
+      // Benchmark bonus
+      if (BENCHMARKS.includes(symbol)) {
+        score += 5;
+        reasons.push("Major market benchmark");
+      }
+
+      scored.push({
+        symbol,
+        provider,
+        opportunityScore: Math.min(100, Math.round(score)),
+        price,
+        volume24h,
+        change24hPct,
+        reasons,
+        isCommon,
+      });
+    }
+
+    return scored
+      .sort((a, b) => b.opportunityScore - a.opportunityScore)
+      .slice(0, limit);
+  }
 }
+

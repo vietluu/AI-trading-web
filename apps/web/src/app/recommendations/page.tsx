@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 import { getRecommendations, reviewRecommendation } from "@/services/quant.service";
+import { apiRequest } from "@/lib/api-client";
 import { ShieldCheck, Check, X, Inbox } from "lucide-react";
 
 interface RecommendationItem {
@@ -19,24 +20,42 @@ interface RecommendationItem {
   status: "PENDING_APPROVAL" | "APPROVED" | "REJECTED";
 }
 
+interface SymbolRecommendation {
+  symbol: string;
+  provider: string;
+  opportunityScore: number;
+  price: number;
+  volume24h: number;
+  change24hPct: number;
+  reasons: string[];
+  isCommon: boolean;
+}
+
 export default function RecommendationsPage() {
   const { t } = useTranslation();
   const [recommendations, setRecommendations] = useState<RecommendationItem[]>([]);
+  const [exchangeRecs, setExchangeRecs] = useState<SymbolRecommendation[]>([]);
   const [loading, setLoading] = useState(true);
   const [actioningId, setActioningId] = useState<string | null>(null);
 
   useEffect(() => {
-    async function loadRecommendations() {
+    async function loadData() {
       try {
-        const data = await getRecommendations();
-        setRecommendations(data);
+        const [quantData, exchangeRes] = await Promise.allSettled([
+          getRecommendations(),
+          apiRequest<SymbolRecommendation[]>("/exchanges/recommendations?limit=6"),
+        ]);
+        if (quantData.status === "fulfilled") setRecommendations(quantData.value);
+        if (exchangeRes.status === "fulfilled" && Array.isArray(exchangeRes.value)) {
+          setExchangeRecs(exchangeRes.value);
+        }
       } catch {
         setRecommendations([]);
       } finally {
         setLoading(false);
       }
     }
-    void loadRecommendations();
+    void loadData();
   }, []);
 
   async function handleReview(id: string, action: "APPROVE" | "REJECT") {
@@ -69,6 +88,54 @@ export default function RecommendationsPage() {
           </p>
         </div>
       </div>
+
+      {/* Top AI Exchange Symbol Recommendations */}
+      {exchangeRecs.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-bold tracking-tight flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              Top AI Exchange Opportunity Recommendations
+            </h2>
+            <span className="text-xs text-muted-foreground">Scanned from Binance & OKX</span>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
+            {exchangeRecs.map((item) => (
+              <div
+                key={item.symbol}
+                className="rounded-2xl border border-emerald-500/20 bg-card/60 p-4 shadow-sm backdrop-blur-md hover:border-emerald-500/40 transition-all space-y-2"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-sm text-foreground">{item.symbol}</span>
+                  <span className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-bold text-emerald-300">
+                    EV Score: {item.opportunityScore}/100
+                  </span>
+                </div>
+                <div className="flex items-baseline justify-between text-xs">
+                  <span className="font-mono text-muted-foreground">
+                    ${item.price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </span>
+                  <span
+                    className={`font-semibold ${
+                      item.change24hPct >= 0 ? "text-emerald-400" : "text-rose-400"
+                    }`}
+                  >
+                    {item.change24hPct >= 0 ? "+" : ""}
+                    {item.change24hPct.toFixed(2)}%
+                  </span>
+                </div>
+                <div className="space-y-1 pt-1 border-t border-border/50">
+                  {item.reasons.map((r, i) => (
+                    <p key={i} className="text-[11px] text-muted-foreground flex items-center gap-1">
+                      <span className="text-emerald-400">•</span> {r}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {recommendations.length === 0 ? (
         <div className="rounded-2xl border border-border bg-card p-12 text-center text-muted-foreground space-y-3">
