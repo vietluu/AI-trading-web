@@ -33,4 +33,31 @@ describe('MarketDataRepository candle freshness', () => {
       newer.openTime.toISOString(),
     ]);
   });
+
+  it('casts string OHLCV parameters for PostgreSQL batch upserts', async () => {
+    const executeRaw = vi.fn().mockResolvedValue(1);
+    const repository = new MarketDataRepository({ $executeRaw: executeRaw } as never);
+    const candle = {
+      provider: ExchangeProvider.OKX_FUTURES,
+      symbol: 'BTC-USDT',
+      interval: ExchangeInterval.ONE_MINUTE,
+      openTime: new Date('2026-08-08T12:00:00Z'),
+      closeTime: new Date('2026-08-08T12:00:59Z'),
+      open: '100.1',
+      high: '101.2',
+      low: '99.8',
+      close: '100.9',
+      volume: '12.34',
+      quoteVolume: '1234.56',
+      tradeCount: 42,
+      isClosed: true,
+    };
+
+    await repository.upsertCandleBatch([candle]);
+
+    const query = executeRaw.mock.calls[0]?.[0] as Prisma.Sql;
+    const sql = query.strings.join('?');
+    expect(sql.match(/::numeric/g)).toHaveLength(6);
+    expect(sql).toContain('::integer');
+  });
 });

@@ -399,8 +399,10 @@ export class MarketDataRepository {
           ${input.symbol},
           ${toDbInterval(input.interval)}::"MarketDataInterval",
           ${input.openTime}, ${input.closeTime},
-          ${input.open}, ${input.high}, ${input.low}, ${input.close}, ${input.volume},
-          ${input.quoteVolume ?? null}, ${input.tradeCount ?? null}, ${input.isClosed}, NOW(), NOW()
+          ${input.open}::numeric, ${input.high}::numeric, ${input.low}::numeric,
+          ${input.close}::numeric, ${input.volume}::numeric,
+          ${input.quoteVolume ?? null}::numeric, ${input.tradeCount ?? null}::integer,
+          ${input.isClosed}, NOW(), NOW()
         )`);
         await this.prisma.$executeRaw(Prisma.sql`
           INSERT INTO "market_candles"
