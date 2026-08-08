@@ -65,7 +65,7 @@ export class OkxFuturesClient {
   async signedPost(
     path: string,
     credentials: ExchangeCredentials,
-    body: Record<string, unknown>,
+    body: unknown,
   ): Promise<unknown> {
     return this.signedWrite("POST", path, credentials, body);
   }
@@ -130,7 +130,7 @@ export class OkxFuturesClient {
     method: "POST",
     path: string,
     credentials: ExchangeCredentials,
-    body: Record<string, unknown>,
+    body: unknown,
   ): Promise<unknown> {
     if (credentials.environment === ExchangeEnvironment.TESTNET) {
       throw ExchangeError.invalidRequest(this.provider, "OKX Futures uses DEMO instead of TESTNET");

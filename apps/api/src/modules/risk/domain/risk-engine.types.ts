@@ -1,5 +1,5 @@
 import type { DecisionOutput, RiskOutput } from "@platform/shared";
-import type { TradePlanMarketContext } from "./trade-plan-engine";
+import type { TradePlan, TradePlanMarketContext } from "./trade-plan-engine";
 
 export interface RiskAccount {
   balance: number;
@@ -52,4 +52,5 @@ export interface RiskLimits {
 export interface RiskEvaluation extends RiskOutput {
   exposurePct: number;
   drawdownPct: number;
+  tradePlan?: TradePlan;
 }

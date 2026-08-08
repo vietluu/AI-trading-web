@@ -1,8 +1,6 @@
 import { Injectable, Logger, Optional } from "@nestjs/common";
 import type { DecisionOutput, RiskOutput } from "@platform/shared";
-import {
-  type Prisma,
-} from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../../database/prisma.service";
 import { ExchangeConnectionService } from "../../../exchange/application/exchange-connection.service";
 import { evaluateRisk, type RiskPosition } from "../domain/risk-engine";
@@ -90,6 +88,9 @@ export class RiskManagementService {
     const sanitizedDrawdownPct = safeFloat(evaluation.drawdownPct, 0);
 
     const sanitizedConnectionId = safeUuid(input.connectionId);
+    const tradePlan = evaluation.tradePlan
+      ? (evaluation.tradePlan as unknown as Prisma.InputJsonObject)
+      : Prisma.JsonNull;
 
     const row = await tx.riskAssessment.upsert({
       where: { pipelineRunId: input.pipelineRunId },
@@ -111,6 +112,7 @@ export class RiskManagementService {
         volatility: sanitizedVolatility,
         exposurePct: sanitizedExposurePct,
         drawdownPct: sanitizedDrawdownPct,
+        tradePlan,
       },
       create: {
         userId: input.userId,
@@ -131,6 +133,7 @@ export class RiskManagementService {
         volatility: sanitizedVolatility,
         exposurePct: sanitizedExposurePct,
         drawdownPct: sanitizedDrawdownPct,
+        tradePlan,
       },
     });
     this.logger.log({

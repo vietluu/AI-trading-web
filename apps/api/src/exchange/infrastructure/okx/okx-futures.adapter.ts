@@ -30,6 +30,8 @@ import {
   type OpenOrderQuery,
   type PlaceOrderCommand,
   type CancelOrderCommand,
+  type AmendProtectiveOrderCommand,
+  type CancelProtectiveOrderCommand,
   type OrderStatus,
   type OrderType,
   type PositionSide,
@@ -150,6 +152,12 @@ const configSchema = z.object({
 const orderAckSchema = z.object({
   ordId: z.string(),
   clOrdId: z.string().optional(),
+  sCode: z.string(),
+  sMsg: z.string().optional(),
+});
+const algoAckSchema = z.object({
+  algoId: z.string().optional(),
+  algoClOrdId: z.string().optional(),
   sCode: z.string(),
   sMsg: z.string().optional(),
 });
@@ -591,7 +599,10 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         error: error instanceof Error ? error.message : String(error),
       });
     }
-    const clOrdId = normalizeClientOrderId(command.clientOrderId);
+    const clOrdId = normalizeClientOrderId(command.clientOrderId) ?? "";
+    const protectiveClientOrderId = (command.stopLoss || command.takeProfit)
+      ? normalizeClientOrderId(`${clOrdId.slice(0, 28)}pm`)
+      : undefined;
     let marketPrice: string | undefined = undefined;
     let ordType: "limit" | "market" = "limit";
     try {
@@ -632,6 +643,9 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     if (hasSl || hasTp) {
       body.attachAlgoOrds = [
         {
+          ...(protectiveClientOrderId
+            ? { attachAlgoClOrdId: protectiveClientOrderId }
+            : {}),
           ...(hasSl
             ? {
                 slTriggerPx: String(command.stopLoss),
@@ -778,9 +792,63 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       executedQuantity: "0",
       reduceOnly: command.reduceOnly ?? false,
       ...(command.positionSide ? { positionSide: command.positionSide } : {}),
+      ...(protectiveClientOrderId ? { protectiveClientOrderId } : {}),
       createdAt: new Date(),
       updatedAt: new Date(),
     };
+  }
+
+  async amendProtectiveOrder(
+    credentials: ExchangeCredentials,
+    command: AmendProtectiveOrderCommand,
+  ): Promise<void> {
+    const hasStop = Number.isFinite(Number(command.stopLoss)) && Number(command.stopLoss) > 0;
+    const hasTake = Number.isFinite(Number(command.takeProfit)) && Number(command.takeProfit) > 0;
+    if (!hasStop && !hasTake) {
+      throw ExchangeError.invalidRequest(this.provider, "A protective price is required");
+    }
+    const response = z.array(algoAckSchema).min(1).parse(
+      await this.client.signedPost("/api/v5/trade/amend-algos", credentials, {
+        instId: toOkxSymbol(command.symbol),
+        algoClOrdId: normalizeClientOrderId(command.protectiveClientOrderId),
+        reqId: normalizeClientOrderId(command.requestId),
+        cxlOnFail: false,
+        ...(hasStop ? { newSlTriggerPx: String(command.stopLoss), newSlOrdPx: "-1" } : {}),
+        ...(hasTake ? { newTpTriggerPx: String(command.takeProfit), newTpOrdPx: "-1" } : {}),
+      }),
+    )[0]!;
+    if (response.sCode !== "0") {
+      throw new ExchangeError(
+        ExchangeErrorCode.INVALID_REQUEST,
+        this.provider,
+        false,
+        400,
+        response.sMsg || "OKX rejected protective order amendment",
+        response.sCode,
+      );
+    }
+  }
+
+  async cancelProtectiveOrder(
+    credentials: ExchangeCredentials,
+    command: CancelProtectiveOrderCommand,
+  ): Promise<void> {
+    const response = z.array(algoAckSchema).min(1).parse(
+      await this.client.signedPost("/api/v5/trade/cancel-algos", credentials, [{
+        instId: toOkxSymbol(command.symbol),
+        algoClOrdId: normalizeClientOrderId(command.protectiveClientOrderId),
+      }]),
+    )[0]!;
+    if (response.sCode !== "0") {
+      throw new ExchangeError(
+        ExchangeErrorCode.INVALID_REQUEST,
+        this.provider,
+        false,
+        400,
+        response.sMsg || "OKX rejected protective order cancellation",
+        response.sCode,
+      );
+    }
   }
 
   async cancelOrder(

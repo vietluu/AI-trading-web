@@ -236,6 +236,7 @@ export interface ExchangeOrder {
   positionSide?: PositionSide;
   createdAt?: Date;
   updatedAt?: Date;
+  protectiveClientOrderId?: string;
 }
 
 export interface ExchangeAccountConfiguration {
@@ -277,6 +278,17 @@ export interface CancelOrderCommand {
   symbol: string;
   orderId?: string;
   clientOrderId?: string;
+}
+export interface AmendProtectiveOrderCommand {
+  symbol: string;
+  protectiveClientOrderId: string;
+  stopLoss?: string;
+  takeProfit?: string;
+  requestId: string;
+}
+export interface CancelProtectiveOrderCommand {
+  symbol: string;
+  protectiveClientOrderId: string;
 }
 export interface GetOrderQuery {
   symbol: string;

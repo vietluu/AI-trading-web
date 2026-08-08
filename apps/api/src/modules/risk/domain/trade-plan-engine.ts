@@ -24,6 +24,7 @@ export interface TradePlanMarketContext {
   ema50?: number;
   breakout?: boolean;
   marketStructure?: "HH_HL" | "LH_LL" | "LL_LH" | "RANGE";
+  timeframeMs?: number;
 }
 
 export interface TradePlan {
@@ -37,6 +38,8 @@ export interface TradePlan {
   maxHoldingCandles: number;
   breakEvenAtR: number;
   trailingAtrMultiple?: number;
+  atr?: number;
+  timeframeMs?: number;
 }
 
 const finitePositive = (value: number | undefined): value is number =>
@@ -164,6 +167,8 @@ export function buildAdaptiveTradePlan(input: {
       rewardToRisk: rounded(rr),
       maxHoldingCandles: 8,
       breakEvenAtR: 0.8,
+      atr,
+      timeframeMs: market.timeframeMs,
     };
   }
 
@@ -204,6 +209,8 @@ export function buildAdaptiveTradePlan(input: {
       maxHoldingCandles: 5,
       breakEvenAtR: 0.8,
       trailingAtrMultiple: 2.5,
+      atr,
+      timeframeMs: market.timeframeMs,
     };
   }
 
@@ -262,5 +269,7 @@ export function buildAdaptiveTradePlan(input: {
     maxHoldingCandles: regime === "HIGH_VOLATILITY" ? 8 : 20,
     breakEvenAtR: 1,
     trailingAtrMultiple: regime === "HIGH_VOLATILITY" ? 3 : 2.5,
+    atr,
+    timeframeMs: market.timeframeMs,
   };
 }

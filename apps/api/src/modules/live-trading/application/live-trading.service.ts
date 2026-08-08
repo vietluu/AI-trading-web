@@ -30,6 +30,8 @@ import { RiskManagementService } from "../../risk/application/risk-management.se
 import { PortfolioService } from "../../portfolio/application/portfolio.service";
 import { LiveTradingGateway } from "../presentation/live-trading.gateway";
 import type { TradePlanMarketContext } from "../../risk/domain/trade-plan-engine";
+import type { TradePlan } from "../../risk/domain/trade-plan-engine";
+import { evaluatePositionManagement } from "../domain/position-manager";
 
 @Injectable()
 export class LiveTradingService {
@@ -723,6 +725,7 @@ export class LiveTradingService {
       take: 100,
     });
     await this.monitorProtection(userId, connection, positions, context);
+    await this.cleanupOrphanProtection(userId, connection, positions, context);
     this.logger.log({
       event: "live_state_synced",
       userId,
@@ -985,6 +988,7 @@ export class LiveTradingService {
       id: string;
       stopLoss: Prisma.Decimal | null;
       takeProfit: Prisma.Decimal | null;
+      tradePlan?: Prisma.JsonValue | null;
     } | null,
     strategyId: string | null | undefined,
     context: RequestMetadata,
@@ -1009,6 +1013,10 @@ export class LiveTradingService {
           reduceOnly: command.reduceOnly ?? false,
           stopLoss: assessment?.stopLoss,
           takeProfit: assessment?.takeProfit,
+          initialStopLoss: assessment?.stopLoss,
+          tradePlan: assessment?.tradePlan === null || assessment?.tradePlan === undefined
+            ? Prisma.JsonNull
+            : (assessment.tradePlan as Prisma.InputJsonValue),
         },
       });
     } catch (error) {
@@ -1035,6 +1043,7 @@ export class LiveTradingService {
           exchangeOrderId: order.exchangeOrderId,
           averagePrice: order.averagePrice,
           status: order.status,
+          protectiveClientOrderId: order.protectiveClientOrderId,
         },
       });
       await this.audit.record("LIVE_ORDER_EXECUTED", userId, context, {
@@ -1142,14 +1151,7 @@ export class LiveTradingService {
           });
         }
       }
-      // OKX receives attached TP/SL orders atomically with the entry. Binance
-      // protection is monitored here and always submitted as reduce-only.
-      if (
-        position.provider !== ExchangeProvider.BINANCE_FUTURES ||
-        !Number.isFinite(mark) ||
-        mark <= 0
-      )
-        continue;
+      if (!Number.isFinite(mark) || mark <= 0) continue;
       const source = await this.prisma.liveOrder.findFirst({
         where: {
           userId,
@@ -1162,6 +1164,132 @@ export class LiveTradingService {
         orderBy: { createdAt: "desc" },
       });
       if (!source) continue;
+      const rawPlan = source.tradePlan as unknown as Partial<TradePlan> | null;
+      if (
+        rawPlan &&
+        typeof rawPlan.regime === "string" &&
+        typeof rawPlan.strategy === "string" &&
+        typeof rawPlan.maxHoldingCandles === "number" &&
+        typeof rawPlan.breakEvenAtR === "number"
+      ) {
+        const entry = Number(position.entryPrice);
+        const initialStop = Number(source.initialStopLoss ?? source.stopLoss);
+        const currentStop = Number(source.stopLoss);
+        if ([entry, initialStop, currentStop].every(Number.isFinite)) {
+          const action = evaluatePositionManagement({
+            side: position.side as "LONG" | "SHORT",
+            entryPrice: entry,
+            markPrice: mark,
+            initialStopLoss: initialStop,
+            currentStopLoss: currentStop,
+            highestMark: source.highestMark ? Number(source.highestMark) : undefined,
+            lowestMark: source.lowestMark ? Number(source.lowestMark) : undefined,
+            openedAt: source.createdAt,
+            partialTaken: source.partialTakenAt !== null,
+            plan: rawPlan as TradePlan,
+          });
+          let amendedStop: number | undefined;
+          if (action.tightenedStopLoss !== undefined) {
+            try {
+              if (
+                position.provider === ExchangeProvider.OKX_FUTURES &&
+                source.protectiveClientOrderId
+              ) {
+                await this.connections.amendProtectiveOrder(
+                  userId,
+                  connection.id,
+                  {
+                    symbol: position.symbol,
+                    protectiveClientOrderId: source.protectiveClientOrderId,
+                    stopLoss: String(action.tightenedStopLoss),
+                    ...(source.takeProfit ? { takeProfit: String(source.takeProfit) } : {}),
+                    requestId: this.derivedId(
+                      source.clientOrderId,
+                      `a${Math.abs(Math.round(action.tightenedStopLoss * 100))}`,
+                    ),
+                  },
+                  context,
+                );
+              }
+              amendedStop = action.tightenedStopLoss;
+            } catch (error) {
+              this.logger.error({
+                event: "protective_order_amend_failed",
+                connectionId: connection.id,
+                symbol: position.symbol,
+                error: this.safeError(error),
+              });
+            }
+          }
+          await this.prisma.liveOrder.update({
+            where: { id: source.id },
+            data: {
+              highestMark: action.highestMark,
+              lowestMark: action.lowestMark,
+              ...(amendedStop !== undefined ? { stopLoss: amendedStop } : {}),
+            },
+          });
+
+          const configuration = await this.connections.configuration(userId, connection.id, context);
+          if (action.timeExit) {
+            const clientOrderId = this.derivedId(source.clientOrderId, "time");
+            const duplicate = await this.prisma.liveOrder.findUnique({
+              where: { connectionId_clientOrderId: { connectionId: connection.id, clientOrderId } },
+            });
+            if (!duplicate) {
+              try {
+                await this.submit(userId, connection, {
+                  symbol: position.symbol,
+                  side: position.side === "LONG" ? "SELL" : "BUY",
+                  quantity: position.quantity,
+                  leverage: Number(position.leverage ?? source.leverage),
+                  clientOrderId,
+                  reduceOnly: true,
+                  ...(configuration.positionMode === "HEDGE" ? { positionSide: position.side as "LONG" | "SHORT" } : {}),
+                }, "CLOSE", null, source.strategyId, context);
+                if (
+                  position.provider === ExchangeProvider.OKX_FUTURES &&
+                  source.protectiveClientOrderId
+                ) {
+                  await this.connections.cancelProtectiveOrder(userId, connection.id, {
+                    symbol: position.symbol,
+                    protectiveClientOrderId: source.protectiveClientOrderId,
+                  }, context).catch((error: unknown) =>
+                    this.logger.warn({ event: "protective_order_cancel_after_close_failed", symbol: position.symbol, error: this.safeError(error) }));
+                }
+              } catch (error) {
+                this.logger.error({ event: "position_time_exit_failed", symbol: position.symbol, error: this.safeError(error) });
+              }
+            }
+            continue;
+          }
+          if (action.takePartial) {
+            const clientOrderId = this.derivedId(source.clientOrderId, "partial1");
+            const duplicate = await this.prisma.liveOrder.findUnique({
+              where: { connectionId_clientOrderId: { connectionId: connection.id, clientOrderId } },
+            });
+            if (!duplicate) {
+              const quantity = Number(position.quantity) * 0.4;
+              if (Number.isFinite(quantity) && quantity > 0) {
+                await this.submit(userId, connection, {
+                  symbol: position.symbol,
+                  side: position.side === "LONG" ? "SELL" : "BUY",
+                  quantity: String(Number(quantity.toFixed(12))),
+                  leverage: Number(position.leverage ?? source.leverage),
+                  clientOrderId,
+                  reduceOnly: true,
+                  ...(configuration.positionMode === "HEDGE" ? { positionSide: position.side as "LONG" | "SHORT" } : {}),
+                }, "TAKE_PROFIT", null, source.strategyId, context).then(() =>
+                  this.prisma.liveOrder.update({ where: { id: source.id }, data: { partialTakenAt: new Date() } }))
+                  .catch((error: unknown) => this.logger.error({ event: "partial_take_profit_failed", symbol: position.symbol, error: this.safeError(error) }));
+              }
+            }
+          }
+        }
+      }
+      // OKX has a native attached algo order. Binance protection is monitored
+      // here and submitted as reduce-only when the ratcheted level is crossed.
+      if (position.provider !== ExchangeProvider.BINANCE_FUTURES) continue;
       const stop = source.stopLoss ? Number(source.stopLoss) : undefined;
       const take = source.takeProfit ? Number(source.takeProfit) : undefined;
       const stopHit =
@@ -1217,6 +1345,48 @@ export class LiveTradingService {
           error: this.safeError(error),
         }),
       );
+    }
+  }
+
+  private async cleanupOrphanProtection(
+    userId: string,
+    connection: Awaited<ReturnType<ExchangeConnectionService["get"]>>,
+    positions: ExchangePosition[],
+    context: RequestMetadata,
+  ): Promise<void> {
+    if (connection.provider !== ExchangeProvider.OKX_FUTURES) return;
+    const protectedEntries = await this.prisma.liveOrder.findMany({
+      where: {
+        userId,
+        connectionId: connection.id,
+        purpose: { in: ["OPEN", "REVERSE"] },
+        status: { not: "FAILED" },
+        protectiveClientOrderId: { not: null },
+      },
+    });
+    for (const source of protectedEntries) {
+      const expectedSide = source.side === "BUY" ? "LONG" : "SHORT";
+      const stillOpen = positions.some(
+        (position) => position.symbol === source.symbol && position.side === expectedSide,
+      );
+      if (stillOpen || !source.protectiveClientOrderId) continue;
+      try {
+        await this.connections.cancelProtectiveOrder(userId, connection.id, {
+          symbol: source.symbol,
+          protectiveClientOrderId: source.protectiveClientOrderId,
+        }, context);
+        await this.prisma.liveOrder.update({
+          where: { id: source.id },
+          data: { protectiveClientOrderId: null },
+        });
+      } catch (error) {
+        this.logger.warn({
+          event: "orphan_protective_order_cancel_failed",
+          connectionId: connection.id,
+          symbol: source.symbol,
+          error: this.safeError(error),
+        });
+      }
     }
   }
 

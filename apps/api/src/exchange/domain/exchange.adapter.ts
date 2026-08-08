@@ -22,6 +22,8 @@ import type {
   OpenOrderQuery,
   PlaceOrderCommand,
   CancelOrderCommand,
+  AmendProtectiveOrderCommand,
+  CancelProtectiveOrderCommand,
 } from "./exchange.types";
 
 export interface ExchangeAdapter {
@@ -71,4 +73,12 @@ export interface ExchangeAdapter {
     credentials: ExchangeCredentials,
     command: CancelOrderCommand,
   ): Promise<ExchangeOrder>;
+  amendProtectiveOrder?(
+    credentials: ExchangeCredentials,
+    command: AmendProtectiveOrderCommand,
+  ): Promise<void>;
+  cancelProtectiveOrder?(
+    credentials: ExchangeCredentials,
+    command: CancelProtectiveOrderCommand,
+  ): Promise<void>;
 }

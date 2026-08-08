@@ -26,6 +26,7 @@ import {
 import { MarketDataService } from "../../../market-data/application/market-data.service";
 import { RedisService } from "../../../redis/redis.service";
 import { DecisionJudgeService } from "./decision-judge.service";
+import { timeframeMilliseconds } from "../domain/adaptive-trading-policy";
 
 class PipelineCancelledError extends Error {}
 
@@ -306,6 +307,7 @@ export class PipelineRunnerService {
               ? { volatilityAtr }
               : {}),
             tradePlanContext: {
+              timeframeMs: timeframeMilliseconds(String(interval)),
               ...(Number.isFinite(Number(indicatorSnapshot?.values.rollingLow))
                 ? { support: Number(indicatorSnapshot?.values.rollingLow) }
                 : {}),

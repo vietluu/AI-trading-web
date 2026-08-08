@@ -369,6 +369,7 @@ describe("exchange adapter normalization contract", () => {
 
     const body = signedPost.mock.calls[1]?.[2] as {
       attachAlgoOrds?: Array<{
+        attachAlgoClOrdId?: string;
         slTriggerPx?: string;
         slOrdPx?: string;
         tpTriggerPx?: string;
@@ -376,10 +377,45 @@ describe("exchange adapter normalization contract", () => {
       }>;
     };
     const algo = body.attachAlgoOrds?.[0];
+    expect(algo?.attachAlgoClOrdId).toBe("phase9orderpm");
     expect(algo?.slTriggerPx).toBe("65000");
     expect(algo?.slOrdPx).toBe("-1");
     expect(algo?.tpTriggerPx).toBe("68000");
     expect(algo?.tpOrdPx).toBe("-1");
+  });
+
+  it("amends and cancels OKX attached protection by client algo id", async () => {
+    const signedPost = vi.fn().mockResolvedValue([
+      { algoId: "algo-1", algoClOrdId: "protect-1", sCode: "0", sMsg: "" },
+    ]);
+    const adapter = new OkxFuturesAdapter({ signedPost } as unknown as OkxFuturesClient);
+    const credentials = {
+      apiKey: "demo-key",
+      apiSecret: "demo-secret",
+      passphrase: "demo-passphrase",
+      environment: ExchangeEnvironment.DEMO,
+    };
+
+    await adapter.amendProtectiveOrder(credentials, {
+      symbol: "BTC-USDT",
+      protectiveClientOrderId: "protect-1",
+      stopLoss: "66000",
+      takeProfit: "68000",
+      requestId: "amend-1",
+    });
+    expect(signedPost).toHaveBeenNthCalledWith(1, "/api/v5/trade/amend-algos", credentials, expect.objectContaining({
+      instId: "BTC-USDT-SWAP",
+      algoClOrdId: "protect1",
+      newSlTriggerPx: "66000",
+    }));
+
+    await adapter.cancelProtectiveOrder(credentials, {
+      symbol: "BTC-USDT",
+      protectiveClientOrderId: "protect-1",
+    });
+    expect(signedPost).toHaveBeenNthCalledWith(2, "/api/v5/trade/cancel-algos", credentials, [expect.objectContaining({
+      algoClOrdId: "protect1",
+    })]);
   });
 
   it("removes hyphens from UUID-style client order ids before OKX submission", async () => {

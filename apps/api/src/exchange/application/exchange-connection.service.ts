@@ -31,6 +31,8 @@ import {
   type ExchangePosition,
   type PlaceOrderCommand,
   type CancelOrderCommand,
+  type AmendProtectiveOrderCommand,
+  type CancelProtectiveOrderCommand,
 } from "../domain/exchange.types";
 import { ExchangeRateLimitService } from "../infrastructure/exchange-rate-limit.service";
 import { normalizeSymbol } from "../infrastructure/exchange-symbol";
@@ -503,6 +505,46 @@ export class ExchangeConnectionService {
       "CANCEL_ORDER",
       context,
       (adapter, credentials) => adapter.cancelOrder(credentials, command),
+    );
+  }
+
+  amendProtectiveOrder(
+    userId: string,
+    id: string,
+    command: AmendProtectiveOrderCommand,
+    context: RequestMetadata,
+  ): Promise<void> {
+    return this.privateCall(
+      userId,
+      id,
+      "AMEND_PROTECTIVE_ORDER",
+      context,
+      (adapter, credentials) => {
+        if (!adapter.amendProtectiveOrder) {
+          throw new Error("PROTECTIVE_ORDER_AMEND_UNSUPPORTED");
+        }
+        return adapter.amendProtectiveOrder(credentials, command);
+      },
+    );
+  }
+
+  cancelProtectiveOrder(
+    userId: string,
+    id: string,
+    command: CancelProtectiveOrderCommand,
+    context: RequestMetadata,
+  ): Promise<void> {
+    return this.privateCall(
+      userId,
+      id,
+      "CANCEL_PROTECTIVE_ORDER",
+      context,
+      (adapter, credentials) => {
+        if (!adapter.cancelProtectiveOrder) {
+          throw new Error("PROTECTIVE_ORDER_CANCEL_UNSUPPORTED");
+        }
+        return adapter.cancelProtectiveOrder(credentials, command);
+      },
     );
   }
 

@@ -254,5 +254,6 @@ export function evaluateRisk(
     ),
     exposurePct: rounded(exposurePct, 6),
     drawdownPct: rounded(drawdownPct, 6),
+    tradePlan: plan,
   };
 }
