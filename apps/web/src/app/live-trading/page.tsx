@@ -65,6 +65,8 @@ const money = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
 });
 
+const RECENT_TRADE_HISTORY_LIMIT = 20;
+
 export default function LiveTradingPage(): React.JSX.Element {
   const { t } = useTranslation();
   const query = useLiveTradingDashboard();
@@ -253,7 +255,7 @@ export default function LiveTradingPage(): React.JSX.Element {
         headings={["Order", t.ai.symbol, "Side", "Size", "Price", "Status"]}
         empty={t.ai.noTradeHistory}
       >
-        {data.orders.map((order) => (
+        {data.orders.slice(0, RECENT_TRADE_HISTORY_LIMIT).map((order) => (
           <OrderRow order={order} key={order.id} />
         ))}
       </Table>

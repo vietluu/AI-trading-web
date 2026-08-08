@@ -489,13 +489,15 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
   async getOrderHistory(
     credentials: ExchangeCredentials,
     symbols = ["BTC-USDT", "ETH-USDT"],
+    limit = 20,
   ): Promise<ExchangeOrder[]> {
+    const historyLimit = Math.min(20, Math.max(1, Math.trunc(limit)));
     const pages = await Promise.all(
       symbols.map((symbol) =>
         this.client
           .signedGet("/fapi/v1/allOrders", credentials, {
             symbol: toBinanceSymbol(symbol),
-            limit: 100,
+            limit: historyLimit,
           })
           .then((value) => z.array(orderSchema).parse(value)),
       ),
@@ -505,7 +507,8 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
       .map((order) => this.order(order))
       .sort(
         (a, b) => (b.updatedAt?.getTime() ?? 0) - (a.updatedAt?.getTime() ?? 0),
-      );
+      )
+      .slice(0, historyLimit);
   }
 
   async getOrder(

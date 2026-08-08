@@ -57,6 +57,7 @@ export interface ExchangeAdapter {
   getOrderHistory?(
     credentials: ExchangeCredentials,
     symbols?: string[],
+    limit?: number,
   ): Promise<ExchangeOrder[]>;
   getOrder(
     credentials: ExchangeCredentials,

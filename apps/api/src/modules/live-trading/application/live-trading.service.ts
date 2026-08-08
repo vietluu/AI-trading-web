@@ -33,6 +33,8 @@ import type { TradePlanMarketContext } from "../../risk/domain/trade-plan-engine
 import type { TradePlan } from "../../risk/domain/trade-plan-engine";
 import { evaluatePositionManagement } from "../domain/position-manager";
 
+const RECENT_TRADE_HISTORY_LIMIT = 20;
+
 @Injectable()
 export class LiveTradingService {
   private readonly logger = new Logger(LiveTradingService.name);
@@ -591,6 +593,7 @@ export class LiveTradingService {
           connectionId,
           context,
           historySymbols.length > 0 ? historySymbols : undefined,
+          RECENT_TRADE_HISTORY_LIMIT,
         )
       : [];
     const syncedAt = new Date();
@@ -679,7 +682,7 @@ export class LiveTradingService {
           data: { status: order.status, averagePrice: order.averagePrice },
         });
       }
-      for (const order of orderHistory.slice(0, 50)) {
+      for (const order of orderHistory.slice(0, RECENT_TRADE_HISTORY_LIMIT)) {
         const clientOrderId =
           order.clientOrderId || `external-${order.exchangeOrderId}`;
         const matched = await tx.liveOrder.updateMany({
@@ -722,7 +725,7 @@ export class LiveTradingService {
     const persistedOrders = await this.prisma.liveOrder.findMany({
       where: { userId, connectionId },
       orderBy: { createdAt: "desc" },
-      take: 100,
+      take: RECENT_TRADE_HISTORY_LIMIT,
     });
     await this.monitorProtection(userId, connection, positions, context);
     await this.cleanupOrphanProtection(userId, connection, positions, context);
@@ -870,7 +873,7 @@ export class LiveTradingService {
       this.prisma.liveOrder.findMany({
         where,
         orderBy: { createdAt: "desc" },
-        take: 100,
+        take: RECENT_TRADE_HISTORY_LIMIT,
       }),
       this.prisma.liveAccountSnapshot.findMany({
         where,

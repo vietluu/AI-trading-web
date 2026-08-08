@@ -512,14 +512,17 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
 
   async getOrderHistory(
     credentials: ExchangeCredentials,
+    _symbols?: string[],
+    limit = 20,
   ): Promise<ExchangeOrder[]> {
+    const historyLimit = Math.min(20, Math.max(1, Math.trunc(limit)));
     const values = z.array(orderSchema).parse(
       await this.client.signedGet("/api/v5/trade/orders-history", credentials, {
         instType: "SWAP",
-        limit: 100,
+        limit: historyLimit,
       }),
     );
-    return values.map((item) => this.order(item));
+    return values.map((item) => this.order(item)).slice(0, historyLimit);
   }
 
   async getOrder(

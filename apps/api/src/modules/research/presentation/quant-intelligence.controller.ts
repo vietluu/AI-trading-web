@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, UnauthorizedException, UseGuards } from '@nestjs/common';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
+import { SessionGuard } from '../../../session/session.guard';
 import { QuantIntelligenceService } from '../application/quant-intelligence.service';
 import type { ExperimentType } from '../domain/simulation-lab.engine';
 import type { HypothesisInput } from '../domain/quant-research.engine';
@@ -8,6 +9,7 @@ import type { OptimizedWeightsResult } from '../domain/weight-threshold-optimize
 type ReportType = 'DAILY' | 'WEEKLY' | 'MONTHLY';
 
 @Controller('quant-intelligence')
+@UseGuards(SessionGuard)
 export class QuantIntelligenceController {
   constructor(private readonly quantService: QuantIntelligenceService) {}
 
@@ -47,22 +49,22 @@ export class QuantIntelligenceController {
   }
 
   @Get('portfolio')
-  getPortfolio(@CurrentUser() user: { id: string }) {
-    return this.quantService.getPortfolioIntelligence(user.id);
+  getPortfolio(@CurrentUser() user?: { id: string }) {
+    return this.quantService.getPortfolioIntelligence(this.requireUserId(user));
   }
 
   @Post('portfolio/strategies/:key/apply')
   applyStrategyRecommendation(
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string } | undefined,
     @Param('key') key: string,
     @Body() body: { targetWeight?: number },
   ) {
-    return this.quantService.applyStrategyRecommendation(user.id, key, body.targetWeight);
+    return this.quantService.applyStrategyRecommendation(this.requireUserId(user), key, body.targetWeight);
   }
 
   @Get('self-learning')
-  getSelfLearning(@CurrentUser() user: { id: string }) {
-    return this.quantService.getSelfLearningInsights(user.id);
+  getSelfLearning(@CurrentUser() user?: { id: string }) {
+    return this.quantService.getSelfLearningInsights(this.requireUserId(user));
   }
 
   @Get('regime')
@@ -72,7 +74,7 @@ export class QuantIntelligenceController {
 
   @Get('recommendations')
   getRecommendations(@CurrentUser() user?: { id: string }) {
-    return this.quantService.getRecommendations(user?.id);
+    return this.quantService.getRecommendations(this.requireUserId(user));
   }
 
   @Post('recommendations/:id/review')
@@ -81,7 +83,7 @@ export class QuantIntelligenceController {
     @Param('id') id: string,
     @Body() body: { action: 'APPROVE' | 'REJECT'; reason?: string },
   ) {
-    return this.quantService.reviewRecommendation(id, body.action, user?.id, body.reason);
+    return this.quantService.reviewRecommendation(id, body.action, this.requireUserId(user), body.reason);
   }
 
   @Post('simulation')
@@ -108,12 +110,17 @@ export class QuantIntelligenceController {
   }
 
   @Get('reports')
-  getReport(@CurrentUser() user: { id: string }, @Query('type') type?: ReportType) {
-    return this.quantService.getReport(type ?? 'DAILY', user.id);
+  getReport(@CurrentUser() user?: { id: string }, @Query('type') type?: ReportType) {
+    return this.quantService.getReport(type ?? 'DAILY', this.requireUserId(user));
   }
 
   @Get('knowledge')
   getKnowledge(@Query('category') category?: string) {
     return this.quantService.getKnowledgeBase(category);
+  }
+
+  private requireUserId(user?: { id: string }): string {
+    if (!user?.id) throw new UnauthorizedException('Authentication required');
+    return user.id;
   }
 }

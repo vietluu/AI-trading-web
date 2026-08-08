@@ -433,6 +433,7 @@ export class ExchangeConnectionService {
     id: string,
     context: RequestMetadata,
     symbols?: string[],
+    limit?: number,
   ): Promise<ExchangeOrder[]> {
     return this.privateCall(
       userId,
@@ -440,7 +441,8 @@ export class ExchangeConnectionService {
       "ORDER_HISTORY",
       context,
       (adapter, credentials) =>
-        adapter.getOrderHistory?.(credentials, symbols) ?? Promise.resolve([]),
+        adapter.getOrderHistory?.(credentials, symbols, limit) ??
+        Promise.resolve([]),
     );
   }
 
