@@ -137,27 +137,27 @@ export default function SecurityPage(): React.JSX.Element {
           <div className="mt-4 grid gap-3">
             {sessions.data?.map((session) => (
               <div
-                className="rounded-lg border border-border p-3 text-xs"
+                className="rounded-lg border border-border p-3 text-xs min-w-0 break-all"
                 key={session.id}
               >
-                <div className="flex justify-between">
-                  <strong>
+                <div className="flex justify-between items-center gap-2">
+                  <strong className="truncate">
                     {session.current
                       ? t.security.thisDevice
                       : (session.ip ?? t.security.unknownDevice)}
                   </strong>
                   <button
-                    className="text-red-300"
+                    className="shrink-0 text-red-300 hover:underline"
                     onClick={() => void handleRemove(session.id)}
                     type="button"
                   >
                     {t.security.revoke}
                   </button>
                 </div>
-                <p className="mt-1 truncate text-muted-foreground">
+                <p className="mt-1 text-muted-foreground break-all">
                   {session.userAgent ?? t.security.unknownBrowser}
                 </p>
-                <p className="text-muted-foreground">
+                <p className="text-muted-foreground mt-0.5">
                   {t.security.lastActive} {new Date(session.lastActivity).toLocaleString()}
                 </p>
                 <p className="text-muted-foreground">

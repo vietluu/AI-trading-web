@@ -6,13 +6,15 @@ export function evaluateDecision(
   decision: Decision,
   priceAtDecision: number,
   priceAfter: number,
+  roundTripCostPct = 0,
 ): Pick<PerformanceRecord, 'outcome' | 'returnPct'> {
   if (!Number.isFinite(priceAtDecision) || priceAtDecision <= 0 || !Number.isFinite(priceAfter) || priceAfter <= 0) {
     throw new Error('Prices must be finite positive numbers');
   }
   if (decision === 'WAIT') return { outcome: 'NEUTRAL', returnPct: 0 };
   const marketReturn = ((priceAfter - priceAtDecision) / priceAtDecision) * 100;
-  const returnPct = decision === 'LONG' ? marketReturn : -marketReturn;
+  const grossReturn = decision === 'LONG' ? marketReturn : -marketReturn;
+  const returnPct = grossReturn - Math.max(0, roundTripCostPct);
   return {
     outcome: returnPct > 0 ? 'CORRECT' : returnPct < 0 ? 'WRONG' : 'NEUTRAL',
     returnPct: round(returnPct),

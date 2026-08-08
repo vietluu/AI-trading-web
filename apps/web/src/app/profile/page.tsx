@@ -62,7 +62,7 @@ export default function ProfilePage(): React.JSX.Element {
           </div>
           <div>
             <p className="text-xs text-muted-foreground">{t.profile.email}</p>
-            <p className="font-semibold">{user.data.email}</p>
+            <p className="font-semibold break-all">{user.data.email}</p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground mb-1">{t.profile.securityVerification}</p>

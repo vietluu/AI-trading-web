@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ConfigModule } from '@nestjs/config';
 import { BullModule } from '@nestjs/bullmq';
 import { MarketDataConfigService } from './application/market-data-config.service';
 import { MarketDataService } from './application/market-data.service';
@@ -22,15 +22,6 @@ import { ExchangeModule } from '../exchange/exchange.module';
     ConfigModule,
     MarketStreamsModule,
     ExchangeModule,
-    BullModule.forRootAsync({
-      imports: [ConfigModule],
-      useFactory: (config: ConfigService) => ({
-        connection: {
-          url: config.get('REDIS_URL') || 'redis://localhost:6379',
-        },
-      }),
-      inject: [ConfigService],
-    }),
     BullModule.registerQueue({
       name: 'market-polling',
     }),

@@ -1,6 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { LoadingButton } from "@/components/loading-button";
+import { PaginationControls } from "@/components/pagination-controls";
 import { usePortfolioActions, usePortfolioDashboard } from "@/hooks/ai/useAiFeature";
 
 const money = new Intl.NumberFormat("en-US", {
@@ -15,6 +17,9 @@ const optionalPercent = (value: number | null | undefined): string =>
 export default function PortfolioPage(): React.JSX.Element {
   const query = usePortfolioDashboard();
   const { rebalanceMutation, updateStrategyStatusMutation } = usePortfolioActions();
+  const [currentRiskPage, setCurrentRiskPage] = useState(1);
+  const pageSize = 20;
+
   if (query.isLoading)
     return <p className="text-muted-foreground">Loading strategy portfolio…</p>;
   if (query.isError)
@@ -34,6 +39,13 @@ export default function PortfolioPage(): React.JSX.Element {
     riskEvents,
     unassignedExposure,
   } = query.data;
+
+  const totalRiskPages = Math.ceil(riskEvents.length / pageSize);
+  const paginatedRiskEvents = riskEvents.slice(
+    (currentRiskPage - 1) * pageSize,
+    currentRiskPage * pageSize,
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -209,8 +221,17 @@ export default function PortfolioPage(): React.JSX.Element {
           "Time",
         ]}
         empty="No portfolio risk decisions yet."
+        footer={
+          <PaginationControls
+            currentPage={currentRiskPage}
+            onPageChange={setCurrentRiskPage}
+            pageSize={pageSize}
+            totalItems={riskEvents.length}
+            totalPages={totalRiskPages}
+          />
+        }
       >
-        {riskEvents.map((item) => (
+        {paginatedRiskEvents.map((item) => (
           <tr key={item.id}>
             <td className="p-3 font-semibold">{item.symbol}</td>
             <td className="p-3">{item.side}</td>
@@ -253,11 +274,13 @@ function DataTable({
   headings,
   empty,
   children,
+  footer,
 }: {
   title: string;
   headings: string[];
   empty: string;
   children: React.ReactNode;
+  footer?: React.ReactNode;
 }) {
   const populated = Array.isArray(children)
     ? children.length > 0
@@ -281,6 +304,7 @@ function DataTable({
         {!populated && (
           <p className="p-8 text-center text-muted-foreground">{empty}</p>
         )}
+        {footer}
       </div>
     </section>
   );

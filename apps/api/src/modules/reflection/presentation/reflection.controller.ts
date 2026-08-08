@@ -5,11 +5,12 @@ import { SessionGuard } from '../../../session/session.guard';
 import { PerformanceService } from '../application/performance.service';
 import { ReflectionService } from '../application/reflection.service';
 import { ReflectionRepository } from '../infrastructure/reflection.repository';
+import { SelfLearningService } from '../application/self-learning.service';
 
 @Controller('ai')
 @UseGuards(SessionGuard)
 export class ReflectionController {
-  constructor(private readonly performance: PerformanceService, private readonly reflection: ReflectionService, private readonly repository: ReflectionRepository) {}
+  constructor(private readonly performance: PerformanceService, private readonly reflection: ReflectionService, private readonly repository: ReflectionRepository, private readonly selfLearning: SelfLearningService) {}
 
   @Get('performance')
   records(@CurrentUser() user: { id: string }, @Query('horizon') raw?: string, @Query('symbol') symbol?: string) {
@@ -21,8 +22,12 @@ export class ReflectionController {
   }
   @Get('performance/alerts')
   alerts(@CurrentUser() user: { id: string }, @Query('symbol') symbol?: string) { return this.performance.alerts(user.id, symbol); }
+  @Get('performance/calibration')
+  calibration(@CurrentUser() user: { id: string }, @Query('symbol') symbol?: string) { return this.performance.calibration(user.id, symbol); }
   @Post('performance/evaluate')
   evaluate() { return this.performance.evaluateDue(); }
+  @Get('self-learning/experiments')
+  experiments(@CurrentUser() user: { id: string }) { return this.selfLearning.listExperiments(user.id); }
 
   @Get('reflection')
   overview(@CurrentUser() user: { id: string }) { return this.reflection.generate(user.id, false); }

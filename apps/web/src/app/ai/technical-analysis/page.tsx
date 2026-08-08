@@ -9,13 +9,16 @@ import {
 } from "@/hooks/ai/useAiFeature";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 
+import { useExchangeSymbols } from "@/hooks/useExchangeSymbols";
+
 const fieldClassName =
   "w-full rounded-md border border-border bg-background px-3 py-2 text-sm";
 
 export default function TechnicalAnalysisPage(): React.JSX.Element {
   const { t } = useTranslation();
+  const { symbols } = useExchangeSymbols();
   const [symbol, setSymbol] =
-    useState<TechnicalAgentInput["symbol"]>("BTC-USDT");
+    useState<string>("BTC-USDT");
   const [provider, setProvider] =
     useState<TechnicalAgentInput["provider"]>("OKX_FUTURES");
   const [interval, setInterval] =
@@ -47,7 +50,7 @@ export default function TechnicalAnalysisPage(): React.JSX.Element {
           label={t.ai.symbol}
           value={symbol}
           onChange={(value) => setSymbol(value)}
-          options={["BTC-USDT", "ETH-USDT"]}
+          options={symbols}
         />
         <Select
           label={t.ai.exchange}

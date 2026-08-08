@@ -8,6 +8,7 @@ import { PipelineConfigService } from './pipeline-config.service';
 import { resolvePipelineDefinition } from '../domain/pipeline.definition';
 import { pipelineSkipReason } from '../domain/rate-limit';
 import { PipelineRunnerService } from './pipeline-runner.service';
+import { RedisService } from '../../../redis/redis.service';
 
 @Injectable()
 export class PipelineService {
@@ -16,6 +17,7 @@ export class PipelineService {
     private readonly queue: PipelineQueueService,
     private readonly config: PipelineConfigService,
     @Optional() @Inject(PipelineRunnerService) private readonly runner?: PipelineRunnerService,
+    @Optional() private readonly redis?: RedisService,
   ) {}
 
   async trigger(userId: string, raw: unknown, trigger: PipelineTrigger = 'MANUAL', options: { replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; useStoredContext?: boolean; maxRunsPerHour?: number } = {}) {
@@ -105,16 +107,11 @@ export class PipelineService {
   }
 
   private async dispatchRun(payload: Parameters<PipelineQueueService['enqueue']>[0], trigger: PipelineTrigger) {
-    if (trigger === 'MANUAL' && this.runner) {
-      await this.runner.run(payload);
-      return;
-    }
-    try {
-      await this.queue.enqueue(payload);
-    } catch (error) {
-      if (trigger !== 'MANUAL' || !this.runner) throw error;
-      await this.runner.run(payload);
-    }
+    // Manual and scheduled work share the same backpressure, retries and worker
+    // isolation. Running an LLM pipeline inside an HTTP request can pin an API
+    // process for up to a minute and bypass queue concurrency limits.
+    void trigger;
+    await this.queue.enqueue(payload);
   }
 
   private async createRun(
@@ -129,9 +126,29 @@ export class PipelineService {
   ) {
     const id = randomUUID(); const now = new Date(); const traceId = randomUUID(); const correlationId = randomUUID();
     const rawLimit = options.maxRunsPerHour ?? this.config.maxRunsPerHour;
-    const hourlyLimit = trigger === 'SCHEDULE' ? Math.max(rawLimit, this.config.maxRunsPerHour) : Math.min(rawLimit, this.config.maxRunsPerHour);
-    const [hourlyCount, latest] = await Promise.all([this.repository.countRecent(userId, new Date(Date.now() - 60 * 60_000), { status: { not: 'SKIPPED' } }), this.repository.latestForSymbol(userId, symbol, provider)]);
-    const skippedReason = pipelineSkipReason({ hourlyCount, hourlyLimit, latestCreatedAt: latest?.createdAt, now, cooldownMs: this.config.cooldownMs, isScheduled: trigger === 'SCHEDULE', replay: trigger === 'REPLAY' });
+    const hourlyLimit = Math.min(rawLimit, this.config.maxRunsPerHour);
+    let skippedReason: ReturnType<typeof pipelineSkipReason>;
+    if (this.redis && trigger !== 'REPLAY') {
+      const hourBucket = now.toISOString().slice(0, 13);
+      const quotaKey = `pipeline:quota:${userId}:${hourBucket}`;
+      const hourlyCount = await this.redis.incrementWithTtl(quotaKey, 3_700);
+      const cooldownSeconds = Math.max(1, Math.ceil(this.config.cooldownMs / 1000));
+      const cooldownAcquired = await this.redis.setNx(
+        `pipeline:cooldown:${userId}:${provider}:${symbol}`,
+        id,
+        cooldownSeconds,
+      );
+      skippedReason = hourlyCount > hourlyLimit
+        ? 'MAX_RUNS_PER_HOUR'
+        : cooldownAcquired ? undefined : 'SYMBOL_COOLDOWN_ACTIVE';
+      if (skippedReason) await this.redis.decrement(quotaKey);
+    } else {
+      const [hourlyCount, latest] = await Promise.all([
+        this.repository.countRecent(userId, new Date(Date.now() - 60 * 60_000), { status: { not: 'SKIPPED' } }),
+        this.repository.latestForSymbol(userId, symbol, provider),
+      ]);
+      skippedReason = pipelineSkipReason({ hourlyCount, hourlyLimit, latestCreatedAt: latest?.createdAt, now, cooldownMs: this.config.cooldownMs, isScheduled: trigger === 'SCHEDULE', replay: trigger === 'REPLAY' });
+    }
     const run = await this.repository.createRun({ id, userId, pipelineId: input.pipelineId, symbol, provider, trigger, params: input.params, traceId, correlationId, replayOfRunId: options.replayOfRunId, scheduleId: options.scheduleId, storedContext: options.storedContext });
     await this.repository.createSteps(id, definition.steps);
     if (skippedReason) {

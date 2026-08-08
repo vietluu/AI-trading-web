@@ -32,6 +32,8 @@ export interface AssessRiskInput {
   lastTradeAt?: Date;
 }
 
+import { DataRetentionService } from "../../system/data-retention.service";
+
 @Injectable()
 export class RiskManagementService {
   private readonly logger = new Logger(RiskManagementService.name);
@@ -39,6 +41,7 @@ export class RiskManagementService {
     private readonly prisma: PrismaService,
     private readonly config: RiskConfigService,
     @Optional() private readonly connections?: ExchangeConnectionService,
+    @Optional() private readonly retention?: DataRetentionService,
   ) {}
 
   async assess(tx: Tx, input: AssessRiskInput): Promise<RiskOutput> {
@@ -46,6 +49,7 @@ export class RiskManagementService {
       where: { pipelineRunId: input.pipelineRunId },
     });
     if (existing) return this.output(existing);
+    const userLimits = await this.config.getUserLimits(input.userId);
     const evaluation = evaluateRisk(
       {
         symbol: input.symbol,
@@ -63,7 +67,7 @@ export class RiskManagementService {
         marketData: { price: input.price, volatility: input.volatility },
         lastTradeAt: input.lastTradeAt,
       },
-      this.config.values,
+      userLimits,
     );
     const safeFloat = (val: unknown, fallback = 0): number =>
       typeof val === "number" && Number.isFinite(val) ? val : fallback;
@@ -236,7 +240,7 @@ export class RiskManagementService {
 
   async dashboard(userId: string) {
     await this.syncActiveConnections(userId);
-    const limits = this.config.values;
+    const limits = await this.config.getUserLimits(userId);
     const connections = await this.prisma.exchangeConnection.findMany({
       where: {
         userId,

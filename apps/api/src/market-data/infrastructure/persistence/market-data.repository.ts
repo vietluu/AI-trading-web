@@ -387,69 +387,43 @@ export class MarketDataRepository {
   async upsertCandleBatch(
     candles: NormalizedCandle[],
   ): Promise<NormalizedCandle[]> {
-    const chunkSize = 25;
-    const rows: Array<Awaited<ReturnType<PrismaService["marketCandle"]["upsert"]>>> = [];
-
+    const chunkSize = 250;
+    const persisted: NormalizedCandle[] = [];
     for (let index = 0; index < candles.length; index += chunkSize) {
       const chunk = candles.slice(index, index + chunkSize);
-      const chunkResults = [] as Array<Awaited<ReturnType<PrismaService["marketCandle"]["upsert"]>>>;
-
-      for (const input of chunk) {
-        try {
-          const row = await this.prisma.marketCandle.upsert({
-            where: {
-              provider_symbol_interval_openTime: {
-                provider: input.provider,
-                symbol: input.symbol,
-                interval: toDbInterval(input.interval),
-                openTime: input.openTime,
-              },
-            },
-            update: {
-              closeTime: input.closeTime,
-              open: toDecimal(input.open),
-              high: toDecimal(input.high),
-              low: toDecimal(input.low),
-              close: toDecimal(input.close),
-              volume: toDecimal(input.volume),
-              quoteVolume: toOptionalDecimal(input.quoteVolume),
-              tradeCount: input.tradeCount,
-              isClosed: input.isClosed,
-            },
-            create: {
-              provider: input.provider,
-              symbol: input.symbol,
-              interval: toDbInterval(input.interval),
-              openTime: input.openTime,
-              closeTime: input.closeTime,
-              open: toDecimal(input.open),
-              high: toDecimal(input.high),
-              low: toDecimal(input.low),
-              close: toDecimal(input.close),
-              volume: toDecimal(input.volume),
-              quoteVolume: toOptionalDecimal(input.quoteVolume),
-              tradeCount: input.tradeCount,
-              isClosed: input.isClosed,
-            },
-          });
-          chunkResults.push(row);
-        } catch (error) {
-          this.logger.warn({
-            event: "market_candle_upsert_failed",
-            symbol: input.symbol,
-            interval: input.interval,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-
-      rows.push(...chunkResults);
-      if (chunk.length >= chunkSize) {
-        await new Promise((resolve) => setTimeout(resolve, 25));
+      if (chunk.length === 0) continue;
+      try {
+        const values = chunk.map((input) => Prisma.sql`(
+          gen_random_uuid(),
+          ${input.provider}::"ExchangeProvider",
+          ${input.symbol},
+          ${toDbInterval(input.interval)}::"MarketDataInterval",
+          ${input.openTime}, ${input.closeTime},
+          ${input.open}, ${input.high}, ${input.low}, ${input.close}, ${input.volume},
+          ${input.quoteVolume ?? null}, ${input.tradeCount ?? null}, ${input.isClosed}, NOW(), NOW()
+        )`);
+        await this.prisma.$executeRaw(Prisma.sql`
+          INSERT INTO "market_candles"
+            ("id", "provider", "symbol", "interval", "openTime", "closeTime", "open", "high", "low", "close", "volume", "quoteVolume", "tradeCount", "isClosed", "createdAt", "updatedAt")
+          VALUES ${Prisma.join(values)}
+          ON CONFLICT ("provider", "symbol", "interval", "openTime") DO UPDATE SET
+            "closeTime" = EXCLUDED."closeTime", "open" = EXCLUDED."open",
+            "high" = EXCLUDED."high", "low" = EXCLUDED."low", "close" = EXCLUDED."close",
+            "volume" = EXCLUDED."volume", "quoteVolume" = EXCLUDED."quoteVolume",
+            "tradeCount" = EXCLUDED."tradeCount", "isClosed" = EXCLUDED."isClosed",
+            "updatedAt" = NOW()
+        `);
+        persisted.push(...chunk);
+      } catch (error) {
+        this.logger.error({
+          event: "market_candle_batch_upsert_failed",
+          batchSize: chunk.length,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
       }
     }
-
-    return rows.map(mapCandleRow);
+    return persisted;
   }
 
   async getCandles(query: {
@@ -460,6 +434,7 @@ export class MarketDataRepository {
     endTime?: Date;
     limit?: number;
   }): Promise<NormalizedCandle[]> {
+    const boundedRange = Boolean(query.startTime || query.endTime);
     const rows = await this.prisma.marketCandle.findMany({
       where: {
         provider: query.provider,
@@ -474,11 +449,15 @@ export class MarketDataRepository {
             }
           : {}),
       },
-      orderBy: { openTime: "asc" },
+      // Without an explicit range callers are asking for the latest N candles.
+      // Querying ASC + take returned the oldest rows and could feed a stale
+      // reference price into the trading pipeline.
+      orderBy: { openTime: boundedRange ? "asc" : "desc" },
       take: query.limit,
     });
 
-    return rows.map(mapCandleRow);
+    const chronologicalRows = boundedRange ? rows : rows.reverse();
+    return chronologicalRows.map(mapCandleRow);
   }
 
   async getClosedCandles(query: {

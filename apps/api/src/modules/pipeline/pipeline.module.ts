@@ -1,5 +1,5 @@
 import { Module } from "@nestjs/common";
-import { ConfigModule, ConfigService } from "@nestjs/config";
+import { ConfigModule } from "@nestjs/config";
 import { BullModule } from "@nestjs/bullmq";
 import { AgentsModule } from "../agents/agents.module";
 import { DatabaseModule } from "../../database/database.module";
@@ -11,6 +11,7 @@ import { PipelineThresholdService } from "./application/pipeline-threshold.servi
 import { SignalFilterService } from "./application/signal-filter.service";
 import { PipelineAlertService } from "./application/pipeline-alert.service";
 import { PipelineRunnerService } from "./application/pipeline-runner.service";
+import { DecisionJudgeService } from "./application/decision-judge.service";
 import { DecisionRiskPolicyService } from "../risk/application/decision-risk-policy.service";
 import { PipelineService } from "./application/pipeline.service";
 import { PipelineSchedulerService } from "./application/pipeline-scheduler.service";
@@ -27,7 +28,7 @@ import {
 } from "./infrastructure/pipeline-queue.constants";
 import { LiveTradingModule } from "../live-trading/live-trading.module";
 import { MarketDataModule } from "../../market-data/market-data.module";
-import { createBullRootConfig } from "./infrastructure/bull-config";
+import { RedisModule } from "../../redis/redis.module";
 
 @Module({
   imports: [
@@ -37,11 +38,7 @@ import { createBullRootConfig } from "./infrastructure/bull-config";
     AgentsModule,
     LiveTradingModule,
     MarketDataModule,
-    BullModule.forRootAsync({
-      imports: [ConfigModule],
-      useFactory: (config: ConfigService) => createBullRootConfig(config),
-      inject: [ConfigService],
-    }),
+    RedisModule,
     BullModule.registerQueue(
       { name: PIPELINE_RUN_QUEUE_NAME },
       { name: PIPELINE_RETRY_QUEUE_NAME },
@@ -56,6 +53,7 @@ import { createBullRootConfig } from "./infrastructure/bull-config";
     PipelineAlertService,
     DecisionRiskPolicyService,
     PipelineRunnerService,
+    DecisionJudgeService,
     PipelineService,
     PipelineSchedulerService,
     PipelineHealthService,

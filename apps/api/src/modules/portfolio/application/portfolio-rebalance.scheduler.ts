@@ -3,10 +3,12 @@ import {
   Logger,
   OnModuleDestroy,
   OnModuleInit,
+  Optional,
 } from "@nestjs/common";
 import { PrismaService } from "../../../database/prisma.service";
 import { PortfolioConfigService } from "./portfolio-config.service";
 import { PortfolioService } from "./portfolio.service";
+import { DistributedTaskLockService } from "../../../redis/distributed-task-lock.service";
 
 @Injectable()
 export class PortfolioRebalanceScheduler
@@ -18,6 +20,7 @@ export class PortfolioRebalanceScheduler
     private readonly prisma: PrismaService,
     private readonly config: PortfolioConfigService,
     private readonly portfolio: PortfolioService,
+    @Optional() private readonly taskLock?: DistributedTaskLockService,
   ) {}
   onModuleInit() {
     this.timer = setInterval(
@@ -30,6 +33,13 @@ export class PortfolioRebalanceScheduler
     if (this.timer) clearInterval(this.timer);
   }
   private async run() {
+    if (this.taskLock) {
+      await this.taskLock.run('portfolio-rebalance', Math.max(60, Math.ceil(this.config.values.rebalanceIntervalMs / 1000)), () => this.runOnce());
+      return;
+    }
+    await this.runOnce();
+  }
+  private async runOnce() {
     const owners = await this.prisma.portfolioStrategy.findMany({
       distinct: ["userId"],
       select: { userId: true },

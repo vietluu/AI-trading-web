@@ -75,6 +75,7 @@ model User {
   benchmarkSuites        BenchmarkSuiteRun[]
   sensitivityHeatmaps    SensitivityHeatmap[]
   selfLearningConfiguration SelfLearningConfiguration?
+  selfLearningExperiments SelfLearningExperiment[]
 
   @@map("users")
 }
@@ -353,15 +354,21 @@ model PaperSignal {
   userId         String   @db.Uuid
   pipelineRunId  String?  @unique @db.Uuid
   symbol         String
+  provider       ExchangeProvider?
   decision       String
   confidence     Float
   mode           String
+  configurationVersion Int?
+  marketRegime   String?
   referencePrice Decimal  @db.Decimal(24, 8)
   outcome        String
+  returnPct      Float?
   createdAt      DateTime @default(now())
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+  @@index([userId, mode, outcome, createdAt])
+  @@index([userId, mode, outcome, configurationVersion, createdAt])
   @@map("paper_signals")
 }
 
@@ -534,6 +541,10 @@ model PipelineRun {
   decision                String?
   confidence              Float?
   dataQuality             String?
+  marketRegime            String?
+  configurationVersion    Int?
+  learningStage           String?
+  timeframe               String?
   skippedReason           String?
   errorCode               String?
   safeErrorMessage        String?
@@ -551,6 +562,9 @@ model PipelineRun {
 
   @@index([userId, createdAt])
   @@index([status, createdAt])
+  @@index([status, completedAt])
+  @@index([userId, provider, symbol, status, createdAt])
+  @@index([userId, configurationVersion, learningStage, timeframe, createdAt])
   @@index([pipelineId, symbol, createdAt])
   @@index([correlationId])
   @@index([replayOfRunId])
@@ -601,6 +615,7 @@ model PerformanceRecord {
   outcome         PerformanceOutcome
   returnPct       Float
   highVolatility  Boolean            @default(false)
+  marketRegime    String?
   majorNews       Boolean            @default(false)
   evaluatedAt     DateTime           @default(now())
   user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -608,6 +623,8 @@ model PerformanceRecord {
 
   @@unique([runId, horizon])
   @@index([userId, evaluatedAt])
+  @@index([userId, horizon, evaluatedAt])
+  @@index([userId, horizon, marketRegime, evaluatedAt])
   @@index([symbol, horizon, evaluatedAt])
   @@map("performance_records")
 }
@@ -852,7 +869,7 @@ model MarketCandle {
 
   @@unique([provider, symbol, interval, openTime])
   @@index([symbol, openTime])
-  @@index([provider, symbol, interval, openTime])
+  @@index([provider, symbol, isClosed, closeTime])
   @@map("market_candles")
 }
 
@@ -2021,6 +2038,7 @@ model MarketRegimeState {
   detectedAt       DateTime @default(now())
 
   @@index([symbol, regime])
+  @@index([symbol, detectedAt])
   @@map("market_regime_states")
 }
 
@@ -2100,6 +2118,18 @@ model SelfLearningConfiguration {
   shadowThreshold       Float?    // Candidate threshold under shadow testing
   shadowEnabled         Boolean   @default(false)
   shadowPerformance     Json?     // Telemetry for shadow testing (e.g. accuracy, profitFactor, tradesCount)
+  liveVersion           Int       @default(1)
+  shadowVersion         Int?
+  shadowStartedAt       DateTime?
+  canaryEnabled         Boolean   @default(false)
+  canaryVersion         Int?
+  canaryWeightsJson     Json?
+  canaryThreshold       Float?
+  canaryStartedAt       DateTime?
+  previousWeightsJson   Json?
+  previousThreshold     Float?
+  previousVersion       Int?
+  lastPromotionAt       DateTime?
   lastOptimizedAt       DateTime?
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
@@ -2108,4 +2138,38 @@ model SelfLearningConfiguration {
   @@map("self_learning_configurations")
 }
 
+model SelfLearningExperiment {
+  id                    String   @id @default(uuid()) @db.Uuid
+  userId                String   @db.Uuid
+  version               Int
+  baseVersion           Int
+  candidateWeightsJson  Json
+  candidateThreshold    Float
+  trainStartedAt        DateTime
+  trainEndedAt          DateTime
+  validationStartedAt   DateTime
+  validationEndedAt     DateTime
+  trainMetricsJson      Json
+  validationMetricsJson Json
+  reproducibleHash      String
+  createdAt             DateTime @default(now())
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  events                SelfLearningExperimentEvent[]
 
+  @@unique([userId, version])
+  @@index([userId, createdAt])
+  @@index([reproducibleHash])
+  @@map("self_learning_experiments")
+}
+
+model SelfLearningExperimentEvent {
+  id           String   @id @default(uuid()) @db.Uuid
+  experimentId String   @db.Uuid
+  eventType    String
+  payloadJson  Json
+  createdAt    DateTime @default(now())
+  experiment   SelfLearningExperiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+
+  @@index([experimentId, createdAt])
+  @@map("self_learning_experiment_events")
+}

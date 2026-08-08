@@ -54,7 +54,7 @@ export default function PipelineRunDetailPage() {
         {[
           ["Status", run.status],
           ["Decision", run.decision ?? "—"],
-          ["Confidence", run.confidence == null ? "—" : `${run.confidence}%`],
+          ["Confidence score", run.confidence == null ? "—" : `${run.confidence}/100`],
           ["Quality", run.dataQuality ?? "—"],
           ["Duration", run.durationMs == null ? "—" : `${run.durationMs}ms`],
         ].map(([k, v]) => (

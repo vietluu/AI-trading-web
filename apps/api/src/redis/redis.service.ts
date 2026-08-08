@@ -57,6 +57,58 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     await this.client.set(key, value, "EX", ttlSeconds);
   }
 
+  /**
+   * Atomically set key=value with TTL only if the key does NOT already exist.
+   * Returns true if the lock was acquired, false if another holder already owns it.
+   * Used for distributed mutex (NX = "Not eXists").
+   */
+  async setNx(key: string, value: string, ttlSeconds: number): Promise<boolean> {
+    const result = await this.client.set(key, value, 'EX', ttlSeconds, 'NX');
+    return result === 'OK';
+  }
+
+  /** Delete a lock only when it is still owned by the supplied token. */
+  async compareAndDelete(key: string, token: string): Promise<boolean> {
+    const result = await this.client.eval(
+      "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+      1,
+      key,
+      token,
+    );
+    return Number(result) === 1;
+  }
+
+  /** Renew a lease only while it is still owned by the supplied token. */
+  async compareAndExpire(key: string, token: string, ttlSeconds: number): Promise<boolean> {
+    const result = await this.client.eval(
+      "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('expire', KEYS[1], ARGV[2]) else return 0 end",
+      1,
+      key,
+      token,
+      ttlSeconds,
+    );
+    return Number(result) === 1;
+  }
+
+  async acquireSemaphore(key: string, token: string, limit: number, ttlMs: number): Promise<{ acquired: boolean; current: number }> {
+    const now = Date.now();
+    const result = await this.client.eval(
+      "redis.call('zremrangebyscore', KEYS[1], '-inf', ARGV[1]); local count = redis.call('zcard', KEYS[1]); if count < tonumber(ARGV[3]) then redis.call('zadd', KEYS[1], ARGV[2], ARGV[5]); redis.call('pexpire', KEYS[1], tonumber(ARGV[4]) * 2); return {1, count + 1}; end; return {0, count}",
+      1,
+      key,
+      now,
+      now + ttlMs,
+      limit,
+      ttlMs,
+      token,
+    ) as [number, number];
+    return { acquired: Number(result[0]) === 1, current: Number(result[1]) };
+  }
+
+  async releaseSemaphore(key: string, token: string): Promise<void> {
+    await this.client.zrem(key, token);
+  }
+
   async delete(...keys: string[]): Promise<void> {
     if (keys.length > 0) {
       await this.client.del(...keys);
@@ -68,14 +120,13 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   async incrementWithTtl(key: string, ttlSeconds: number): Promise<number> {
-    const count = await this.client.incr(key);
-    if (count === 1) {
-      // Only set TTL when the key is brand new (count === 1).
-      // This avoids the sliding-window bug where every INCR resets the expiry,
-      // causing the counter to never expire and accumulate indefinitely.
-      await this.client.expire(key, ttlSeconds);
-    }
-    return count;
+    const result = await this.client.eval(
+      "local value = redis.call('incr', KEYS[1]); if value == 1 then redis.call('expire', KEYS[1], ARGV[1]); end; return value",
+      1,
+      key,
+      ttlSeconds,
+    );
+    return Number(result);
   }
 
   /**

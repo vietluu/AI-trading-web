@@ -109,10 +109,21 @@ export default function LiveTradingPage(): React.JSX.Element {
       setLiveData(payload);
     });
 
+    socket.on("exception", (err: unknown) => {
+      console.warn("Live trading socket exception:", err);
+      // Fallback: refetch query via HTTP
+      void query.refetch();
+    });
+
+    socket.on("connect_error", (err: Error) => {
+      console.warn("Live trading socket connect_error:", err.message);
+      void query.refetch();
+    });
+
     return () => {
       socket.disconnect();
     };
-  }, []);
+  }, [query]);
 
   if (query.isLoading)
     return <p className="text-muted-foreground">{t.ai.loadingStatus}…</p>;

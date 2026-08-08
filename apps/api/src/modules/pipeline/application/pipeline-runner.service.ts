@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { ExchangeInterval, ExchangeProvider } from "../../../exchange/domain/exchange.types";
 import {
@@ -24,6 +24,8 @@ import {
   decisionForStrategy,
 } from "../../portfolio/domain/strategy-decision";
 import { MarketDataService } from "../../../market-data/application/market-data.service";
+import { RedisService } from "../../../redis/redis.service";
+import { DecisionJudgeService } from "./decision-judge.service";
 
 class PipelineCancelledError extends Error {}
 
@@ -43,6 +45,8 @@ export class PipelineRunnerService {
     private readonly alerts: PipelineAlertService,
     private readonly analytics: PipelineAnalyticsService,
     private readonly liveTrading: LiveTradingService,
+    private readonly redis: RedisService,
+    @Optional() private readonly judge?: DecisionJudgeService,
   ) {}
 
   async run(job: PipelineJob): Promise<void> {
@@ -77,6 +81,9 @@ export class PipelineRunnerService {
 
       const signalFilter = this.signalFilter.evaluate({
         price: lastPrice,
+        symbol,
+        provider: job.provider,
+        timeframe: String(interval),
         rsi: Number(indicatorSnapshot?.values.rsi14),
         atr: Number(indicatorSnapshot?.values.atr14),
         volumeChangePercent: Number(indicatorSnapshot?.values.volumeChangePercent),
@@ -187,10 +194,15 @@ export class PipelineRunnerService {
       }
       await this.assertNotCancelled(runId);
       await this.startStep(runId, "decision");
-      const synthesizedOutput = this.decision.decide({
+      const synthesizedOutput = await this.decision.decideForUser({
         symbol,
         fusionOutput,
         ...analyses,
+      }, job.userId, {
+        pipelineRunId: runId,
+        provider: job.provider,
+        timeframe: String(interval),
+        referencePrice: lastPrice,
       });
       const strategyKey =
         typeof job.params?.strategyId === "string"
@@ -202,10 +214,18 @@ export class PipelineRunnerService {
         analyses,
       );
       const decisionCompletedAt = new Date();
-      const thresholdFilter = this.threshold.evaluate(output);
-      const filter = this.riskPolicy.evaluate(output);
-      const actionable = thresholdFilter.actionable && filter.actionable;
-      const reason = thresholdFilter.reason ?? filter.reason;
+      const policyContext = { symbol, provider: job.provider, timeframe: String(interval), regime: output.regime.type };
+      const thresholdFilter = this.threshold.evaluate(output, policyContext);
+      const filter = this.riskPolicy.evaluate(output, policyContext);
+      const judge = this.judge?.evaluate(output, analyses, {
+        symbol,
+        provider: job.provider,
+        timeframe: String(interval),
+        referencePrice: lastPrice,
+        sourceTimestamp: indicatorSnapshot?.candleCloseTime ?? recentCandles[0]?.closeTime,
+      }) ?? { verdict: 'APPROVE' as const, approved: true, reasons: [] };
+      const actionable = thresholdFilter.actionable && filter.actionable && judge.approved;
+      const reason = thresholdFilter.reason ?? filter.reason ?? judge.reasons[0];
       await this.finishStep(runId, "decision", output, decisionCompletedAt);
       this.analytics.recordStageTelemetry({
         pipelineId: job.pipelineId,
@@ -234,26 +254,67 @@ export class PipelineRunnerService {
       let riskAssessment: Awaited<ReturnType<LiveTradingService["assessPipelineDecision"]>> | undefined;
       let liveExecution: Awaited<ReturnType<LiveTradingService["executePipeline"]>> | undefined;
       if (actionable) {
-        riskAssessment = await this.liveTrading.assessPipelineDecision({
-          userId: job.userId,
-          pipelineRunId: runId,
-          symbol,
-          provider: job.provider as unknown as ExchangeProvider,
-          decision: executionDecision,
-          ...(typeof job.params?.strategyId === "string"
-            ? { strategyKey: job.params.strategyId }
-            : {}),
-          ...(Number.isFinite(volatilityAtr) && volatilityAtr >= 0
-            ? { volatilityAtr }
-            : {}),
-        });
-        if (riskAssessment.outcome === "NO_ELIGIBLE_EXCHANGE_CONNECTION") {
-          throw new Error("NO_ELIGIBLE_EXCHANGE_CONNECTION: Active verified exchange connection is required to run live risk assessment.");
+        // ─── Distributed Execution Lock ───────────────────────────────────────
+        // Prevent race condition: multiple concurrent pipelines for the same user
+        // could all read the same balance snapshot and collectively over-leverage.
+        // We acquire a per-user Redis mutex (NX = only set if not exists) that
+        // ensures only ONE pipeline at a time can run assess+execute for a user.
+        const lockKey = `pipeline:exec:lock:${job.userId}`;
+        const lockTtl = 30; // seconds — generous enough for one assess+execute round
+        const acquired = await this.redis.setNx(lockKey, runId, lockTtl);
+
+        if (!acquired) {
+          // Another pipeline is currently inside the execution gate for this user.
+          // Treat as WAIT — BullMQ retry will re-queue after backoffMs.
+          this.logger.warn({
+            event: 'pipeline_execution_lock_busy',
+            userId: job.userId,
+            runId,
+            symbol,
+          });
+          await this.repository.updateRun(runId, {
+            status: 'COMPLETED',
+            completedAt: new Date(),
+            durationMs: new Date().getTime() - startedAt.getTime(),
+            decision: 'WAIT',
+            confidence: output.confidence,
+            dataQuality: output.dataQuality,
+            marketRegime: output.regime.type,
+            configurationVersion: output.learningConfiguration?.version,
+            learningStage: output.learningConfiguration?.stage,
+            timeframe: String(interval),
+            skippedReason: 'EXECUTION_LOCK_BUSY',
+            storedContext: { analyses, fusionOutput },
+            result: { ...output, decision: 'WAIT' as const, actionable: false, skippedReason: 'EXECUTION_LOCK_BUSY' },
+          });
+          return;
         }
-        liveExecution = await this.liveTrading.executePipeline(
-          job.userId,
-          runId,
-        );
+
+        try {
+          riskAssessment = await this.liveTrading.assessPipelineDecision({
+            userId: job.userId,
+            pipelineRunId: runId,
+            symbol,
+            provider: job.provider as unknown as ExchangeProvider,
+            decision: executionDecision,
+            ...(typeof job.params?.strategyId === "string"
+              ? { strategyKey: job.params.strategyId }
+              : {}),
+            ...(Number.isFinite(volatilityAtr) && volatilityAtr >= 0
+              ? { volatilityAtr }
+              : {}),
+          });
+          if (riskAssessment.outcome === "NO_ELIGIBLE_EXCHANGE_CONNECTION") {
+            throw new Error("NO_ELIGIBLE_EXCHANGE_CONNECTION: Active verified exchange connection is required to run live risk assessment.");
+          }
+          liveExecution = await this.liveTrading.executePipeline(
+            job.userId,
+            runId,
+          );
+        } finally {
+          // Always release the lock — even if assessment or execution throws
+          await this.redis.compareAndDelete(lockKey, runId);
+        }
       }
       const completedAt = new Date();
       const risk = riskAssessment?.risk;
@@ -285,6 +346,10 @@ export class PipelineRunnerService {
         decision: executionDecision.decision,
         confidence: output.confidence,
         dataQuality: output.dataQuality,
+        marketRegime: output.regime.type,
+        configurationVersion: output.learningConfiguration?.version,
+        learningStage: output.learningConfiguration?.stage,
+        timeframe: String(interval),
         skippedReason: filter.reason,
         storedContext: { analyses, fusionOutput },
         result: {
@@ -293,6 +358,7 @@ export class PipelineRunnerService {
           skippedReason: reason,
           riskAssessment,
           liveExecution,
+          judge: judge as unknown as Prisma.InputJsonValue,
         },
       });
       await this.alerts.contextual(runId, symbol, analyses);

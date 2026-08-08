@@ -1,4 +1,5 @@
 import type { DecisionOutput } from '@platform/shared';
+import { adaptiveTradingPolicy, type AdaptivePolicyContext } from '../../pipeline/domain/adaptive-trading-policy';
 
 export type DecisionRiskPolicyReason =
   | 'DATA_QUALITY_INSUFFICIENT'
@@ -17,7 +18,8 @@ export interface DecisionRiskPolicyResult {
 }
 
 export class DecisionRiskPolicyService {
-  evaluate(output: Pick<DecisionOutput, 'decision' | 'confidence' | 'dataQuality' | 'conflictLevel' | 'opportunityScore' | 'expectedValue' | 'adaptiveThreshold' | 'riskScore' | 'volatilityAdjustment' | 'agreementScore'>): DecisionRiskPolicyResult {
+  evaluate(output: Pick<DecisionOutput, 'decision' | 'confidence' | 'dataQuality' | 'conflictLevel' | 'opportunityScore' | 'expectedValue' | 'adaptiveThreshold' | 'riskScore' | 'volatilityAdjustment' | 'agreementScore' | 'regime'>, context?: AdaptivePolicyContext): DecisionRiskPolicyResult {
+    const policy = adaptiveTradingPolicy({ symbol: context?.symbol ?? 'BTC-USDT', ...context, regime: output.regime?.type ?? context?.regime ?? 'RANGING' });
     if (output.decision === 'WAIT') {
       return { actionable: false, decision: 'WAIT', reason: 'DECISION_IS_WAIT' };
     }
@@ -35,13 +37,13 @@ export class DecisionRiskPolicyService {
     if (output.confidence < output.adaptiveThreshold && !strongConviction) {
       return { actionable: false, decision: 'WAIT', reason: 'CONFIDENCE_BELOW_THRESHOLD' };
     }
-    if (output.expectedValue <= 0 && !strongConviction) {
+    if (output.expectedValue <= policy.minExpectedValue && !strongConviction) {
       return { actionable: false, decision: 'WAIT', reason: 'EXPECTED_VALUE_NEGATIVE' };
     }
     if (output.opportunityScore < thresholdFloor && !strongConviction) {
       return { actionable: false, decision: 'WAIT', reason: 'OPPORTUNITY_BELOW_THRESHOLD' };
     }
-    if (output.riskScore > 80 && !strongConviction) {
+    if (output.riskScore > policy.maxRiskScore && !strongConviction) {
       return { actionable: false, decision: 'WAIT', reason: 'RISK_SCORE_TOO_HIGH' };
     }
     return { actionable: true, decision: output.decision };

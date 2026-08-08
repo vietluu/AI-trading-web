@@ -42,14 +42,45 @@ export function deriveAssetSymbol(symbol: string): string {
 }
 
 import { Optional } from '@nestjs/common';
-import { UnifiedAnalystService } from './unified-analyst.service';
+import { RedisService } from '../../../../redis/redis.service';
+
+/** TTL in seconds for global (market-wide) agent output cache. */
+const GLOBAL_CTX_TTL_SECONDS = 300; // 5 minutes
 
 @Injectable()
 export class FusionService {
   constructor(
     private readonly agentExecutionService: AgentExecutionService,
-    @Optional() private readonly unifiedAnalystService?: UnifiedAnalystService,
+    @Optional() private readonly redis?: RedisService,
   ) {}
+
+  // ─── Global Context Cache helpers ────────────────────────────────────────────
+  /** Agents whose output is market-wide (not per-symbol) and safe to cache. */
+  private readonly GLOBAL_AGENTS = new Set(['news', 'sentiment', 'macro'] as const);
+
+  private globalCacheKey(name: string, lookbackHours: number, assetSymbol: string): string {
+    const scope = name === 'macro' ? 'market-wide' : assetSymbol;
+    return `fusion:context:${name}:${scope}:lh${lookbackHours}`;
+  }
+
+  private async getGlobalCache<T>(key: string): Promise<T | null> {
+    if (!this.redis) return null;
+    try {
+      const raw = await this.redis.get(key);
+      return raw ? (JSON.parse(raw) as T) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async setGlobalCache(key: string, value: unknown): Promise<void> {
+    if (!this.redis) return;
+    try {
+      await this.redis.setWithTtl(key, JSON.stringify(value), GLOBAL_CTX_TTL_SECONDS);
+    } catch {
+      // Cache write failures must never break the pipeline
+    }
+  }
 
   public async run(options: RunFusionOptions): Promise<FusionOutput> {
     return (await this.runDetailed(options)).fusionOutput;
@@ -58,13 +89,6 @@ export class FusionService {
   public async runDetailed(
     options: RunFusionOptions,
   ): Promise<FusionAnalysisResult> {
-    if (this.unifiedAnalystService) {
-      try {
-        return await this.unifiedAnalystService.analyze(options);
-      } catch {
-        // Fallback to legacy individual agent loop
-      }
-    }
     const input = FusionRunInputSchema.parse(options.input);
     const correlationId = options.correlationId ?? randomUUID();
     const assetSymbol = deriveAssetSymbol(input.symbol);
@@ -133,24 +157,48 @@ export class FusionService {
     ];
 
     const analyses: Partial<FusionInput> = {};
-    for (const request of requests) {
-      try {
+    const results = await Promise.allSettled(
+      requests.map(async (request) => {
+        // ── Global context cache: reuse market-wide agent results across symbols ──
+        if (this.GLOBAL_AGENTS.has(request.name as 'news' | 'sentiment' | 'macro')) {
+          const cacheKey = this.globalCacheKey(request.name, input.lookbackHours ?? 24, assetSymbol);
+          const cached = await this.getGlobalCache<unknown>(cacheKey);
+          if (cached) {
+            const parsed = request.schema.safeParse(cached);
+            if (parsed.success) return { name: request.name, data: parsed.data };
+          }
+          const run = await this.agentExecutionService.executeSync({
+            ...common,
+            agentType: request.agentType,
+            input: request.input,
+          });
+          const parsed = request.schema.safeParse(run.output);
+          if (!parsed.success) throw new Error(`Invalid output from ${request.name}`);
+          await this.setGlobalCache(cacheKey, parsed.data);
+          return { name: request.name, data: parsed.data };
+        }
+        // ── Per-symbol agents run fresh every time ─────────────────────────────
         const run = await this.agentExecutionService.executeSync({
           ...common,
           agentType: request.agentType,
           input: request.input,
         });
         const parsed = request.schema.safeParse(run.output);
-        if (parsed.success) {
-          Object.assign(analyses, { [request.name]: parsed.data });
-          continue;
-        }
-      } catch {
-        // A single analyst must not prevent the remaining analyses from running.
+        if (!parsed.success) throw new Error(`Invalid output from ${request.name}`);
+        return { name: request.name, data: parsed.data };
+      })
+    );
+
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i]!;
+      const request = requests[i]!;
+      if (result.status === 'fulfilled') {
+        Object.assign(analyses, { [result.value.name]: result.value.data });
+      } else {
+        Object.assign(analyses, {
+          [request.name]: this.unavailableAnalysis(request.name),
+        });
       }
-      Object.assign(analyses, {
-        [request.name]: this.unavailableAnalysis(request.name),
-      });
     }
 
     const parsedAnalyses = FusionInputSchema.parse(analyses);

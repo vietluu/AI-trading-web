@@ -10,22 +10,11 @@ import {
 } from "@/hooks/ai/useAiFeature";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 
-const AVAILABLE_SYMBOLS = [
-  "BTC-USDT",
-  "ETH-USDT",
-  "SOL-USDT",
-  "BNB-USDT",
-  "XRP-USDT",
-  "DOGE-USDT",
-  "ADA-USDT",
-  "AVAX-USDT",
-  "LINK-USDT",
-  "NEAR-USDT",
-  "SUI-USDT",
-];
+import { useExchangeSymbols } from "@/hooks/useExchangeSymbols";
 
 export default function PipelinePage() {
   const { t } = useTranslation();
+  const { symbols: dynamicSymbols } = useExchangeSymbols();
   const [symbol, setSymbol] = useState("BTC-USDT");
   const [provider, setProvider] = useState("OKX_FUTURES");
   const [message, setMessage] = useState("");
@@ -138,16 +127,16 @@ export default function PipelinePage() {
         <h2 className="text-lg font-semibold">{t.ai.manualTriggerTitle}</h2>
         <div className="mt-4 flex flex-wrap gap-3">
           <select
-            className="min-w-0 flex-1 rounded border bg-background px-3 py-2 sm:flex-none"
+            className="min-w-36 flex-1 rounded border bg-background px-3 py-2 sm:flex-none"
             value={symbol}
             onChange={(e) => setSymbol(e.target.value)}
           >
-            {AVAILABLE_SYMBOLS.map((item) => (
+            {dynamicSymbols.map((item) => (
               <option key={item}>{item}</option>
             ))}
           </select>
           <select
-            className="min-w-0 flex-1 rounded border bg-background px-3 py-2 sm:flex-none"
+            className="min-w-36 flex-1 rounded border bg-background px-3 py-2 sm:flex-none"
             value={provider}
             onChange={(e) => setProvider(e.target.value)}
           >

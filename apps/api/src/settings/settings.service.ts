@@ -23,7 +23,13 @@ export class SettingsService {
     context: RequestMetadata,
   ) {
     await this.repository.getOrCreate(userId);
-    const setting = await this.repository.update(userId, dto);
+    const normalizedDto = {
+      ...dto,
+      ...(dto.riskPreference
+        ? { riskPreference: dto.riskPreference.toUpperCase() }
+        : {}),
+    };
+    const setting = await this.repository.update(userId, normalizedDto);
     await this.audit.record("SETTINGS_UPDATE", userId, context, {
       fields: Object.keys(dto),
     });

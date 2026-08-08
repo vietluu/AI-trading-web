@@ -35,15 +35,15 @@ export default function PipelineRunsPage() {
           Automation →
         </Link>
       </div>
-      <div className="overflow-hidden rounded-lg border bg-card">
-        <table className="w-full text-left text-sm">
+      <div className="overflow-x-auto rounded-lg border bg-card">
+        <table className="w-full min-w-[640px] text-left text-sm">
           <thead className="bg-muted text-xs uppercase text-muted-foreground">
             <tr>
               {[
                 "Run",
                 "Status",
                 "Decision",
-                "Confidence",
+                "Confidence score",
                 "Trigger",
                 "Duration",
                 "Created",
@@ -71,7 +71,7 @@ export default function PipelineRunsPage() {
                 <td className="p-3 font-semibold">{run.status}</td>
                 <td className="p-3">{run.decision ?? "—"}</td>
                 <td className="p-3">
-                  {run.confidence == null ? "—" : `${run.confidence}%`}
+                  {run.confidence == null ? "—" : `${run.confidence}/100`}
                 </td>
                 <td className="p-3">{run.trigger}</td>
                 <td className="p-3">

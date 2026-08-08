@@ -5,13 +5,15 @@ import type { FusionRunInput } from "@platform/shared";
 import { useDecisionRunner } from "@/hooks/ai/useAiFeature";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 
+import { useExchangeSymbols } from "@/hooks/useExchangeSymbols";
+
 const fieldClassName =
   "w-full rounded-md border border-border bg-background px-3 py-2 text-sm";
 
 export default function DecisionPage(): React.JSX.Element {
   const { t } = useTranslation();
-  const [symbol, setSymbol] = useState<FusionRunInput["symbol"]>("BTC-USDT");
-  const [symbols] = useState<string[]>(["BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT", "XRP-USDT", "DOGE-USDT", "ADA-USDT", "AVAX-USDT", "LINK-USDT", "NEAR-USDT", "SUI-USDT"]);
+  const { symbols } = useExchangeSymbols();
+  const [symbol, setSymbol] = useState<string>("BTC-USDT");
   const [provider, setProvider] =
     useState<FusionRunInput["provider"]>("OKX_FUTURES");
   const [interval, setInterval] = useState<FusionRunInput["interval"]>("15m");
@@ -73,7 +75,19 @@ export default function DecisionPage(): React.JSX.Element {
             <div className="flex flex-wrap items-center justify-between gap-4">
               <span className={`rounded-full px-5 py-2 text-xl font-black ${badge}`}>{output.decision}</span>
               <div className="flex gap-6 text-sm">
-                <Metric label={t.ai.confidence} value={`${output.confidence}%`} />
+                <Metric label={t.ai.confidence} value={`${output.confidence} / 100`} />
+                {output.confidenceCalibration?.status === "CALIBRATED" ? (
+                  <>
+                    <Metric
+                      label={t.ai.calibratedProbability}
+                      value={`${Math.round((output.confidenceCalibration.empiricalProbability ?? 0) * 100)}%`}
+                    />
+                    <Metric
+                      label={t.ai.brierScore}
+                      value={(output.confidenceCalibration.brierScore ?? 0).toFixed(3)}
+                    />
+                  </>
+                ) : null}
                 <Metric label={t.ai.agreement} value={`${output.agreementScore}%`} />
                 <Metric label={t.ai.data} value={output.dataQuality} />
                 <Metric label={t.ai.regime} value={output.regime.type} />

@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { adaptiveTradingPolicy } from "../domain/adaptive-trading-policy";
 
 export interface SignalFilterInput {
   rsi?: number;
@@ -9,20 +10,28 @@ export interface SignalFilterInput {
   ema200?: number;
   breakout?: boolean;
   price?: number;
+  symbol?: string;
+  provider?: "BINANCE_FUTURES" | "OKX_FUTURES";
+  timeframe?: string;
+  spreadBps?: number;
+  marketRegime?: "TRENDING" | "RANGING" | "HIGH_VOLATILITY";
 }
 
 export interface SignalFilterResult {
   allowed: boolean;
-  reason?: "NO_TRADE_ZONE" | "LOW_ATR" | "NO_TREND";
+  reason?: "NO_TRADE_ZONE" | "LOW_ATR" | "NO_TREND" | "INSUFFICIENT_INDICATORS" | "WIDE_SPREAD";
 }
 
 @Injectable()
 export class SignalFilterService {
-  private readonly minAtrAbsolute = 25;
-  private readonly minAtrPercent = 0.1; // 0.1% min relative volatility
-  private readonly minVolumeChangePercent = 1.2;
-
   evaluate(input: SignalFilterInput): SignalFilterResult {
+    const policy = adaptiveTradingPolicy({
+      symbol: input.symbol ?? "BTC-USDT",
+      provider: input.provider,
+      timeframe: input.timeframe,
+      regime: input.marketRegime,
+      spreadBps: input.spreadBps,
+    });
     const rsi = input.rsi === undefined ? NaN : Number(input.rsi);
     const atr = input.atr === undefined ? NaN : Number(input.atr);
     const volumeChange =
@@ -49,15 +58,19 @@ export class SignalFilterService {
 
     const effectiveMinAtr =
       explicitPrice !== undefined
-        ? Math.min(this.minAtrAbsolute, Math.max(0.1, explicitPrice * 0.005))
-        : this.minAtrAbsolute;
+        ? Math.max(Number.EPSILON, explicitPrice * (policy.minAtrPercent / 100))
+        : 25;
 
     const isLowAtr = Number.isFinite(atr) && atr < effectiveMinAtr;
 
     const hasRsiNeutralZone = Number.isFinite(rsi) && rsi >= 45 && rsi <= 55;
     const lowVolume =
       Number.isFinite(volumeChange) &&
-      volumeChange < this.minVolumeChangePercent;
+      volumeChange < policy.minVolumeChangePercent;
+
+    if (input.spreadBps !== undefined && input.spreadBps > policy.maxSpreadBps) {
+      return { allowed: false, reason: "WIDE_SPREAD" };
+    }
 
     if (hasAnyIndicatorData && hasRsiNeutralZone && isLowAtr && lowVolume) {
       return { allowed: false, reason: "NO_TRADE_ZONE" };
@@ -68,7 +81,7 @@ export class SignalFilterService {
     }
 
     if (!hasAnyIndicatorData) {
-      return { allowed: true };
+      return { allowed: false, reason: "INSUFFICIENT_INDICATORS" };
     }
 
     const hasTrend =

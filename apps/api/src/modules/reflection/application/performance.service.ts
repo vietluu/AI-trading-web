@@ -4,6 +4,7 @@ import type { EvaluationHorizon, Prisma } from '@prisma/client';
 import type { PerformanceRecord } from '@platform/shared';
 import { evaluateDecision, calculatePerformanceMetrics, type Decision } from '../domain/performance-calculator';
 import { ReflectionRepository } from '../infrastructure/reflection.repository';
+import { buildReliabilityCurve } from '../domain/confidence-calibration';
 
 const FIXED_HORIZONS: Array<{ horizon: EvaluationHorizon; ms: number }> = [
   { horizon: 'MID', ms: 60 * 60_000 },
@@ -14,13 +15,14 @@ const FIXED_HORIZONS: Array<{ horizon: EvaluationHorizon; ms: number }> = [
 export class PerformanceService {
   constructor(private readonly repository: ReflectionRepository, private readonly config: ConfigService) {}
 
-  async evaluateDue(): Promise<{ evaluated: number; skippedForMissingMarketData: number }> {
-    if (!this.config.get<boolean>('REFLECTION_ENABLED', true)) return { evaluated: 0, skippedForMissingMarketData: 0 };
+  async evaluateDue(): Promise<{ evaluated: number; skippedForMissingMarketData: number; evaluatedUserIds: string[] }> {
+    if (!this.config.get<boolean>('REFLECTION_ENABLED', true)) return { evaluated: 0, skippedForMissingMarketData: 0, evaluatedUserIds: [] };
     const shortMs = this.config.get<number>('EVALUATION_DELAY_MS', 600_000);
     const horizons = [{ horizon: 'SHORT' as const, ms: shortMs }, ...FIXED_HORIZONS];
     const runs = await this.repository.completedRuns(new Date(Date.now() - Math.min(...horizons.map((h) => h.ms))));
     let evaluated = 0;
     let skippedForMissingMarketData = 0;
+    const evaluatedUserIds = new Set<string>();
     for (const run of runs) {
       if (!run.completedAt || !run.decision || run.confidence == null) continue;
       const existing = new Set(run.performanceRecords.map((record) => record.horizon));
@@ -34,21 +36,34 @@ export class PerformanceService {
         if (!after) { skippedForMissingMarketData++; continue; }
         const priceAtDecision = Number(start.close);
         const priceAfter = Number(after.close);
-        const result = evaluateDecision(run.decision as Decision, priceAtDecision, priceAfter);
+        const result = evaluateDecision(
+          run.decision as Decision,
+          priceAtDecision,
+          priceAfter,
+          this.config.get<number>('EVALUATION_ROUND_TRIP_COST_PCT', 0.1),
+        );
         const context = flags(run.storedContext);
         await this.repository.createRecord({
           userId: run.userId, runId: run.id, symbol: run.symbol, horizon: item.horizon,
           decision: run.decision, confidence: run.confidence, priceAtDecision, priceAfter,
-          ...result, ...context,
+          ...result, ...context, marketRegime: run.marketRegime,
         });
         evaluated++;
+        evaluatedUserIds.add(run.userId);
       }
     }
-    return { evaluated, skippedForMissingMarketData };
+    return { evaluated, skippedForMissingMarketData, evaluatedUserIds: [...evaluatedUserIds] };
   }
 
   async list(userId: string, horizon?: EvaluationHorizon, symbol?: string) { return (await this.repository.records(userId, horizon, 500, symbol)).map(toDto); }
   async metrics(userId: string, horizon?: EvaluationHorizon, symbol?: string) { return calculatePerformanceMetrics(await this.list(userId, horizon, symbol)); }
+  async calibration(userId: string, symbol?: string) {
+    const rows = await this.repository.records(userId, 'MID', 500, symbol);
+    return buildReliabilityCurve(rows.map((row) => ({
+      confidence: row.confidence,
+      outcome: row.outcome,
+    })));
+  }
   async alerts(userId: string, symbol?: string) {
     const records = await this.list(userId, undefined, symbol);
     const metrics = calculatePerformanceMetrics(records);

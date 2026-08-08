@@ -21,7 +21,7 @@ describe('pipeline evaluation and reflection flow', () => {
     const config = { get: <T>(_key: string, fallback: T) => fallback } as ConfigService;
     const result = await new PerformanceService(repository, config).evaluateDue();
     expect(result.evaluated).toBe(3);
-    expect(createRecord).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'CORRECT', returnPct: 10, highVolatility: true }));
+    expect(createRecord).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'CORRECT', returnPct: 9.9, highVolatility: true }));
   });
 
   it('detects volatility weakness and persists insights without applying changes', async () => {

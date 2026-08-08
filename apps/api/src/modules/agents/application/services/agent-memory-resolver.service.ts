@@ -22,6 +22,8 @@ export class AgentMemoryResolverService {
     try {
       const memories = await this.memoryManagerService.search({
         userId: params.userId,
+        types: params.memoryPolicy.readTypes as AIMemoryType[],
+        tags: [params.agentType],
         limit: params.memoryPolicy.maxItems,
       });
 
@@ -54,7 +56,7 @@ export class AgentMemoryResolverService {
     try {
       await this.memoryManagerService.save({
         userId: params.userId,
-        type: AIMemoryType.OBSERVATION,
+        type: (params.memoryPolicy.writeTypes[0] as AIMemoryType | undefined) ?? AIMemoryType.OBSERVATION,
         key: `agent_run:${params.agentType}:${params.runId}`,
         content: params.output,
         importance: 60,

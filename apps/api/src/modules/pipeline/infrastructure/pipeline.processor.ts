@@ -5,7 +5,12 @@ import type { PipelineJob } from './pipeline-queue.service';
 import { PipelineRunnerService } from '../application/pipeline-runner.service';
 import { PIPELINE_DEAD_LETTER_QUEUE_NAME, PIPELINE_RUN_QUEUE_NAME } from './pipeline-queue.constants';
 
-@Processor(PIPELINE_RUN_QUEUE_NAME, { concurrency: 5 })
+const configuredConcurrency = Number(process.env.PIPELINE_MAX_CONCURRENCY ?? 5);
+const workerConcurrency = Number.isFinite(configuredConcurrency)
+  ? Math.max(1, Math.min(50, Math.trunc(configuredConcurrency)))
+  : 5;
+
+@Processor(PIPELINE_RUN_QUEUE_NAME, { concurrency: workerConcurrency })
 export class PipelineProcessor extends WorkerHost {
   private readonly logger = new Logger(PipelineProcessor.name);
   constructor(private readonly runner: PipelineRunnerService, @InjectQueue(PIPELINE_DEAD_LETTER_QUEUE_NAME) private readonly deadLetter: Queue) { super(); }

@@ -20,8 +20,8 @@ export default function AgentRunHistoryPage() {
         <p className="text-muted-foreground mt-1">{t.ai.agentExecutionRunsSubtitle}</p>
       </div>
 
-      <div className="flex gap-4 items-center bg-card p-4 border rounded-lg">
-        <div className="w-48">
+      <div className="flex flex-col sm:flex-row gap-3 sm:items-center bg-card p-4 border rounded-lg">
+        <div className="w-full sm:w-48">
           <label className="text-xs font-semibold text-muted-foreground block mb-1">{t.ai.filterStatus}</label>
           <select
             value={statusFilter}
@@ -37,7 +37,7 @@ export default function AgentRunHistoryPage() {
           </select>
         </div>
 
-        <div className="w-48">
+        <div className="w-full sm:w-48">
           <label className="text-xs font-semibold text-muted-foreground block mb-1">{t.ai.filterAgentType}</label>
           <select
             value={typeFilter}
@@ -61,8 +61,8 @@ export default function AgentRunHistoryPage() {
           {t.ai.noRunsFound}
         </div>
       ) : (
-        <div className="border rounded-lg overflow-hidden bg-card">
-          <table className="w-full text-left text-sm">
+        <div className="border rounded-lg overflow-x-auto bg-card">
+          <table className="w-full min-w-[640px] text-left text-sm">
             <thead className="bg-muted text-muted-foreground text-xs uppercase">
               <tr>
                 <th className="p-3">{t.ai.runIdAgent}</th>

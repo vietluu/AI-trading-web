@@ -1,6 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { useRiskDashboard } from "@/hooks/ai/useAiFeature";
+import { PaginationControls } from "@/components/pagination-controls";
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -11,6 +13,9 @@ const percent = (value: number): string => `${(value * 100).toFixed(2)}%`;
 
 export default function RiskPage(): React.JSX.Element {
   const query = useRiskDashboard();
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 20;
+
   if (query.isLoading)
     return <p className="text-muted-foreground">Loading portfolio risk…</p>;
   if (query.isError)
@@ -40,6 +45,13 @@ export default function RiskPage(): React.JSX.Element {
     ["Approved", String(approved)],
     ["Rejected", String(rejected)],
   ];
+
+  const totalPages = Math.ceil(assessments.length / pageSize);
+  const paginatedAssessments = assessments.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
+  );
+
   return (
     <div className="space-y-6">
       <div>
@@ -62,7 +74,12 @@ export default function RiskPage(): React.JSX.Element {
         ))}
       </div>
       <section>
-        <h2 className="mb-3 text-lg font-semibold">Risk decisions</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold">Risk decisions</h2>
+          <span className="text-xs text-muted-foreground">
+            {assessments.length} total records
+          </span>
+        </div>
         <div className="overflow-x-auto rounded-lg border bg-card">
           <table className="w-full text-left text-sm">
             <thead className="bg-muted text-xs uppercase text-muted-foreground">
@@ -83,12 +100,12 @@ export default function RiskPage(): React.JSX.Element {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {assessments.map((item) => (
+              {paginatedAssessments.map((item) => (
                 <tr key={item.id}>
                   <td className="p-3 font-semibold">
                     {item.symbol}
                     <div className="text-xs text-muted-foreground">
-                      {item.decision} · {item.confidence}%
+                      {item.decision} · score {item.confidence}/100
                     </div>
                   </td>
                   <td
@@ -119,6 +136,13 @@ export default function RiskPage(): React.JSX.Element {
               No trade risk assessments yet.
             </p>
           )}
+          <PaginationControls
+            currentPage={currentPage}
+            onPageChange={setCurrentPage}
+            pageSize={pageSize}
+            totalItems={assessments.length}
+            totalPages={totalPages}
+          />
         </div>
       </section>
     </div>

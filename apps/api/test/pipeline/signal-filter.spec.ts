@@ -6,6 +6,7 @@ describe("signal filter", () => {
 
   it("skips sideways low-volatility regimes before any AI analysis", () => {
     const result = service.evaluate({
+      symbol: "MEME-USDT",
       rsi: 50,
       atr: 20,
       volumeChangePercent: 0.4,
@@ -43,10 +44,10 @@ describe("signal filter", () => {
     expect(result.reason).toBeUndefined();
   });
 
-  it("does not block when indicator data is unavailable", () => {
+  it("fails closed when indicator data is unavailable", () => {
     const result = service.evaluate({});
 
-    expect(result.allowed).toBe(true);
-    expect(result.reason).toBeUndefined();
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe("INSUFFICIENT_INDICATORS");
   });
 });

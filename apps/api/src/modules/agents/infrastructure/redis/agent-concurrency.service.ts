@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { RedisService } from '../../../../redis/redis.service';
+import { randomUUID } from 'node:crypto';
 
 @Injectable()
 export class AgentConcurrencyService {
@@ -11,62 +12,45 @@ export class AgentConcurrencyService {
     private readonly configService: ConfigService,
   ) {}
 
-  async acquireGlobal(): Promise<{ acquired: boolean; current: number; limit: number }> {
+  async acquireGlobal(): Promise<{ acquired: boolean; current: number; limit: number; token?: string }> {
     const limit = this.configService.get<number>('AGENT_MAX_GLOBAL_CONCURRENCY', 10);
     const key = 'ai:agent:concurrency:global';
-    const current = await this.redisService.incrementWithTtl(key, 120);
-    
-    if (current > limit) {
-      await this.decrementSafe(key);
-      return { acquired: false, current: current - 1, limit };
-    }
-    
-    return { acquired: true, current, limit };
+    return this.acquire(key, limit);
   }
 
-  async acquireUser(userId: string): Promise<{ acquired: boolean; current: number; limit: number }> {
+  async acquireUser(userId: string): Promise<{ acquired: boolean; current: number; limit: number; token?: string }> {
     const limit = this.configService.get<number>('AGENT_MAX_USER_CONCURRENCY', 3);
     const key = `ai:agent:concurrency:user:${userId}`;
-    const current = await this.redisService.incrementWithTtl(key, 120);
-    
-    if (current > limit) {
-      await this.decrementSafe(key);
-      return { acquired: false, current: current - 1, limit };
-    }
-    
-    return { acquired: true, current, limit };
+    return this.acquire(key, limit);
   }
 
-  async acquireType(agentType: string): Promise<{ acquired: boolean; current: number; limit: number }> {
+  async acquireType(agentType: string): Promise<{ acquired: boolean; current: number; limit: number; token?: string }> {
     const limit = this.configService.get<number>('AGENT_MAX_TYPE_CONCURRENCY', 5);
     const key = `ai:agent:concurrency:type:${agentType}`;
-    const current = await this.redisService.incrementWithTtl(key, 120);
-    
-    if (current > limit) {
-      await this.decrementSafe(key);
-      return { acquired: false, current: current - 1, limit };
-    }
-    
-    return { acquired: true, current, limit };
+    return this.acquire(key, limit);
   }
 
-  async releaseGlobal(): Promise<void> {
-    await this.decrementSafe('ai:agent:concurrency:global');
+  async releaseGlobal(token: string): Promise<void> {
+    await this.release('ai:agent:concurrency:global', token);
   }
 
-  async releaseUser(userId: string): Promise<void> {
-    await this.decrementSafe(`ai:agent:concurrency:user:${userId}`);
+  async releaseUser(userId: string, token: string): Promise<void> {
+    await this.release(`ai:agent:concurrency:user:${userId}`, token);
   }
 
-  async releaseType(agentType: string): Promise<void> {
-    await this.decrementSafe(`ai:agent:concurrency:type:${agentType}`);
+  async releaseType(agentType: string, token: string): Promise<void> {
+    await this.release(`ai:agent:concurrency:type:${agentType}`, token);
   }
 
-  private async decrementSafe(key: string): Promise<void> {
+  private async acquire(key: string, limit: number) {
+    const token = randomUUID();
+    const result = await this.redisService.acquireSemaphore(key, token, limit, 120_000);
+    return { ...result, limit, ...(result.acquired ? { token } : {}) };
+  }
+
+  private async release(key: string, token: string): Promise<void> {
     try {
-      // Use atomic DECR instead of GET+SET to avoid race conditions that cause
-      // the counter to get stuck above the limit and permanently block agents.
-      await this.redisService.decrement(key);
+      await this.redisService.releaseSemaphore(key, token);
     } catch (error) {
       this.logger.error(
         `Error safely decrementing concurrency for key ${key}`,

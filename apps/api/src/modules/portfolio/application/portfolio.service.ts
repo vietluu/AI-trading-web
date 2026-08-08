@@ -524,53 +524,59 @@ export class PortfolioService {
                 .filter((pos) => Number(pos.quantity) > 0)
                 .map((pos) => `${pos.symbol}:${pos.side}`),
             );
-            for (const pos of positions) {
-              if (Number(pos.quantity) <= 0) continue;
-              await tx.livePosition.upsert({
-                where: {
-                  connectionId_symbol_side: {
-                    connectionId: conn.id,
-                    symbol: pos.symbol,
-                    side: pos.side,
-                  },
-                },
-                update: {
-                  quantity: pos.quantity,
-                  entryPrice: pos.entryPrice,
-                  markPrice: pos.markPrice,
-                  liquidationPrice: pos.liquidationPrice,
-                  leverage: pos.leverage ? Number(pos.leverage) : undefined,
-                  unrealizedPnl: pos.unrealizedPnl,
-                  realizedPnl: pos.realizedPnl,
-                  notional: pos.notional,
-                  syncedAt,
-                },
-                create: {
-                  userId,
-                  connectionId: conn.id,
-                  provider: conn.provider,
-                  environment: conn.environment,
-                  symbol: pos.symbol,
-                  side: pos.side,
-                  quantity: pos.quantity,
-                  entryPrice: pos.entryPrice,
-                  markPrice: pos.markPrice,
-                  liquidationPrice: pos.liquidationPrice,
-                  leverage: pos.leverage ? Number(pos.leverage) : undefined,
-                  unrealizedPnl: pos.unrealizedPnl,
-                  realizedPnl: pos.realizedPnl,
-                  notional: pos.notional,
-                  syncedAt,
-                },
-              });
-            }
+            await Promise.all(
+              positions
+                .filter((pos) => Number(pos.quantity) > 0)
+                .map((pos) =>
+                  tx.livePosition.upsert({
+                    where: {
+                      connectionId_symbol_side: {
+                        connectionId: conn.id,
+                        symbol: pos.symbol,
+                        side: pos.side,
+                      },
+                    },
+                    update: {
+                      quantity: pos.quantity,
+                      entryPrice: pos.entryPrice,
+                      markPrice: pos.markPrice,
+                      liquidationPrice: pos.liquidationPrice,
+                      leverage: pos.leverage ? Number(pos.leverage) : undefined,
+                      unrealizedPnl: pos.unrealizedPnl,
+                      realizedPnl: pos.realizedPnl,
+                      notional: pos.notional,
+                      syncedAt,
+                    },
+                    create: {
+                      userId,
+                      connectionId: conn.id,
+                      provider: conn.provider,
+                      environment: conn.environment,
+                      symbol: pos.symbol,
+                      side: pos.side,
+                      quantity: pos.quantity,
+                      entryPrice: pos.entryPrice,
+                      markPrice: pos.markPrice,
+                      liquidationPrice: pos.liquidationPrice,
+                      leverage: pos.leverage ? Number(pos.leverage) : undefined,
+                      unrealizedPnl: pos.unrealizedPnl,
+                      realizedPnl: pos.realizedPnl,
+                      notional: pos.notional,
+                      syncedAt,
+                    },
+                  }),
+                )
+            );
             const currentPositions = await tx.livePosition.findMany({
               where: { connectionId: conn.id },
             });
-            for (const cp of currentPositions) {
-              if (!activeSymbolSides.has(`${cp.symbol}:${cp.side}`)) {
-                await tx.livePosition.delete({ where: { id: cp.id } });
-              }
+            const idsToDelete = currentPositions
+              .filter((cp) => !activeSymbolSides.has(`${cp.symbol}:${cp.side}`))
+              .map((cp) => cp.id);
+            if (idsToDelete.length > 0) {
+              await tx.livePosition.deleteMany({
+                where: { id: { in: idsToDelete } },
+              });
             }
           });
         }),
