@@ -1,47 +1,46 @@
-# DEFINITION OF DONE
+# Definition of done
 
-***A phase is considered COMPLETE only when:***
+A change is complete only when the checks proportional to its risk have passed.
 
-✓ Project compiles
-✓ Docker starts successfully
-✓ Frontend starts
-✓ Backend starts
-✓ Database migration successful
-✓ Redis connected
-✓ APIs tested
-✓ WebSocket connected
-✓ No runtime errors
-✓ No TypeScript errors
-✓ No ESLint errors
-✓ README updated
-✓ Tests pass
+## Common gates
 
-## Phase 3 additions
+- TypeScript compiles without errors.
+- ESLint and formatting checks pass.
+- Relevant unit, contract, integration, and end-to-end tests pass.
+- Prisma schema changes include a committed migration and generated client.
+- API and Web build successfully.
+- PostgreSQL, Redis, workers, and required WebSocket namespaces start cleanly.
+- APIs, environment settings, logs, and Markdown documentation match behavior.
+- No secrets, credential material, or sensitive exchange payloads appear in
+  responses or logs.
 
-✓ Binance Futures and OKX Futures implement the common adapter contract
-✓ Provider DTOs remain inside infrastructure code
-✓ Symbols, intervals, dates, and decimal strings are normalized
-✓ Private repository access is scoped by session user and connection ID
-✓ Credentials remain encrypted and secret values never enter responses/logs
-✓ Public caching and private rate limiting have separate scopes
-✓ Timeout, bounded safe retries, timestamp resync, and normalized errors work
-✓ No trading mutation or realtime streaming endpoint exists
-✓ Production exchange connections are disabled by default
-✓ Connection list/create/detail/test/enable/disable/delete UI works
+## Trading and risk gates
 
-## Phase 5 additions
+- AI cannot bypass Decision/Judge/Risk and cannot directly mutate an exchange.
+- User, connection, environment, enablement, recent-auth, risk-approval,
+  leverage, exposure, cooldown, and kill-switch rules are enforced.
+- Adaptive trade plans cover trend, range, breakout, high volatility, and safe
+  fallback behavior with deterministic tests.
+- Structurally invalid stops, poor range entries, and insufficient net R:R are
+  rejected.
+- Exchange placement/cancel/amend behavior is normalized for Binance/OKX and
+  uses idempotent client order identifiers.
+- Position synchronization, TP/SL protection, break-even, ATR trailing, partial
+  take-profit, time exits, and orphan cleanup are tested.
+- Live Trading history returns no more than 20 recent orders without truncating
+  position/risk calculations.
+- DEMO observation completes before production enablement; production remains
+  disabled by default.
 
-✓ Public RSS/Atom feeds, exchange announcements (Binance/OKX), Fear & Greed, and Reddit ingested reliably
-✓ SSRF IP/hostname blocking and XXE entity resolution protection verified
-✓ URL canonicalization and title normalization strip tracking parameters cleanly
-✓ Exact and near-duplicate similarity deduplication (Jaccard + Cosine TF-IDF) groups duplicated articles
-✓ Metadata extraction maps symbols ($BTC, $ETH, $LINK), topics, and entities automatically
-✓ Deterministic 0-100 importance score formula implemented with score factor breakdown
-✓ BullMQ background ingestion queue and repeatable schedulers running cleanly
-✓ WebSocket `/external-data` gateway streams realtime high-importance news alerts
-✓ Manual CSV/JSON macro import importer with dry-run preview table verified
-✓ Cross-user bookmarks and read states strictly isolated per user
-✓ Frontend UI pages (`/news`, `/news/:id`, `/macro`, `/sentiment`, `/settings/data-sources`, `/system/providers`) fully interactive
-✓ All unit, integration, and workspace production build checks pass cleanly
+## Learning and research gates
 
-**Only then continue to the next phase.**
+- Decisions, transitions, outputs, performance records, and recommendations are
+  persisted and attributable.
+- Backtest/validation avoids look-ahead leakage and exposes assumptions.
+- Shadow/canary promotion follows configured sample, profit factor, Sharpe,
+  accuracy-lift, drawdown, and duration thresholds.
+- A model or strategy is never described as profitable solely from confidence
+  scores or a small demo sample.
+
+Paper Trading remains partial until an independently testable execution API and
+position/order lifecycle are delivered.

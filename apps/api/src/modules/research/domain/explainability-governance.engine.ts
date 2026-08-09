@@ -28,6 +28,7 @@ export function buildQuantRecommendation(input: {
   priority?: RecommendationPriority;
   implementationCost?: string;
   rollbackPlan: string;
+  status?: RecommendationStatus;
 }): FullQuantRecommendation {
   return {
     id: input.id,
@@ -41,7 +42,7 @@ export function buildQuantRecommendation(input: {
     priority: input.priority ?? 'MEDIUM',
     implementationCost: input.implementationCost ?? 'LOW',
     rollbackPlan: input.rollbackPlan,
-    status: 'PENDING_APPROVAL',
+    status: input.status ?? 'PENDING_APPROVAL',
   };
 }
 

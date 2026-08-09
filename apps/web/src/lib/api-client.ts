@@ -31,7 +31,10 @@ export async function apiRequestValidated<T>(
 }
 
 export function resolveApiUrl(path: string): string {
-  let baseUrl = publicEnvironment.NEXT_PUBLIC_API_BASE_URL.trim().replace(/\/$/, "");
+  let baseUrl = publicEnvironment.NEXT_PUBLIC_API_BASE_URL.trim().replace(
+    /\/$/,
+    "",
+  );
   if (baseUrl.endsWith("/api")) {
     baseUrl = baseUrl.slice(0, -4);
   }
@@ -39,6 +42,10 @@ export function resolveApiUrl(path: string): string {
     ? path
     : `/api${path.startsWith("/") ? path : `/${path}`}`;
   return baseUrl ? `${baseUrl}${normalizedPath}` : normalizedPath;
+}
+
+export function hasAuthSessionHint(): boolean {
+  return Boolean(readCookie("csrf_token"));
 }
 
 export async function apiRequest<T>(
@@ -76,17 +83,21 @@ export async function apiRequest<T>(
     const isExchangeError =
       (typeof body.error === "string" && body.error.startsWith("EXCHANGE_")) ||
       (typeof body.code === "string" && body.code.startsWith("EXCHANGE_"));
+    const isAuthenticationFailure = response.status === 401 && !isExchangeError;
 
     if (
-      response.status === 401 &&
-      !isExchangeError &&
+      isAuthenticationFailure &&
       typeof window !== "undefined" &&
       window.location.pathname !== "/login"
     ) {
       window.dispatchEvent(new CustomEvent("auth:expired"));
     }
 
-    if (typeof window !== "undefined") {
+    // An unauthenticated response is an expected control-flow event: protected
+    // pages redirect to login and login forms render their own inline error.
+    // Emitting a global toast here causes noisy "Authentication required"
+    // messages on logout or when a session naturally expires.
+    if (typeof window !== "undefined" && !isAuthenticationFailure) {
       window.dispatchEvent(
         new CustomEvent<ApiErrorToastDetail>("api:error", {
           detail: { message: error.message, status: error.status },

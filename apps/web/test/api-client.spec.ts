@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { z } from "zod";
 
-import { apiRequest, apiRequestValidated } from "../src/lib/api-client";
+import {
+  apiRequest,
+  apiRequestValidated,
+  hasAuthSessionHint,
+} from "../src/lib/api-client";
 
 const originalCookieDescriptor = Object.getOwnPropertyDescriptor(
   document,
@@ -11,12 +15,22 @@ const originalCookieDescriptor = Object.getOwnPropertyDescriptor(
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  window.history.replaceState({}, "", "/");
   if (originalCookieDescriptor) {
     Object.defineProperty(document, "cookie", originalCookieDescriptor);
   }
 });
 
 describe("apiRequest", () => {
+  it("detects an existing session without reading the HttpOnly session cookie", () => {
+    Object.defineProperty(document, "cookie", {
+      configurable: true,
+      value: "csrf_token=session-hint",
+    });
+
+    expect(hasAuthSessionHint()).toBe(true);
+  });
+
   it("always sends browser-managed credentials", async () => {
     const fetchMock = vi
       .fn()
@@ -49,13 +63,14 @@ describe("apiRequest", () => {
     vi.resetModules();
     vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "");
 
-    const { apiRequest: apiRequestWithoutBaseUrl } = await import(
-      "../src/lib/api-client",
-    );
+    const { apiRequest: apiRequestWithoutBaseUrl } =
+      await import("../src/lib/api-client");
 
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      .mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      );
     vi.stubGlobal("fetch", fetchMock);
 
     await apiRequestWithoutBaseUrl("/api/health");
@@ -90,4 +105,51 @@ describe("apiRequest", () => {
     }
   });
 
+  it("does not emit global auth errors for an expected 401 on login", async () => {
+    window.history.replaceState({}, "", "/login");
+    const authExpired = vi.fn();
+    const apiError = vi.fn();
+    window.addEventListener("auth:expired", authExpired);
+    window.addEventListener("api:error", apiError);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ message: "Authentication required" }), {
+          status: 401,
+        }),
+      ),
+    );
+
+    await expect(apiRequest("/auth/me")).rejects.toMatchObject({ status: 401 });
+
+    expect(authExpired).not.toHaveBeenCalled();
+    expect(apiError).not.toHaveBeenCalled();
+    window.removeEventListener("auth:expired", authExpired);
+    window.removeEventListener("api:error", apiError);
+  });
+
+  it("redirects protected-page auth failures without emitting an error toast", async () => {
+    window.history.replaceState({}, "", "/profile");
+    const authExpired = vi.fn();
+    const apiError = vi.fn();
+    window.addEventListener("auth:expired", authExpired);
+    window.addEventListener("api:error", apiError);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ message: "Authentication required" }), {
+          status: 401,
+        }),
+      ),
+    );
+
+    await expect(apiRequest("/auth/session")).rejects.toMatchObject({
+      status: 401,
+    });
+
+    expect(authExpired).toHaveBeenCalledTimes(1);
+    expect(apiError).not.toHaveBeenCalled();
+    window.removeEventListener("auth:expired", authExpired);
+    window.removeEventListener("api:error", apiError);
+  });
 });

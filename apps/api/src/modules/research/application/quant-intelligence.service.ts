@@ -237,6 +237,7 @@ export class QuantIntelligenceService {
         const regimeSignal = marketRegime === 'TRENDING' ? 0.03 : marketRegime === 'HIGH_VOLATILITY' ? -0.04 : 0.01;
         const delta = Math.max(-0.12, Math.min(0.12, returnPct * 0.08 - drawdownPct * 0.2 + liveSignal + regimeSignal));
         const recommendedWeight = Math.max(0.05, Math.min(0.4, weight + delta));
+        const isAlreadyApplied = Math.abs(delta) < 0.005 || Math.abs(weight - recommendedWeight) < 0.005;
         return buildQuantRecommendation({
           title: `Adjust ${strategy.name} allocation to ${Math.round(recommendedWeight * 100)}%`,
           moduleSource: 'PORTFOLIO_INTELLIGENCE',
@@ -248,6 +249,7 @@ export class QuantIntelligenceService {
           priority: drawdownPct > 0.05 || marketRegime === 'HIGH_VOLATILITY' ? 'HIGH' : 'MEDIUM',
           implementationCost: 'LOW',
           rollbackPlan: 'Revert the allocation weight using the portfolio rebalance endpoint.',
+          status: isAlreadyApplied ? 'APPROVED' : 'PENDING_APPROVAL',
         });
       });
 
@@ -267,7 +269,7 @@ export class QuantIntelligenceService {
         priority: item.priority,
         implementationCost: item.implementationCost,
         rollbackPlan: item.rollbackPlan,
-        status: 'PENDING_APPROVAL',
+        status: item.status ?? 'PENDING_APPROVAL',
       })),
     });
 

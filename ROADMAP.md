@@ -1,79 +1,32 @@
-# ROADMAP
+# Roadmap
 
-## Phase 1: Project Foundation
-- Next.js
-- NestJS
-- Docker
-- PostgreSQL
-- Redis
-- Prisma
-- **Status: [x]**
+Status reflects code currently present in the repository, not a profitability
+claim or production certification.
 
-------------------------------------------------
+| Phase | Scope | Status |
+| --- | --- | --- |
+| 1 | Project foundation: monorepo, Docker, PostgreSQL, Redis, Prisma, CI | Complete |
+| 2 | Authentication, sessions, TOTP, encrypted credentials, audit | Complete |
+| 3 | Binance/OKX normalized exchange integration | Complete |
+| 4 | Realtime market streams, indicators, persistence, gaps/backfill, dashboard | Complete |
+| 5 | News, announcements, incidents, sentiment, social, macro ingestion | Complete |
+| 6 | AI providers, tool framework, agents, Decision/Judge, pipeline runtime | Complete |
+| 7 | Deterministic risk, portfolio limits, adaptive regime-aware TP/SL | Complete |
+| 8 | Paper/shadow trading records and evaluation | Partial: no standalone execution API |
+| 9 | Web dashboards and operational views | Complete |
+| 10 | Backtest, validation, sensitivity, benchmarks, simulations | Complete |
+| 11 | DEMO/LIVE exchange execution, kill switch, sync, Position Manager | Implemented; production gated |
+| 12 | Reflection, performance, quantitative intelligence, shadow/canary learning | Implemented; ongoing validation |
 
-## Phase 2: Authentication
-- **Status: [x]**
+## Current hardening priorities
 
-------------------------------------------------
-
-## Phase 3: Exchange Integration
-- Binance
-- OKX
-- **Status: [ ]**
-
-------------------------------------------------
-
-## Phase 4: Market Data Collector
-- [x] Integrate Binance Futures public WebSocket
-- [x] Integrate OKX Futures public WebSocket
-- [x] Implement Market Event Bus
-- [x] Maintain latest market snapshot in Redis
-- [x] Calculate deterministic technical indicators (SMA, EMA, RSI, MACD, etc.)
-- [x] Persist historical candles with configurable retention
-- [x] Implement data gap detection and backfill CLI
-- [x] Build application WebSocket gateway for frontend
-- [x] Create realtime market data dashboard UI using Lightweight Charts
-- **Status: [x]**
-
-------------------------------------------------
-
-## Phase 5: News Service
-- **Status: [ ]**
-
-------------------------------------------------
-
-## Phase 6: AI Multi Agent
-- [x] Phase 6.1: AI Infrastructure (Provider Abstraction, Budget, Memory, Context, Streaming, Fallback)
-- [x] Phase 6.2: AI Tool Calling Framework (Typed Registration, Policy Engine, Mappers, 18 Safe Tools)
-- [x] Phase 6.3: Multi-Agent Framework and Agent Lifecycle
-- **Status: [x]**
-
-------------------------------------------------
-
-## Phase 7: Risk Engine
-- **Status: [ ]**
-
-------------------------------------------------
-
-## Phase 8: Paper Trading
-- **Status: [ ]**
-
-------------------------------------------------
-
-## Phase 9: Dashboard
-- **Status: [ ]**
-
-------------------------------------------------
-
-## Phase 10: Backtesting
-- **Status: [ ]**
-
-------------------------------------------------
-
-## Phase 11: Live Trading
-- **Status: [ ]**
-
-------------------------------------------------
-
-## Phase 12: Optimization
-- **Status: [ ]**
+1. Continue long-running DEMO observation of order lifecycle, reconnects,
+   exchange errors, TP/SL amendments, partial exits, and orphan cleanup.
+2. Separate complete open-order monitoring from the capped 20-item historical
+   trade view if accounts can maintain more than 20 concurrent open orders.
+3. Complete a standalone Paper Trading execution service/API and reconcile its
+   behavior with the exchange-backed DEMO path.
+4. Expand adapter contract/integration coverage for protection amendment and
+   cancellation edge cases.
+5. Require statistically adequate shadow/canary samples before promoting
+   learned policies or enabling production trading.

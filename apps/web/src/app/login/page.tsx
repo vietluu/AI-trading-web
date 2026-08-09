@@ -6,6 +6,7 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import { buttonClass, Feedback, Field } from "@/components/form-controls";
 import { ROUTES } from "@/constants/routes";
+import { hasAuthSessionHint } from "@/lib/api-client";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 import { checkCurrentUser, login } from "@/services/auth.service";
 
@@ -22,6 +23,10 @@ export default function LoginPage(): React.JSX.Element {
   }>();
 
   useEffect(() => {
+    // The readable CSRF cookie is issued and cleared together with the HttpOnly
+    // session cookie. Avoid probing /auth/me for first-time/logged-out visitors,
+    // but redirect an authenticated user who manually opens /login.
+    if (!hasAuthSessionHint()) return;
     let active = true;
     void checkCurrentUser()
       .then(() => {
@@ -42,13 +47,25 @@ export default function LoginPage(): React.JSX.Element {
     const rawPass = form.get("password");
     const rawCode = form.get("code");
 
-    const identifier = credentials?.identifier ?? (typeof rawId === "string" ? rawId : "");
-    const password = credentials?.password ?? (typeof rawPass === "string" ? rawPass : "");
-    const rememberMe = credentials?.rememberMe ?? (form.get("rememberMe") === "on");
-    const code = requiresTotp ? (typeof rawCode === "string" ? rawCode : undefined) : undefined;
+    const identifier =
+      credentials?.identifier ?? (typeof rawId === "string" ? rawId : "");
+    const password =
+      credentials?.password ?? (typeof rawPass === "string" ? rawPass : "");
+    const rememberMe =
+      credentials?.rememberMe ?? form.get("rememberMe") === "on";
+    const code = requiresTotp
+      ? typeof rawCode === "string"
+        ? rawCode
+        : undefined
+      : undefined;
 
     try {
-      const res = await login({ identifier, password, rememberMe, ...(code ? { code } : {}) });
+      const res = await login({
+        identifier,
+        password,
+        rememberMe,
+        ...(code ? { code } : {}),
+      });
 
       if (res.requiresTotp) {
         setRequiresTotp(true);
@@ -76,7 +93,12 @@ export default function LoginPage(): React.JSX.Element {
         {!requiresTotp ? (
           <>
             <Field label={t.auth.emailOrUsername} name="identifier" required />
-            <Field label={t.auth.password} name="password" type="password" required />
+            <Field
+              label={t.auth.password}
+              name="password"
+              type="password"
+              required
+            />
             <label className="flex items-center gap-2 text-sm text-muted-foreground">
               <input className="h-4 w-4" name="rememberMe" type="checkbox" />
               {t.auth.rememberDevice}
@@ -100,7 +122,11 @@ export default function LoginPage(): React.JSX.Element {
 
         <Feedback error={error} />
         <button className={buttonClass} disabled={busy}>
-          {busy ? t.auth.signingIn : requiresTotp ? t.auth.verify2faButton : t.auth.signIn}
+          {busy
+            ? t.auth.signingIn
+            : requiresTotp
+              ? t.auth.verify2faButton
+              : t.auth.signIn}
         </button>
         <div className="flex justify-between text-xs text-muted-foreground">
           <Link href={ROUTES.register}>{t.auth.createAccount}</Link>

@@ -1,72 +1,88 @@
 # Database
 
-PostgreSQL is managed through Prisma. The `foundation` migration establishes
-the migration history, and `authentication` adds the Phase 2 identity domain.
-Redis stores active sessions, login throttles, and short-lived password-reset
-tokens; it is not a source of long-term user data.
+PostgreSQL is the durable store and Prisma owns the schema/migration history.
+Redis is used for active sessions, throttles, cache, cancellation flags, leader
+leases, quotas, and BullMQ; it is not the long-term source of truth.
 
-## Current tables
+## Model groups
 
-- `users`: normalized email, unique username, Argon2id password hash, and
-  temporary login-lock state.
-- `sessions`: user-owned session metadata, an HMAC-derived identifier, device
-  information, expiration, and last activity. Raw tokens are never stored.
-- `encrypted_credentials`: user-owned provider metadata and AES-256-GCM
-  ciphertext. Decrypted secrets are never returned.
-- `user_settings`: one settings record per user for display, market, AI-budget,
-  paper-balance, leverage, and risk preferences.
-- `audit_logs`: security-relevant actions and sanitized request metadata.
-- `exchange_connections`: one user-owned provider/environment connection linked
-  one-to-one to an existing encrypted credential. It stores safe enablement,
-  verification, permission, and last normalized error metadata only.
+### Identity and security
 
-## Phase 5 external data tables
+- `User`, `Session`, `EncryptedCredential`, `ExchangeConnection`, `UserSetting`,
+  and `AuditLog`.
+- Session/CSRF raw tokens and plaintext credentials are never stored.
+- Exchange connections store safe provider/environment, verification,
+  permission, enablement, and normalized error metadata.
 
-- `external_data_sources`: Configured external RSS feeds, exchange announcement endpoints, and API providers with reliability score and poll interval settings.
-- `news_duplicate_groups`: Clusters of near-duplicate news articles identified by title and content hash similarity.
-- `news_articles`: Shared normalized cryptocurrency news articles with deterministic importance scores, title hashes, canonical URLs, and duplicate counts.
-- `news_source_references`: Secondary source attributions associated with duplicate news groups.
-- `article_symbols`: Explicit symbol tags linked to news articles (e.g. `BTC-USDT`) with extraction confidence scores.
-- `article_topics`: Topic classifications linked to news articles (e.g. `regulation`, `layer_1`, `oracle`).
-- `article_entities`: Named entity extractions (e.g. `SEC`, `Binance`, `Fed`) linked to news articles.
-- `exchange_announcements`: Normalized exchange announcements (delisting, listing, maintenance, leverage change) for Binance and OKX.
-- `security_incidents`: Security incident, exploit, and hack tracking with verification status and severity levels.
-- `incident_source_references`: Source citations for security incidents.
-- `market_sentiment_observations`: Crypto Fear & Greed index history and observations.
-- `social_posts`: Normalized social media community posts (e.g. Reddit) with SHA256 author privacy hashing.
-- `macro_economic_events`: Scheduled macroeconomic calendar events (CPI, FOMC, GDP, Interest Rates) with actual/forecast/previous metrics.
-- `macro_import_runs`: Audit trail for dry-run preview and confirmed manual CSV/JSON macro imports.
-- `external_data_ingestion_runs`: Execution logs for BullMQ scheduled ingestion workers.
-- `external_data_provider_health`: Provider telemetry tracking average latency, rate limit usage, error codes, and health statuses.
-- `user_external_data_preferences`: Per-user source preferences, minimum importance filters, and notification settings.
-- `user_news_states`: Per-user article state tracking (`isRead`, `isSaved`, `isHidden`, `notes`) with strict cross-user isolation.
+### Market and external data
 
-`ExchangeProvider` contains explicit `BINANCE_FUTURES` and `OKX_FUTURES`
-values. `ExchangeEnvironment` contains `TESTNET`, `DEMO`, and `PRODUCTION`.
+- `MarketInstrument`, `MarketCandle`, `FundingRateSnapshot`,
+  `OpenInterestSnapshot`, `MarketDataGap`, `MarketStreamIncident`, and
+  `IndicatorSnapshotRecord`.
+- `ExternalDataSource`, `NewsDuplicateGroup`, `NewsArticle`, source references,
+  article symbols/topics/entities, `ExchangeAnnouncement`, `SecurityIncident`,
+  `MarketSentimentObservation`, `SocialPost`, `MacroEconomicEvent`, import/run
+  records, provider health, preferences, and user news state.
 
-Migration `20260801051515_external_data_ingestion` creates the Phase 5 schema, unique indexes, and FK cascades. Companion `rollback.sql` safely drops Phase 5 tables, indexes, and enums.
+### AI and agent runtime
 
-## Reserved domain tables
+- `AIHistory`, `AIMemory`, `AIConfiguration`, and `AIUsage`.
+- `ToolInvocationRecord`, `ToolDefinitionMetadata`, and `ToolQuotaUsage`.
+- Agent definitions/runs/transitions/context snapshots/outputs/quota usage.
+- Pipeline schedules/runs/step runs/alerts with replay, status, decision,
+  confidence, stored context, and timing metadata.
 
-The following tables remain reserved for the roadmap phase that owns them:
+### Trading, risk, and portfolio
 
-- market_symbols
-- candles
-- funding_rates
-- order_books
-- liquidations
-- open_interest
-- fear_greed
-- news
-- social_posts
-- onchain_events
-- agent_results
-- signals
-- paper_trades
-- live_trades
-- trade_logs
-- positions
-- portfolios
-- performance_reports
-- ai_requests
-- ai_responses
+- Paper/shadow foundation: `PaperAccount`, `PaperPosition`, `SimulatedOrder`,
+  `PaperTrade`, and `PaperSignal`.
+- `RiskAssessment` persists account/connection scope, decision, entry, size,
+  leverage, TP/SL, approval/rejection, limits snapshot, and expiry.
+- `LiveOrder`, `LivePosition`, and `LiveAccountSnapshot` persist normalized
+  exchange-backed state.
+- Portfolio strategy, allocation, performance, position, trade result, risk
+  event, and rebalance models.
+
+`LiveOrder` additionally stores Position Manager state:
+
+- `initialStopLoss`, current `stopLoss`, and `takeProfit`;
+- `highestMark` and `lowestMark`;
+- protective client order ID;
+- serialized adaptive `tradePlan`;
+- `partialTakenAt`.
+
+Recent-history retrieval is capped at 20 in Live Trading application queries;
+historical database rows are retained and analytics queries are not truncated
+by that UI rule.
+
+### Evaluation, research, and learning
+
+- `PerformanceRecord`, `ReflectionInsight`, and `ImprovementProposal`.
+- Research validation, benchmark, sensitivity, hypothesis, discovered strategy,
+  factor evaluation, auto-benchmark, weight/threshold optimization, regime,
+  recommendation, simulation, report, and knowledge archive records.
+- `SelfLearningConfiguration`, `SelfLearningExperiment`, and experiment events
+  support shadow/canary/rejection/promotion governance.
+
+## Migration history
+
+Committed migrations cover foundation/authentication, exchange connections,
+market data, external ingestion, AI/tools/agents, pipeline, reflection,
+paper-trading schema, risk, live trading, portfolio, connection-scoped risk,
+self-learning, runtime indexes/statistics/governance, and Position Manager state.
+
+The latest Position Manager migration is:
+
+```text
+20260808213000_add_position_manager_state
+```
+
+Apply migrations through:
+
+```bash
+pnpm db:generate
+pnpm db:migrate
+```
+
+Do not edit an already-applied migration. Add a new forward migration and a
+reviewed recovery/rollback procedure for material schema changes.

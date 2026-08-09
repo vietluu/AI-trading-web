@@ -1,112 +1,67 @@
-# PROJECT CONTEXT
+# Project context
 
 ## Vision
-Build a production-ready AI Multi-Agent Cryptocurrency Futures Research Platform.
-This project is NOT a simple trading bot.
-The platform must collect realtime data, analyze market conditions using multiple AI Agents, simulate trades, evaluate performance, and optionally execute trades through Binance Futures or OKX Futures.
-The system must always prioritize risk management over trading opportunities.
 
-AI is an advisor.
-Risk Engine is the decision maker.
-Trading Engine is the executor.
+Build a production-oriented multi-agent cryptocurrency futures platform that
+collects realtime data, produces explainable decisions, enforces deterministic
+risk, evaluates outcomes, and can optionally execute through Binance Futures or
+OKX Futures.
 
-------------------------------------------------
+This is not a single-strategy bot:
 
-## Objectives
-- Realtime Market Data
-- AI Analysis
-- Trading Signal Generation
-- Paper Trading
-- Backtesting
-- Live Trading
-- Dashboard
-- Performance Analytics
+- AI agents analyze and recommend.
+- The Decision/Judge pipeline consolidates and validates signals.
+- The Risk Engine approves/rejects and sizes trades.
+- The Trading Engine is the only exchange mutation boundary.
+- Performance, Reflection, Research, and Self-Learning evaluate changes before
+  promotion.
 
-------------------------------------------------
+## Current flow
 
-## High Level Flow
-Market Data
-↓
-Indicators
-↓
-News
-↓
-Social
-↓
-On-chain
-↓
-AI Agents
-↓
-Decision Agent
-↓
-Judge Agent
-↓
-Risk Engine
-↓
-Paper Trading
-↓
-Live Trading (Disabled by default)
+```text
+Market streams + indicators + external data
+  → specialized agents
+  → fusion / Decision Agent
+  → Judge and deterministic signal filters
+  → adaptive Trade Plan Engine (regime, entry, TP, SL, R:R)
+  → Risk Engine and portfolio limits
+  → DEMO/LIVE exchange execution
+  → Position Manager (protect, amend, partial exit, time exit)
+  → performance, reflection, research, shadow/canary learning
+```
 
-------------------------------------------------
+## Delivered domains
 
-## Tech Stack
+- Foundation, authentication, security, credentials, settings, and audit.
+- Binance/OKX exchange integration and realtime market data.
+- External news/social/macro ingestion and realtime notifications.
+- AI provider abstraction, safe tool calling, specialized agents, and pipeline
+  automation.
+- Adaptive risk/trade planning and exchange-backed Live Trading.
+- Portfolio management, performance/reflection, backtest/validation, quantitative
+  intelligence, simulations, recommendations, and self-learning governance.
+- Next.js dashboards for market, AI, risk, portfolio, live trading, research,
+  recommendations, factors, knowledge, and system operations.
 
-### Frontend
-- Next.js
-- React
-- TypeScript
-- TailwindCSS
-- shadcn/ui
-- Zustand
-- TanStack Query
-- TradingView Lightweight Charts
+Paper/shadow data models are present and used by evaluation workflows, but a
+standalone paper execution service/API remains incomplete.
 
-### Backend
-- NestJS
-- Prisma
-- PostgreSQL
-- Redis
-- BullMQ
-- WebSocket
+## Safety principles
 
-### Infrastructure
-- Docker
-- Docker Compose
+- Risk has precedence over opportunity.
+- AI never receives exchange credentials and never invokes exchange mutations.
+- Every automated order requires fresh deterministic approval.
+- TP/SL adapts to market structure when sufficient data exists; environment
+  percentages are fallback/policy limits, not the primary market model.
+- Live production execution is disabled by default and requires explicit gates.
+- Every user-owned query is scoped by the authenticated user and connection.
+- Secrets are encrypted and excluded from responses and logs.
 
-### AI
-- OpenAI Responses API
-Architecture must allow replacing AI provider later.
+## Technology
 
-------------------------------------------------
-
-## Design Principles
-- DDD
-- SOLID
-- Clean Architecture
-- Feature Modules
-- Dependency Injection
-- Repository Pattern
-- Typed APIs
-- No duplicated code
-- Production Ready
-
-------------------------------------------------
-
-## Project Goal
-Every module must be independently testable.
-The project must always remain runnable.
-Never leave unfinished implementations.
-Never break previous phases.
-
-## Current delivery: Phase 3
-
-The repository now includes the authenticated, multi-user exchange integration
-boundary for Binance USD-M Futures and OKX perpetual swaps. Public REST market
-queries and read-only private account queries are normalized behind a shared
-adapter contract. Each private call resolves its connection from the current
-server-side session and decrypts that user's credential immediately before use.
-
-Phase 3 deliberately exposes no order placement, cancellation, leverage,
-margin-mode, transfer, automation, agent, or WebSocket path. Production
-connections are feature-flagged off by default. Realtime collection remains
-owned by Phase 4.
+- Web: Next.js, React, TypeScript, Tailwind CSS, TanStack Query, Socket.IO client,
+  Lightweight Charts.
+- API: NestJS, Prisma, PostgreSQL, Redis, BullMQ, Socket.IO, Zod/shared contracts.
+- AI: provider-independent orchestration for OpenAI, Anthropic, Gemini, and
+  Ollama configuration.
+- Infrastructure: pnpm monorepo and Docker Compose.
