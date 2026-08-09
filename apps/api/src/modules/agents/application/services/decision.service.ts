@@ -566,7 +566,9 @@ export class DecisionService {
   ): { adaptiveThreshold: number; calibrationAdjustment: number } {
     const base = regime.type === 'TRENDING' ? 62 : regime.type === 'HIGH_VOLATILITY' ? 78 : 72;
     const volatilityAdjustment = input.market?.volatility.level === 'HIGH' ? 8 : input.market?.volatility.level === 'LOW' ? -3 : 0;
-    const liquidityAdjustment = input.market?.liquidity?.spread !== undefined ? 4 : 0;
+    const liquidityAdjustment = this.spreadThresholdAdjustment(
+      input.market?.liquidity?.bidAskSpread ?? input.market?.liquidity?.spread,
+    );
     const opportunityAdjustment = opportunityScore < 65 ? 9 : opportunityScore > 80 ? -4 : 0;
     const conflictAdjustment = conflictLevel === 'HIGH' ? 7 : conflictLevel === 'MEDIUM' ? 3 : 0;
     const threshold = this.clamp(base + volatilityAdjustment + liquidityAdjustment + opportunityAdjustment + conflictAdjustment, 55, 90);
@@ -574,8 +576,29 @@ export class DecisionService {
     return { adaptiveThreshold: threshold, calibrationAdjustment };
   }
 
+  private spreadThresholdAdjustment(raw: string | undefined): number {
+    const spreadBps = this.spreadBasisPoints(raw);
+    if (spreadBps === undefined) return 0;
+    if (spreadBps <= 2) return -2;
+    if (spreadBps <= 5) return 0;
+    if (spreadBps <= 10) return 2;
+    return 5;
+  }
+
+  private spreadBasisPoints(raw: string | undefined): number | undefined {
+    if (!raw) return undefined;
+    const normalized = raw.replace(/[%,$]|bps?/gi, '').trim();
+    if (!normalized) return undefined;
+    const numeric = Number(normalized);
+    if (!Number.isFinite(numeric) || numeric < 0) return undefined;
+    return raw.includes('%') ? numeric * 100 : numeric;
+  }
+
   private estimateExecutionCost(input: DecisionInput, opportunityScore: number, regime: MarketRegime['type']): number {
-    const spreadPenalty = input.market?.liquidity?.spread !== undefined ? Math.min(0.25, Number(input.market.liquidity.spread) / 1000) : 0.05;
+    const spreadBps = this.spreadBasisPoints(
+      input.market?.liquidity?.bidAskSpread ?? input.market?.liquidity?.spread,
+    );
+    const spreadPenalty = spreadBps !== undefined ? Math.min(0.25, spreadBps / 1000) : 0.05;
     const volatilityPenalty = regime === 'HIGH_VOLATILITY' ? 0.1 : 0.04;
     const slippage = Math.max(0.01, spreadPenalty + volatilityPenalty + (100 - opportunityScore) / 1000);
     return Number(slippage.toFixed(3));

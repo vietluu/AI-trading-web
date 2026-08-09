@@ -76,10 +76,14 @@ export function decisionForStrategy(
     confidence = 0;
     explanation = "Insufficient shared market data forced WAIT.";
   }
+  const adaptiveThreshold = key === "mean-reversion"
+    ? Math.min(base.adaptiveThreshold, 62)
+    : base.adaptiveThreshold;
   return {
     ...base,
     decision,
     confidence: Math.round(Math.min(100, Math.max(0, confidence))),
+    adaptiveThreshold,
     reasoning: `[${key}] ${explanation} ${base.reasoning}`,
     overrides: [...base.overrides, `Applied ${key} strategy policy.`],
   };

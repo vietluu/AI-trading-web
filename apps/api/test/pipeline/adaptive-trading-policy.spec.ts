@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   adaptiveTradingPolicy,
   parseSpreadBps,
+  preferredTradePlanAtr,
 } from '../../src/modules/pipeline/domain/adaptive-trading-policy';
 
 describe('adaptive trading policy', () => {
@@ -30,5 +31,11 @@ describe('adaptive trading policy', () => {
   it('normalizes percentage and absolute spread to basis points', () => {
     expect(parseSpreadBps('0.05%')).toBe(5);
     expect(parseSpreadBps('2', 10_000)).toBe(2);
+  });
+
+  it('prefers deterministic indicator ATR over the agent representation', () => {
+    expect(preferredTradePlanAtr('0.42', '0.8 USDT')).toBe(0.42);
+    expect(preferredTradePlanAtr(undefined, '0.8 USDT')).toBe(0.8);
+    expect(preferredTradePlanAtr('0', 'not available')).toBeUndefined();
   });
 });

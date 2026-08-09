@@ -44,6 +44,44 @@ describe("signal filter", () => {
     expect(result.reason).toBeUndefined();
   });
 
+  it("allows a liquid quantitative range without requiring EMA trend", () => {
+    const result = service.evaluate({
+      symbol: "BTC-USDT",
+      timeframe: "15m",
+      price: 100,
+      rsi: 42,
+      atr: 0.2,
+      volumeChangePercent: 0.5,
+      ema20: 100,
+      ema50: 100,
+      adx: 15,
+      efficiencyRatio: 0.2,
+    });
+
+    expect(result).toMatchObject({ allowed: true, preliminaryRegime: "RANGING" });
+  });
+
+  it("keeps neutral low-volume ranges in the no-trade zone", () => {
+    const result = service.evaluate({
+      symbol: "BTC-USDT",
+      timeframe: "15m",
+      price: 100,
+      rsi: 50,
+      atr: 0.2,
+      volumeChangePercent: 0.1,
+      ema20: 100,
+      ema50: 100,
+      adx: 15,
+      efficiencyRatio: 0.2,
+    });
+
+    expect(result).toMatchObject({
+      allowed: false,
+      reason: "NO_TRADE_ZONE",
+      preliminaryRegime: "RANGING",
+    });
+  });
+
   it("fails closed when indicator data is unavailable", () => {
     const result = service.evaluate({});
 

@@ -35,6 +35,17 @@ export function parseSpreadBps(raw: string | undefined, referencePrice?: number)
   return numeric;
 }
 
+export function preferredTradePlanAtr(indicatorAtr: unknown, agentAtr: unknown): number | undefined {
+  for (const value of [indicatorAtr, agentAtr]) {
+    const normalized = typeof value === 'string'
+      ? value.replace(/[$,]/g, '').replace(/\s*(?:USD|USDT)$/i, '').trim()
+      : value;
+    const numeric = Number(normalized);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  }
+  return undefined;
+}
+
 export function adaptiveTradingPolicy(context: AdaptivePolicyContext) {
   const liquidityClass = assetLiquidityClass(context.symbol);
   const regime = context.regime ?? 'RANGING';

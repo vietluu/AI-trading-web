@@ -22,6 +22,7 @@ export interface SignalFilterInput {
 export interface SignalFilterResult {
   allowed: boolean;
   reason?: "NO_TRADE_ZONE" | "LOW_ATR" | "NO_TREND" | "INSUFFICIENT_INDICATORS" | "WIDE_SPREAD";
+  preliminaryRegime: "TRENDING" | "RANGING" | "BREAKOUT" | "UNCLASSIFIED";
 }
 
 @Injectable()
@@ -76,41 +77,58 @@ export class SignalFilterService {
       Number.isFinite(volumeChange) &&
       volumeChange < policy.minVolumeChangePercent;
 
-    if (input.spreadBps !== undefined && input.spreadBps > policy.maxSpreadBps) {
-      return { allowed: false, reason: "WIDE_SPREAD" };
-    }
-
     const quantitativelyRanging =
       (Number.isFinite(adx) && adx < 18) ||
       (Number.isFinite(efficiencyRatio) && efficiencyRatio < 0.25);
+    const quantitativelyTrending =
+      Number.isFinite(adx) && adx >= 22 &&
+      Number.isFinite(efficiencyRatio) && efficiencyRatio >= 0.3;
+    const preliminaryRegime = input.breakout
+      ? "BREAKOUT"
+      : quantitativelyTrending
+        ? "TRENDING"
+        : quantitativelyRanging || input.marketRegime === "RANGING"
+          ? "RANGING"
+          : input.marketRegime === "TRENDING"
+            ? "TRENDING"
+            : "UNCLASSIFIED";
+
+    if (input.spreadBps !== undefined && input.spreadBps > policy.maxSpreadBps) {
+      return { allowed: false, reason: "WIDE_SPREAD", preliminaryRegime };
+    }
 
     if (
       hasAnyIndicatorData &&
       ((hasRsiNeutralZone && isLowAtr && lowVolume) ||
         (quantitativelyRanging && hasRsiNeutralZone && lowVolume))
     ) {
-      return { allowed: false, reason: "NO_TRADE_ZONE" };
+      return { allowed: false, reason: "NO_TRADE_ZONE", preliminaryRegime };
     }
 
     if (isLowAtr) {
-      return { allowed: false, reason: "LOW_ATR" };
+      return { allowed: false, reason: "LOW_ATR", preliminaryRegime };
     }
 
     if (!hasAnyIndicatorData) {
-      return { allowed: false, reason: "INSUFFICIENT_INDICATORS" };
+      return { allowed: false, reason: "INSUFFICIENT_INDICATORS", preliminaryRegime };
     }
 
+    // Flat moving averages are expected in a range. Once ADX/efficiency ratio
+    // identify that regime, let the downstream range-entry and R:R guards decide.
+    if (preliminaryRegime === "RANGING") return { allowed: true, preliminaryRegime };
+
     const hasTrend =
-      (Number.isFinite(adx) && adx >= 22 &&
-        Number.isFinite(efficiencyRatio) && efficiencyRatio >= 0.3) ||
-      (Number.isFinite(ema20) && Number.isFinite(ema50) && Math.abs(ema20 - ema50) > 0.0001) ||
-      (Number.isFinite(ema20) && Number.isFinite(ema200) && Math.abs(ema20 - ema200) > 0.0001) ||
+      quantitativelyTrending ||
+      (Number.isFinite(ema20) && Number.isFinite(ema50) &&
+        Math.abs(ema20 - ema50) / Math.max(Math.abs(ema50), Number.EPSILON) >= 0.0005) ||
+      (Number.isFinite(ema20) && Number.isFinite(ema200) &&
+        Math.abs(ema20 - ema200) / Math.max(Math.abs(ema200), Number.EPSILON) >= 0.0005) ||
       input.breakout === true;
 
     if (!hasTrend) {
-      return { allowed: false, reason: "NO_TREND" };
+      return { allowed: false, reason: "NO_TREND", preliminaryRegime };
     }
 
-    return { allowed: true };
+    return { allowed: true, preliminaryRegime };
   }
 }
