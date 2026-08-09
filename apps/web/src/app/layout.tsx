@@ -34,7 +34,9 @@ export default function RootLayout({
                     AX
                   </div>
                   <div>
-                    <p className="text-sm font-semibold leading-none">AI Trading Research</p>
+                    <p className="text-sm font-semibold leading-none">
+                      AI Trading Research
+                    </p>
                     <p className="mt-1 text-xs text-muted-foreground">
                       Multi-agent futures intelligence
                     </p>
@@ -44,7 +46,7 @@ export default function RootLayout({
               </header>
               <main className="min-w-0 flex-1 py-6 sm:py-8">{children}</main>
               <footer className="border-t border-border py-6 text-xs text-muted-foreground">
-                Phase 4 · Realtime market-data research
+                Multi-agent trading intelligence · Risk-controlled execution
               </footer>
             </div>
           </QueryProvider>

@@ -1,13 +1,23 @@
 export const QUERY_KEYS = {
   auth: {
     me: ["me"],
+    homeSession: ["auth", "home-session"],
     sessions: ["sessions"],
+  },
+  dashboard: {
+    recommendations: ["home", "recommendations"],
+    researchRuns: ["home", "research-runs"],
+    symbolOpportunities: ["home", "symbol-opportunities"],
   },
   credentials: {
     list: ["credentials"],
   },
   macro: {
-    events: (importanceFilter: string, categoryFilter: string) => ["macro-events", importanceFilter, categoryFilter],
+    events: (importanceFilter: string, categoryFilter: string) => [
+      "macro-events",
+      importanceFilter,
+      categoryFilter,
+    ],
   },
   ai: {
     base: ["ai"],
@@ -18,7 +28,12 @@ export const QUERY_KEYS = {
     history: ["ai-history"],
     agents: () => ["agents"],
     agentHealth: () => ["agents-health"],
-    agentRuns: (page = 1, statusFilter = "", typeFilter = "") => ["agent-runs", page, statusFilter, typeFilter],
+    agentRuns: (page = 1, statusFilter = "", typeFilter = "") => [
+      "agent-runs",
+      page,
+      statusFilter,
+      typeFilter,
+    ],
     agentRunDetail: (id: string) => ["agent-run-detail", id],
     agentRunTransitions: (id: string) => ["agent-run-transitions", id],
     liveTrading: () => ["live-trading"],
@@ -28,8 +43,14 @@ export const QUERY_KEYS = {
     reflectionInsights: () => ["reflection-insights"],
     reflectionProposals: () => ["reflection-proposals"],
     performance: (symbol?: string) => ["performance-metrics", symbol ?? ""],
-    performanceRecords: (symbol?: string) => ["performance-records", symbol ?? ""],
-    performanceAlerts: (symbol?: string) => ["performance-alerts", symbol ?? ""],
+    performanceRecords: (symbol?: string) => [
+      "performance-records",
+      symbol ?? "",
+    ],
+    performanceAlerts: (symbol?: string) => [
+      "performance-alerts",
+      symbol ?? "",
+    ],
     pipelineRuns: () => ["pipeline-runs"],
     pipelineRunDetail: (id: string) => ["pipeline-run", id],
     pipelineHealth: () => ["pipeline-health"],
@@ -43,7 +64,18 @@ export const QUERY_KEYS = {
     exchangeOrders: (id: string) => ["exchange-orders", id],
   },
   news: {
-    list: (filters: { symbolFilter: string; minImportance: number; savedOnly: boolean; unreadOnly: boolean }) => ["news", filters.symbolFilter, filters.minImportance, filters.savedOnly, filters.unreadOnly],
+    list: (filters: {
+      symbolFilter: string;
+      minImportance: number;
+      savedOnly: boolean;
+      unreadOnly: boolean;
+    }) => [
+      "news",
+      filters.symbolFilter,
+      filters.minImportance,
+      filters.savedOnly,
+      filters.unreadOnly,
+    ],
     detail: (id: string) => ["news-detail", id],
   },
   sentiment: {

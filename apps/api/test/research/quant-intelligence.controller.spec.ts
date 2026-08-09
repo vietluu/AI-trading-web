@@ -11,11 +11,11 @@ describe('QuantIntelligenceController identity boundary', () => {
     expect(service.getPortfolioIntelligence).not.toHaveBeenCalled();
   });
 
-  it('passes the authenticated user id to portfolio intelligence', () => {
+  it('passes the authenticated user id to portfolio intelligence', async () => {
     const service = { getPortfolioIntelligence: vi.fn().mockReturnValue({}) };
     const controller = new QuantIntelligenceController(service as never);
 
-    controller.getPortfolio({ id: 'user-1' });
+    await controller.getPortfolio({ id: 'user-1' });
 
     expect(service.getPortfolioIntelligence).toHaveBeenCalledWith('user-1');
   });
