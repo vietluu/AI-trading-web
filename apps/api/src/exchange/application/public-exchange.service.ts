@@ -378,11 +378,10 @@ export class PublicExchangeService {
       this.crossExchangeSymbols(),
       this.instruments(activeProvider, "TRADING").catch(() => []),
     ]);
-
     let instruments = initialInstruments;
 
     // Automatic fallback to OKX_FUTURES if requested provider (e.g. BINANCE_FUTURES) is unavailable
-    if (instruments.length === 0 && !options?.provider) {
+    if (!instruments || instruments.length === 0) {
       const fallbackProvider = ExchangeProvider.OKX_FUTURES;
       const fallbackInstruments = await this.instruments(
         fallbackProvider,
@@ -399,7 +398,7 @@ export class PublicExchangeService {
     );
 
     let candidates = instruments;
-    if (options?.commonOnly) {
+    if (options?.commonOnly && commonSet.size > 0) {
       candidates = candidates.filter((inst) => commonSet.has(inst.symbol));
     }
 
