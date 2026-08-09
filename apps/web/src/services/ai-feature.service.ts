@@ -1,4 +1,14 @@
-import type { DecisionOutput, FusionRunInput, MarketAgentInput, MarketAgentOutput, NewsAgentOutput, NewsSentimentInput, SentimentAgentOutput, TechnicalAgentInput, TechnicalAgentOutput } from "@platform/shared";
+import type {
+  DecisionOutput,
+  FusionRunInput,
+  MarketAgentInput,
+  MarketAgentOutput,
+  NewsAgentOutput,
+  NewsSentimentInput,
+  SentimentAgentOutput,
+  TechnicalAgentInput,
+  TechnicalAgentOutput,
+} from "@platform/shared";
 
 import { API_ENDPOINTS } from "@/constants/api-endpoints";
 import { apiRequest } from "@/lib/api-client";
@@ -87,10 +97,50 @@ export interface LiveTradingDashboard {
   mode: string;
   globalTradingEnabled: boolean;
   liveTradingEnabled: boolean;
-  connections: Array<{ id: string; provider: string; environment: string; displayName: string | null; isEnabled: boolean; isVerified: boolean }>;
-  accounts: Array<{ connectionId: string; totalEquity: number; availableBalance: number; unrealizedPnl: number; marginBalance: number; syncedAt: string }>;
-  positions: Array<{ id: string; connectionId: string; symbol: string; side: string; quantity: number; entryPrice: number; markPrice: number | null; liquidationPrice: number | null; leverage: number | null; unrealizedPnl: number; syncedAt: string }>;
-  orders: Array<{ id: string; orderId: string | null; clientOrderId: string; provider: string; environment: string; symbol: string; side: string; size: number; price: number | null; status: string; purpose: string; errorCode: string | null; createdAt: string }>;
+  connections: Array<{
+    id: string;
+    provider: string;
+    environment: string;
+    displayName: string | null;
+    isEnabled: boolean;
+    isVerified: boolean;
+  }>;
+  accounts: Array<{
+    connectionId: string;
+    totalEquity: number;
+    availableBalance: number;
+    unrealizedPnl: number;
+    marginBalance: number;
+    syncedAt: string;
+  }>;
+  positions: Array<{
+    id: string;
+    connectionId: string;
+    symbol: string;
+    side: string;
+    quantity: number;
+    entryPrice: number;
+    markPrice: number | null;
+    liquidationPrice: number | null;
+    leverage: number | null;
+    unrealizedPnl: number;
+    syncedAt: string;
+  }>;
+  orders: Array<{
+    id: string;
+    orderId: string | null;
+    clientOrderId: string;
+    provider: string;
+    environment: string;
+    symbol: string;
+    side: string;
+    size: number;
+    price: number | null;
+    status: string;
+    purpose: string;
+    errorCode: string | null;
+    createdAt: string;
+  }>;
 }
 
 export interface PerformanceMetrics {
@@ -262,15 +312,44 @@ export interface PipelineRun {
   decision?: string;
   confidence?: number;
   dataQuality?: string;
+  marketRegime?: string;
   skippedReason?: string;
   errorCode?: string;
   safeErrorMessage?: string;
   trigger: string;
   durationMs?: number;
   createdAt: string;
-  result?: { reasoning?: string; conflictLevel?: string };
-  steps: Array<{ id: string; stepId: string; type: string; status: string; durationMs?: number; errorCode?: string }>;
-  alerts: Array<{ id: string; kind: string; reasoningSummary: string; createdAt: string }>;
+  result?: {
+    decision?: string;
+    confidence?: number;
+    reasoning?: string;
+    signals?: { bullishFactors?: string[]; bearishFactors?: string[] };
+    risks?: string[];
+    regime?: { type?: string; confidence?: number };
+    conflictLevel?: string;
+    opportunityScore?: number;
+    expectedWinProbability?: number;
+    expectedValue?: number;
+    profitFactorEstimate?: number;
+    riskScore?: number;
+    actionable?: boolean;
+    skippedReason?: string;
+    judge?: { verdict?: string; approved?: boolean; reasons?: string[] };
+  };
+  steps: Array<{
+    id: string;
+    stepId: string;
+    type: string;
+    status: string;
+    durationMs?: number;
+    errorCode?: string;
+  }>;
+  alerts: Array<{
+    id: string;
+    kind: string;
+    reasoningSummary: string;
+    createdAt: string;
+  }>;
 }
 
 export interface PipelineSchedule {
@@ -292,11 +371,17 @@ export interface PipelineHealth {
   scheduler: { enabled: boolean; running: boolean };
 }
 
-export async function getAgentRunsList(page = 1, statusFilter = "", typeFilter = "") {
+export async function getAgentRunsList(
+  page = 1,
+  statusFilter = "",
+  typeFilter = "",
+) {
   const params = new URLSearchParams({ page: String(page), limit: "15" });
   if (statusFilter) params.append("status", statusFilter);
   if (typeFilter) params.append("agentType", typeFilter);
-  return apiRequest<AgentRunListResponse>(`${API_ENDPOINTS.agentRuns.root}?${params.toString()}`);
+  return apiRequest<AgentRunListResponse>(
+    `${API_ENDPOINTS.agentRuns.root}?${params.toString()}`,
+  );
 }
 
 export async function getAgentRunDetail(runId: string) {
@@ -305,7 +390,9 @@ export async function getAgentRunDetail(runId: string) {
 
 export async function getAgentRunTransitions(runId: string) {
   try {
-    return await apiRequest<Transition[]>(API_ENDPOINTS.agentRuns.transitions(runId));
+    return await apiRequest<Transition[]>(
+      API_ENDPOINTS.agentRuns.transitions(runId),
+    );
   } catch {
     return [] as Transition[];
   }
@@ -339,28 +426,42 @@ export async function runDecision(input: FusionRunInput) {
 }
 
 export async function runMarketAnalysis(input: MarketAgentInput) {
-  return apiRequest<{ id: string; status: string; output?: MarketAgentOutput }>(API_ENDPOINTS.ai.analysisRun("MARKET_ANALYST"), {
-    method: "POST",
-    body: JSON.stringify({ input }),
-  });
+  return apiRequest<{ id: string; status: string; output?: MarketAgentOutput }>(
+    API_ENDPOINTS.ai.analysisRun("MARKET_ANALYST"),
+    {
+      method: "POST",
+      body: JSON.stringify({ input }),
+    },
+  );
 }
 
 export async function runNewsAnalysis(input: NewsSentimentInput) {
-  return apiRequest<{ id: string; status: string; output?: NewsAgentOutput }>(API_ENDPOINTS.ai.analysisRun("NEWS_ANALYST"), {
-    method: "POST",
-    body: JSON.stringify({ input }),
-  });
+  return apiRequest<{ id: string; status: string; output?: NewsAgentOutput }>(
+    API_ENDPOINTS.ai.analysisRun("NEWS_ANALYST"),
+    {
+      method: "POST",
+      body: JSON.stringify({ input }),
+    },
+  );
 }
 
 export async function runSentimentAnalysis(input: NewsSentimentInput) {
-  return apiRequest<{ id: string; status: string; output?: SentimentAgentOutput }>(API_ENDPOINTS.ai.analysisRun("SENTIMENT_ANALYST"), {
+  return apiRequest<{
+    id: string;
+    status: string;
+    output?: SentimentAgentOutput;
+  }>(API_ENDPOINTS.ai.analysisRun("SENTIMENT_ANALYST"), {
     method: "POST",
     body: JSON.stringify({ input }),
   });
 }
 
 export async function runTechnicalAnalysis(input: TechnicalAgentInput) {
-  return apiRequest<{ id: string; status: string; output?: TechnicalAgentOutput }>(API_ENDPOINTS.ai.analysisRun("TECHNICAL_ANALYST"), {
+  return apiRequest<{
+    id: string;
+    status: string;
+    output?: TechnicalAgentOutput;
+  }>(API_ENDPOINTS.ai.analysisRun("TECHNICAL_ANALYST"), {
     method: "POST",
     body: JSON.stringify({ input }),
   });
@@ -386,17 +487,23 @@ export async function enableLiveTrading() {
 }
 
 export async function getPerformanceMetrics(symbol?: string) {
-  const target = symbol ? `${API_ENDPOINTS.ai.performanceMetrics}?symbol=${encodeURIComponent(symbol)}` : API_ENDPOINTS.ai.performanceMetrics;
+  const target = symbol
+    ? `${API_ENDPOINTS.ai.performanceMetrics}?symbol=${encodeURIComponent(symbol)}`
+    : API_ENDPOINTS.ai.performanceMetrics;
   return apiRequest<PerformanceMetrics>(target);
 }
 
 export async function getPerformanceRecords(symbol?: string) {
-  const target = symbol ? `${API_ENDPOINTS.ai.performanceRoot}?symbol=${encodeURIComponent(symbol)}` : API_ENDPOINTS.ai.performanceRoot;
+  const target = symbol
+    ? `${API_ENDPOINTS.ai.performanceRoot}?symbol=${encodeURIComponent(symbol)}`
+    : API_ENDPOINTS.ai.performanceRoot;
   return apiRequest<PerformanceRecord[]>(target);
 }
 
 export async function getPerformanceAlerts(symbol?: string) {
-  const target = symbol ? `${API_ENDPOINTS.ai.performanceAlerts}?symbol=${encodeURIComponent(symbol)}` : API_ENDPOINTS.ai.performanceAlerts;
+  const target = symbol
+    ? `${API_ENDPOINTS.ai.performanceAlerts}?symbol=${encodeURIComponent(symbol)}`
+    : API_ENDPOINTS.ai.performanceAlerts;
   return apiRequest<PerformanceAlert[]>(target);
 }
 
@@ -428,21 +535,32 @@ export async function getReflectionProposals() {
 }
 
 export async function runReflection() {
-  return apiRequest<ReflectionSummary>(API_ENDPOINTS.ai.reflectionRun, { method: "POST" });
+  return apiRequest<ReflectionSummary>(API_ENDPOINTS.ai.reflectionRun, {
+    method: "POST",
+  });
 }
 
 export async function createReflectionProposal(suggestion: string) {
   return apiRequest<ReflectionProposal>(API_ENDPOINTS.ai.reflectionProposals, {
     method: "POST",
-    body: JSON.stringify({ description: suggestion, proposedChange: suggestion }),
+    body: JSON.stringify({
+      description: suggestion,
+      proposedChange: suggestion,
+    }),
   });
 }
 
-export async function reviewReflectionProposal(id: string, status: "APPROVED" | "REJECTED") {
-  return apiRequest<ReflectionProposal>(`${API_ENDPOINTS.ai.reflectionProposals}/${id}/review`, {
-    method: "PATCH",
-    body: JSON.stringify({ status, confirmed: true }),
-  });
+export async function reviewReflectionProposal(
+  id: string,
+  status: "APPROVED" | "REJECTED",
+) {
+  return apiRequest<ReflectionProposal>(
+    `${API_ENDPOINTS.ai.reflectionProposals}/${id}/review`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ status, confirmed: true }),
+    },
+  );
 }
 
 export async function getRiskDashboard() {
@@ -458,10 +576,13 @@ export async function getPipelineSchedules() {
 }
 
 export async function runPipeline(payload: Record<string, unknown>) {
-  return apiRequest<{ id: string; status: string }>(API_ENDPOINTS.pipeline.run, {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+  return apiRequest<{ id: string; status: string }>(
+    API_ENDPOINTS.pipeline.run,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
 export async function createPipelineSchedule(payload: Record<string, unknown>) {
@@ -476,7 +597,9 @@ export async function cancelPipelineSchedule(id: string) {
 }
 
 export async function getPipelineRuns() {
-  return apiRequest<{ data: PipelineRun[]; total: number }>(`${API_ENDPOINTS.pipelineRuns.root}?limit=50`);
+  return apiRequest<{ data: PipelineRun[]; total: number }>(
+    `${API_ENDPOINTS.pipelineRuns.root}?limit=50`,
+  );
 }
 
 export async function getPipelineRunDetail(id: string) {
@@ -484,7 +607,10 @@ export async function getPipelineRunDetail(id: string) {
 }
 
 export async function replayPipelineRun(id: string) {
-  return apiRequest(API_ENDPOINTS.pipelineRuns.replay(id), { method: "POST", body: JSON.stringify({ mode: "REPLAY_WITH_STORED_CONTEXT" }) });
+  return apiRequest(API_ENDPOINTS.pipelineRuns.replay(id), {
+    method: "POST",
+    body: JSON.stringify({ mode: "REPLAY_WITH_STORED_CONTEXT" }),
+  });
 }
 
 export async function cancelPipelineRun(id: string) {
