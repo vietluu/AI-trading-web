@@ -194,6 +194,21 @@ describe('DecisionService', () => {
     expect(Object.values(output.weighting).reduce((sum, weight) => sum + weight, 0)).toBe(100);
   });
 
+  it('adjusts the ranging threshold by spread width instead of spread presence', () => {
+    const narrowInput = decisionInput();
+    narrowInput.market!.volatility.level = 'LOW';
+    narrowInput.market!.liquidity.bidAskSpread = '0.01%';
+    const wideInput = decisionInput();
+    wideInput.market!.volatility.level = 'LOW';
+    wideInput.market!.liquidity.bidAskSpread = '0.12%';
+
+    const narrow = new DecisionService({} as never).decide(narrowInput);
+    const wide = new DecisionService({} as never).decide(wideInput);
+
+    expect(wide.adaptiveThreshold).toBe(narrow.adaptiveThreshold + 7);
+    expect(wide.executionCost).toBeGreaterThan(narrow.executionCost);
+  });
+
   it('runs fusion analysis and decision as one pipeline', async () => {
     const detailed = fixture();
     const outputs: Partial<Record<AgentType, unknown>> = {

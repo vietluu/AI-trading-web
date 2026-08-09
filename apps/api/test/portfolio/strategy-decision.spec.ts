@@ -88,4 +88,18 @@ describe("independent strategy decisions", () => {
       "WAIT",
     );
   });
+
+  it("uses a bounded range threshold for an active mean-reversion setup", () => {
+    const strictRangeBase = {
+      ...base,
+      regime: { type: "RANGING" as const },
+      adaptiveThreshold: 84,
+    };
+
+    expect(decisionForStrategy("mean-reversion", strictRangeBase, analyses)).toMatchObject({
+      decision: "LONG",
+      confidence: 70,
+      adaptiveThreshold: 62,
+    });
+  });
 });

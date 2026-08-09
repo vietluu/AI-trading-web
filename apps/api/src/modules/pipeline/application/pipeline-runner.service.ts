@@ -26,7 +26,7 @@ import {
 import { MarketDataService } from "../../../market-data/application/market-data.service";
 import { RedisService } from "../../../redis/redis.service";
 import { DecisionJudgeService } from "./decision-judge.service";
-import { timeframeMilliseconds } from "../domain/adaptive-trading-policy";
+import { preferredTradePlanAtr, timeframeMilliseconds } from "../domain/adaptive-trading-policy";
 
 class PipelineCancelledError extends Error {}
 
@@ -244,7 +244,7 @@ export class PipelineRunnerService {
         riskScore: output.riskScore,
         decision: output.decision,
         rejectReason: reason,
-        executionResult: actionable ? 'EXECUTED' : 'REJECTED',
+        executionResult: actionable ? 'APPROVED' : 'REJECTED',
         durationMs: decisionCompletedAt.getTime() - startedAt.getTime(),
         tokenUsage: 0,
         apiCost: 0,
@@ -253,7 +253,10 @@ export class PipelineRunnerService {
       const executionDecision = actionable
         ? output
         : { ...output, decision: "WAIT" as const };
-      const volatilityAtr = Number(analyses.market?.volatility.atr);
+      const volatilityAtr = preferredTradePlanAtr(
+        indicatorSnapshot?.values.atr14,
+        analyses.market?.volatility.atr,
+      );
       let riskAssessment: Awaited<ReturnType<LiveTradingService["assessPipelineDecision"]>> | undefined;
       let liveExecution: Awaited<ReturnType<LiveTradingService["executePipeline"]>> | undefined;
       if (actionable) {
@@ -303,7 +306,7 @@ export class PipelineRunnerService {
             ...(typeof job.params?.strategyId === "string"
               ? { strategyKey: job.params.strategyId }
               : {}),
-            ...(Number.isFinite(volatilityAtr) && volatilityAtr >= 0
+            ...(volatilityAtr !== undefined
               ? { volatilityAtr }
               : {}),
             tradePlanContext: {
@@ -348,7 +351,15 @@ export class PipelineRunnerService {
       }
       const completedAt = new Date();
       const risk = riskAssessment?.risk;
-      const executionApproved = Boolean(risk?.approved);
+      const riskApproved = Boolean(risk?.approved);
+      const orderSubmitted = liveExecution?.outcome === "ORDER_SUBMITTED";
+      const finalSkippedReason = !actionable
+        ? reason
+        : !riskApproved
+          ? risk?.reason ?? riskAssessment?.outcome ?? "RISK_NOT_APPROVED"
+          : !orderSubmitted
+            ? liveExecution?.errorCode ?? liveExecution?.outcome ?? "ORDER_NOT_SUBMITTED"
+            : undefined;
       this.analytics.recordStageTelemetry({
         pipelineId: job.pipelineId,
         runId,
@@ -362,8 +373,8 @@ export class PipelineRunnerService {
         opportunityScore: output.opportunityScore,
         riskScore: risk?.riskScore ?? 0,
         decision: executionDecision.decision,
-        rejectReason: executionApproved ? undefined : risk?.reason,
-        executionResult: executionApproved ? 'EXECUTED' : 'REJECTED',
+        rejectReason: finalSkippedReason,
+        executionResult: orderSubmitted ? 'EXECUTED' : riskApproved ? 'RISK_APPROVED' : 'REJECTED',
         durationMs: completedAt.getTime() - startedAt.getTime(),
         tokenUsage: 0,
         apiCost: 0,
@@ -380,12 +391,16 @@ export class PipelineRunnerService {
         configurationVersion: output.learningConfiguration?.version,
         learningStage: output.learningConfiguration?.stage,
         timeframe: String(interval),
-        skippedReason: filter.reason,
+        skippedReason: finalSkippedReason,
         storedContext: { analyses, fusionOutput },
         result: {
           ...output,
           actionable,
-          skippedReason: reason,
+          skippedReason: finalSkippedReason,
+          signalFilter: {
+            allowed: signalFilter.allowed,
+            preliminaryRegime: signalFilter.preliminaryRegime,
+          },
           riskAssessment,
           liveExecution,
           judge: judge as unknown as Prisma.InputJsonValue,

@@ -96,8 +96,8 @@ describe('Phase 6.6 pipeline runtime policies', () => {
       }),
     };
     const threshold = { evaluate: vi.fn().mockReturnValue({ actionable: false, reason: 'CONFIDENCE_BELOW_THRESHOLD' }) };
-    const riskPolicy = { evaluate: vi.fn().mockReturnValue({ actionable: false, decision: 'WAIT', reason: 'CONFIDENCE_BELOW_THRESHOLD' }) };
-    const signalFilter = { evaluate: vi.fn().mockReturnValue({ allowed: true, reason: undefined }) };
+    const riskPolicy = { evaluate: vi.fn().mockReturnValue({ actionable: true, decision: 'LONG' }) };
+    const signalFilter = { evaluate: vi.fn().mockReturnValue({ allowed: true, preliminaryRegime: 'TRENDING' }) };
     const marketData = {
       getIndicatorSnapshot: vi.fn().mockResolvedValue({ values: { rsi14: 55, atr14: 0.8, volumeChangePercent: 3, ema20: 100, ema50: 99, ema200: 95 } }),
       getHistoricalCandles: vi.fn().mockResolvedValue([{ close: '100' }]),
@@ -135,7 +135,9 @@ describe('Phase 6.6 pipeline runtime policies', () => {
 
     expect(liveTrading.assessPipelineDecision).not.toHaveBeenCalled();
     expect(liveTrading.executePipeline).not.toHaveBeenCalled();
-    expect(repository.updateRun).toHaveBeenCalledWith('run-1', expect.objectContaining({ status: 'COMPLETED', decision: 'WAIT' }));
+    expect(repository.updateRun).toHaveBeenCalledWith('run-1', expect.objectContaining({
+      status: 'COMPLETED', decision: 'WAIT', skippedReason: 'CONFIDENCE_BELOW_THRESHOLD',
+    }));
   });
 
   it('uses BullMQ-safe pipeline queue names', () => {
