@@ -371,13 +371,28 @@ export class PublicExchangeService {
       isCommon: boolean;
     }>
   > {
-    const provider = options?.provider ?? ExchangeProvider.BINANCE_FUTURES;
+    let activeProvider = options?.provider ?? ExchangeProvider.BINANCE_FUTURES;
     const limit = options?.limit ?? 10;
 
-    const [crossSymbols, instruments] = await Promise.all([
+    const [crossSymbols, initialInstruments] = await Promise.all([
       this.crossExchangeSymbols(),
-      this.instruments(provider, "TRADING").catch(() => []),
+      this.instruments(activeProvider, "TRADING").catch(() => []),
     ]);
+
+    let instruments = initialInstruments;
+
+    // Automatic fallback to OKX_FUTURES if requested provider (e.g. BINANCE_FUTURES) is unavailable
+    if (instruments.length === 0 && !options?.provider) {
+      const fallbackProvider = ExchangeProvider.OKX_FUTURES;
+      const fallbackInstruments = await this.instruments(
+        fallbackProvider,
+        "TRADING",
+      ).catch(() => []);
+      if (fallbackInstruments.length > 0) {
+        activeProvider = fallbackProvider;
+        instruments = fallbackInstruments;
+      }
+    }
 
     const commonSet = new Set(
       crossSymbols.filter((s) => s.isCommon).map((s) => s.symbol),
@@ -395,7 +410,7 @@ export class PublicExchangeService {
     const tickers = await Promise.allSettled(
       candidates.slice(0, 50).map(async (inst) => {
         try {
-          const ticker = await this.ticker(provider, inst.symbol);
+          const ticker = await this.ticker(activeProvider, inst.symbol);
           return { symbol: inst.symbol, ticker };
         } catch {
           return null;
@@ -439,10 +454,14 @@ export class PublicExchangeService {
       const absChange = Math.abs(change24hPct);
       if (absChange >= 5 && absChange <= 20) {
         score += 25;
-        reasons.push(`High trading momentum (${change24hPct > 0 ? "+" : ""}${change24hPct.toFixed(1)}% 24h)`);
+        reasons.push(
+          `High trading momentum (${change24hPct > 0 ? "+" : ""}${change24hPct.toFixed(1)}% 24h)`,
+        );
       } else if (absChange > 20) {
         score += 10; // Extreme volatility has higher risk
-        reasons.push(`Extreme price expansion (${change24hPct.toFixed(1)}% 24h)`);
+        reasons.push(
+          `Extreme price expansion (${change24hPct.toFixed(1)}% 24h)`,
+        );
       }
 
       // Cross-exchange compatibility bonus
@@ -460,7 +479,7 @@ export class PublicExchangeService {
 
       scored.push({
         symbol,
-        provider,
+        provider: activeProvider,
         opportunityScore: Math.min(100, Math.round(score)),
         price,
         volume24h,
