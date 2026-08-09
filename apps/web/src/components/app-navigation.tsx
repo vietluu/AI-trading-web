@@ -78,7 +78,7 @@ export function AppNavigation(): React.JSX.Element {
         aria-label="Main navigation"
         className={` ${
           mobileMenuOpen
-            ? "fixed inset-x-4 top-16 z-50 flex flex-col gap-1.5 rounded-2xl border border-border bg-card/95 backdrop-blur-xl p-4 shadow-2xl max-h-[80vh] overflow-y-auto lg:static lg:z-auto lg:top-auto lg:inset-auto lg:max-h-none lg:overflow-visible lg:flex-row lg:items-center lg:border-none lg:bg-transparent lg:p-0 lg:shadow-none"
+            ? "fixed inset-x-4 top-16 z-[99] flex flex-col gap-1.5 rounded-2xl border border-border bg-card/95 backdrop-blur-xl p-4 shadow-2xl max-h-[80vh] overflow-y-auto lg:static lg:z-auto lg:top-auto lg:inset-auto lg:max-h-none lg:overflow-visible lg:flex-row lg:items-center lg:border-none lg:bg-transparent lg:p-0 lg:shadow-none"
             : "hidden lg:flex lg:items-center lg:gap-1"
         }`}
       >

@@ -32,7 +32,7 @@ export class PublicExchangesController {
     @Query("commonOnly") commonOnly?: string,
   ) {
     return this.exchanges.recommendTopSymbols({
-      provider: provider ?? ExchangeProvider.BINANCE_FUTURES,
+      provider,
       limit: limit ? Number(limit) : 10,
       commonOnly: commonOnly === "true",
     });

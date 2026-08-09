@@ -249,8 +249,8 @@ function AuthenticatedDashboard(): React.JSX.Element {
         </section>
       )}
 
-      <section className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-        <Card className="p-5">
+      <section className="grid min-w-0 gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+        <Card className="min-w-0 p-5">
           <SectionHeader
             icon={CandlestickChart}
             title="Vị thế AI đang quản lý"
@@ -306,7 +306,7 @@ function AuthenticatedDashboard(): React.JSX.Element {
           </div>
         </Card>
 
-        <Card className="p-5">
+        <Card className="min-w-0 p-5">
           <SectionHeader
             icon={BrainCircuit}
             title="Hiệu suất quyết định AI"
