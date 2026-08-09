@@ -1,9 +1,9 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 
-const describeIfDb = process.env.DATABASE_URL ? describe : describe.skip;
+const runIntegration = process.env.RUN_INTEGRATION_TESTS === 'true';
 
-describeIfDb('Phase 5 External Data Integration Tests', () => {
+describe.skipIf(!runIntegration)('Phase 5 External Data Integration Tests', () => {
   let prisma: PrismaClient;
   const createdUserIds: string[] = [];
   const createdArticleIds: string[] = [];
