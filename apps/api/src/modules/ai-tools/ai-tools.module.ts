@@ -53,9 +53,11 @@ import { SessionModule } from "../../session/session.module";
 import { ExchangeModule } from "../../exchange/exchange.module";
 import { AIModule } from "../ai/ai.module";
 import { MarketDataModule } from "../../market-data/market-data.module";
+import { ExternalDataModule } from "../external-data/external-data.module";
+import { OnChainMetricsGetTool } from "./infrastructure/tools/onchain-tools";
 
 @Module({
-  imports: [DatabaseModule, RedisModule, SessionModule, ExchangeModule, MarketDataModule, AIModule],
+  imports: [DatabaseModule, RedisModule, SessionModule, ExchangeModule, MarketDataModule, ExternalDataModule, AIModule],
   controllers: [AIToolsController],
   providers: [
     OpenAIToolSchemaMapper,
@@ -91,6 +93,7 @@ import { MarketDataModule } from "../../market-data/market-data.module";
     SentimentMarketGetTool,
     MacroEventsListTool,
     SocialPostsListTool,
+    OnChainMetricsGetTool,
     UserSettingsGetTool,
     UserAiConfigGetTool,
     ExchangeAccountSummaryTool,
@@ -115,7 +118,7 @@ export class AIToolsModule implements OnModuleInit {
   constructor(
     private readonly registry: ToolRegistryService,
 
-    // Inject all 18 safe tool instances
+    // Inject all safe read-only tool instances
     private readonly tickerTool: MarketTickerGetTool,
     private readonly candlesTool: MarketCandlesListTool,
     private readonly indicatorsTool: MarketIndicatorsGetTool,
@@ -128,6 +131,7 @@ export class AIToolsModule implements OnModuleInit {
     private readonly sentimentTool: SentimentMarketGetTool,
     private readonly macroTool: MacroEventsListTool,
     private readonly socialTool: SocialPostsListTool,
+    private readonly onChainMetricsTool: OnChainMetricsGetTool,
     private readonly userSettingsTool: UserSettingsGetTool,
     private readonly userAiConfigTool: UserAiConfigGetTool,
     private readonly exchangeSummaryTool: ExchangeAccountSummaryTool,
@@ -137,7 +141,7 @@ export class AIToolsModule implements OnModuleInit {
   ) {}
 
   public onModuleInit(): void {
-    // Register all 18 safe read-only tools predictably during startup
+    // Register all safe read-only tools predictably during startup
     this.registry.register(this.tickerTool);
     this.registry.register(this.candlesTool);
     this.registry.register(this.indicatorsTool);
@@ -150,6 +154,7 @@ export class AIToolsModule implements OnModuleInit {
     this.registry.register(this.sentimentTool);
     this.registry.register(this.macroTool);
     this.registry.register(this.socialTool);
+    this.registry.register(this.onChainMetricsTool);
     this.registry.register(this.userSettingsTool);
     this.registry.register(this.userAiConfigTool);
     this.registry.register(this.exchangeSummaryTool);

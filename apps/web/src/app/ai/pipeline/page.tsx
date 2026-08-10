@@ -95,34 +95,6 @@ export default function PipelinePage() {
         ))}
       </section>
 
-      {/* Quota optimization banner */}
-      <section className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-200">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="font-semibold text-emerald-300">
-              {t.ai.optimalQuotaTitle}
-            </p>
-            <p className="mt-1 text-emerald-200/80">
-              {t.ai.optimalQuotaDescription}
-            </p>
-          </div>
-          <button
-            className="shrink-0 rounded-lg bg-emerald-500 px-4 py-2 text-xs font-bold text-black hover:bg-emerald-400"
-            onClick={() =>
-              void addSchedule(15, [
-                "BTC-USDT",
-                "ETH-USDT",
-                "SOL-USDT",
-                "BNB-USDT",
-              ])
-            }
-            type="button"
-          >
-            {t.ai.createOptimalSchedule}
-          </button>
-        </div>
-      </section>
-
       <section className="rounded-lg border bg-card p-5">
         <h2 className="text-lg font-semibold">{t.ai.manualTriggerTitle}</h2>
         <div className="mt-4 flex flex-wrap gap-3">
@@ -152,17 +124,11 @@ export default function PipelinePage() {
           </button>
           <button
             className="rounded border border-border px-4 py-2 font-medium hover:bg-muted"
+            disabled={(schedules.data?.length ?? 0) >= 10}
             onClick={() => void addSchedule(15)}
             type="button"
           >
             {t.ai.schedule15m} ({symbol})
-          </button>
-          <button
-            className="rounded border border-border px-4 py-2 text-muted-foreground hover:bg-muted"
-            onClick={() => void addSchedule(5)}
-            type="button"
-          >
-            {t.ai.schedule5m} ({symbol})
           </button>
         </div>
         {message && (
@@ -171,7 +137,7 @@ export default function PipelinePage() {
       </section>
 
       <section className="rounded-lg border bg-card p-5">
-        <h2 className="text-lg font-semibold">{t.ai.activeSchedules}</h2>
+        <h2 className="text-lg font-semibold"> {t.ai.activeSchedules}{' '}({schedules.data?.length ?? 0}/10)</h2>
         <div className="mt-3 space-y-2">
           {schedules.data?.length ? (
             schedules.data.map((item) => (

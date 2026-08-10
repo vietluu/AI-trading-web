@@ -106,6 +106,25 @@ describe('DecisionService', () => {
     expect(output.risks.some((risk) => risk.toLowerCase().includes('conflict'))).toBe(true);
   });
 
+  it('retains a meaningful composite score for a well-supported WAIT decision', () => {
+    const input = decisionInput();
+    input.market!.trend.direction = 'SIDEWAYS';
+    input.technical!.trend.direction = 'SIDEWAYS';
+    input.news!.impact.direction = 'NEUTRAL';
+    input.sentiment!.sentiment.overall = 'NEUTRAL';
+    input.macro!.macroTrend = 'NEUTRAL';
+    input.onchain!.activity = 'NORMAL';
+    input.onchain!.flows = {};
+    input.onchain!.signals = ['On-chain activity is neutral.'];
+    input.fusionOutput.overallBias = 'NEUTRAL';
+    input.fusionOutput.conflicts = [];
+    const output = new DecisionService({} as never).decide(input);
+
+    expect(output.decision).toBe('WAIT');
+    expect(output.confidence).toBeGreaterThan(0);
+    expect(output.confidenceKind).toBe('COMPOSITE_SCORE');
+  });
+
   it('forces WAIT for insufficient active data', () => {
     const input = decisionInput();
     input.fusionOutput.dataQuality = 'INSUFFICIENT';

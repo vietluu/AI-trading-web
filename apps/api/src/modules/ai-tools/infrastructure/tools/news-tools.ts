@@ -1,9 +1,10 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { z } from "zod";
 import type { ToolDefinition } from "../../domain/contracts/tool-definition.contract";
 import type { ToolExecutionContext } from "../../domain/contracts/tool-context.contract";
 import { PrismaService } from "../../../../database/prisma.service";
 import { NewsToolDataService } from "./news-tool-data.service";
+import { ExternalDataIngestionProcessor } from "../../../external-data/application/jobs/external-data-ingestion.processor";
 
 @Injectable()
 export class NewsArticlesListTool implements ToolDefinition<{ symbol?: string; lookbackHours?: number; limit?: number }, Record<string, unknown>> {
@@ -16,7 +17,7 @@ export class NewsArticlesListTool implements ToolDefinition<{ symbol?: string; l
   public readonly category = "NEWS" as const;
 
   public readonly inputSchema = z.object({
-    symbol: z.enum(["BTC", "ETH"]).optional(),
+    symbol: z.string().min(1).max(32).optional(),
     lookbackHours: z.number().int().min(1).max(24).optional().default(6),
     limit: z.number().int().min(1).max(50).optional().default(10),
   });
@@ -101,7 +102,7 @@ export class NewsHighImportanceListTool implements ToolDefinition<{ symbol?: str
   public readonly category = "NEWS" as const;
 
   public readonly inputSchema = z.object({
-    symbol: z.enum(["BTC", "ETH"]).optional(),
+    symbol: z.string().min(1).max(32).optional(),
     lookbackHours: z.number().int().min(1).max(24).optional().default(6),
     limit: z.number().int().min(1).max(50).optional().default(20),
     minimumImportance: z.number().int().min(50).max(100).optional().default(70),
@@ -141,7 +142,10 @@ export class NewsHighImportanceListTool implements ToolDefinition<{ symbol?: str
 
 @Injectable()
 export class SentimentMarketGetTool implements ToolDefinition<{ symbol?: string; lookbackHours?: number }, Record<string, unknown>> {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly ingestion?: ExternalDataIngestionProcessor,
+  ) {}
 
   public readonly name = "sentiment.market.get";
   public readonly version = 1;
@@ -150,7 +154,7 @@ export class SentimentMarketGetTool implements ToolDefinition<{ symbol?: string;
   public readonly category = "SENTIMENT" as const;
 
   public readonly inputSchema = z.object({
-    symbol: z.enum(["BTC", "ETH"]).optional(),
+    symbol: z.string().min(1).max(32).optional(),
     lookbackHours: z.number().int().min(1).max(24).optional().default(6),
   });
 
@@ -175,6 +179,7 @@ export class SentimentMarketGetTool implements ToolDefinition<{ symbol?: string;
   public readonly schemaHash = "hash-sentiment-market-get-v1";
 
   public async execute(input: { symbol?: string; lookbackHours?: number }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
+    await this.ingestion?.refreshSentimentIfStale().catch(() => undefined);
     const latest = await this.prisma.marketSentimentObservation.findFirst({
       orderBy: { observedAt: "desc" },
     });
@@ -267,7 +272,7 @@ export class SocialPostsListTool implements ToolDefinition<{ symbol?: string; lo
   public readonly category = "SOCIAL" as const;
 
   public readonly inputSchema = z.object({
-    symbol: z.enum(["BTC", "ETH"]).optional().describe("Crypto symbol filter"),
+    symbol: z.string().min(1).max(32).optional().describe("Crypto symbol filter"),
     lookbackHours: z.number().int().min(1).max(24).optional().default(6),
     limit: z.number().int().min(1).max(50).optional().default(10),
   });
@@ -293,12 +298,13 @@ export class SocialPostsListTool implements ToolDefinition<{ symbol?: string; lo
   public async execute(input: { symbol?: string; lookbackHours?: number; limit?: number }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
     const limit = input.limit || 10;
     const lookbackHours = input.lookbackHours || 6;
+    const baseSymbol = input.symbol?.toUpperCase().split("-")[0];
     const publishedAfter = new Date(Date.now() - lookbackHours * 60 * 60 * 1000);
 
     let posts = await this.prisma.socialPost.findMany({
       where: {
         publishedAt: { gte: publishedAfter },
-        ...(input.symbol ? { relatedSymbols: { has: input.symbol.toUpperCase() } } : {}),
+        ...(baseSymbol ? { relatedSymbols: { has: baseSymbol } } : {}),
       },
       take: limit,
       orderBy: { publishedAt: "desc" },
@@ -306,7 +312,7 @@ export class SocialPostsListTool implements ToolDefinition<{ symbol?: string; lo
 
     if (posts.length === 0) {
       posts = await this.prisma.socialPost.findMany({
-        where: input.symbol ? { relatedSymbols: { has: input.symbol.toUpperCase() } } : {},
+        where: baseSymbol ? { relatedSymbols: { has: baseSymbol } } : {},
         take: limit,
         orderBy: { publishedAt: "desc" },
       });

@@ -1,6 +1,7 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../../../../database/prisma.service";
+import { ExternalDataIngestionProcessor } from "../../../external-data/application/jobs/external-data-ingestion.processor";
 
 export interface NewsToolQuery {
   symbol?: string;
@@ -17,14 +18,19 @@ interface TrustedSource {
 
 @Injectable()
 export class NewsToolDataService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly ingestion?: ExternalDataIngestionProcessor,
+  ) {}
 
   public async list(input: NewsToolQuery): Promise<Record<string, unknown>[]> {
+    await this.ingestion?.refreshNewsIfStale().catch(() => undefined);
     const limit = input.limit ?? 10;
     const lookbackHours = input.lookbackHours ?? 6;
     const publishedAfter = new Date(Date.now() - lookbackHours * 60 * 60 * 1000);
     const trustedSources = await this.trustedSources();
     const trustedById = new Map(trustedSources.map((source) => [source.sourceId, source]));
+    const symbol = this.symbolVariants(input.symbol);
 
     const sourceFilters: Prisma.NewsArticleWhereInput[] = trustedSources.map((source) => ({
       sourceId: source.sourceId,
@@ -37,15 +43,12 @@ export class NewsToolDataService {
         ? { importanceScore: { gte: input.minimumImportance } }
         : {}),
       ...(sourceFilters.length ? { OR: sourceFilters } : { id: "__no_trusted_sources__" }),
-      ...(input.symbol
+      ...(symbol
         ? {
             symbols: {
               some: {
                 symbol: {
-                  in: [
-                    input.symbol.toUpperCase(),
-                    `${input.symbol.toUpperCase()}-USDT`,
-                  ],
+                  in: symbol,
                 },
               },
             },
@@ -98,9 +101,11 @@ export class NewsToolDataService {
 
     const normalizedAnnouncements = announcements
       .filter((announcement) =>
-        input.symbol
-          ? announcement.relatedSymbols.some((symbol) =>
-              symbol.toUpperCase().includes(input.symbol!.toUpperCase()),
+        symbol
+          ? announcement.relatedSymbols.some((relatedSymbol) =>
+              (this.symbolVariants(relatedSymbol) ?? []).some((candidate) =>
+                symbol.includes(candidate),
+              ),
             )
           : true,
       )
@@ -193,6 +198,14 @@ export class NewsToolDataService {
       where: { isEnabled: true },
       select: { sourceId: true, displayName: true, baseDomain: true },
     });
+  }
+
+  private symbolVariants(raw?: string): string[] | undefined {
+    if (!raw) return undefined;
+    const normalized = raw.trim().toUpperCase().replace(/[_/]/g, "-");
+    const base = normalized.split("-")[0];
+    if (!base) return undefined;
+    return [...new Set([base, `${base}-USDT`, normalized])];
   }
 
   private matchesDomain(rawUrl: string, baseDomain: string): boolean {

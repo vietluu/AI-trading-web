@@ -231,7 +231,13 @@ export class FusionService {
       macro: input.macro.dataQuality,
       onchain: input.onchain.dataQuality,
     };
-    const usableNames = (Object.keys(votes) as AnalysisName[]).filter(
+    const onChainConfigured = !input.onchain.signals.some((signal) =>
+      /no verified on-chain (?:provider|analysis)|coin metrics returned no verified coverage/i.test(signal),
+    );
+    const expectedNames = (Object.keys(votes) as AnalysisName[]).filter(
+      (name) => name !== 'onchain' || onChainConfigured,
+    );
+    const usableNames = expectedNames.filter(
       (name) => qualities[name] !== 'INSUFFICIENT',
     );
     const counts = { BULLISH: 0, BEARISH: 0, NEUTRAL: 0 };
@@ -248,13 +254,15 @@ export class FusionService {
       counts.BEARISH,
       counts.NEUTRAL,
     );
-    const confidence = Math.round((agreement / 6) * 100);
-    const dataQuality: AgentDataQuality = Object.values(qualities).every(
-      (quality) => quality === 'GOOD',
+    const confidence = Math.round(
+      (agreement / Math.max(expectedNames.length, 1)) * 100,
+    );
+    const dataQuality: AgentDataQuality = expectedNames.every(
+      (name) => qualities[name] === 'GOOD',
     )
       ? 'GOOD'
-      : Object.values(qualities).every(
-            (quality) => quality === 'INSUFFICIENT',
+      : expectedNames.every(
+            (name) => qualities[name] === 'INSUFFICIENT',
           )
         ? 'INSUFFICIENT'
         : 'PARTIAL';

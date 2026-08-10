@@ -49,4 +49,22 @@ describe('DecisionJudgeService', () => {
     expect(result).toEqual(expect.objectContaining({ approved: false, verdict: 'REQUEST_MORE_DATA' }));
     expect(result.reasons).toContain('STALE_SOURCE_DATA');
   });
+
+  it('treats an explicitly unconfigured on-chain provider as optional', () => {
+    const generatedAt = new Date().toISOString();
+    const good = { dataQuality: 'GOOD', generatedAt };
+    const result = judge.evaluate({
+      decision: 'WAIT', dataQuality: 'GOOD', conflictLevel: 'LOW', confidence: 0,
+      expectedValue: 0.2, profitFactorEstimate: 1.4, riskScore: 30,
+    } as never, {
+      market: good, technical: good, news: good, sentiment: good, macro: good,
+      onchain: {
+        dataQuality: 'INSUFFICIENT', generatedAt,
+        signals: ['No verified on-chain provider is configured.'],
+      },
+    } as never);
+
+    expect(result.reasons).not.toContain('INSUFFICIENT_USABLE_ANALYSTS');
+    expect(result.verdict).toBe('APPROVE');
+  });
 });

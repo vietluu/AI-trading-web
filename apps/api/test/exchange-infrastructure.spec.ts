@@ -113,7 +113,7 @@ describe("exchange infrastructure", () => {
       ok: false,
       status: 400,
       headers: new Headers(),
-      json: () => Promise.resolve({ code: "50004", msg: "Order quantity exceeds limit" }),
+      json: () => Promise.resolve({ code: "51000", msg: "Order quantity exceeds limit" }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -131,6 +131,37 @@ describe("exchange infrastructure", () => {
         code: ExchangeErrorCode.INVALID_REQUEST,
         message: "Order quantity exceeds limit",
       });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("classifies OKX endpoint timeout code 50004 as retryable timeout", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      // OKX can return business error envelopes with either HTTP 200 or 400.
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: () => Promise.resolve({ code: "50004", msg: "API endpoint request timeout." }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const service = new (await import("../src/exchange/infrastructure/exchange-http.service")).ExchangeHttpService(
+        new ConfigService({ EXCHANGE_MAX_RETRIES: 2, EXCHANGE_RETRY_BASE_DELAY_MS: 0 }),
+      );
+      await expect(
+        service.request({
+          provider: ExchangeProvider.OKX_FUTURES,
+          operation: "/api/v5/account/balance",
+          url: "https://example.com/api/v5/account/balance",
+        }),
+      ).rejects.toMatchObject({
+        code: ExchangeErrorCode.TIMEOUT,
+        exchangeCode: "50004",
+        retryable: true,
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(3);
     } finally {
       vi.unstubAllGlobals();
     }

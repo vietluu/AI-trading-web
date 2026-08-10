@@ -14,6 +14,8 @@ import { ExternalDataEventPublisher } from '../services/external-data-event-publ
 @Processor(EXTERNAL_DATA_QUEUE_NAME)
 export class ExternalDataIngestionProcessor extends WorkerHost {
   private readonly logger = new Logger(ExternalDataIngestionProcessor.name);
+  private newsRefresh?: Promise<void>;
+  private sentimentRefresh?: Promise<void>;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -52,6 +54,40 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
         this.logger.warn(`Unknown job type: ${job.name}`);
         return { status: 'SKIPPED' };
     }
+  }
+
+  async refreshNewsIfStale(maxAgeMs = 15 * 60_000): Promise<void> {
+    const staleBefore = new Date(Date.now() - maxAgeMs);
+    const staleSource = await this.prisma.externalDataSource.findFirst({
+      where: {
+        isEnabled: true,
+        provider: 'GENERIC_RSS',
+        sourceType: 'RSS',
+        OR: [{ lastSuccessAt: null }, { lastSuccessAt: { lt: staleBefore } }],
+      },
+      select: { id: true },
+    });
+    if (!staleSource) return;
+    if (!this.newsRefresh) {
+      this.newsRefresh = this.handlePollRssSources(Date.now())
+        .then(() => undefined)
+        .finally(() => { this.newsRefresh = undefined; });
+    }
+    await this.newsRefresh;
+  }
+
+  async refreshSentimentIfStale(maxAgeMs = 2 * 60 * 60_000): Promise<void> {
+    const latest = await this.prisma.marketSentimentObservation.findFirst({
+      orderBy: { observedAt: 'desc' },
+      select: { observedAt: true },
+    });
+    if (latest && Date.now() - latest.observedAt.getTime() <= maxAgeMs) return;
+    if (!this.sentimentRefresh) {
+      this.sentimentRefresh = this.handlePollFearGreed(Date.now())
+        .then(() => undefined)
+        .finally(() => { this.sentimentRefresh = undefined; });
+    }
+    await this.sentimentRefresh;
   }
 
   private async handlePollRssSources(startTime: number, sourceId?: string) {

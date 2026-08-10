@@ -56,7 +56,11 @@ function createPrismaMock() {
 describe("NewsToolDataService", () => {
   it("returns real trusted-domain articles and excludes test URLs", async () => {
     const prisma = createPrismaMock();
-    const service = new NewsToolDataService(prisma as unknown as PrismaService);
+    const ingestion = { refreshNewsIfStale: vi.fn().mockResolvedValue(undefined) };
+    const service = new NewsToolDataService(
+      prisma as unknown as PrismaService,
+      ingestion as never,
+    );
 
     const result = await service.list({ symbol: "BTC", lookbackHours: 6, limit: 20 });
 
@@ -70,8 +74,20 @@ describe("NewsToolDataService", () => {
     );
     expect(JSON.stringify(result)).not.toContain("Synthetic test article");
     expect(prisma.newsArticle.findMany).toHaveBeenCalledOnce();
+    expect(ingestion.refreshNewsIfStale).toHaveBeenCalledOnce();
     expect(JSON.stringify(prisma.newsArticle.findMany.mock.calls)).toContain(
       '"symbols":{"some":{"symbol":{"in":["BTC","BTC-USDT"]}}}',
+    );
+  });
+
+  it("normalizes arbitrary quote pairs to base and canonical symbol variants", async () => {
+    const prisma = createPrismaMock();
+    const service = new NewsToolDataService(prisma as unknown as PrismaService);
+
+    await service.list({ symbol: "ZRO/USDT", lookbackHours: 6, limit: 20 });
+
+    expect(JSON.stringify(prisma.newsArticle.findMany.mock.calls)).toContain(
+      '"in":["ZRO","ZRO-USDT"]',
     );
   });
 

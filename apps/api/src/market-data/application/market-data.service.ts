@@ -100,12 +100,37 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
     const cached = await this.cache.getIndicator(provider, symbol, interval);
     if (cached) return cached;
 
-    await this.getHistoricalCandles({
+    const persisted = await this.repository.getLatestIndicatorSnapshot(
+      provider,
+      symbol,
+      interval,
+    );
+    if (persisted) {
+      await this.cache.setIndicator(provider, symbol, interval, persisted);
+      return persisted;
+    }
+
+    const candles = await this.getHistoricalCandles({
       provider,
       symbol,
       interval,
       limit: 250,
     });
+    const calculated = await this.cache.getIndicator(provider, symbol, interval);
+    if (calculated) return calculated;
+
+    // getHistoricalCandles returns early when PostgreSQL already contains the
+    // requested amount. In that path no indicator calculation is triggered,
+    // so explicitly rebuild the expired cache from the latest closed candle.
+    const lastClosed = [...candles].reverse().find((candle) => candle.isClosed);
+    if (lastClosed) {
+      await this.calculateAndPersistIndicators(
+        provider,
+        symbol,
+        interval,
+        lastClosed,
+      );
+    }
     return this.cache.getIndicator(provider, symbol, interval);
   }
 

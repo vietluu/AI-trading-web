@@ -305,7 +305,10 @@ export class DecisionService {
     const convictionBonus = agreementScore >= 80 && baseScore >= 70 ? 8 : agreementScore >= 70 && baseScore >= 60 ? 4 : 0;
 
     const rawConfidence = baseScore + coreBonus + convictionBonus - qualityDeduction - conflictDeduction - volDeduction;
-    const confidence = candidate === 'WAIT' ? 0 : Math.round(this.clamp(rawConfidence, 0, 100));
+    // WAIT is still a decision: retain the composite confidence in staying out.
+    // Truly insufficient evidence is reduced by the quality deduction below,
+    // instead of every neutral market being displayed as an unexplained 0/100.
+    const confidence = Math.round(this.clamp(rawConfidence, 0, 100));
 
     const minConfidence = customOptions?.confidenceThreshold ?? DECISION_THRESHOLDS.MINIMUM_CONFIDENCE_THRESHOLD;
     if (confidence < minConfidence && candidate !== 'WAIT') {
@@ -349,7 +352,7 @@ export class DecisionService {
       decision: finalDecision,
       confidence: Math.round(calibratedConfidence),
       confidenceKind: 'COMPOSITE_SCORE',
-      reasoning: `${active.length} of 6 analysts supplied usable data. The ${regime.type.toLowerCase().replace('_', ' ')} regime produced a normalized ${weightedBias} bias of ${Math.round(directionalBias)}, ${agreementScore}% analyst agreement, and ${Math.round(baseScore)}% weighted alignment. The composite confidence score is ${Math.round(calibratedConfidence)} with ${dataQuality} data and ${conflictLevel} conflict; it is not a win probability.`,
+      reasoning: `${active.length} of ${this.expectedAnalystCount(input)} configured analysts supplied usable data. The ${regime.type.toLowerCase().replace('_', ' ')} regime produced a normalized ${weightedBias} bias of ${Math.round(directionalBias)}, ${agreementScore}% analyst agreement, and ${Math.round(baseScore)}% weighted alignment. The composite confidence score is ${Math.round(calibratedConfidence)} with ${dataQuality} data and ${conflictLevel} conflict; it is not a win probability.`,
       signals,
       risks,
       agreementScore,
@@ -500,15 +503,23 @@ export class DecisionService {
   }
 
   private dataQuality(input: DecisionInput, active: AnalystName[]): AgentDataQuality {
-    if (input.fusionOutput.dataQuality === 'INSUFFICIENT' || active.length < 3) {
+    const expectedCount = this.expectedAnalystCount(input);
+    if (input.fusionOutput.dataQuality === 'INSUFFICIENT' || active.length < Math.min(3, expectedCount)) {
       return 'INSUFFICIENT';
     }
     if (
       input.fusionOutput.dataQuality === 'GOOD' &&
-      active.length === 6 &&
+      active.length === expectedCount &&
       active.every((name) => input[name]?.dataQuality === 'GOOD')
     ) return 'GOOD';
     return 'PARTIAL';
+  }
+
+  private expectedAnalystCount(input: DecisionInput): number {
+    const onChainConfigured = !input.onchain?.signals.some((signal) =>
+      /no verified on-chain (?:provider|analysis)|coin metrics returned no verified coverage/i.test(signal),
+    );
+    return onChainConfigured ? 6 : 5;
   }
 
   private calculateOpportunityScore(

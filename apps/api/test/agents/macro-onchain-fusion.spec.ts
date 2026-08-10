@@ -128,11 +128,17 @@ describe('Macro and On-chain Analyst Agents', () => {
     );
   });
 
-  it('keeps the on-chain framework explicit about unavailable real data', () => {
+  it('uses a verified on-chain data tool and degrades unsupported assets explicitly', () => {
     expect(ON_CHAIN_ANALYST_DEFINITION.type).toBe(AgentType.ON_CHAIN_ANALYST);
     expect(ON_CHAIN_ANALYST_DEFINITION.status).toBe(AgentStatus.ACTIVE);
-    expect(ON_CHAIN_ANALYST_DEFINITION.allowedToolNames).toEqual([]);
-    expect(ON_CHAIN_ANALYST_DEFINITION.requiredCapabilities).toEqual([]);
+    expect(ON_CHAIN_ANALYST_DEFINITION.allowedToolNames).toEqual(['onchain.metrics.get']);
+    expect(ON_CHAIN_ANALYST_DEFINITION.requiredCapabilities).toEqual(['READ_ONCHAIN_DATA']);
+    expect(ON_CHAIN_ANALYST_DEFINITION.buildToolCalls?.({
+      symbol: 'SUI-USDT', lookbackHours: 168,
+    })).toEqual([{
+      toolName: 'onchain.metrics.get',
+      arguments: { symbol: 'SUI-USDT', lookbackHours: 168 },
+    }]);
     const fallback = ON_CHAIN_ANALYST_DEFINITION.buildInsufficientOutput?.(
       [],
       'provider unavailable',
@@ -148,9 +154,7 @@ describe('Macro and On-chain Analyst Agents', () => {
     expect(macro?.systemTemplate).toContain(
       'Never output LONG, SHORT, BUY, or SELL',
     );
-    expect(onchain?.systemTemplate).toContain(
-      'no connected on-chain data provider',
-    );
+    expect(onchain?.systemTemplate).toContain('Coin Metrics');
   });
 });
 
@@ -181,6 +185,22 @@ describe('FusionService', () => {
 
     expect(output.overallBias).toBe('NEUTRAL');
     expect(output.confidence).toBe(50);
+  });
+
+  it('does not penalize fusion quality for an explicitly unconfigured on-chain provider', () => {
+    const input = analysisFixture();
+    input.onchain = {
+      summary: 'On-chain data is not yet connected.',
+      activity: 'NORMAL',
+      flows: {},
+      signals: ['Coin Metrics returned no verified coverage for this asset or was unavailable.'],
+      dataQuality: 'INSUFFICIENT',
+      generatedAt: new Date().toISOString(),
+    };
+    const output = new FusionService({} as never).fuse(input);
+
+    expect(output.dataQuality).toBe('GOOD');
+    expect(output.confidence).toBe(80);
   });
 
   it('runs all six agents through AgentExecutionService and validates output', async () => {

@@ -99,60 +99,67 @@ export class ExternalDataSchedulerService implements OnApplicationBootstrap {
 
   private async scheduleRepeatableJobs() {
     try {
-      // 1. Poll RSS Sources (every 5 minutes)
-      await this.queue.add(
-        ExternalDataJobType.POLL_RSS_SOURCES,
-        {},
-        {
-          repeat: { every: 300000 },
-          jobId: 'repeatable-poll-rss-sources',
-        } as any,
-      );
+      await Promise.all([
+        this.upsertScheduler(
+          'repeatable-poll-rss-sources',
+          ExternalDataJobType.POLL_RSS_SOURCES,
+          300_000,
+        ),
+        this.upsertScheduler(
+          'repeatable-poll-binance-announcements',
+          ExternalDataJobType.POLL_BINANCE_ANNOUNCEMENTS,
+          300_000,
+        ),
+        this.upsertScheduler(
+          'repeatable-poll-okx-announcements',
+          ExternalDataJobType.POLL_OKX_ANNOUNCEMENTS,
+          300_000,
+        ),
+        this.upsertScheduler(
+          'repeatable-poll-fear-greed',
+          ExternalDataJobType.POLL_FEAR_GREED,
+          3_600_000,
+        ),
+        this.upsertScheduler(
+          'repeatable-retention-cleanup',
+          ExternalDataJobType.RETENTION_CLEANUP,
+          86_400_000,
+        ),
+      ]);
 
-      // 2. Poll Binance Announcements (every 5 minutes)
-      await this.queue.add(
-        ExternalDataJobType.POLL_BINANCE_ANNOUNCEMENTS,
-        {},
-        {
-          repeat: { every: 300000 },
-          jobId: 'repeatable-poll-binance-announcements',
-        } as any,
-      );
-
-      // 3. Poll OKX Announcements (every 5 minutes)
-      await this.queue.add(
-        ExternalDataJobType.POLL_OKX_ANNOUNCEMENTS,
-        {},
-        {
-          repeat: { every: 300000 },
-          jobId: 'repeatable-poll-okx-announcements',
-        } as any,
-      );
-
-      // 4. Poll Fear & Greed Index (every 1 hour)
-      await this.queue.add(
-        ExternalDataJobType.POLL_FEAR_GREED,
-        {},
-        {
-          repeat: { every: 3600000 },
-          jobId: 'repeatable-poll-fear-greed',
-        } as any,
-      );
-
-      // 5. Retention Cleanup (every 24 hours)
-      await this.queue.add(
-        ExternalDataJobType.RETENTION_CLEANUP,
-        {},
-        {
-          repeat: { every: 86400000 },
-          jobId: 'repeatable-retention-cleanup',
-        } as any,
-      );
+      // Do not wait for the first repeat interval after a restart. Stable
+      // time-bucket IDs prevent duplicate catch-up jobs across API replicas.
+      const fiveMinuteBucket = Math.floor(Date.now() / 300_000);
+      const hourlyBucket = Math.floor(Date.now() / 3_600_000);
+      await Promise.all([
+        this.queue.add(
+          ExternalDataJobType.POLL_RSS_SOURCES,
+          {},
+          { jobId: `startup-rss-${fiveMinuteBucket}`, removeOnComplete: true },
+        ),
+        this.queue.add(
+          ExternalDataJobType.POLL_FEAR_GREED,
+          {},
+          { jobId: `startup-fear-greed-${hourlyBucket}`, removeOnComplete: true },
+        ),
+      ]);
 
       this.logger.log('Successfully registered repeatable BullMQ ingestion schedules');
     } catch (err: any) {
       this.logger.error(`Failed to register BullMQ repeatable jobs: ${err.message}`);
     }
+  }
+
+  private upsertScheduler(id: string, name: ExternalDataJobType, every: number) {
+    return this.queue.upsertJobScheduler(
+      id,
+      { every },
+      {
+        name,
+        data: {},
+        opts: { removeOnComplete: true, removeOnFail: false },
+      },
+    );
   }
 
   async triggerManualRun(provider: string, sourceId?: string) {

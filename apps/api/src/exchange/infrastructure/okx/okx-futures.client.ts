@@ -227,6 +227,16 @@ export class OkxFuturesClient {
     correlationId?: string,
     message?: string,
   ): ExchangeError {
+    if (code === "50004")
+      return new ExchangeError(
+        ExchangeErrorCode.TIMEOUT,
+        this.provider,
+        true,
+        504,
+        "Exchange endpoint request timed out",
+        code,
+        correlationId,
+      );
     if (code === "50102")
       return new ExchangeError(
         ExchangeErrorCode.TIMESTAMP_INVALID,
@@ -280,7 +290,6 @@ export class OkxFuturesClient {
     }
     if (
       [
-        "50004",
         "51000",
         "51002",
         "51003",

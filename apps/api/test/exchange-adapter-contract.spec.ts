@@ -156,7 +156,8 @@ describe("exchange adapter normalization contract", () => {
     const ticker = await adapter.getTicker("BTC-USDT");
     expect(ticker.symbol).toBe("BTC-USDT");
     expect(ticker.lastPrice).toBe("67233.12345678");
-    expect(ticker).not.toHaveProperty("priceChangePercent24h");
+    expect(Number(ticker.priceChange24h)).toBeCloseTo(133.12345678, 8);
+    expect(Number(ticker.priceChangePercent24h)).toBeCloseTo(0.19839561, 8);
   });
 
   it("normalizes closed klines for both providers", async () => {

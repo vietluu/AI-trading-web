@@ -35,6 +35,7 @@ export class ToolHealthService {
       "READ_SENTIMENT",
       "READ_MACRO",
       "READ_SOCIAL",
+      "READ_ONCHAIN_DATA",
       "READ_USER_SETTINGS",
       "READ_USER_EXCHANGE_ACCOUNT",
       "READ_AI_MEMORY",

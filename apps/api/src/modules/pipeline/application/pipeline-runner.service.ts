@@ -27,6 +27,12 @@ import { MarketDataService } from "../../../market-data/application/market-data.
 import { RedisService } from "../../../redis/redis.service";
 import { DecisionJudgeService } from "./decision-judge.service";
 import { preferredTradePlanAtr, timeframeMilliseconds } from "../domain/adaptive-trading-policy";
+import { SettingsService } from "../../../settings/settings.service";
+import {
+  analyzeMultiTimeframe,
+  evaluateMultiTimeframeDecision,
+  selectPipelineTimeframes,
+} from "../domain/multi-timeframe-analysis";
 
 class PipelineCancelledError extends Error {}
 
@@ -48,6 +54,7 @@ export class PipelineRunnerService {
     private readonly liveTrading: LiveTradingService,
     private readonly redis: RedisService,
     @Optional() private readonly judge?: DecisionJudgeService,
+    @Optional() private readonly settings?: SettingsService,
   ) {}
 
   async run(job: PipelineJob): Promise<void> {
@@ -64,21 +71,63 @@ export class PipelineRunnerService {
     try {
       let analyses: FusionInput;
       let fusionOutput: FusionOutput;
-      const interval = (job.params?.interval as string | undefined) ?? definition.defaultParams.interval;
-      const [indicatorSnapshot, recentCandles] = await Promise.all([
-        this.marketData.getIndicatorSnapshot(
-          job.provider as unknown as ExchangeProvider,
-          symbol,
-          (interval as ExchangeInterval) ?? ExchangeInterval.ONE_HOUR,
-        ),
-        this.marketData.getHistoricalCandles({
-          provider: job.provider as unknown as ExchangeProvider,
-          symbol,
-          interval: (interval as ExchangeInterval) ?? ExchangeInterval.ONE_HOUR,
-          limit: 1,
+      const preferredTimeframes = this.settings
+        ? await this.settings
+            .get(job.userId)
+            .then((setting) => setting.preferredTimeframes)
+            .catch(() => [] as string[])
+        : [];
+      const timeframeSelection = selectPipelineTimeframes(
+        typeof job.params?.interval === 'string' ? job.params.interval : undefined,
+        preferredTimeframes,
+        typeof definition.defaultParams.interval === 'string'
+          ? definition.defaultParams.interval
+          : '15m',
+      );
+      const interval = timeframeSelection.primary;
+      const timeframeMarketData = await Promise.all(
+        timeframeSelection.selected.map(async (timeframe) => {
+          try {
+            const [snapshot, candles] = await Promise.all([
+              this.marketData.getIndicatorSnapshot(
+                job.provider as unknown as ExchangeProvider,
+                symbol,
+                timeframe as ExchangeInterval,
+              ),
+              this.marketData.getHistoricalCandles({
+                provider: job.provider as unknown as ExchangeProvider,
+                symbol,
+                interval: timeframe as ExchangeInterval,
+                limit: 1,
+              }),
+            ]);
+            return { timeframe, snapshot, candles };
+          } catch (error) {
+            this.logger.warn({
+              event: 'pipeline_timeframe_data_unavailable',
+              runId,
+              symbol,
+              timeframe,
+              message: error instanceof Error ? error.message : 'Unknown market-data error',
+            });
+            return { timeframe, snapshot: undefined, candles: [] };
+          }
         }),
-      ]);
+      );
+      const primaryMarketData = timeframeMarketData.find((item) => item.timeframe === interval)!;
+      const indicatorSnapshot = primaryMarketData.snapshot;
+      const recentCandles = primaryMarketData.candles;
       const lastPrice = recentCandles[0] ? Number(recentCandles[0].close) : undefined;
+      const multiTimeframe = analyzeMultiTimeframe(
+        interval,
+        timeframeMarketData.map((item) => ({
+          timeframe: item.timeframe,
+          close: item.candles[0] ? Number(item.candles[0].close) : undefined,
+          ema20: Number(item.snapshot?.values.ema20),
+          ema50: Number(item.snapshot?.values.ema50),
+          rsi: Number(item.snapshot?.values.rsi14),
+        })),
+      );
 
       const signalFilter = this.signalFilter.evaluate({
         price: lastPrice,
@@ -129,12 +178,14 @@ export class PipelineRunnerService {
           decision: "WAIT",
           confidence: 0,
           dataQuality: "INSUFFICIENT",
+          timeframe: String(interval),
           skippedReason: signalFilter.reason,
-          result: {
+        result: {
           decision: "WAIT",
           reason: signalFilter.reason,
           actionable: false,
           signalFilter: { allowed: signalFilter.allowed, reason: signalFilter.reason },
+          multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue,
         },
         });
         return;
@@ -227,8 +278,9 @@ export class PipelineRunnerService {
         referencePrice: lastPrice,
         sourceTimestamp: indicatorSnapshot?.candleCloseTime ?? recentCandles[0]?.closeTime,
       }) ?? { verdict: 'APPROVE' as const, approved: true, reasons: [] };
-      const actionable = thresholdFilter.actionable && filter.actionable && judge.approved;
-      const reason = thresholdFilter.reason ?? filter.reason ?? judge.reasons[0];
+      const multiTimeframeFilter = evaluateMultiTimeframeDecision(output.decision, multiTimeframe);
+      const actionable = thresholdFilter.actionable && filter.actionable && judge.approved && multiTimeframeFilter.allowed;
+      const reason = thresholdFilter.reason ?? filter.reason ?? judge.reasons[0] ?? multiTimeframeFilter.reason;
       await this.finishStep(runId, "decision", output, decisionCompletedAt);
       this.analytics.recordStageTelemetry({
         pipelineId: job.pipelineId,
@@ -290,8 +342,8 @@ export class PipelineRunnerService {
             learningStage: output.learningConfiguration?.stage,
             timeframe: String(interval),
             skippedReason: 'EXECUTION_LOCK_BUSY',
-            storedContext: { analyses, fusionOutput },
-            result: { ...output, decision: 'WAIT' as const, actionable: false, skippedReason: 'EXECUTION_LOCK_BUSY' },
+            storedContext: { analyses, fusionOutput, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue },
+            result: { ...output, decision: 'WAIT' as const, actionable: false, skippedReason: 'EXECUTION_LOCK_BUSY', multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue },
           });
           return;
         }
@@ -392,7 +444,7 @@ export class PipelineRunnerService {
         learningStage: output.learningConfiguration?.stage,
         timeframe: String(interval),
         skippedReason: finalSkippedReason,
-        storedContext: { analyses, fusionOutput },
+        storedContext: { analyses, fusionOutput, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue },
         result: {
           ...output,
           actionable,
@@ -400,6 +452,12 @@ export class PipelineRunnerService {
           signalFilter: {
             allowed: signalFilter.allowed,
             preliminaryRegime: signalFilter.preliminaryRegime,
+          },
+          multiTimeframe: {
+            ...multiTimeframe,
+            decisionConfirmation: multiTimeframeFilter.confirmation,
+            allowed: multiTimeframeFilter.allowed,
+            reason: multiTimeframeFilter.reason,
           },
           riskAssessment,
           liveExecution,

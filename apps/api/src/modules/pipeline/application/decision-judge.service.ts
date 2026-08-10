@@ -32,8 +32,17 @@ export class DecisionJudgeService {
       regime: decision.regime?.type ?? 'RANGING',
       spreadBps,
     });
-    const usable = Object.values(analyses).filter((analysis) => analysis.dataQuality !== 'INSUFFICIENT');
-    if (usable.length < 4) reasons.push('FEWER_THAN_FOUR_USABLE_ANALYSTS');
+    const configured = Object.entries(analyses).filter(([name, analysis]) =>
+      name !== 'onchain' || !(
+        'signals' in analysis &&
+        analysis.signals.some((signal: string) =>
+          /no verified on-chain (?:provider|analysis)|coin metrics returned no verified coverage/i.test(signal),
+        )
+      ),
+    ).map(([, analysis]) => analysis);
+    const usable = configured.filter((analysis) => analysis.dataQuality !== 'INSUFFICIENT');
+    const minimumUsable = Math.min(4, configured.length);
+    if (usable.length < minimumUsable) reasons.push('INSUFFICIENT_USABLE_ANALYSTS');
     if (decision.dataQuality === 'INSUFFICIENT') reasons.push('INSUFFICIENT_DECISION_DATA');
     if (decision.conflictLevel === 'HIGH') reasons.push('HIGH_SIGNAL_CONFLICT');
 

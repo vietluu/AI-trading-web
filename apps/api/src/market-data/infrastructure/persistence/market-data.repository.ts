@@ -778,4 +778,20 @@ export class MarketDataRepository {
 
     return mapSnapshotRow(row);
   }
+
+  async getLatestIndicatorSnapshot(
+    provider: ExchangeProvider,
+    symbol: string,
+    interval: ExchangeInterval,
+  ): Promise<IndicatorSnapshot | null> {
+    const row = await this.prisma.indicatorSnapshotRecord.findFirst({
+      where: {
+        provider,
+        symbol,
+        interval: toDbInterval(interval),
+      },
+      orderBy: { candleCloseTime: "desc" },
+    });
+    return row ? mapSnapshotRow(row) : null;
+  }
 }

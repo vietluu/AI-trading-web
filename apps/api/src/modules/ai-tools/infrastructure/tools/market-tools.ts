@@ -24,6 +24,7 @@ export class MarketTickerGetTool implements ToolDefinition<{ symbol: string; pro
     high24h: z.string().optional(),
     low24h: z.string().optional(),
     volume24h: z.string().optional(),
+    priceChangePercent24h: z.string().optional(),
     timestamp: z.string(),
     stale: z.boolean(),
   });
@@ -54,6 +55,7 @@ export class MarketTickerGetTool implements ToolDefinition<{ symbol: string; pro
       high24h: ticker.high24h,
       low24h: ticker.low24h,
       volume24h: ticker.volume24h,
+      priceChangePercent24h: ticker.priceChangePercent24h,
       bidPrice: ticker.bidPrice,
       askPrice: ticker.askPrice,
       timestamp: timestamp.toISOString(),

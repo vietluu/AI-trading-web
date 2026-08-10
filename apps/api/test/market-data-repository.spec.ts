@@ -62,4 +62,44 @@ describe('MarketDataRepository candle freshness', () => {
     expect(query.values).toContain('1m');
     expect(query.values).not.toContain('i1m');
   });
+
+  it('loads the latest persisted indicator snapshot for cache recovery', async () => {
+    const row = {
+      id: crypto.randomUUID(),
+      provider: 'OKX_FUTURES' as const,
+      symbol: 'ZRO-USDT',
+      interval: 'i15m' as const,
+      candleOpenTime: new Date('2026-08-10T04:00:00Z'),
+      candleCloseTime: new Date('2026-08-10T04:14:59.999Z'),
+      status: 'CLOSED' as const,
+      values: { rsi14: '67.29', atr14: '0.00540733' },
+      calculationVersion: 1,
+      createdAt: new Date('2026-08-10T04:15:35Z'),
+      updatedAt: new Date('2026-08-10T04:15:35Z'),
+    };
+    const findFirst = vi.fn().mockResolvedValue(row);
+    const repository = new MarketDataRepository({
+      indicatorSnapshotRecord: { findFirst },
+    } as never);
+
+    const result = await repository.getLatestIndicatorSnapshot(
+      ExchangeProvider.OKX_FUTURES,
+      'ZRO-USDT',
+      ExchangeInterval.FIFTEEN_MINUTES,
+    );
+
+    expect(findFirst).toHaveBeenCalledWith({
+      where: {
+        provider: ExchangeProvider.OKX_FUTURES,
+        symbol: 'ZRO-USDT',
+        interval: 'i15m',
+      },
+      orderBy: { candleCloseTime: 'desc' },
+    });
+    expect(result).toMatchObject({
+      symbol: 'ZRO-USDT',
+      interval: ExchangeInterval.FIFTEEN_MINUTES,
+      values: { rsi14: '67.29', atr14: '0.00540733' },
+    });
+  });
 });

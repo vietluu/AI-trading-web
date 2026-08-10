@@ -69,6 +69,8 @@ import { ExternalDataGateway } from './presentation/gateways/external-data.gatew
     ExternalDataGateway,
   ],
   exports: [
+    ExternalHttpClient,
+    ExternalDataIngestionProcessor,
     NewsIngestionService,
     UserNewsStateService,
     ProviderHealthService,

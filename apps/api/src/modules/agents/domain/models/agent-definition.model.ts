@@ -49,7 +49,7 @@ export interface AgentDefinition<TInput = unknown, TOutput = unknown> {
   readonly status: AgentStatus;
   readonly executionMode: AgentExecutionMode;
   readonly inputSchema: ZodType<TInput, ZodTypeDef, unknown>;
-  readonly outputSchema: ZodType<TOutput>;
+  readonly outputSchema: ZodType<TOutput, ZodTypeDef, unknown>;
   readonly promptId: string;
   readonly promptVersion: number;
   readonly allowedToolNames: string[];

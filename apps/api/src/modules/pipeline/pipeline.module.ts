@@ -29,6 +29,7 @@ import {
 import { LiveTradingModule } from "../live-trading/live-trading.module";
 import { MarketDataModule } from "../../market-data/market-data.module";
 import { RedisModule } from "../../redis/redis.module";
+import { SettingsModule } from "../../settings/settings.module";
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { RedisModule } from "../../redis/redis.module";
     LiveTradingModule,
     MarketDataModule,
     RedisModule,
+    SettingsModule,
     BullModule.registerQueue(
       { name: PIPELINE_RUN_QUEUE_NAME },
       { name: PIPELINE_RETRY_QUEUE_NAME },

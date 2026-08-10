@@ -40,6 +40,9 @@ export interface TradePlan {
   trailingAtrMultiple?: number;
   atr?: number;
   timeframeMs?: number;
+  entryLocation?: number;
+  boundaryThreshold?: number;
+  structuralRiskAtr?: number;
 }
 
 const finitePositive = (value: number | undefined): value is number =>
@@ -95,7 +98,7 @@ export function buildAdaptiveTradePlan(input: {
   roundTripCostPct?: number;
 }): TradePlan {
   const { side, entryPrice, decision, market } = input;
-  const regime = resolveTradePlanRegime(decision, market);
+  let regime = resolveTradePlanRegime(decision, market);
   const atr = market.atr;
   const support = market.support;
   const resistance = market.resistance;
@@ -121,6 +124,17 @@ export function buildAdaptiveTradePlan(input: {
     };
   }
 
+  // Derive a breakout from market prices when the model omitted its optional
+  // breakout flag. A small ATR buffer avoids classifying a boundary touch as a
+  // confirmed break.
+  if (
+    market.breakout !== true &&
+    ((side === "LONG" && finitePositive(resistance) && entryPrice > resistance + atr * 0.1) ||
+      (side === "SHORT" && finitePositive(support) && entryPrice < support - atr * 0.1))
+  ) {
+    regime = "BREAKOUT";
+  }
+
   if (
     regime === "RANGING" &&
     finitePositive(support) &&
@@ -129,7 +143,10 @@ export function buildAdaptiveTradePlan(input: {
   ) {
     const rangeWidth = resistance - support;
     const location = (entryPrice - support) / rangeWidth;
-    if ((side === "LONG" && location > 0.35) || (side === "SHORT" && location < 0.65)) {
+    const boundaryTolerance = Math.min(0.05, (atr / rangeWidth) * 0.1);
+    const longBoundary = 0.35 + boundaryTolerance;
+    const shortBoundary = 0.65 - boundaryTolerance;
+    if ((side === "LONG" && location > longBoundary) || (side === "SHORT" && location < shortBoundary)) {
       return {
         approved: false,
         reason: "RANGE_ENTRY_NOT_AT_BOUNDARY",
@@ -137,6 +154,8 @@ export function buildAdaptiveTradePlan(input: {
         strategy: "RANGE_REVERSAL",
         maxHoldingCandles: 8,
         breakEvenAtR: 0.8,
+        entryLocation: rounded(location),
+        boundaryThreshold: rounded(side === "LONG" ? longBoundary : shortBoundary),
       };
     }
     const stopLoss = side === "LONG" ? support - atr * 0.3 : resistance + atr * 0.3;
@@ -156,6 +175,8 @@ export function buildAdaptiveTradePlan(input: {
         rewardToRisk: rounded(rr),
         maxHoldingCandles: 8,
         breakEvenAtR: 0.8,
+        entryLocation: rounded(location),
+        boundaryThreshold: rounded(side === "LONG" ? longBoundary : shortBoundary),
       };
     }
     return {
@@ -169,6 +190,8 @@ export function buildAdaptiveTradePlan(input: {
       breakEvenAtR: 0.8,
       atr,
       timeframeMs: market.timeframeMs,
+      entryLocation: rounded(location),
+      boundaryThreshold: rounded(side === "LONG" ? longBoundary : shortBoundary),
     };
   }
 
@@ -214,11 +237,24 @@ export function buildAdaptiveTradePlan(input: {
     };
   }
 
-  const structuralStop = side === "LONG"
-    ? finitePositive(support) ? support - atr * 0.3 : entryPrice - atr * 1.2
-    : finitePositive(resistance) ? resistance + atr * 0.3 : entryPrice + atr * 1.2;
+  const structuralCandidates = side === "LONG"
+    ? [
+        finitePositive(support) ? support - atr * 0.3 : undefined,
+        finitePositive(market.ema20) ? market.ema20 - atr * 0.3 : undefined,
+        finitePositive(market.ema50) ? market.ema50 - atr * 0.3 : undefined,
+      ].filter((value): value is number => finitePositive(value) && value < entryPrice)
+    : [
+        finitePositive(resistance) ? resistance + atr * 0.3 : undefined,
+        finitePositive(market.ema20) ? market.ema20 + atr * 0.3 : undefined,
+        finitePositive(market.ema50) ? market.ema50 + atr * 0.3 : undefined,
+      ].filter((value): value is number => finitePositive(value) && value > entryPrice);
+  const structuralStop = structuralCandidates.length > 0
+    ? side === "LONG" ? Math.max(...structuralCandidates) : Math.min(...structuralCandidates)
+    : side === "LONG" ? entryPrice - atr * 1.2 : entryPrice + atr * 1.2;
   const rawRisk = Math.abs(entryPrice - structuralStop);
-  if (rawRisk > atr * 2) {
+  const structuralRiskAtr = rawRisk / atr;
+  const maximumStructuralRiskAtr = regime === "HIGH_VOLATILITY" ? 2 : 3;
+  if (structuralRiskAtr > maximumStructuralRiskAtr) {
     return {
       approved: false,
       reason: "STRUCTURAL_STOP_TOO_WIDE",
@@ -226,6 +262,7 @@ export function buildAdaptiveTradePlan(input: {
       strategy: regime === "HIGH_VOLATILITY" ? "VOLATILITY_CONTROL" : "TREND_PULLBACK",
       maxHoldingCandles: regime === "HIGH_VOLATILITY" ? 8 : 20,
       breakEvenAtR: 1,
+      structuralRiskAtr: rounded(structuralRiskAtr),
     };
   }
   const risk = Math.max(atr * 0.8, rawRisk);
@@ -257,6 +294,7 @@ export function buildAdaptiveTradePlan(input: {
       rewardToRisk: rounded(rr),
       maxHoldingCandles: regime === "HIGH_VOLATILITY" ? 8 : 20,
       breakEvenAtR: 1,
+      structuralRiskAtr: rounded(structuralRiskAtr),
     };
   }
   return {
@@ -271,5 +309,6 @@ export function buildAdaptiveTradePlan(input: {
     trailingAtrMultiple: regime === "HIGH_VOLATILITY" ? 3 : 2.5,
     atr,
     timeframeMs: market.timeframeMs,
+    structuralRiskAtr: rounded(structuralRiskAtr),
   };
 }

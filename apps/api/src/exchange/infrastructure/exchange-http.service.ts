@@ -55,6 +55,20 @@ export class ExchangeHttpService {
           signal: AbortSignal.timeout(this.timeoutMs),
         });
         const data: unknown = await response.json().catch(() => null);
+        const successfulEnvelopeError = response.ok
+          ? this.vendorEnvelopeError(request.provider, correlationId, data)
+          : undefined;
+        if (successfulEnvelopeError) {
+          if (
+            request.retryable !== false &&
+            retryCount < this.maxRetries &&
+            successfulEnvelopeError.retryable
+          ) {
+            await this.backoff(retryCount++);
+            continue;
+          }
+          throw successfulEnvelopeError;
+        }
         if (!response.ok) {
           const error = this.httpError(
             request.provider,
@@ -178,6 +192,25 @@ export class ExchangeHttpService {
     );
   }
 
+  private vendorEnvelopeError(
+    provider: ExchangeProvider,
+    correlationId: string,
+    body: unknown,
+  ): ExchangeError | undefined {
+    const exchangeCode = this.exchangeCode(body);
+    const vendorCode = this.vendorCode(provider, exchangeCode);
+    if (!vendorCode) return undefined;
+    return new ExchangeError(
+      vendorCode.code,
+      provider,
+      vendorCode.retryable,
+      vendorCode.statusCode,
+      this.exchangeMessage(body) ?? vendorCode.message,
+      exchangeCode,
+      correlationId,
+    );
+  }
+
   private exchangeCode(body: unknown): string | undefined {
     if (!body || typeof body !== "object") return undefined;
     const value = "code" in body ? body.code : undefined;
@@ -206,6 +239,8 @@ export class ExchangeHttpService {
     if (!code) return undefined;
     const timestampCodes =
       provider === ExchangeProvider.BINANCE_FUTURES ? ["-1021"] : ["50102"];
+    const timeoutCodes =
+      provider === ExchangeProvider.OKX_FUTURES ? ["50004"] : [];
     const signatureCodes =
       provider === ExchangeProvider.BINANCE_FUTURES ? ["-1022"] : ["50113"];
     const credentialCodes =
@@ -220,7 +255,6 @@ export class ExchangeHttpService {
       provider === ExchangeProvider.BINANCE_FUTURES
         ? ["-2010", "-2011", "-2013", "-2014", "-2015"]
         : [
-            "50004",
             "51000",
             "51002",
             "51003",
@@ -245,6 +279,14 @@ export class ExchangeHttpService {
         retryable: false,
         statusCode: 400,
         message: "Exchange timestamp is outside the accepted window",
+      };
+    }
+    if (timeoutCodes.includes(code)) {
+      return {
+        code: ExchangeErrorCode.TIMEOUT,
+        retryable: true,
+        statusCode: 504,
+        message: "Exchange endpoint request timed out",
       };
     }
     if (signatureCodes.includes(code)) {
@@ -309,6 +351,7 @@ export class ExchangeHttpService {
       durationMs: Date.now() - startedAt,
       status: "failed",
       normalizedErrorCode: error.code,
+      ...(error.exchangeCode ? { exchangeCode: error.exchangeCode } : {}),
       retryCount,
       correlationId: error.correlationId,
     });

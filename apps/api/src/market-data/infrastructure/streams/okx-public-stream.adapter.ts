@@ -492,6 +492,12 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
       if (!symbolValue || !timestamp) continue;
 
       const symbol = fromOkxSymbol(symbolValue);
+      const lastPrice = Number(toStringValue(data.last));
+      const openPrice = Number(toStringValue(data.open24h));
+      const priceChange = lastPrice - openPrice;
+      const priceChangePercent = openPrice > 0
+        ? (priceChange / openPrice) * 100
+        : undefined;
       const ticker: NormalizedTicker = {
         provider: this.provider,
         symbol,
@@ -504,6 +510,12 @@ export class OkxPublicStreamAdapter implements PublicMarketStreamAdapter {
         low24h: toStringValue(data.low24h),
         volume24h: toStringValue(data.vol24h),
         quoteVolume24h: toStringValue(data.volCcy24h),
+        ...(Number.isFinite(priceChange)
+          ? { priceChange24h: String(priceChange) }
+          : {}),
+        ...(priceChangePercent !== undefined && Number.isFinite(priceChangePercent)
+          ? { priceChangePercent24h: String(priceChangePercent) }
+          : {}),
         timestamp,
       };
 

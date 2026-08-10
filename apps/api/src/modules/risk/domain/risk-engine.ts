@@ -185,7 +185,10 @@ export function evaluateRisk(
     configuredRiskRewardRatio: limits.riskRewardRatio,
   });
   if (!plan.approved || !plan.stopLoss || !plan.takeProfit)
-    return reject(plan.reason ?? "TRADE_PLAN_REJECTED");
+    return {
+      ...reject(plan.reason ?? "TRADE_PLAN_REJECTED"),
+      tradePlan: plan,
+    };
   const { stopLoss, takeProfit } = plan;
   const rewardToRisk = Math.abs(takeProfit - marketData.price) / Math.abs(marketData.price - stopLoss);
   const requiredRiskReward = plan.strategy === "RANGE_REVERSAL"

@@ -275,6 +275,12 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         .publicGet("/api/v5/public/mark-price", { instType: "SWAP", instId })
         .then((value) => z.array(markSchema).min(1).parse(value)[0]!),
     ]);
+    const lastPrice = Number(ticker.last);
+    const openPrice = Number(ticker.open24h);
+    const priceChange = lastPrice - openPrice;
+    const priceChangePercent = openPrice > 0
+      ? (priceChange / openPrice) * 100
+      : undefined;
     return {
       provider: this.provider,
       symbol: symbol.toUpperCase(),
@@ -286,6 +292,12 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       low24h: ticker.low24h,
       volume24h: ticker.vol24h,
       quoteVolume24h: ticker.volCcy24h,
+      ...(Number.isFinite(priceChange)
+        ? { priceChange24h: String(priceChange) }
+        : {}),
+      ...(priceChangePercent !== undefined && Number.isFinite(priceChangePercent)
+        ? { priceChangePercent24h: String(priceChangePercent) }
+        : {}),
       timestamp: new Date(Number(ticker.ts)),
     };
   }

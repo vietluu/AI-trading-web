@@ -61,7 +61,6 @@ describe("independent strategy decisions", () => {
   it.each([
     ["ai-core", "LONG", 75],
     ["trend", "LONG", 80],
-    ["mean-reversion", "LONG", 70],
     ["breakout", "LONG", 74],
     ["news", "SHORT", 82],
   ])("evaluates %s with its own policy", (key, decision, confidence) => {
@@ -96,10 +95,68 @@ describe("independent strategy decisions", () => {
       adaptiveThreshold: 84,
     };
 
-    expect(decisionForStrategy("mean-reversion", strictRangeBase, analyses)).toMatchObject({
+    expect(decisionForStrategy("mean-reversion", strictRangeBase, rangeAnalyses())).toMatchObject({
       decision: "LONG",
-      confidence: 70,
+      confidence: 73,
       adaptiveThreshold: 62,
+      opportunityScore: 70,
     });
   });
+
+  it("rejects mean reversion away from a confirmed range boundary", () => {
+    const middleOfRange = {
+      ...rangeAnalyses(),
+      technical: {
+        ...rangeAnalyses().technical,
+        volatility: { bollinger: { position: "MIDDLE" as const, squeeze: false } },
+      },
+    } as FusionInput;
+    const rangingBase = {
+      ...base,
+      regime: { type: "RANGING" as const },
+    };
+
+    expect(decisionForStrategy("mean-reversion", rangingBase, middleOfRange).decision).toBe("WAIT");
+  });
+
+  it("recalculates economics for an active range reversal", () => {
+    const rangingBase = {
+      ...base,
+      decision: "WAIT" as const,
+      confidence: 0,
+      regime: { type: "RANGING" as const },
+      opportunityScore: 55,
+      expectedValue: -0.5,
+      adaptiveThreshold: 78,
+    };
+
+    const result = decisionForStrategy("mean-reversion", rangingBase, rangeAnalyses());
+    expect(result.decision).toBe("LONG");
+    expect(result.opportunityScore).toBe(68);
+    expect(result.expectedValue).toBeGreaterThan(0);
+    expect(result.expectedWinProbability).toBeGreaterThan(0.6);
+  });
 });
+
+function rangeAnalyses(): FusionInput {
+  return {
+    ...analyses,
+    market: {
+      ...analyses.market,
+      trend: { direction: "SIDEWAYS", strength: "WEAK" },
+      volatility: { level: "LOW" },
+    },
+    technical: {
+      ...analyses.technical,
+      trend: { direction: "SIDEWAYS", strength: "WEAK" },
+      momentum: {
+        ...analyses.technical.momentum,
+        rsiState: "OVERSOLD",
+        macd: { trend: "BULLISH" },
+      },
+      volatility: { bollinger: { position: "LOWER", squeeze: false } },
+      structure: { marketStructure: "RANGE", breakout: false },
+      divergence: {},
+    },
+  };
+}
