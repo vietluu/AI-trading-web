@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { MarketAgentInput } from "@platform/shared";
 
 import {
@@ -10,19 +10,25 @@ import {
 } from "@/hooks/ai/useAiFeature";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 
-import { useExchangeSymbols } from "@/hooks/useExchangeSymbols";
+import { useConfiguredTradingScope } from "@/hooks/useConfiguredTradingScope";
 
 const fieldClassName =
   "w-full rounded-md border border-border bg-background px-3 py-2 text-sm";
 
 export default function MarketAnalysisPage(): React.JSX.Element {
   const { t } = useTranslation();
-  const { symbols } = useExchangeSymbols();
-  const [symbol, setSymbol] = useState<string>("BTC-USDT");
+  const scope = useConfiguredTradingScope();
+  const symbols = useMemo(() => scope.data?.symbols ?? [], [scope.data?.symbols]);
+  const [symbol, setSymbol] = useState<string>("");
   const [provider, setProvider] =
     useState<MarketAgentInput["provider"]>("OKX_FUTURES");
   const [interval, setInterval] = useState<MarketAgentInput["interval"]>("1h");
   const [lookbackCandles, setLookbackCandles] = useState(100);
+  useEffect(() => {
+    if (!symbol && symbols[0]) setSymbol(symbols[0]);
+    const preferred = scope.data?.timeframes[0] as MarketAgentInput['interval'] | undefined;
+    if (preferred) setInterval(preferred);
+  }, [scope.data?.timeframes, symbol, symbols]);
 
   const analysis = useAnalysisRunner("MARKET");
   const analysisInput: MarketAgentInput = {
@@ -46,6 +52,7 @@ export default function MarketAnalysisPage(): React.JSX.Element {
         <label className="space-y-1 text-xs font-semibold text-muted-foreground">
           {t.ai.symbol}
           <select className={fieldClassName} value={symbol} onChange={(event) => setSymbol(event.target.value)}>
+            {!symbol && <option value="">{t.ai.symbol}</option>}
             {symbols.map((item) => (
               <option key={item} value={item}>
                 {item}
@@ -72,7 +79,7 @@ export default function MarketAnalysisPage(): React.JSX.Element {
         </label>
         <button
           className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50 md:col-span-4"
-          disabled={analysis.isPending || lookbackCandles < 1 || lookbackCandles > 500}
+          disabled={!symbol || analysis.isPending || lookbackCandles < 1 || lookbackCandles > 500}
           onClick={() => analysis.mutate(analysisInput)}
           type="button"
         >

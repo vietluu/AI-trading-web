@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api-client";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 import { Cpu, Play, Award, CheckCircle } from "lucide-react";
+import { useConfiguredTradingScope } from "@/hooks/useConfiguredTradingScope";
 
 interface StrategyCandidate {
   key: string;
@@ -29,35 +30,58 @@ interface SimulationResultData {
 
 export default function StrategyLabPage() {
   const { t } = useTranslation();
+  const scope = useConfiguredTradingScope();
   const [strategies, setStrategies] = useState<StrategyCandidate[]>([]);
+  const [selectedSymbol, setSelectedSymbol] = useState("");
+  const [selectedInterval, setSelectedInterval] = useState("");
+  const [loadingStrategies, setLoadingStrategies] = useState(false);
   const [simulationResult, setSimulationResult] = useState<SimulationResultData | null>(null);
   const [simulating, setSimulating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!selectedSymbol && scope.data?.symbols[0]) setSelectedSymbol(scope.data.symbols[0]);
+    if (!selectedInterval && scope.data?.timeframes[0]) setSelectedInterval(scope.data.timeframes[0]);
+  }, [scope.data?.symbols, scope.data?.timeframes, selectedInterval, selectedSymbol]);
+
+  useEffect(() => {
+    if (!selectedSymbol || !selectedInterval) {
+      setStrategies([]);
+      return;
+    }
+    let active = true;
     async function loadData() {
+      setLoadingStrategies(true);
+      setError(null);
       try {
-        const strats = await apiRequest<StrategyCandidate[]>("/quant-intelligence/strategies");
-        setStrategies(strats);
+        const query = new URLSearchParams({ symbol: selectedSymbol, interval: selectedInterval });
+        const strats = await apiRequest<StrategyCandidate[]>(`/quant-intelligence/strategies?${query.toString()}`);
+        if (active) setStrategies(strats);
       } catch (cause) {
-        setStrategies([]);
-        setError(cause instanceof Error ? cause.message : "Verified strategy evidence is unavailable.");
+        if (active) {
+          setStrategies([]);
+          setError(cause instanceof Error ? cause.message : "Verified strategy evidence is unavailable.");
+        }
+      } finally {
+        if (active) setLoadingStrategies(false);
       }
     }
     void loadData();
-  }, []);
+    return () => { active = false; };
+  }, [selectedInterval, selectedSymbol]);
 
   async function handleRunSimulation() {
+    if (!selectedSymbol || !selectedInterval) return;
     setSimulating(true);
+    setError(null);
     try {
       const res = await apiRequest<SimulationResultData>("/quant-intelligence/simulation", {
         method: "POST",
         body: JSON.stringify({
           name: "Virtual Prompt & Threshold Test",
           experimentType: "THRESHOLD",
-          symbol: "BTC-USDT",
-          provider: "OKX_FUTURES",
-          interval: "15m",
+          symbol: selectedSymbol,
+          interval: selectedInterval,
           lookbackCandles: 500,
           config: { strategyName: "HYBRID_QUANT", confidenceThreshold: 68, atrMultiplier: 1.8 },
         }),
@@ -73,7 +97,7 @@ export default function StrategyLabPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between border-b border-border pb-4">
+      <div className="flex flex-col gap-4 border-b border-border pb-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             <Cpu className="h-6 w-6 text-primary" /> {t.quant.strategyLabTitle}
@@ -84,11 +108,42 @@ export default function StrategyLabPage() {
         </div>
         <button
           onClick={() => void handleRunSimulation()}
-          disabled={simulating}
+          disabled={simulating || !selectedSymbol || !selectedInterval}
           className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
         >
           <Play className="h-4 w-4" /> {simulating ? t.quant.simulating : t.quant.runSimulation}
         </button>
+      </div>
+
+      <div className="grid gap-4 rounded-2xl border border-border bg-card p-4 sm:grid-cols-2">
+        <label className="space-y-1 text-xs font-semibold text-muted-foreground">
+          {t.ai.symbol}
+          <select
+            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+            value={selectedSymbol}
+            onChange={(event) => {
+              setSelectedSymbol(event.target.value);
+              setSimulationResult(null);
+            }}
+          >
+            {!selectedSymbol && <option value="">{t.research.noSymbolsSelected}</option>}
+            {(scope.data?.symbols ?? []).map((symbol) => <option key={symbol} value={symbol}>{symbol}</option>)}
+          </select>
+        </label>
+        <label className="space-y-1 text-xs font-semibold text-muted-foreground">
+          {t.ai.interval}
+          <select
+            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+            value={selectedInterval}
+            onChange={(event) => {
+              setSelectedInterval(event.target.value);
+              setSimulationResult(null);
+            }}
+          >
+            {!selectedInterval && <option value="">—</option>}
+            {(scope.data?.timeframes ?? []).map((interval) => <option key={interval} value={interval}>{interval}</option>)}
+          </select>
+        </label>
       </div>
 
       {error && <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-sm text-red-200">{error}</div>}
@@ -111,6 +166,10 @@ export default function StrategyLabPage() {
         <h2 className="text-lg font-semibold flex items-center gap-2">
           <Award className="h-5 w-5 text-primary" /> {t.quant.discoveredStrategyCandidates}
         </h2>
+        {loadingStrategies && <p className="text-sm text-muted-foreground">{t.ai.loadingStatus}</p>}
+        {!loadingStrategies && !strategies.length && !error && (
+          <p className="text-sm text-muted-foreground">{t.research.insufficientSymbolData}</p>
+        )}
         <div className="grid gap-4 sm:grid-cols-2">
           {strategies.map((s) => (
             <div key={s.key} className="rounded-xl border border-border p-4 space-y-2">

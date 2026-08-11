@@ -162,6 +162,7 @@ export const vi: Dictionary = {
       critical: 'Khẩn cấp',
     },
     recommendationStatuses: {
+      validationRequired: 'Chưa đủ bằng chứng kiểm định',
       pendingApproval: 'Chờ phê duyệt',
       approved: 'Đã phê duyệt',
       shadow: 'Đang chạy thử',

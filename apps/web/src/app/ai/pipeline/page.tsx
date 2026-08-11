@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ROUTES } from "@/constants/routes";
 import {
@@ -10,18 +10,23 @@ import {
 } from "@/hooks/ai/useAiFeature";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 
-import { useExchangeSymbols } from "@/hooks/useExchangeSymbols";
+import { useConfiguredTradingScope } from "@/hooks/useConfiguredTradingScope";
 
 export default function PipelinePage() {
   const { t } = useTranslation();
-  const { symbols: dynamicSymbols } = useExchangeSymbols();
-  const [symbol, setSymbol] = useState("BTC-USDT");
+  const scope = useConfiguredTradingScope();
+  const configuredSymbols = useMemo(() => scope.data?.symbols ?? [], [scope.data?.symbols]);
+  const [symbol, setSymbol] = useState("");
   const [provider, setProvider] = useState("OKX_FUTURES");
   const [message, setMessage] = useState("");
   const health = usePipelineDashboard();
   const schedules = usePipelineSchedules();
   const { runMutation, createScheduleMutation, cancelScheduleMutation } = usePipelineActions();
+  useEffect(() => {
+    if (!symbol && configuredSymbols[0]) setSymbol(configuredSymbols[0]);
+  }, [configuredSymbols, symbol]);
   async function run() {
+    if (!symbol) return setMessage('NO_SYMBOLS_SELECTED');
     try {
       const result = await runMutation.mutateAsync({
         symbol,
@@ -106,7 +111,8 @@ export default function PipelinePage() {
             value={symbol}
             onChange={(e) => setSymbol(e.target.value)}
           >
-            {dynamicSymbols.map((item) => (
+            {!symbol && <option value="">{t.ai.symbol}</option>}
+            {configuredSymbols.map((item) => (
               <option key={item}>{item}</option>
             ))}
           </select>
@@ -120,6 +126,7 @@ export default function PipelinePage() {
           </select>
           <button
             className="rounded bg-primary px-4 py-2 font-medium text-primary-foreground hover:bg-primary/90"
+            disabled={!symbol}
             onClick={() => void run()}
             type="button"
           >
@@ -127,7 +134,7 @@ export default function PipelinePage() {
           </button>
           <button
             className="rounded border border-border px-4 py-2 font-medium hover:bg-muted"
-            disabled={(schedules.data?.length ?? 0) >= 10}
+            disabled={!symbol || (schedules.data?.length ?? 0) >= 10}
             onClick={() => void addSchedule(15)}
             type="button"
           >

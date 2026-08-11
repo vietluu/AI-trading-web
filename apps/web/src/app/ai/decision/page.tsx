@@ -1,22 +1,28 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FusionRunInput } from "@platform/shared";
 import { useDecisionRunner } from "@/hooks/ai/useAiFeature";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 
-import { useExchangeSymbols } from "@/hooks/useExchangeSymbols";
+import { useConfiguredTradingScope } from "@/hooks/useConfiguredTradingScope";
 
 const fieldClassName =
   "w-full rounded-md border border-border bg-background px-3 py-2 text-sm";
 
 export default function DecisionPage(): React.JSX.Element {
   const { t } = useTranslation();
-  const { symbols } = useExchangeSymbols();
-  const [symbol, setSymbol] = useState<string>("BTC-USDT");
+  const scope = useConfiguredTradingScope();
+  const symbols = useMemo(() => scope.data?.symbols ?? [], [scope.data?.symbols]);
+  const [symbol, setSymbol] = useState<string>("");
   const [provider, setProvider] =
     useState<FusionRunInput["provider"]>("OKX_FUTURES");
   const [interval, setInterval] = useState<FusionRunInput["interval"]>("15m");
+  useEffect(() => {
+    if (!symbol && symbols[0]) setSymbol(symbols[0]);
+    const preferred = scope.data?.timeframes[0] as FusionRunInput['interval'] | undefined;
+    if (preferred) setInterval(preferred);
+  }, [scope.data?.timeframes, symbol, symbols]);
 
   const decision = useDecisionRunner();
   const decisionInput: FusionRunInput = {
@@ -47,6 +53,7 @@ export default function DecisionPage(): React.JSX.Element {
         <label className="space-y-1 text-xs font-semibold text-muted-foreground">
           {t.ai.symbol}
           <select className={fieldClassName} value={symbol} onChange={(event) => setSymbol(event.target.value)}>
+            {!symbol && <option value="">{t.ai.symbol}</option>}
             {symbols.map((value) => <option key={value} value={value}>{value}</option>)}
           </select>
         </label>
@@ -63,7 +70,7 @@ export default function DecisionPage(): React.JSX.Element {
             {(["1m", "5m", "15m", "1h"] as const).map((value) => <option key={value}>{value}</option>)}
           </select>
         </label>
-        <button className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50 md:col-span-3" disabled={decision.isPending} onClick={() => decision.mutate(decisionInput)} type="button">
+        <button className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50 md:col-span-3" disabled={!symbol || decision.isPending} onClick={() => decision.mutate(decisionInput)} type="button">
           {decision.isPending ? t.ai.runningPipeline : t.ai.generateDecision}
         </button>
         {decision.isError ? <p className="text-sm text-red-500 md:col-span-3" role="alert">{decision.error.message}</p> : null}
