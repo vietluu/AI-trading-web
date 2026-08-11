@@ -11,7 +11,7 @@ describe('MarketAnalysisPage', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('runs the market agent and displays every analysis section', async () => {
-    vi.mocked(apiRequest).mockResolvedValue({
+    const runResult = {
       id: 'run-1',
       status: 'COMPLETED',
       durationMs: 25,
@@ -32,14 +32,21 @@ describe('MarketAnalysisPage', () => {
         usedTools: ['market.ticker.get'],
         generatedAt: new Date().toISOString(),
       },
-    });
+    };
+    vi.mocked(apiRequest).mockImplementation((path) => Promise.resolve(
+      path === '/quant-intelligence/scope'
+        ? { symbols: ['SOL-USDT'], timeframes: ['15m'], settings: ['SOL-USDT'], pipelineTriggers: [], settingsTimeframes: ['15m'], pipelineTimeframes: [] }
+        : runResult,
+    ));
 
     render(
       <QueryClientProvider client={new QueryClient()}>
         <MarketAnalysisPage />
       </QueryClientProvider>,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Run market analysis' }));
+    const runButton = await screen.findByRole('button', { name: 'Run market analysis' });
+    await waitFor(() => expect(runButton).toBeEnabled());
+    fireEvent.click(runButton);
 
     await waitFor(() => expect(screen.getByText('Market structure is orderly.')).toBeInTheDocument());
     expect(screen.getByText('Trend')).toBeInTheDocument();

@@ -10,7 +10,7 @@ describe("TechnicalAnalysisPage", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("runs and displays structured technical conditions", async () => {
-    vi.mocked(apiRequest).mockResolvedValue({
+    const runResult = {
       id: "run-1",
       status: "COMPLETED",
       output: {
@@ -33,15 +33,20 @@ describe("TechnicalAnalysisPage", () => {
         usedTools: ["market.indicators.get", "market.candles.list"],
         generatedAt: new Date().toISOString(),
       },
-    });
+    };
+    vi.mocked(apiRequest).mockImplementation((path) => Promise.resolve(
+      path === "/quant-intelligence/scope"
+        ? { symbols: ["SOL-USDT"], timeframes: ["15m"], settings: ["SOL-USDT"], pipelineTriggers: [], settingsTimeframes: ["15m"], pipelineTimeframes: [] }
+        : runResult,
+    ));
     render(
       <QueryClientProvider client={new QueryClient()}>
         <TechnicalAnalysisPage />
       </QueryClientProvider>,
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Run technical analysis" }),
-    );
+    const runButton = await screen.findByRole("button", { name: "Run technical analysis" });
+    await waitFor(() => expect(runButton).toBeEnabled());
+    fireEvent.click(runButton);
     await waitFor(() =>
       expect(
         screen.getByText(
