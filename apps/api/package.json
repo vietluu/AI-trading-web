@@ -14,7 +14,9 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:push": "prisma db push",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "trade-ledger:backfill": "node dist/scripts/backfill-trade-ledger.js",
+    "quant:backfill": "node dist/scripts/backfill-real-quant.js"
   },
   "dependencies": {
     "@nestjs/bullmq": "^11.0.4",

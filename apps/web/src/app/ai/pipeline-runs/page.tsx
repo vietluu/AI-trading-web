@@ -21,19 +21,21 @@ export default function PipelineRunsPage() {
   const runs = (query.data?.data ?? []) as PipelineRunListItem[];
   return (
     <div className="space-y-6">
-      <div className="flex justify-between">
+      <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold">Pipeline runs</h1>
           <p className="mt-1 text-muted-foreground">
             End-to-end runtime history and outcomes.
           </p>
         </div>
-        <Link
-          className="text-primary hover:underline"
+       <button className="rounded h-8 bg-primary px-4  font-medium text-primary-foreground hover:bg-primary/90">
+         <Link
+          className="text-nowrap h-fit"
           href={ROUTES.ai.pipeline}
         >
-          Automation →
+          Automation
         </Link>
+       </button>
       </div>
       <div className="overflow-x-auto rounded-lg border bg-card">
         <table className="w-full min-w-[640px] text-left text-sm">

@@ -14,6 +14,7 @@ import {
   type ExchangeConnectionTest,
   type ExchangeCredentials,
   type ExchangeFundingRate,
+  type ExchangeFill,
   type ExchangeInfo,
   type ExchangeInstrument,
   type ExchangeKline,
@@ -144,6 +145,23 @@ const orderSchema = z.object({
   posSide: z.string().optional(),
   cTime: z.string().regex(/^\d+$/).optional(),
   uTime: z.string().regex(/^\d+$/).optional(),
+});
+const fillSchema = z.object({
+  instId: z.string(),
+  tradeId: z.string(),
+  billId: z.string().optional(),
+  ordId: z.string(),
+  clOrdId: z.string().optional(),
+  side: z.string(),
+  posSide: z.string().optional(),
+  fillPx: decimal,
+  fillSz: decimal,
+  fillPnl: decimal.default("0"),
+  fee: decimal.default("0"),
+  feeCcy: z.string().optional(),
+  execType: z.string().optional(),
+  fillTime: z.string().regex(/^\d+$/).optional(),
+  ts: z.string().regex(/^\d+$/).optional(),
 });
 const configSchema = z.object({
   posMode: z.string(),
@@ -527,7 +545,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     _symbols?: string[],
     limit = 20,
   ): Promise<ExchangeOrder[]> {
-    const historyLimit = Math.min(20, Math.max(1, Math.trunc(limit)));
+    const historyLimit = Math.min(100, Math.max(1, Math.trunc(limit)));
     const values = z.array(orderSchema).parse(
       await this.client.signedGet("/api/v5/trade/orders-history", credentials, {
         instType: "SWAP",
@@ -535,6 +553,82 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       }),
     );
     return values.map((item) => this.order(item)).slice(0, historyLimit);
+  }
+
+  async getTradeFills(
+    credentials: ExchangeCredentials,
+    symbols?: string[],
+    limit = 100,
+    before?: Date,
+  ): Promise<ExchangeFill[]> {
+    const historyLimit = Math.min(1000, Math.max(1, Math.trunc(limit)));
+    const pageSize = Math.min(100, historyLimit);
+    let values: Array<z.infer<typeof fillSchema>> = [];
+    try {
+      let after: string | undefined;
+      while (values.length < historyLimit) {
+        const page = z.array(fillSchema).parse(
+          await this.client.signedGet(
+            "/api/v5/trade/fills-history",
+            credentials,
+            {
+              instType: "SWAP",
+              limit: Math.min(pageSize, historyLimit - values.length),
+              after,
+              ...(before ? { end: before.getTime() } : {}),
+            },
+          ),
+        );
+        if (!page.length) break;
+        values.push(...page);
+        const next = page.at(-1)?.billId;
+        if (page.length < pageSize || !next || next === after) break;
+        after = next;
+      }
+    } catch (error) {
+      this.logger.warn({
+        event: "okx_fill_history_fallback_to_recent",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      values = z.array(fillSchema).parse(
+        await this.client.signedGet("/api/v5/trade/fills", credentials, {
+          instType: "SWAP",
+          limit: pageSize,
+          ...(before ? { end: before.getTime() } : {}),
+        }),
+      );
+    }
+    const instruments = await this.getInstruments();
+    const normalizedSymbols = symbols?.length ? new Set(symbols.map((symbol) => symbol.toUpperCase())) : null;
+    return values.map((item) => {
+      const symbol = fromOkxSymbol(item.instId);
+      const instrument = instruments.find((candidate) => candidate.symbol === symbol);
+      const quantity = this.baseQuantity(item.fillSz, instrument?.contractSize);
+      const realizedPnl = Number(item.fillPnl);
+      const positionSide = item.posSide ? this.positionSide(item.posSide) : undefined;
+      const isClosing =
+        realizedPnl !== 0 ||
+        (positionSide === "LONG" && item.side === "sell") ||
+        (positionSide === "SHORT" && item.side === "buy");
+      return {
+        provider: this.provider,
+        symbol,
+        exchangeTradeId: item.tradeId,
+        exchangeOrderId: item.ordId,
+        ...(item.clOrdId ? { clientOrderId: item.clOrdId } : {}),
+        side: item.side === "sell" ? "SELL" as const : "BUY" as const,
+        ...(positionSide ? { positionSide } : {}),
+        price: item.fillPx,
+        quantity,
+        quoteQuantity: String(Number(quantity) * Number(item.fillPx)),
+        realizedPnl: item.fillPnl,
+        fee: item.fee,
+        ...(item.feeCcy ? { feeAsset: item.feeCcy } : {}),
+        ...(item.execType ? { isMaker: item.execType === "M" } : {}),
+        isClosing,
+        executedAt: new Date(Number(item.fillTime ?? item.ts)),
+      };
+    }).filter((fill) => !normalizedSymbols || normalizedSymbols.has(fill.symbol));
   }
 
   async getOrder(

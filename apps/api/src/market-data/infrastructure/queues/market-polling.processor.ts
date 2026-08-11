@@ -29,6 +29,9 @@ export class MarketPollingProcessor extends WorkerHost {
   }
 
   process(job: Job<unknown, unknown, string>): Promise<unknown> {
+    if (process.env.CLI_DISABLE_SCHEDULERS === 'true') {
+      return Promise.resolve({ status: 'SKIPPED', reason: 'CLI background workers disabled' });
+    }
     this.logger.debug(`Processing polling job: ${job.name}`);
     
     switch (job.name) {

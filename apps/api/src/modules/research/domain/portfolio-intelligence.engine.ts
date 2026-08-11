@@ -5,8 +5,8 @@ export interface StrategyAllocationRecommendation {
   recommendedCapitalAllocationPct: number;
   currentRiskAllocationPct: number;
   recommendedRiskAllocationPct: number;
-  correlationWithPortfolio: number;
-  diversificationBenefitScore: number;
+  correlationWithPortfolio: number | null;
+  diversificationBenefitScore: number | null;
 }
 
 export interface PortfolioIntelligenceAnalysis {
@@ -24,6 +24,7 @@ export interface PortfolioIntelligenceSnapshot {
   allocation?: { weight?: number; allocatedCapital?: number };
   performance?: { totalTrades?: number; winRate?: number; returnPct?: number; drawdownPct?: number; sharpeRatio?: number | null };
   livePerformance?: { unrealizedPnl?: number; realizedPnl?: number; positionCount?: number };
+  returns?: Array<{ at: string; returnPct: number }>;
   marketRegime?: string;
 }
 
@@ -43,7 +44,7 @@ function normalizeStrategy(strategy: PortfolioIntelligenceSnapshot, index: numbe
     key: strategy.key,
     name: strategy.name,
     currentCapitalPct,
-    currentRiskPct: Math.max(10, Math.min(100, 30 + index * 5)),
+    currentRiskPct: Math.max(0, Math.min(100, Number(strategy.performance?.drawdownPct ?? 0) * 100)),
     performance: {
       totalTrades: strategy.performance?.totalTrades ?? 0,
       winRate: strategy.performance?.winRate ?? 0.5,
@@ -57,6 +58,7 @@ function normalizeStrategy(strategy: PortfolioIntelligenceSnapshot, index: numbe
       positionCount: strategy.livePerformance?.positionCount ?? 0,
     },
     marketRegime: strategy.marketRegime,
+    returns: strategy.returns ?? [],
   };
 }
 
@@ -85,6 +87,9 @@ export function analyzePortfolioIntelligence(
         ? -0.04
         : 0.01;
     const livePnl = Number(item?.livePerformance?.unrealizedPnl ?? 0);
+    if ((item?.performance.totalTrades ?? 0) <= 0 && (item?.livePerformance.positionCount ?? 0) <= 0) {
+      return currentWeights[index] ?? 0.01;
+    }
     const liveSignal = livePnl > 0
       ? 0.02
       : livePnl < 0
@@ -104,8 +109,13 @@ export function analyzePortfolioIntelligence(
     const currentRiskPct = strategy.currentRiskPct;
     const regime = normalizeRegime(strategy.marketRegime);
     const recommendedRiskPct = Math.max(10, Math.min(100, currentRiskPct + (regime === 'HIGH_VOLATILITY' ? -8 : regime === 'TRENDING' ? 5 : 0)));
-    const correlationWithPortfolio = strategy.key === 'mean-reversion' ? -0.15 : strategy.key === 'trend-following' ? 0.42 : 0.25;
-    const diversificationBenefitScore = strategy.key === 'mean-reversion' ? 95 : strategy.key === 'trend-following' ? 78 : 92;
+    const peerReturns = normalized
+      .filter((_, peerIndex) => peerIndex !== index)
+      .flatMap((peer) => peer.returns);
+    const correlationWithPortfolio = returnCorrelation(strategy.returns, peerReturns);
+    const diversificationBenefitScore = correlationWithPortfolio === null
+      ? null
+      : Number(((1 - Math.abs(correlationWithPortfolio)) * 100).toFixed(2));
 
     return {
       strategyKey: strategy.key,
@@ -177,7 +187,39 @@ export function analyzePortfolioIntelligence(
     maxPortfolioDrawdownPct: Number((weightedDrawdown * 100).toFixed(2)),
     allocations,
     recommendedActions: recommendedActions.length > 0 ? recommendedActions : [
-      'Keep current allocation mix while monitoring drawdown and win-rate stability.',
+      normalized.some((strategy) => strategy.performance.totalTrades > 0)
+        ? 'Keep current allocation mix while monitoring drawdown and win-rate stability.'
+        : 'Insufficient strategy-attributed exchange trades; keep allocations unchanged until verified evidence is available.',
     ],
   };
+}
+
+function returnCorrelation(
+  strategy: Array<{ at: string; returnPct: number }>,
+  peers: Array<{ at: string; returnPct: number }>,
+): number | null {
+  const daily = (rows: Array<{ at: string; returnPct: number }>) => {
+    const values = new Map<string, number>();
+    for (const row of rows) {
+      const day = row.at.slice(0, 10);
+      values.set(day, (values.get(day) ?? 0) + row.returnPct);
+    }
+    return values;
+  };
+  const left = daily(strategy);
+  const right = daily(peers);
+  const pairs = [...left.entries()]
+    .filter(([day]) => right.has(day))
+    .map(([day, value]) => [value, right.get(day)!] as const);
+  if (pairs.length < 3) return null;
+  const leftMean = pairs.reduce((sum, pair) => sum + pair[0], 0) / pairs.length;
+  const rightMean = pairs.reduce((sum, pair) => sum + pair[1], 0) / pairs.length;
+  const covariance = pairs.reduce(
+    (sum, pair) => sum + (pair[0] - leftMean) * (pair[1] - rightMean),
+    0,
+  );
+  const leftDeviation = Math.sqrt(pairs.reduce((sum, pair) => sum + (pair[0] - leftMean) ** 2, 0));
+  const rightDeviation = Math.sqrt(pairs.reduce((sum, pair) => sum + (pair[1] - rightMean) ** 2, 0));
+  if (!(leftDeviation > 0) || !(rightDeviation > 0)) return null;
+  return Number((covariance / (leftDeviation * rightDeviation)).toFixed(4));
 }

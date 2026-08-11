@@ -42,7 +42,7 @@ export const QuantRecommendationSchema = z.object({
   priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']),
   implementationCost: z.string(),
   rollbackPlan: z.string(),
-  status: z.enum(['PENDING_APPROVAL', 'APPROVED', 'REJECTED', 'DEPLOYED', 'ROLLED_BACK']),
+  status: z.enum(['PENDING_APPROVAL', 'APPROVED', 'SHADOW', 'CANARY', 'REJECTED', 'DEPLOYED', 'ROLLED_BACK']),
   createdAt: z.string(),
 });
 

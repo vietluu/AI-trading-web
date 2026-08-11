@@ -199,6 +199,50 @@ export class SelfLearningService {
     });
   }
 
+  async activeLifecycleUserIds(): Promise<string[]> {
+    const rows = await this.prisma.selfLearningConfiguration.findMany({
+      where: {
+        isEnabled: true,
+        OR: [
+          { shadowEnabled: true },
+          { canaryEnabled: true },
+          { previousVersion: { not: null } },
+        ],
+      },
+      select: { userId: true },
+    });
+    return rows.map((row) => row.userId);
+  }
+
+  async lifecycleStatus(userId: string) {
+    const config = await this.getOrCreateConfig(userId);
+    const canaryPercent = this.config.get<number>('SELF_LEARNING_CANARY_PERCENT', 10);
+    const [pendingShadowSignals, evaluatedShadowSignals, canaryRecords, liveRecords, experiment] = await Promise.all([
+      this.prisma.paperSignal.count({ where: { userId, mode: 'SHADOW', outcome: 'PENDING', configurationVersion: config.shadowVersion ?? undefined } }),
+      this.prisma.paperSignal.count({ where: { userId, mode: 'SHADOW', outcome: { in: ['CORRECT', 'WRONG'] }, configurationVersion: config.shadowVersion ?? undefined } }),
+      config.canaryVersion ? this.prisma.performanceRecord.count({ where: { userId, horizon: 'MID', run: { configurationVersion: config.canaryVersion, learningStage: 'CANARY' } } }) : 0,
+      this.prisma.performanceRecord.count({ where: { userId, horizon: 'MID', run: { configurationVersion: config.liveVersion, learningStage: 'LIVE' } } }),
+      this.prisma.selfLearningExperiment.findFirst({
+        where: { userId, version: config.canaryVersion ?? config.shadowVersion ?? config.liveVersion },
+        include: { recommendation: { select: { id: true, status: true, title: true } }, events: { orderBy: { createdAt: 'desc' }, take: 1 } },
+      }),
+    ]);
+    const stage = config.canaryEnabled ? 'CANARY' : config.shadowEnabled ? 'SHADOW' : 'LIVE';
+    return {
+      stage,
+      isEnabled: config.isEnabled,
+      liveVersion: config.liveVersion,
+      candidateVersion: config.canaryVersion ?? config.shadowVersion,
+      liveImpactPct: stage === 'CANARY' ? 100 - canaryPercent : 100,
+      candidateImpactPct: stage === 'CANARY' ? canaryPercent : 0,
+      shadowPerformance: stage === 'SHADOW' ? parseShadowPerformance(config.shadowPerformance) : null,
+      evidence: { pendingShadowSignals, evaluatedShadowSignals, canaryRecords, liveRecords },
+      startedAt: config.canaryStartedAt ?? config.shadowStartedAt,
+      lastPromotionAt: config.lastPromotionAt,
+      experiment,
+    };
+  }
+
   /**
    * Get or create self-learning configuration for a user.
    */
@@ -401,6 +445,35 @@ export class SelfLearningService {
       validationStartedAt: validationStartedAt.toISOString(),
       validationEndedAt: validationEndedAt.toISOString(),
     })).digest('hex');
+    const validationPassed = candidateValidation.total >= 20 &&
+      candidateValidation.accuracy >= baselineValidation.accuracy &&
+      candidateThresholdValidation.total >= 10 &&
+      candidateThresholdValidation.accuracy >= baselineThresholdValidation.accuracy;
+    const recommendation = await this.prisma.quantRecommendation.create({
+      data: {
+        userId,
+        title: `Self-learning configuration v${candidateVersion}`,
+        moduleSource: 'SELF_LEARNING_AUTO',
+        problemStatement: 'Continuously improve governed decision weights and confidence threshold from evaluated pipeline outcomes.',
+        evidenceText: `${trainingRuns.length} training runs and ${validationRuns.length} non-overlapping validation runs.`,
+        historicalResult: {
+          candidateVersion,
+          baseVersion: config.liveVersion,
+          candidate: candidateValidation,
+          baseline: baselineValidation,
+          candidateThreshold: candidateThresholdValidation,
+          baselineThreshold: baselineThresholdValidation,
+        },
+        expectedBenefit: 'Improve decision quality under measured live market regimes.',
+        estimatedRisk: 'Recent samples may not generalize to a future regime.',
+        priority: 'MEDIUM',
+        implementationCost: 'AUTOMATED',
+        rollbackPlan: 'Reject shadow, roll back canary, or restore the previous live version automatically.',
+        status: validationPassed ? 'SHADOW' : 'REJECTED',
+        reviewedAt: new Date(),
+        rejectionReason: validationPassed ? null : 'NON_OVERLAPPING_VALIDATION_FAILED',
+      },
+    });
     const experiment = await this.prisma.selfLearningExperiment.create({
       data: {
         userId,
@@ -420,12 +493,9 @@ export class SelfLearningService {
           baselineThreshold: baselineThresholdValidation,
         },
         reproducibleHash,
+        recommendationId: recommendation.id,
       },
     });
-    const validationPassed = candidateValidation.total >= 20 &&
-      candidateValidation.accuracy >= baselineValidation.accuracy &&
-      candidateThresholdValidation.total >= 10 &&
-      candidateThresholdValidation.accuracy >= baselineThresholdValidation.accuracy;
     await this.appendExperimentEvent(
       experiment.id,
       validationPassed ? 'VALIDATION_PASSED_SHADOW_STARTED' : 'VALIDATION_REJECTED',
@@ -609,7 +679,7 @@ export class SelfLearningService {
       });
       const experiment = await this.prisma.selfLearningExperiment.findUnique({
         where: { userId_version: { userId, version: candidateVersion } },
-        select: { id: true },
+        select: { id: true, recommendationId: true },
       });
       await this.prisma.selfLearningConfiguration.update({
         where: { userId },
@@ -635,6 +705,7 @@ export class SelfLearningService {
           payloadJson: { shadow: toShadowPerformanceJson(updatedPerf), live: toShadowPerformanceJson(livePerf), shadowByRegime, liveByRegime } as unknown as Prisma.InputJsonObject,
         },
       });
+      if (experiment?.recommendationId) await this.prisma.quantRecommendation.update({ where: { id: experiment.recommendationId }, data: { status: 'CANARY' } });
     } else if (shouldReject) {
       this.logger.warn({
         event: 'shadow_configuration_rejected',
@@ -666,7 +737,7 @@ export class SelfLearningService {
       });
       const experiment = await this.prisma.selfLearningExperiment.findUnique({
         where: { userId_version: { userId, version: candidateVersion } },
-        select: { id: true },
+        select: { id: true, recommendationId: true },
       });
       if (experiment) await this.prisma.selfLearningExperimentEvent.create({
         data: {
@@ -675,6 +746,7 @@ export class SelfLearningService {
           payloadJson: { shadow: toShadowPerformanceJson(updatedPerf), shadowExpired, regimeGatePassed },
         },
       });
+      if (experiment?.recommendationId) await this.prisma.quantRecommendation.update({ where: { id: experiment.recommendationId }, data: { status: 'REJECTED', rejectionReason: shadowExpired ? 'SHADOW_EXPIRED' : 'SHADOW_PERFORMANCE_FAILED' } });
     } else {
       await this.prisma.selfLearningConfiguration.update({
         where: { userId },
@@ -741,7 +813,7 @@ export class SelfLearningService {
     const expired = Date.now() - config.canaryStartedAt.getTime() >= maxDays * 86_400_000;
     const experiment = await this.prisma.selfLearningExperiment.findUnique({
       where: { userId_version: { userId, version: config.canaryVersion } },
-      select: { id: true },
+      select: { id: true, recommendationId: true },
     });
 
     if (canPromote) {
@@ -760,6 +832,7 @@ export class SelfLearningService {
         },
       });
       if (experiment) await this.appendExperimentEvent(experiment.id, 'CANARY_PROMOTED_TO_LIVE', { canary, live, canaryByRegime, liveByRegime });
+      if (experiment?.recommendationId) await this.prisma.quantRecommendation.update({ where: { id: experiment.recommendationId }, data: { status: 'DEPLOYED' } });
     } else if (severeRegression || expired) {
       await this.prisma.selfLearningConfiguration.update({
         where: { userId },
@@ -775,6 +848,7 @@ export class SelfLearningService {
         },
       });
       if (experiment) await this.appendExperimentEvent(experiment.id, 'CANARY_ROLLED_BACK', { canary, live, severeRegression, expired });
+      if (experiment?.recommendationId) await this.prisma.quantRecommendation.update({ where: { id: experiment.recommendationId }, data: { status: 'ROLLED_BACK', rejectionReason: expired ? 'CANARY_EXPIRED' : 'CANARY_REGRESSION' } });
     }
   }
 
@@ -838,9 +912,10 @@ export class SelfLearningService {
     });
     const experiment = await this.prisma.selfLearningExperiment.findUnique({
       where: { userId_version: { userId, version: failedVersion } },
-      select: { id: true },
+      select: { id: true, recommendationId: true },
     });
     if (experiment) await this.appendExperimentEvent(experiment.id, 'LIVE_AUTO_ROLLED_BACK', { current, previous });
+    if (experiment?.recommendationId) await this.prisma.quantRecommendation.update({ where: { id: experiment.recommendationId }, data: { status: 'ROLLED_BACK', rejectionReason: 'LIVE_REGRESSION' } });
     return true;
   }
 

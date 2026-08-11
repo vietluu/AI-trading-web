@@ -5,6 +5,7 @@ import type {
   ExchangeConnectionTest,
   ExchangeCredentials,
   ExchangeFundingRate,
+  ExchangeFill,
   ExchangeInfo,
   ExchangeInstrument,
   ExchangeKline,
@@ -59,6 +60,12 @@ export interface ExchangeAdapter {
     symbols?: string[],
     limit?: number,
   ): Promise<ExchangeOrder[]>;
+  getTradeFills?(
+    credentials: ExchangeCredentials,
+    symbols?: string[],
+    limit?: number,
+    before?: Date,
+  ): Promise<ExchangeFill[]>;
   getOrder(
     credentials: ExchangeCredentials,
     query: GetOrderQuery,

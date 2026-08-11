@@ -38,6 +38,8 @@ export default function PortfolioPage(): React.JSX.Element {
     aggregation,
     riskEvents,
     unassignedExposure,
+    unassignedClosedTrades,
+    unassignedRealizedPnl,
   } = query.data;
 
   const totalRiskPages = Math.ceil(riskEvents.length / pageSize);
@@ -94,6 +96,11 @@ export default function PortfolioPage(): React.JSX.Element {
           visible but are not assigned retroactively.
         </div>
       )}
+      {unassignedClosedTrades > 0 && (
+        <div className="rounded-lg border border-sky-400/30 bg-sky-400/10 p-4 text-sm text-sky-100">
+          {unassignedClosedTrades} verified historical exchange trades ({money.format(unassignedRealizedPnl)} net PnL) cannot be attributed to a strategy because they were opened outside the pipeline. They remain included in account-level performance.
+        </div>
+      )}
       {portfolio.failsafeActive && (
         <div className="rounded-lg border border-red-400/30 bg-red-400/10 p-4 text-sm text-red-200">
           Portfolio failsafe is active. New strategy trades are paused.
@@ -103,8 +110,8 @@ export default function PortfolioPage(): React.JSX.Element {
         {[
           ["Portfolio equity", money.format(portfolio.equity)],
           [
-            portfolio.pnlKind === "EXCHANGE_MARK_TO_MARKET"
-              ? "Exchange PnL"
+            portfolio.pnlKind === "EXCHANGE_FILL_NET_PLUS_MARK_TO_MARKET"
+              ? "Exchange net + unrealized PnL"
               : "Realized PnL",
             money.format(portfolio.pnl),
           ],

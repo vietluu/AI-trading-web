@@ -8,6 +8,7 @@ import { LiveTradingSyncService } from "./application/live-trading-sync.service"
 import { LiveTradingService } from "./application/live-trading.service";
 import { LiveTradingController } from "./presentation/live-trading.controller";
 import { LiveTradingGateway } from "./presentation/live-trading.gateway";
+import { ExchangeTradeLedgerService } from "./application/exchange-trade-ledger.service";
 
 @Module({
   imports: [AuthModule, ExchangeModule, RiskModule, PortfolioModule],
@@ -17,6 +18,7 @@ import { LiveTradingGateway } from "./presentation/live-trading.gateway";
     LiveTradingService,
     LiveTradingSyncService,
     LiveTradingGateway,
+    ExchangeTradeLedgerService,
   ],
   exports: [LiveTradingService, LiveTradingConfigService],
 })

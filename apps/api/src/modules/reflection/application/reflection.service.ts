@@ -9,13 +9,21 @@ import { toDto } from './performance.service';
 export class ReflectionService {
   constructor(private readonly repository: ReflectionRepository, private readonly config: ConfigService) {}
 
-  async generate(userId: string, persist = true): Promise<ReflectionOutput & { recordCount: number; ready: boolean }> {
-    const rows = await this.repository.records(userId, undefined, 500);
+  async generate(userId: string, persist = true): Promise<ReflectionOutput & { actualTrading: ReturnType<typeof actualTradeMetrics>; recordCount: number; ready: boolean }> {
+    const repositoryWithTrades = this.repository as ReflectionRepository & {
+      closedTrades?: ReflectionRepository['closedTrades'];
+    };
+    const [rows, actualTrades] = await Promise.all([
+      this.repository.records(userId, undefined, 500),
+      repositoryWithTrades.closedTrades
+        ? repositoryWithTrades.closedTrades(userId)
+        : Promise.resolve([]),
+    ]);
     const records = rows.map(toDto);
     const minimum = this.config.get<number>('MIN_RECORDS_FOR_REFLECTION', 20);
     const metrics = calculatePerformanceMetrics(records);
     if (records.length < minimum) {
-      return { summary: `Collecting evidence: ${records.length} of ${minimum} evaluated records are available.`, accuracy: metrics.accuracy, strengths: [], weaknesses: [], patterns: [], suggestions: [], generatedAt: new Date().toISOString(), recordCount: records.length, ready: false };
+      return { summary: `Collecting evidence: ${records.length} of ${minimum} evaluated records are available.`, accuracy: metrics.accuracy, strengths: [], weaknesses: [], patterns: [], suggestions: [], generatedAt: new Date().toISOString(), actualTrading: actualTradeMetrics(actualTrades), recordCount: records.length, ready: false };
     }
 
     const strengths: string[] = [];
@@ -71,7 +79,7 @@ export class ReflectionService {
       generatedAt: new Date().toISOString(),
     });
     if (persist) await this.persistInsights(userId, weaknesses, patterns, metrics.maxDrawdown);
-    return { ...output, recordCount: records.length, ready: true };
+    return { ...output, actualTrading: actualTradeMetrics(actualTrades), recordCount: records.length, ready: true };
   }
 
   private async persistInsights(userId: string, weaknesses: string[], patterns: string[], drawdown: number) {
@@ -84,3 +92,24 @@ export class ReflectionService {
 }
 
 function round(value: number) { return Math.round(value * 100) / 100; }
+
+function actualTradeMetrics(rows: Array<{
+  netPnl: { toString(): string };
+  grossPnl: { toString(): string };
+  fee: { toString(): string };
+  sourceDataComplete: boolean;
+}>) {
+  const wins = rows.filter((row) => Number(row.netPnl) > 0);
+  const grossProfit = wins.reduce((sum, row) => sum + Number(row.netPnl), 0);
+  const grossLoss = Math.abs(rows.filter((row) => Number(row.netPnl) < 0).reduce((sum, row) => sum + Number(row.netPnl), 0));
+  return {
+    source: 'EXCHANGE_CLOSED_TRADE_LEDGER' as const,
+    totalTrades: rows.length,
+    completeTrades: rows.filter((row) => row.sourceDataComplete).length,
+    winRate: rows.length ? round(wins.length / rows.length * 100) : 0,
+    grossPnl: round(rows.reduce((sum, row) => sum + Number(row.grossPnl), 0)),
+    fees: round(rows.reduce((sum, row) => sum + Number(row.fee), 0)),
+    netPnl: round(rows.reduce((sum, row) => sum + Number(row.netPnl), 0)),
+    profitFactor: grossLoss > 0 ? round(grossProfit / grossLoss) : grossProfit > 0 ? null : 0,
+  };
+}

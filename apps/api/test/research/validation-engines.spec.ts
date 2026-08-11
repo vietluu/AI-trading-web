@@ -79,7 +79,10 @@ describe('Phase 10.3A Quantitative Research Validation Engines', () => {
   });
 
   it('runs Bootstrap Resampling Engine', () => {
-    const result = runBootstrapEngine({ trades: [], resamples: 200 });
+    const result = runBootstrapEngine({ trades: [
+      { entryTime: '', exitTime: '', entryPrice: 100, exitPrice: 110, pnl: 100, holdingTime: 1, maxFavorableExcursion: 10, maxAdverseExcursion: -2, riskReward: 2, expectedValue: 50, tradeQualityScore: 80 },
+      { entryTime: '', exitTime: '', entryPrice: 100, exitPrice: 95, pnl: -50, holdingTime: 1, maxFavorableExcursion: 2, maxAdverseExcursion: -5, riskReward: 0.5, expectedValue: -25, tradeQualityScore: 40 },
+    ], resamples: 200 });
     expect(result.profitFactorCI95.length).toBe(2);
     expect(result.expectancyCI95.length).toBe(2);
     expect(result.sharpeRatioCI95.length).toBe(2);
@@ -117,8 +120,11 @@ describe('Phase 10.3A Quantitative Research Validation Engines', () => {
   });
 
   it('runs Cross-Symbol Robustness Engine across 10 liquid pairs', () => {
-    const result = runCrossSymbolRobustnessEngine();
-    expect(result.symbols.length).toBe(10);
+    const result = runCrossSymbolRobustnessEngine([
+      { symbol: 'BTC-USDT', winRate: 60, totalReturn: 8, sharpeRatio: 1.2, maxDrawdown: 5 },
+      { symbol: 'ETH-USDT', winRate: 55, totalReturn: 4, sharpeRatio: 0.8, maxDrawdown: 7 },
+    ]);
+    expect(result.symbols.length).toBe(2);
     expect(result.robustnessScore).toBeGreaterThanOrEqual(0);
     expect(typeof result.isRobust).toBe('boolean');
   });

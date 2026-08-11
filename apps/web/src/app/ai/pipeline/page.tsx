@@ -69,14 +69,16 @@ export default function PipelinePage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-end justify-between">
+      <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">{t.ai.pipelineTitle}</h1>
           <p className="mt-1 text-muted-foreground">{t.ai.pipelineSubtitle}</p>
         </div>
-        <Link className="text-primary hover:underline" href={ROUTES.ai.pipelineRuns}>
+        <button className="rounded bg-primary px-4 py-2 font-medium text-primary-foreground hover:bg-primary/90">
+          <Link className="text-nowrap" href={ROUTES.ai.pipelineRuns}>
           {t.ai.runHistory}
         </Link>
+        </button>
       </div>
       <section className="grid gap-4 md:grid-cols-4">
         {[

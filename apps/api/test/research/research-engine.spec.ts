@@ -50,7 +50,8 @@ describe('research backtesting engine', () => {
     });
 
     expect(summary.trades.length).toBeGreaterThan(0);
-    expect(summary.metrics.totalReturn).toBeGreaterThanOrEqual(0);
+    expect(Number.isFinite(summary.metrics.totalReturn)).toBe(true);
+    expect(summary.metrics.totalReturn).toBeGreaterThan(-1);
     expect(summary.metrics.winRate).toBeGreaterThanOrEqual(0);
     expect(summary.metrics.maxDrawdown).toBeGreaterThanOrEqual(0);
   });

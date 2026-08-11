@@ -18,19 +18,16 @@ export default function FactorsPage() {
   const { t } = useTranslation();
   const [factors, setFactors] = useState<FactorItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadFactors() {
       try {
         const data = await apiRequest<FactorItem[]>("/quant-intelligence/factors");
         setFactors(data);
-      } catch {
-        setFactors([
-          { factorName: "EMA Alignment (20/50/200)", category: "TECHNICAL", predictivePower: 85, contribution: 25, noiseScore: 15, redundancyScore: 10 },
-          { factorName: "Market Structure (HH/HL)", category: "STRUCTURE", predictivePower: 88, contribution: 22, noiseScore: 12, redundancyScore: 8 },
-          { factorName: "High-Impact News Events", category: "NEWS", predictivePower: 90, contribution: 15, noiseScore: 30, redundancyScore: 5 },
-          { factorName: "Whale Net Exchange Outflow", category: "ONCHAIN", predictivePower: 84, contribution: 14, noiseScore: 16, redundancyScore: 10 },
-        ]);
+      } catch (cause) {
+        setFactors([]);
+        setError(cause instanceof Error ? cause.message : "Verified factor evidence is unavailable.");
       } finally {
         setLoading(false);
       }
@@ -52,6 +49,9 @@ export default function FactorsPage() {
           </p>
         </div>
       </div>
+
+      {error && <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-sm text-red-200">{error}</div>}
+      {!error && factors.length === 0 && <div className="rounded-xl border border-border p-4 text-sm text-muted-foreground">DATA_UNAVAILABLE: no evaluated factor observations.</div>}
 
       <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2">
         {factors.map((f, i) => (

@@ -39,8 +39,15 @@ export function AppNavigation(): React.JSX.Element {
         setDropdownOpen(false);
       }
     }
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setDropdownOpen(false);
+    }
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEscape);
+    };
   }, []);
 
   // Close menus on route change
@@ -117,7 +124,7 @@ export function AppNavigation(): React.JSX.Element {
           </button>
 
           {dropdownOpen && (
-            <div className="mt-1 grid w-full gap-1 rounded-xl border border-border/80 bg-background/90 p-2 shadow-lg lg:absolute lg:right-0 lg:mt-2 lg:w-52 lg:bg-card">
+            <div className="z-[99] mt-1 grid w-full gap-1 rounded-xl border border-border/80 bg-background/95 p-2 shadow-lg backdrop-blur-xl lg:absolute lg:right-0 lg:mt-2 lg:w-[28rem] lg:grid-cols-2 lg:bg-card">
               {MORE_NAV_ITEMS.map((item) => (
                 <Link
                   className={`rounded-lg px-3 py-2 text-sm transition-colors ${

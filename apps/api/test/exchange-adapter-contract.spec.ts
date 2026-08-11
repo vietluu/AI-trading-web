@@ -14,6 +14,36 @@ import { OkxFuturesAdapter } from "../src/exchange/infrastructure/okx/okx-future
 import { OkxFuturesClient } from "../src/exchange/infrastructure/okx/okx-futures.client";
 
 describe("exchange adapter normalization contract", () => {
+  it("does not silently backfill hard-coded Binance symbols", async () => {
+    const signedGet = vi.fn();
+    const adapter = new BinanceFuturesAdapter({ signedGet } as unknown as BinanceFuturesClient);
+
+    await expect(adapter.getTradeFills({
+      apiKey: "key",
+      apiSecret: "secret",
+      environment: ExchangeEnvironment.TESTNET,
+    })).resolves.toEqual([]);
+    expect(signedGet).not.toHaveBeenCalled();
+  });
+
+  it("passes the backfill time cursor to Binance", async () => {
+    const signedGet = vi.fn().mockResolvedValue([]);
+    const adapter = new BinanceFuturesAdapter({ signedGet } as unknown as BinanceFuturesClient);
+    const before = new Date("2026-08-01T00:00:00.000Z");
+
+    await adapter.getTradeFills({
+      apiKey: "key",
+      apiSecret: "secret",
+      environment: ExchangeEnvironment.TESTNET,
+    }, ["ALGO-USDT"], 1000, before);
+
+    expect(signedGet).toHaveBeenCalledWith(
+      "/fapi/v1/userTrades",
+      expect.any(Object),
+      { symbol: "ALGOUSDT", limit: 1000, endTime: before.getTime() },
+    );
+  });
+
   it("normalizes compact quote symbols into base-quote format", () => {
     expect(normalizeSymbol("BNBUSDT")).toBe("BNB-USDT");
     expect(normalizeSymbol("ETHUSDT")).toBe("ETH-USDT");

@@ -101,6 +101,7 @@ export interface Dictionary {
     title: string;
     subtitle: string;
     scorecardGrade: string;
+    insufficientEvidenceGrade: string;
     expectedValue: string;
     expectedValueDesc: string;
     profitFactor: string;
@@ -129,6 +130,20 @@ export interface Dictionary {
     recommendedAllocation: string;
     recommendationsTitle: string;
     recommendationsSubtitle: string;
+    opportunityRecommendationsTitle: string;
+    scannedFromExchanges: string;
+    evScore: string;
+    ultraHighLiquidity: string;
+    strongLiquidity: string;
+    highTradingMomentum: string;
+    supportedOnBothExchanges: string;
+    majorMarketBenchmark: string;
+    thresholdRecommendationTitle: string;
+    thresholdRecommendationProblem: string;
+    thresholdRecommendationEvidence: string;
+    thresholdRecommendationBenefit: string;
+    thresholdRecommendationRisk: string;
+    thresholdRecommendationRollback: string;
     problemStatement: string;
     evidenceText: string;
     expectedBenefit: string;
@@ -137,6 +152,30 @@ export interface Dictionary {
     rejectRecommendation: string;
     noRecommendations: string;
     noRecommendationsDesc: string;
+    priorityLabel: string;
+    statusLabel: string;
+    rollbackLabel: string;
+    recommendationPriorities: {
+      low: string;
+      medium: string;
+      high: string;
+      critical: string;
+    };
+    recommendationStatuses: {
+      pendingApproval: string;
+      approved: string;
+      shadow: string;
+      canary: string;
+      rejected: string;
+      deployed: string;
+      rolledBack: string;
+    };
+    recommendationModules: {
+      thresholdOptimizer: string;
+      weightOptimizer: string;
+      selfLearningAuto: string;
+      portfolioOptimizer: string;
+    };
     knowledgeTitle: string;
     knowledgeSubtitle: string;
     noKnowledge: string;
@@ -247,6 +286,11 @@ export interface Dictionary {
     jsonExample: string;
   };
   research: {
+    noSymbolsSelected: string;
+    noSymbolsSelectedDesc: string;
+    selectedSymbols: string;
+    insufficientSymbolData: string;
+    evaluatedOutcomes: string;
     category: string;
     statisticalEvidence: string;
     pValue: string;

@@ -13,6 +13,7 @@ import {
   type ExchangeConnectionTest,
   type ExchangeCredentials,
   type ExchangeFundingRate,
+  type ExchangeFill,
   type ExchangeInfo,
   type ExchangeInstrument,
   type ExchangeKline,
@@ -164,6 +165,21 @@ const orderSchema = z.object({
   positionSide: z.string().optional(),
   time: z.number().int().optional(),
   updateTime: z.number().int().optional(),
+});
+const userTradeSchema = z.object({
+  id: z.union([z.string(), z.number()]),
+  orderId: z.union([z.string(), z.number()]),
+  symbol: z.string(),
+  side: z.string(),
+  positionSide: z.string().optional(),
+  price: decimal,
+  qty: decimal,
+  quoteQty: decimal.optional(),
+  realizedPnl: decimal.default("0"),
+  commission: decimal.default("0"),
+  commissionAsset: z.string().optional(),
+  maker: z.boolean().optional(),
+  time: z.number().int(),
 });
 
 @Injectable()
@@ -491,7 +507,7 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
     symbols = ["BTC-USDT", "ETH-USDT"],
     limit = 20,
   ): Promise<ExchangeOrder[]> {
-    const historyLimit = Math.min(20, Math.max(1, Math.trunc(limit)));
+    const historyLimit = Math.min(100, Math.max(1, Math.trunc(limit)));
     const pages = await Promise.all(
       symbols.map((symbol) =>
         this.client
@@ -508,6 +524,55 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
       .sort(
         (a, b) => (b.updatedAt?.getTime() ?? 0) - (a.updatedAt?.getTime() ?? 0),
       )
+      .slice(0, historyLimit);
+  }
+
+  async getTradeFills(
+    credentials: ExchangeCredentials,
+    symbols: string[] = [],
+    limit = 100,
+    before?: Date,
+  ): Promise<ExchangeFill[]> {
+    if (!symbols.length) return [];
+    const historyLimit = Math.min(1000, Math.max(1, Math.trunc(limit)));
+    const pages = await Promise.all(
+      [...new Set(symbols)].map((symbol) =>
+        this.client
+          .signedGet("/fapi/v1/userTrades", credentials, {
+            symbol: toBinanceSymbol(symbol),
+            limit: historyLimit,
+            ...(before ? { endTime: before.getTime() } : {}),
+          })
+          .then((value) => z.array(userTradeSchema).parse(value)),
+      ),
+    );
+    return pages
+      .flat()
+      .map((item) => {
+        const positionSide = item.positionSide as PositionSide | undefined;
+        const realizedPnl = Number(item.realizedPnl);
+        return {
+          provider: this.provider,
+          symbol: this.symbolFromKnownQuotes(item.symbol),
+          exchangeTradeId: String(item.id),
+          exchangeOrderId: String(item.orderId),
+          side: item.side === "SELL" ? "SELL" as const : "BUY" as const,
+          ...(positionSide ? { positionSide } : {}),
+          price: item.price,
+          quantity: item.qty,
+          ...(item.quoteQty ? { quoteQuantity: item.quoteQty } : {}),
+          realizedPnl: item.realizedPnl,
+          fee: String(-Math.abs(Number(item.commission))),
+          ...(item.commissionAsset ? { feeAsset: item.commissionAsset } : {}),
+          ...(item.maker === undefined ? {} : { isMaker: item.maker }),
+          isClosing:
+            realizedPnl !== 0 ||
+            (positionSide === "LONG" && item.side === "SELL") ||
+            (positionSide === "SHORT" && item.side === "BUY"),
+          executedAt: new Date(item.time),
+        };
+      })
+      .sort((a, b) => b.executedAt.getTime() - a.executedAt.getTime())
       .slice(0, historyLimit);
   }
 

@@ -5,6 +5,7 @@ import { QuantIntelligenceService } from '../application/quant-intelligence.serv
 import type { ExperimentType } from '../domain/simulation-lab.engine';
 import type { HypothesisInput } from '../domain/quant-research.engine';
 import type { OptimizedWeightsResult } from '../domain/weight-threshold-optimizer.engine';
+import { ExchangeInterval, ExchangeProvider } from '../../../exchange/domain/exchange.types';
 
 type ReportType = 'DAILY' | 'WEEKLY' | 'MONTHLY';
 
@@ -14,38 +15,50 @@ export class QuantIntelligenceController {
   constructor(private readonly quantService: QuantIntelligenceService) {}
 
   @Get('scorecard')
-  getScorecard() {
-    return this.quantService.getDecisionScorecard();
+  getScorecard(@CurrentUser() user?: { id: string }) {
+    return this.quantService.getDecisionScorecard(this.requireUserId(user));
   }
 
   @Get('hypotheses')
-  getHypotheses(@Query('category') category?: HypothesisInput['category'], @Query('symbol') symbol?: string) {
-    return this.quantService.generateHypothesis(category, symbol);
+  getHypotheses(@CurrentUser() user: { id: string } | undefined, @Query('category') category?: HypothesisInput['category'], @Query('symbol') symbol?: string) {
+    return this.quantService.generateSelectedHypotheses(this.requireUserId(user), category, symbol);
   }
 
   @Get('strategies')
-  getStrategies(@Query('symbol') symbol?: string) {
-    return this.quantService.getDiscoveredStrategies(symbol);
+  getStrategies(
+    @CurrentUser() user: { id: string } | undefined,
+    @Query('symbol') symbol?: string,
+    @Query('provider') provider?: ExchangeProvider,
+    @Query('interval') interval?: ExchangeInterval,
+    @Query('lookbackCandles') lookbackCandles?: string,
+  ) {
+    return this.quantService.getDiscoveredStrategies(
+      this.requireUserId(user),
+      symbol,
+      provider,
+      interval,
+      lookbackCandles ? Number(lookbackCandles) : undefined,
+    );
   }
 
   @Get('factors')
-  getFactors() {
-    return this.quantService.getFactorEvaluations();
+  getFactors(@CurrentUser() user?: { id: string }) {
+    return this.quantService.getFactorEvaluations(this.requireUserId(user));
   }
 
   @Get('benchmarks')
-  getBenchmarks(@Query('strategyName') strategyName?: string) {
-    return this.quantService.getAutoBenchmarks(strategyName);
+  getBenchmarks(@CurrentUser() user: { id: string } | undefined, @Query('strategyName') strategyName?: string, @Query('symbol') symbol?: string) {
+    return this.quantService.getAutoBenchmarks(this.requireUserId(user), strategyName, symbol);
   }
 
   @Get('weights')
-  getWeights(@Query('scope') scope?: OptimizedWeightsResult['scope']) {
-    return this.quantService.getOptimizedWeights(scope);
+  getWeights(@CurrentUser() user: { id: string } | undefined, @Query('scope') scope?: OptimizedWeightsResult['scope']) {
+    return this.quantService.getOptimizedWeights(this.requireUserId(user), scope);
   }
 
   @Get('thresholds')
-  getThresholds() {
-    return this.quantService.getOptimizedThresholds();
+  getThresholds(@CurrentUser() user?: { id: string }) {
+    return this.quantService.getOptimizedThresholds(this.requireUserId(user));
   }
 
   @Get('portfolio')
@@ -68,8 +81,8 @@ export class QuantIntelligenceController {
   }
 
   @Get('regime')
-  getRegime(@Query('symbol') symbol?: string) {
-    return this.quantService.getRegimeIntelligence(symbol);
+  getRegime(@Query('symbol') symbol?: string, @Query('provider') provider?: ExchangeProvider, @Query('interval') interval?: ExchangeInterval) {
+    return this.quantService.getRegimeIntelligence(symbol, provider, interval);
   }
 
   @Get('recommendations')
@@ -87,8 +100,8 @@ export class QuantIntelligenceController {
   }
 
   @Post('simulation')
-  runSimulation(@Body() body: { name: string; experimentType: ExperimentType; config: Record<string, unknown> }) {
-    return this.quantService.runSimulation(body);
+  runSimulation(@CurrentUser() user: { id: string } | undefined, @Body() body: { name: string; experimentType: ExperimentType; config: Record<string, unknown>; symbol?: string; provider?: ExchangeProvider; interval?: ExchangeInterval; lookbackCandles?: number }) {
+    return this.quantService.runSimulation(this.requireUserId(user), body);
   }
 
   @Get('synthetic-simulation/dashboard')
@@ -115,8 +128,8 @@ export class QuantIntelligenceController {
   }
 
   @Get('knowledge')
-  getKnowledge(@Query('category') category?: string) {
-    return this.quantService.getKnowledgeBase(category);
+  getKnowledge(@CurrentUser() user?: { id: string }, @Query('category') category?: string) {
+    return this.quantService.getKnowledgeBase(this.requireUserId(user), category);
   }
 
   private requireUserId(user?: { id: string }): string {

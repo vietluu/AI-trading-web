@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service';
 
 type ReportType = 'DAILY' | 'WEEKLY' | 'MONTHLY';
@@ -15,63 +15,67 @@ export interface GeneratedReport {
 
 @Injectable()
 export class QuantReportService {
-  private readonly logger = new Logger(QuantReportService.name);
-
   constructor(private readonly prisma: PrismaService) {}
 
-  async generateReport(reportType: ReportType, userId?: string): Promise<GeneratedReport> {
+  async generateReport(reportType: ReportType, userId: string): Promise<GeneratedReport> {
     const title = `${reportType} Quantitative Intelligence Report`;
-    const summary = `Comprehensive statistical evaluation, risk breakdown, factor contribution, and strategy ranking for ${reportType.toLowerCase()} operational window.`;
-
+    const cutoff = new Date(Date.now() - (reportType === 'DAILY' ? 1 : reportType === 'WEEKLY' ? 7 : 30) * 24 * 60 * 60_000);
+    const [trades, evaluations, hypotheses, factors, validation] = await Promise.all([
+      this.prisma.closedTrade.findMany({ where: { userId, closedAt: { gte: cutoff } }, orderBy: { closedAt: 'asc' } }),
+      this.prisma.performanceRecord.findMany({ where: { userId, evaluatedAt: { gte: cutoff }, decision: { in: ['LONG', 'SHORT'] } } }),
+      this.prisma.quantHypothesis.count({ where: { userId, createdAt: { gte: cutoff } } }),
+      this.prisma.factorEvaluation.findMany({ where: { userId }, orderBy: { predictivePower: 'desc' }, take: 1 }),
+      this.prisma.researchValidationRun.findFirst({ where: { userId }, orderBy: { createdAt: 'desc' } }),
+    ]);
+    const returns = trades.flatMap((trade) => trade.returnPct === null ? [] : [trade.returnPct]);
+    const mean = returns.length ? returns.reduce((sum, value) => sum + value, 0) / returns.length : null;
+    const variance = mean !== null && returns.length > 1 ? returns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (returns.length - 1) : null;
+    const grossProfit = trades.filter((trade) => Number(trade.netPnl) > 0).reduce((sum, trade) => sum + Number(trade.netPnl), 0);
+    const grossLoss = Math.abs(trades.filter((trade) => Number(trade.netPnl) < 0).reduce((sum, trade) => sum + Number(trade.netPnl), 0));
+    let equity = 1;
+    let peak = 1;
+    let maxDrawdown = 0;
+    for (const value of returns) {
+      equity *= 1 + value;
+      peak = Math.max(peak, equity);
+      maxDrawdown = Math.max(maxDrawdown, (peak - equity) / peak);
+    }
     const metrics = {
-      expectedValue: 1.92,
-      profitFactor: 2.48,
-      sharpeRatio: 2.55,
-      calmarRatio: 3.15,
-      maxDrawdownPct: 5.8,
-      walkForwardStabilityPct: 94.5,
-      winRatePct: 62.4,
-      totalHypothesesTested: 14,
-      topFactor: 'Market Structure & Technical Alignment',
+      source: 'EXCHANGE_CLOSED_TRADES_AND_PIPELINE_EVALUATIONS',
+      expectedValuePct: mean === null ? null : Number((mean * 100).toFixed(4)),
+      profitFactor: grossLoss > 0 ? Number((grossProfit / grossLoss).toFixed(4)) : grossProfit > 0 ? null : 0,
+      sharpeRatio: mean !== null && variance !== null && variance > 0 ? Number((mean / Math.sqrt(variance) * Math.sqrt(returns.length)).toFixed(4)) : null,
+      maxDrawdownPct: returns.length ? Number((maxDrawdown * 100).toFixed(4)) : null,
+      winRatePct: trades.length ? Number((trades.filter((trade) => Number(trade.netPnl) > 0).length / trades.length * 100).toFixed(2)) : null,
+      netPnl: Number(trades.reduce((sum, trade) => sum + Number(trade.netPnl), 0).toFixed(8)),
+      closedTrades: trades.length,
+      pipelineEvaluations: evaluations.length,
+      hypothesesTested: hypotheses,
+      topFactor: factors[0]?.factorName ?? null,
+      latestValidationRunId: validation?.id ?? null,
     };
-
-    const recommendations = [
-      'Maintain current risk allocations across AI Core and Mean Reversion strategies.',
-      'Review pending weight optimization recommendation for Technical Analyst in trending regime.',
-      'Continue monitoring On-Chain exchange outflow velocity for sustained accumulation signals.',
-    ];
+    const recommendations: string[] = [];
+    if (!trades.length) recommendations.push('Collect verified closed trades before changing live allocation.');
+    if (metrics.profitFactor !== null && metrics.profitFactor < 1) recommendations.push('Do not increase risk: verified profit factor is below 1.');
+    if (validation === null) recommendations.push('Run walk-forward and out-of-sample validation before deploying research changes.');
+    if (!recommendations.length) recommendations.push('Keep the current governed configuration and continue collecting verified evidence.');
+    const summary = `${trades.length} verified closed trades and ${evaluations.length} evaluated pipeline decisions are available for this ${reportType.toLowerCase()} window.`;
 
     const generatedAt = new Date().toISOString();
-    let reportId = `report-${Date.now()}`;
-
-    try {
-      const record = await this.prisma.quantReportRecord.create({
-        data: {
-          userId: userId ?? null,
-          reportType,
-          title,
-          summary,
-          metricsJson: metrics,
-          recommendations,
-          generatedAt: new Date(),
-        },
-      });
-      reportId = record.id;
-    } catch {
-      this.logger.warn({
-        event: 'quant_report_record_db_fallback',
-        message: 'Database query failed or unmigrated; returning in-memory generated report',
-      });
-    }
-
-    this.logger.log({
-      event: 'quant_report_generated',
-      reportId,
-      reportType,
+    const record = await this.prisma.quantReportRecord.create({
+      data: {
+        userId,
+        reportType,
+        title,
+        summary,
+        metricsJson: metrics,
+        recommendations,
+        generatedAt: new Date(),
+      },
     });
 
     return {
-      id: reportId,
+      id: record.id,
       reportType,
       title,
       summary,

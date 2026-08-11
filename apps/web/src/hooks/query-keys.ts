@@ -40,6 +40,7 @@ export const QUERY_KEYS = {
     portfolio: () => ["portfolio-dashboard"],
     risk: () => ["risk-dashboard"],
     reflection: () => ["reflection"],
+    selfLearningLifecycle: () => ["self-learning-lifecycle"],
     reflectionInsights: () => ["reflection-insights"],
     reflectionProposals: () => ["reflection-proposals"],
     performance: (symbol?: string) => ["performance-metrics", symbol ?? ""],

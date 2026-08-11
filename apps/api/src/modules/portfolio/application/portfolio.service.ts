@@ -9,6 +9,7 @@ import {
 import { ConfigService } from "@nestjs/config";
 import {
   Prisma,
+  ExchangeEnvironment,
   StrategyKind,
   StrategyStatus,
   StrategyType,
@@ -339,11 +340,11 @@ export class PortfolioService {
           key: strategy.key,
           status: strategy.status,
           performance: {
-            totalTrades: 0,
-            winRate: 0.5,
-            returnPct: capital > 0 ? pnl / capital : 0,
-            drawdownPct: 0,
-            sharpeRatio: null,
+            totalTrades: strategy.performance?.totalTrades ?? 0,
+            winRate: strategy.performance?.winRate ?? 0,
+            returnPct: strategy.performance?.returnPct ?? (capital > 0 ? pnl / capital : 0),
+            drawdownPct: strategy.performance?.drawdownPct ?? 0,
+            sharpeRatio: strategy.performance?.sharpeRatio ?? null,
           },
         };
       }),
@@ -589,7 +590,7 @@ export class PortfolioService {
   async dashboard(userId: string): Promise<Record<string, unknown>> {
     await this.ensureDefaults(userId);
     await this.syncActiveConnections(userId);
-    const [live, strategies, riskEvents, rebalances, liveOrders] =
+    const [live, strategies, riskEvents, rebalances, closedTrades] =
       await Promise.all([
         this.liveState(userId),
         this.prisma.portfolioStrategy.findMany({
@@ -607,13 +608,14 @@ export class PortfolioService {
           orderBy: { createdAt: "desc" },
           take: 20,
         }),
-        this.prisma.liveOrder.findMany({
+        this.prisma.closedTrade?.findMany({
           where: {
             userId,
             environment: { in: this.exchangeEnvironments() },
-            status: { not: "FAILED" },
           },
-        }),
+          orderBy: { closedAt: "desc" },
+          take: 5_000,
+        }) ?? Promise.resolve([]),
       ]);
     if (
       strategies.every(
@@ -640,6 +642,19 @@ export class PortfolioService {
       (sum, item) => sum + Math.abs(item.quantity * item.markPrice),
       0,
     );
+    const hasTradeLedger = Boolean(this.prisma.closedTrade);
+    const realizedPnl = closedTrades.reduce(
+      (sum, trade) => sum + Number(trade.netPnl),
+      0,
+    ) + (!hasTradeLedger
+      ? live.positions.reduce(
+          (sum, position) => sum + Number(position.realizedPnl ?? 0),
+          0,
+        )
+      : 0);
+    const incompleteClosedTrades = closedTrades.filter(
+      (trade) => !trade.sourceDataComplete,
+    ).length;
     return {
       config: this.config.values,
       source: {
@@ -654,8 +669,12 @@ export class PortfolioService {
       portfolio: {
         equity,
         peakEquity,
-        pnl: live.pnl,
-        pnlKind: "EXCHANGE_MARK_TO_MARKET",
+        pnl: realizedPnl + live.unrealizedPnl,
+        realizedPnl,
+        unrealizedPnl: live.unrealizedPnl,
+        pnlKind: "EXCHANGE_FILL_NET_PLUS_MARK_TO_MARKET",
+        closedTrades: closedTrades.length,
+        incompleteClosedTrades,
         grossExposure,
         exposurePct: equity > 0 ? grossExposure / equity : 0,
         drawdownPct:
@@ -669,14 +688,22 @@ export class PortfolioService {
           live?.positions.filter(
             (position) => position.strategyId === item.id,
           ) ?? [];
-        const strategyPnl = exchangePositions.reduce(
+        const capital = Number(item.allocation?.allocatedCapital ?? 0);
+        const strategyMarkPnl = exchangePositions.reduce(
           (sum, position) =>
-            sum +
-            Number(position.unrealizedPnl) +
-            Number(position.realizedPnl ?? 0),
+            sum + Number(position.unrealizedPnl) + Number(position.realizedPnl ?? 0),
           0,
         );
-        const capital = Number(item.allocation?.allocatedCapital ?? 0);
+        const strategyTrades = closedTrades.filter(
+          (trade) => trade.strategyId === item.id,
+        );
+        const strategyRealizedPnl = strategyTrades.reduce(
+          (sum, trade) => sum + Number(trade.netPnl),
+          0,
+        );
+        const winningTrades = strategyTrades.filter(
+          (trade) => Number(trade.netPnl) > 0,
+        ).length;
         return {
           id: item.id,
           key: item.key,
@@ -693,20 +720,14 @@ export class PortfolioService {
               }
             : { weight: 0, allocatedCapital: 0 },
           performance: {
-            source: "EXCHANGE_POSITION",
-            totalTrades: liveOrders.filter(
-              (order) =>
-                order.strategyId === item.id &&
-                ["OPEN", "REVERSE"].includes(order.purpose),
-            ).length,
-            winRate: null,
-            returnPct: capital > 0 ? strategyPnl / capital : null,
-            drawdownPct: null,
-            sharpeRatio: null,
-            realizedPnl: exchangePositions.reduce(
-              (sum, position) => sum + Number(position.realizedPnl ?? 0),
-              0,
-            ),
+            source: "EXCHANGE_CLOSED_TRADE_LEDGER",
+            totalTrades: strategyTrades.length,
+            winningTrades,
+            winRate: strategyTrades.length ? winningTrades / strategyTrades.length : null,
+            returnPct: item.performance?.returnPct ?? (!hasTradeLedger && capital > 0 ? strategyMarkPnl / capital : null),
+            drawdownPct: item.performance?.drawdownPct ?? null,
+            sharpeRatio: item.performance?.sharpeRatio ?? null,
+            realizedPnl: strategyRealizedPnl,
             unrealizedPnl: exchangePositions.reduce(
               (sum, position) => sum + Number(position.unrealizedPnl),
               0,
@@ -719,6 +740,10 @@ export class PortfolioService {
       unassignedExposure: this.exchangeExposure(
         live.positions.filter((position) => !position.strategyId),
       ),
+      unassignedClosedTrades: closedTrades.filter((trade) => !trade.strategyId).length,
+      unassignedRealizedPnl: closedTrades
+        .filter((trade) => !trade.strategyId)
+        .reduce((sum, trade) => sum + Number(trade.netPnl), 0),
       aggregation: aggregatePositions(positions),
       riskEvents: riskEvents.map((item) => ({
         ...item,
@@ -832,10 +857,10 @@ export class PortfolioService {
     return "SIDEWAYS";
   }
 
-  private exchangeEnvironments(): string[] {
+  private exchangeEnvironments(): ExchangeEnvironment[] {
     return this.config.tradingMode === "LIVE"
-      ? ["PRODUCTION"]
-      : ["DEMO", "TESTNET"];
+      ? [ExchangeEnvironment.PRODUCTION]
+      : [ExchangeEnvironment.DEMO, ExchangeEnvironment.TESTNET];
   }
 
   private exchangeExposure(
@@ -927,11 +952,11 @@ export class PortfolioService {
         latest.reduce(
           (sum, snapshot) => sum + Number(snapshot.unrealizedPnl),
           0,
-        ) +
-        freshPositions.reduce(
-          (sum, position) => sum + Number(position.realizedPnl ?? 0),
-          0,
         ),
+      unrealizedPnl: latest.reduce(
+        (sum, snapshot) => sum + Number(snapshot.unrealizedPnl),
+        0,
+      ),
       positions: freshPositions,
     };
   }
