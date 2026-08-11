@@ -74,11 +74,12 @@ export default function PipelinePage() {
           <h1 className="text-3xl font-bold">{t.ai.pipelineTitle}</h1>
           <p className="mt-1 text-muted-foreground">{t.ai.pipelineSubtitle}</p>
         </div>
-        <button className="rounded bg-primary px-4 py-2 font-medium text-primary-foreground hover:bg-primary/90">
-          <Link className="text-nowrap" href={ROUTES.ai.pipelineRuns}>
+        <Link
+          className="text-nowrap rounded bg-primary px-4 py-2 font-medium text-primary-foreground hover:bg-primary/90"
+          href={ROUTES.ai.pipelineRuns}
+        >
           {t.ai.runHistory}
         </Link>
-        </button>
       </div>
       <section className="grid gap-4 md:grid-cols-4">
         {[
