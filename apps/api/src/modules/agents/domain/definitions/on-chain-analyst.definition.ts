@@ -67,13 +67,13 @@ export const ON_CHAIN_ANALYST_DEFINITION: AgentDefinition<
   maxOutputTokens: 1_000,
   requiresUserContext: false,
   allowsPublicSystemRun: true,
-  buildToolCalls: (input) => [{
+  buildToolCalls: (input) => input.symbol ? [{
     toolName: 'onchain.metrics.get',
     arguments: {
-      symbol: input.symbol ?? 'BTC-USDT',
+      symbol: input.symbol,
       lookbackHours: input.lookbackHours,
     },
-  }],
+  }] : [],
   buildInsufficientOutput: (_usedTools, reason) => ({
     summary: `Verified on-chain data is unavailable for this asset: ${reason}`,
     activity: 'NORMAL',

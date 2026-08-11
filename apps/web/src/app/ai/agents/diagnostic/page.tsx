@@ -1,11 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSystemDiagnostic, type DiagnosticRunResult } from "@/hooks/ai/useAiFeature";
+import { useConfiguredTradingScope } from '@/hooks/useConfiguredTradingScope';
 
 export default function SystemDiagnosticPage() {
-  const [symbol, setSymbol] = useState("BTC-USDT");
+  const scope = useConfiguredTradingScope();
+  const symbols = useMemo(() => scope.data?.symbols ?? [], [scope.data?.symbols]);
+  const [symbol, setSymbol] = useState("");
   const [provider, setProvider] = useState("OPENAI");
+  useEffect(() => {
+    if (!symbol && symbols[0]) setSymbol(symbols[0]);
+  }, [symbol, symbols]);
 
   const runMutation = useSystemDiagnostic(symbol, provider);
   const runData: DiagnosticRunResult | undefined = runMutation.data;
@@ -26,12 +32,14 @@ export default function SystemDiagnosticPage() {
 
         <div>
           <label className="text-xs font-semibold text-muted-foreground block mb-1">Target Symbol</label>
-          <input
-            type="text"
+          <select
             value={symbol}
             onChange={(e) => setSymbol(e.target.value)}
             className="w-full bg-background border rounded px-3 py-2 text-sm font-mono"
-          />
+          >
+            {!symbol && <option value="">No symbol selected</option>}
+            {symbols.map((value) => <option key={value} value={value}>{value}</option>)}
+          </select>
         </div>
 
         <div>
@@ -50,7 +58,7 @@ export default function SystemDiagnosticPage() {
 
         <button
           onClick={() => runMutation.mutate(undefined)}
-          disabled={runMutation.isPending}
+          disabled={!symbol || runMutation.isPending}
           className="w-full py-2.5 bg-primary text-primary-foreground text-sm font-medium rounded-md hover:bg-primary/90 transition-colors"
         >
           {runMutation.isPending ? "Executing Diagnostic Agent..." : "Run Diagnostic Agent"}

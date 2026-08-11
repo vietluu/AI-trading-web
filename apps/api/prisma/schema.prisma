@@ -1914,6 +1914,7 @@ model SensitivityHeatmap {
 // ============================================================
 
 enum RecommendationStatus {
+  VALIDATION_REQUIRED
   PENDING_APPROVAL
   APPROVED
   SHADOW
@@ -2062,6 +2063,8 @@ model SelfLearningInsight {
 model MarketRegimeState {
   id               String   @id @default(uuid()) @db.Uuid
   symbol           String
+  provider         String?
+  interval         String?
   regime           String   // BULL, BEAR, SIDEWAYS, HIGH_VOLATILITY, LOW_VOLATILITY, PANIC, EUPHORIA
   confidence       Float    @default(0)
   recommendedConfig Json
@@ -2069,6 +2072,7 @@ model MarketRegimeState {
 
   @@index([symbol, regime])
   @@index([symbol, detectedAt])
+  @@index([symbol, provider, interval, detectedAt])
   @@map("market_regime_states")
 }
 

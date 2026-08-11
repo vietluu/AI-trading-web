@@ -7,7 +7,8 @@ import { adaptiveTradingPolicy, type AdaptivePolicyContext } from '../domain/ada
 export class PipelineThresholdService {
   constructor(private readonly config: PipelineConfigService) {}
   evaluate(output: DecisionOutput, context?: AdaptivePolicyContext): { actionable: boolean; reason?: string } {
-    const policy = adaptiveTradingPolicy({ symbol: context?.symbol ?? 'BTC-USDT', ...context, regime: output.regime?.type ?? context?.regime ?? 'RANGING' });
+    if (!context?.symbol) return { actionable: false, reason: 'SYMBOL_REQUIRED' };
+    const policy = adaptiveTradingPolicy({ ...context, symbol: context.symbol, regime: output.regime?.type ?? context.regime ?? 'RANGING' });
     if (output.decision === 'WAIT') return { actionable: false, reason: 'DECISION_IS_WAIT' };
     if (output.dataQuality === 'INSUFFICIENT') return { actionable: false, reason: 'DATA_QUALITY_INSUFFICIENT' };
     if (output.conflictLevel === 'HIGH') return { actionable: false, reason: 'HIGH_CONFLICT' };

@@ -20,6 +20,7 @@ describe("signal filter", () => {
 
   it("skips when ATR is below the volatility threshold", () => {
     const result = service.evaluate({
+      symbol: "ALGO-USDT",
       rsi: 62,
       atr: 15,
       volumeChangePercent: 2.8,
@@ -33,6 +34,7 @@ describe("signal filter", () => {
 
   it("allows trending conditions with aligned EMA and sufficient ATR", () => {
     const result = service.evaluate({
+      symbol: "ALGO-USDT",
       rsi: 62,
       atr: 80,
       volumeChangePercent: 2.8,
@@ -83,7 +85,7 @@ describe("signal filter", () => {
   });
 
   it("fails closed when indicator data is unavailable", () => {
-    const result = service.evaluate({});
+    const result = service.evaluate({ symbol: "ALGO-USDT" });
 
     expect(result.allowed).toBe(false);
     expect(result.reason).toBe("INSUFFICIENT_INDICATORS");

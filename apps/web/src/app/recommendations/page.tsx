@@ -18,7 +18,7 @@ interface RecommendationItem {
   implementationCost: string;
   rollbackPlan: string;
   historicalResult?: Record<string, unknown>;
-  status: "PENDING_APPROVAL" | "APPROVED" | "SHADOW" | "CANARY" | "REJECTED" | "DEPLOYED" | "ROLLED_BACK";
+  status: "VALIDATION_REQUIRED" | "PENDING_APPROVAL" | "APPROVED" | "SHADOW" | "CANARY" | "REJECTED" | "DEPLOYED" | "ROLLED_BACK";
 }
 
 interface SymbolRecommendation {
@@ -46,6 +46,7 @@ export default function RecommendationsPage() {
     CRITICAL: t.quant.recommendationPriorities.critical,
   };
   const statusLabels: Record<string, string> = {
+    VALIDATION_REQUIRED: t.quant.recommendationStatuses.validationRequired,
     PENDING_APPROVAL: t.quant.recommendationStatuses.pendingApproval,
     APPROVED: t.quant.recommendationStatuses.approved,
     SHADOW: t.quant.recommendationStatuses.shadow,
@@ -94,7 +95,7 @@ export default function RecommendationsPage() {
       try {
         const [quantData, exchangeRes] = await Promise.allSettled([
           getRecommendations(),
-          apiRequest<SymbolRecommendation[]>("/exchanges/recommendations?limit=6"),
+          apiRequest<SymbolRecommendation[]>("/quant-intelligence/opportunities?limit=6"),
         ]);
         if (quantData.status === "fulfilled") setRecommendations(quantData.value);
         if (exchangeRes.status === "fulfilled" && Array.isArray(exchangeRes.value)) {

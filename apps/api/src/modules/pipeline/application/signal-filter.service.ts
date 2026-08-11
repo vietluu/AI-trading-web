@@ -21,15 +21,18 @@ export interface SignalFilterInput {
 
 export interface SignalFilterResult {
   allowed: boolean;
-  reason?: "NO_TRADE_ZONE" | "LOW_ATR" | "NO_TREND" | "INSUFFICIENT_INDICATORS" | "WIDE_SPREAD";
+  reason?: "NO_TRADE_ZONE" | "LOW_ATR" | "NO_TREND" | "INSUFFICIENT_INDICATORS" | "WIDE_SPREAD" | "SYMBOL_REQUIRED";
   preliminaryRegime: "TRENDING" | "RANGING" | "BREAKOUT" | "UNCLASSIFIED";
 }
 
 @Injectable()
 export class SignalFilterService {
   evaluate(input: SignalFilterInput): SignalFilterResult {
+    if (!input.symbol) {
+      return { allowed: false, reason: "SYMBOL_REQUIRED", preliminaryRegime: "UNCLASSIFIED" };
+    }
     const policy = adaptiveTradingPolicy({
-      symbol: input.symbol ?? "BTC-USDT",
+      symbol: input.symbol,
       provider: input.provider,
       timeframe: input.timeframe,
       regime: input.marketRegime,

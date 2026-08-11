@@ -14,7 +14,7 @@ describe('DecisionJudgeService', () => {
     const result = judge.evaluate(decision as never, {
       market: insufficient, technical: insufficient, news: insufficient,
       sentiment: insufficient, macro: insufficient, onchain: insufficient,
-    } as never);
+    } as never, { symbol: 'ALGO-USDT' });
 
     expect(result.approved).toBe(false);
     expect(result.verdict).toBe('REQUEST_MORE_DATA');
@@ -28,7 +28,7 @@ describe('DecisionJudgeService', () => {
       expectedValue: 0, profitFactorEstimate: 1.8, riskScore: 30,
     } as never, {
       market: good, technical: good, news: good, sentiment: good, macro: good, onchain: good,
-    } as never);
+    } as never, { symbol: 'ALGO-USDT' });
 
     expect(result).toEqual(expect.objectContaining({ approved: false, verdict: 'REJECT' }));
     expect(result.reasons).toContain('EXPECTED_VALUE_TOO_LOW');
@@ -62,7 +62,7 @@ describe('DecisionJudgeService', () => {
         dataQuality: 'INSUFFICIENT', generatedAt,
         signals: ['No verified on-chain provider is configured.'],
       },
-    } as never);
+    } as never, { symbol: 'ALGO-USDT' });
 
     expect(result.reasons).not.toContain('INSUFFICIENT_USABLE_ANALYSTS');
     expect(result.verdict).toBe('APPROVE');

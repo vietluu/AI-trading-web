@@ -1,4 +1,4 @@
-import { ExchangeInterval, ExchangeProvider } from '../../../exchange/domain/exchange.types';
+import type { ExchangeInterval, ExchangeProvider } from '../../../exchange/domain/exchange.types';
 import type { NormalizedCandle } from '../../../market-data/domain/market-data.types';
 
 export interface BacktestRequest {
@@ -350,11 +350,17 @@ export function runWalkForwardValidation({
   trainWindow,
   validationWindow,
   initialBalance,
+  provider,
+  symbol,
+  interval,
 }: {
   candles: NormalizedCandle[];
   trainWindow: number;
   validationWindow: number;
   initialBalance: number;
+  provider: ExchangeProvider;
+  symbol: string;
+  interval: ExchangeInterval;
 }): WalkForwardSummary {
   const sorted = [...candles].sort((a, b) => a.openTime.getTime() - b.openTime.getTime());
   const windows: WalkForwardWindowSummary[] = [];
@@ -365,9 +371,9 @@ export function runWalkForwardValidation({
     if (trainSlice.length === 0 || validationSlice.length === 0) continue;
     const validationBacktest = runHistoricalBacktest({
       candles: validationSlice,
-      provider: ExchangeProvider.BINANCE_FUTURES,
-      symbol: 'BTC-USDT',
-      interval: ExchangeInterval.FIVE_MINUTES,
+      provider,
+      symbol,
+      interval,
       initialBalance,
       leverage: 2,
       riskPerTrade: 0.01,

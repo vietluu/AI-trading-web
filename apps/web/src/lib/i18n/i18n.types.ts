@@ -162,6 +162,7 @@ export interface Dictionary {
       critical: string;
     };
     recommendationStatuses: {
+      validationRequired: string;
       pendingApproval: string;
       approved: string;
       shadow: string;

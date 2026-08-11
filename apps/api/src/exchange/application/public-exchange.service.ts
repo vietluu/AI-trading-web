@@ -359,6 +359,7 @@ export class PublicExchangeService {
     provider?: ExchangeProvider;
     limit?: number;
     commonOnly?: boolean;
+    symbols?: string[];
   }): Promise<
     Array<{
       symbol: string;
@@ -398,12 +399,13 @@ export class PublicExchangeService {
     );
 
     let candidates = instruments;
+    if (options?.symbols) {
+      const selectedSymbols = new Set(options.symbols.map((symbol) => symbol.trim().toUpperCase()));
+      candidates = candidates.filter((instrument) => selectedSymbols.has(instrument.symbol));
+    }
     if (options?.commonOnly && commonSet.size > 0) {
       candidates = candidates.filter((inst) => commonSet.has(inst.symbol));
     }
-
-    // Benchmark symbols to always include if available
-    const BENCHMARKS = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT"];
 
     // Evaluate tickers in parallel batches for candidates
     const tickers = await Promise.allSettled(
@@ -468,12 +470,6 @@ export class PublicExchangeService {
       if (isCommon) {
         score += 10;
         reasons.push("Supported on both Binance & OKX");
-      }
-
-      // Benchmark bonus
-      if (BENCHMARKS.includes(symbol)) {
-        score += 5;
-        reasons.push("Major market benchmark");
       }
 
       scored.push({

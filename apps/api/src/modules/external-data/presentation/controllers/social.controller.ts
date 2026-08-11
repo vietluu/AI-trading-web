@@ -60,7 +60,7 @@ export class SocialController {
               engagementScore: post.engagement?.score || 0,
               commentsCount: post.engagement?.comments || 0,
               upvoteRatio: post.engagement?.upvoteRatio,
-              relatedSymbols: symbol ? [symbol.toUpperCase()] : ['BTC', 'ETH'],
+              relatedSymbols: symbol ? [symbol.toUpperCase()] : [],
             },
             update: {
               title: post.title,

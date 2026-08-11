@@ -162,6 +162,7 @@ export const en: Dictionary = {
       critical: 'Critical',
     },
     recommendationStatuses: {
+      validationRequired: 'Validation required',
       pendingApproval: 'Pending approval',
       approved: 'Approved',
       shadow: 'Shadow evaluation',

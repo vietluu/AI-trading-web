@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { TechnicalAgentInput } from "@platform/shared";
 import {
   useAnalysisRunner,
@@ -9,21 +9,26 @@ import {
 } from "@/hooks/ai/useAiFeature";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 
-import { useExchangeSymbols } from "@/hooks/useExchangeSymbols";
+import { useConfiguredTradingScope } from "@/hooks/useConfiguredTradingScope";
 
 const fieldClassName =
   "w-full rounded-md border border-border bg-background px-3 py-2 text-sm";
 
 export default function TechnicalAnalysisPage(): React.JSX.Element {
   const { t } = useTranslation();
-  const { symbols } = useExchangeSymbols();
-  const [symbol, setSymbol] =
-    useState<string>("BTC-USDT");
+  const scope = useConfiguredTradingScope();
+  const symbols = useMemo(() => scope.data?.symbols ?? [], [scope.data?.symbols]);
+  const [symbol, setSymbol] = useState<string>("");
   const [provider, setProvider] =
     useState<TechnicalAgentInput["provider"]>("OKX_FUTURES");
   const [interval, setInterval] =
     useState<TechnicalAgentInput["interval"]>("1h");
   const [lookbackCandles, setLookbackCandles] = useState(150);
+  useEffect(() => {
+    if (!symbol && symbols[0]) setSymbol(symbols[0]);
+    const preferred = scope.data?.timeframes[0] as TechnicalAgentInput['interval'] | undefined;
+    if (preferred) setInterval(preferred);
+  }, [scope.data?.timeframes, symbol, symbols]);
   const analysis = useAnalysisRunner("TECHNICAL");
   const analysisInput: TechnicalAgentInput = {
     symbol,
@@ -78,7 +83,7 @@ export default function TechnicalAnalysisPage(): React.JSX.Element {
         <button
           className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50 md:col-span-4"
           disabled={
-            analysis.isPending || lookbackCandles < 1 || lookbackCandles > 500
+            !symbol || analysis.isPending || lookbackCandles < 1 || lookbackCandles > 500
           }
           onClick={() => analysis.mutate(analysisInput)}
           type="button"

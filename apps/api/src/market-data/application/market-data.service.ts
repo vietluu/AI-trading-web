@@ -135,6 +135,7 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleInit(): void {
+    if (process.env.CLI_DISABLE_SCHEDULERS === 'true') return;
     if (!this.configService.isEnabled()) {
       this.logger.log({ event: "market_data_disabled" });
       return;

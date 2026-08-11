@@ -31,7 +31,7 @@ export function getHomeRecommendations() {
 }
 
 export function getHomeSymbolOpportunities() {
-  return apiRequest<SymbolOpportunity[]>("/exchanges/recommendations?limit=6");
+  return apiRequest<SymbolOpportunity[]>("/quant-intelligence/opportunities?limit=6");
 }
 
 export function getHomeResearchRuns() {
