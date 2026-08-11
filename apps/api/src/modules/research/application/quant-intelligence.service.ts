@@ -16,7 +16,7 @@ type QuantRecommendation = {
   priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
   implementationCost: string;
   rollbackPlan: string;
-  status: 'PENDING_APPROVAL' | 'APPROVED' | 'SHADOW' | 'CANARY' | 'REJECTED' | 'DEPLOYED' | 'ROLLED_BACK';
+  status: 'VALIDATION_REQUIRED' | 'PENDING_APPROVAL' | 'APPROVED' | 'SHADOW' | 'CANARY' | 'REJECTED' | 'DEPLOYED' | 'ROLLED_BACK';
   reviewedByUserId?: string | null;
   reviewedAt?: Date | null;
   rejectionReason?: string | null;
@@ -107,7 +107,7 @@ export class QuantIntelligenceService {
   ) {}
 
   async getDecisionScorecard(userId: string) {
-    const [closedTrades, pipelineTotal, pipelineCompleted, pipelineFailed, riskTotal, riskApproved, liveOrders, latestValidation] = await Promise.all([
+    const [closedTrades, pipelineTotal, pipelineCompleted, pipelineFailed, riskTotal, riskApproved, liveOrders, validationEvidence] = await Promise.all([
       this.prisma.closedTrade.findMany({ where: { userId }, orderBy: { closedAt: 'asc' } }),
       this.prisma.pipelineRun.count({ where: { userId } }),
       this.prisma.pipelineRun.count({ where: { userId, status: 'COMPLETED' } }),
@@ -115,18 +115,14 @@ export class QuantIntelligenceService {
       this.prisma.riskAssessment.count({ where: { userId } }),
       this.prisma.riskAssessment.count({ where: { userId, approved: true } }),
       this.prisma.liveOrder.count({ where: { userId } }),
-      this.prisma.researchValidationRun.findFirst({ where: { userId }, orderBy: { createdAt: 'desc' } }),
+      this.multiSymbolValidationEvidence(userId, []),
     ]);
     const ledger = calculateLedgerPortfolioMetrics(closedTrades);
     const clampPct = (value: number) => Math.max(0, Math.min(100, value));
-    const researchValidationScore = latestValidation
-      ? [
-          clampPct(latestValidation.probabilityOfProfit),
-          clampPct(100 - latestValidation.probabilityOfRuin),
-          latestValidation.walkForwardStable ? 100 : 0,
-          latestValidation.outOfSampleSharpe > 0 ? clampPct(latestValidation.outOfSampleSharpe * 50) : 0,
-          clampPct(latestValidation.regimeStabilityScore),
-        ].reduce((sum, value) => sum + value, 0) / 5
+    const researchValidationScore = validationEvidence.requiredPairs
+      ? validationEvidence.coveragePct * 0.4
+        + validationEvidence.passRatePct * 0.4
+        + clampPct((validationEvidence.averageOutOfSampleSharpe ?? 0) * 50) * 0.2
       : 0;
     const dimensions = {
       dataEvidence: Math.min(100, closedTrades.length / 30 * 100),
@@ -149,8 +145,8 @@ export class QuantIntelligenceService {
       sharpeRatio: ledger.sharpeRatio,
       calmarRatio: calmar,
       maxDrawdownPct: ledger.maxDrawdownPct,
-      walkForwardStability: latestValidation ? Number(latestValidation.walkForwardAvgReturn) : null,
-      monteCarloSurvivalRate: latestValidation ? Number((100 - latestValidation.probabilityOfRuin).toFixed(2)) : null,
+      walkForwardStability: validationEvidence.requiredPairs ? validationEvidence.passRatePct : null,
+      monteCarloSurvivalRate: null,
       evidence: {
         source: 'EXCHANGE_LEDGER_PIPELINE_RUNTIME_AND_RESEARCH_DB',
         closedTrades: closedTrades.length,
@@ -161,12 +157,11 @@ export class QuantIntelligenceService {
         riskAssessments: riskTotal,
         riskApproved,
         liveOrders,
-        validationRunId: latestValidation?.id ?? null,
-        validationPassed: latestValidation
-          ? latestValidation.walkForwardStable
-            && latestValidation.outOfSampleSharpe > 0
-            && latestValidation.probabilityOfRuin < 25
-          : false,
+        validationRunIds: validationEvidence.validationRunIds,
+        validationScope: { symbols: validationEvidence.symbols, timeframes: validationEvidence.timeframes },
+        validationCoveragePct: validationEvidence.coveragePct,
+        validationPassRatePct: validationEvidence.passRatePct,
+        validationPassed: validationEvidence.passed,
       },
       evaluatedAt: new Date().toISOString(),
     };
@@ -191,9 +186,61 @@ export class QuantIntelligenceService {
     return { settings, pipelineTriggers, symbols: [...new Set([...settings, ...pipelineTriggers])] };
   }
 
+  async getSelectedResearchScope(userId: string) {
+    const selected = await this.getSelectedResearchSymbols(userId);
+    const recentCutoff = new Date(Date.now() - 30 * 24 * 60 * 60_000);
+    const [setting, runs] = await Promise.all([
+      this.prisma.userSetting.findUnique({ where: { userId }, select: { preferredTimeframes: true } }),
+      this.prisma.pipelineRun.findMany({
+        where: { userId, createdAt: { gte: recentCutoff } },
+        select: { symbol: true, provider: true, timeframe: true },
+        orderBy: { createdAt: 'desc' },
+        take: 1000,
+      }),
+    ]);
+    const supported = new Set<string>(Object.values(ExchangeInterval));
+    const settingsTimeframes = [...new Set((setting?.preferredTimeframes ?? []).filter((value) => supported.has(value)))];
+    const pipelineTimeframes = [...new Set(runs.flatMap((run) => run.timeframe && supported.has(run.timeframe) ? [run.timeframe] : []))];
+    return {
+      ...selected,
+      timeframes: [...new Set([...settingsTimeframes, ...pipelineTimeframes])] as ExchangeInterval[],
+      settingsTimeframes,
+      pipelineTimeframes,
+      recentRuns: runs,
+    };
+  }
+
+  private async resolveResearchTarget(
+    userId: string,
+    requestedSymbol?: string,
+    requestedProvider?: ExchangeProvider,
+    requestedInterval?: ExchangeInterval,
+  ) {
+    const scope = await this.getSelectedResearchScope(userId);
+    const normalized = requestedSymbol?.trim().toUpperCase().replace(/[/_]/g, '-');
+    if (normalized && !scope.symbols.includes(normalized)) {
+      throw new BadRequestException(`SYMBOL_NOT_SELECTED: ${normalized} is outside the configured or recently triggered investment universe`);
+    }
+    const symbol = normalized && /^[A-Z0-9]+-[A-Z0-9]+$/.test(normalized) ? normalized : scope.symbols[0];
+    if (!symbol) throw new BadRequestException('NO_SYMBOLS_SELECTED: select a symbol in Settings or trigger a symbol pipeline first');
+    const interval = requestedInterval ?? scope.timeframes[0];
+    if (!interval) throw new BadRequestException('NO_TIMEFRAMES_SELECTED: select a timeframe in Settings or run a pipeline with a timeframe first');
+    const runProvider = scope.recentRuns.find((run) => run.symbol === symbol)?.provider;
+    const connection = await this.prisma.exchangeConnection.findFirst({
+      where: { userId, isEnabled: true, isVerified: true, ...((requestedProvider ?? runProvider) ? { provider: requestedProvider ?? runProvider! } : {}) },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!connection && !requestedProvider) throw new BadRequestException('NO_VERIFIED_EXCHANGE_CONNECTION: no provider is available for the selected symbol');
+    const provider = requestedProvider ?? (connection?.provider === 'BINANCE_FUTURES' ? ExchangeProvider.BINANCE_FUTURES : ExchangeProvider.OKX_FUTURES);
+    return { symbol, provider, interval, scope };
+  }
+
   async generateSelectedHypotheses(userId: string, category?: HypothesisInput['category'], requestedSymbol?: string) {
     const selected = await this.getSelectedResearchSymbols(userId);
     const requested = requestedSymbol?.trim().toUpperCase().replace(/[/_]/g, '-');
+    if (requested && !selected.symbols.includes(requested)) {
+      throw new BadRequestException(`SYMBOL_NOT_SELECTED: ${requested} is outside the configured or recently triggered investment universe`);
+    }
     const symbols = requested && /^[A-Z0-9]+-[A-Z0-9]+$/.test(requested) ? [requested] : selected.symbols;
     if (!symbols.length) {
       return { status: 'NO_SYMBOLS_SELECTED', symbols: [], sources: selected, hypotheses: [] };
@@ -249,14 +296,15 @@ export class QuantIntelligenceService {
     return result;
   }
 
-  async getDiscoveredStrategies(userId: string, symbol = 'BTC-USDT', provider = ExchangeProvider.OKX_FUTURES, interval = ExchangeInterval.FIFTEEN_MINUTES, lookbackCandles = 500) {
+  async getDiscoveredStrategies(userId: string, requestedSymbol?: string, requestedProvider?: ExchangeProvider, requestedInterval?: ExchangeInterval, lookbackCandles = 500) {
+    const { symbol, provider, interval } = await this.resolveResearchTarget(userId, requestedSymbol, requestedProvider, requestedInterval);
     const candles = await this.marketData.getHistoricalCandles({ provider, symbol, interval, limit: Math.max(100, Math.min(1000, lookbackCandles)) });
     if (candles.length < 100) throw new BadRequestException(`DATA_UNAVAILABLE: only ${candles.length} real candles are available`);
     const suite = runBenchmarkSuite({ candles, provider, symbol, interval, initialBalance: 10_000, leverage: 2, riskPerTrade: 0.01, riskRewardRatio: 2 });
     const ranked = [...suite.benchmarks].sort((left, right) => right.metrics.rankingScore - left.metrics.rankingScore);
     const strategies = ranked.map((item, index) => ({
-      key: `${item.strategyName.toLowerCase().replace(/_/g, '-')}-${symbol.toLowerCase()}`,
-      name: `${item.strategyName.replace(/_/g, ' ')} (${symbol})`,
+      key: `${item.strategyName.toLowerCase().replace(/_/g, '-')}-${symbol.toLowerCase()}-${provider.toLowerCase()}-${interval}`,
+      name: `${item.strategyName.replace(/_/g, ' ')} (${symbol} · ${provider} · ${interval})`,
       kind: item.strategyName,
       score: Number(Math.max(0, 100 - index * (100 / Math.max(1, ranked.length - 1))).toFixed(2)),
       expectedValue: item.metrics.expectancy,
@@ -270,7 +318,7 @@ export class QuantIntelligenceService {
       provenance: { source: 'REAL_EXCHANGE_CANDLES', firstCandleAt: candles[0]?.openTime.toISOString(), lastCandleAt: candles.at(-1)?.closeTime.toISOString() },
       status: item.trades >= 5 ? 'DISCOVERED' : 'INSUFFICIENT_TRADES',
     }));
-    await this.prisma.discoveredStrategy.deleteMany({ where: { userId } });
+    await this.prisma.discoveredStrategy.deleteMany({ where: { userId, key: { in: strategies.map((item) => item.key) } } });
     await this.prisma.discoveredStrategy.createMany({ data: strategies.map((item) => ({ userId, key: item.key, name: item.name, kind: item.kind, score: item.score, expectedValue: item.expectedValue, profitFactor: item.profitFactor, sharpeRatio: item.sharpeRatio, calmarRatio: item.calmarRatio, maxDrawdown: item.maxDrawdown, rulesJson: item.rules, parametersJson: item.parameters, provenance: item.provenance, status: item.status })) });
     return strategies;
   }
@@ -306,8 +354,9 @@ export class QuantIntelligenceService {
     return factors;
   }
 
-  async getAutoBenchmarks(userId: string, strategyName = 'HYBRID_QUANT', symbol = 'BTC-USDT') {
-    const strategies = await this.getDiscoveredStrategies(userId, symbol);
+  async getAutoBenchmarks(userId: string, strategyName = 'HYBRID_QUANT', requestedSymbol?: string) {
+    const { symbol, provider, interval } = await this.resolveResearchTarget(userId, requestedSymbol);
+    const strategies = await this.getDiscoveredStrategies(userId, symbol, provider, interval);
     const selected = strategies.find((item) => item.kind === strategyName || item.name === strategyName) ?? strategies[0];
     if (!selected) throw new BadRequestException('DATA_UNAVAILABLE: no evidence-backed strategy was discovered');
     const comparisons = strategies.filter((item) => item.key !== selected.key).map((item, index) => ({
@@ -355,20 +404,21 @@ export class QuantIntelligenceService {
     const metrics = returnMetrics(returns);
     const result = { scope, weights, expectedValue: metrics.mean, sharpeRatio: metrics.sharpe, profitFactor: metrics.profitFactor, sampleSize: records.length, insufficientAgents, source: 'performance_records + pipeline agent outputs' };
     await this.prisma.weightOptimizationRecord.create({ data: { userId, scope, optimizedWeights: weights, expectedValue: metrics.mean, sharpeRatio: metrics.sharpe, sampleSize: records.length, evidenceJson: { source: result.source, factors, insufficientAgents, policy: 'Agents with fewer than 10 observations retain their governed live weight' } } });
-    const validation = await this.prisma.researchValidationRun.findFirst({ where: { userId }, orderBy: { createdAt: 'desc' } });
+    const validation = await this.multiSymbolValidationEvidence(userId, []);
     await this.prisma.quantRecommendation.deleteMany({ where: { userId, moduleSource: 'WEIGHT_OPTIMIZER', status: 'PENDING_APPROVAL' } });
     await this.prisma.quantRecommendation.create({ data: {
       userId,
       title: 'Promote evidence-backed agent weights to shadow evaluation',
       moduleSource: 'WEIGHT_OPTIMIZER',
       problemStatement: 'Agent weights should reflect measured directional contribution rather than static defaults.',
-      evidenceText: `${records.length} evaluated pipeline decisions; validation run ${validation?.id ?? 'missing'}.`,
-      historicalResult: { ...result, validationRunId: validation?.id ?? null, walkForwardStable: validation?.walkForwardStable ?? false, outOfSampleSharpe: validation?.outOfSampleSharpe ?? null },
+      evidenceText: `${records.length} evaluated pipeline decisions; multi-symbol validation coverage ${validation.coveragePct}%.`,
+      historicalResult: { ...result, symbols: validation.symbols, validationEvidence: validation },
       expectedBenefit: 'Shadow-test higher-evidence agent weighting without changing live decisions.',
       estimatedRisk: 'Weights may overfit recent market regimes.',
       priority: 'MEDIUM',
       implementationCost: 'LOW',
       rollbackPlan: 'Disable shadow mode; live weights remain unchanged until governed promotion.',
+      status: validation.passed ? 'PENDING_APPROVAL' : 'VALIDATION_REQUIRED',
     } });
     return result;
   }
@@ -389,7 +439,7 @@ export class QuantIntelligenceService {
     const expectedImprovement = baseline && Number.isFinite(baseline.mean) ? best.mean - baseline.mean : 0;
     const result = [{ thresholdName: 'CONFIDENCE' as const, previousValue, optimizedValue: best.threshold, expectedImprovement: Number(expectedImprovement.toFixed(6)), sampleSize: best.sampleSize, observedAccuracy: Number((best.accuracy * 100).toFixed(2)), source: 'performance_records' }];
     await this.prisma.thresholdOptimizationRecord.create({ data: { userId, thresholdName: 'CONFIDENCE', previousValue, optimizedValue: best.threshold, expectedImprovement, sampleSize: best.sampleSize, evidenceJson: { source: 'performance_records', candidates } } });
-    const validation = await this.prisma.researchValidationRun.findFirst({ where: { userId }, orderBy: { createdAt: 'desc' } });
+    const validation = await this.multiSymbolValidationEvidence(userId, []);
     await this.prisma.quantRecommendation.deleteMany({ where: { userId, moduleSource: 'THRESHOLD_OPTIMIZER', status: 'PENDING_APPROVAL' } });
     await this.prisma.quantRecommendation.create({ data: {
       userId,
@@ -397,12 +447,13 @@ export class QuantIntelligenceService {
       moduleSource: 'THRESHOLD_OPTIMIZER',
       problemStatement: 'The current threshold is not the highest-expectancy candidate in verified pipeline evaluations.',
       evidenceText: `${best.sampleSize} decisions above threshold; observed accuracy ${(best.accuracy * 100).toFixed(2)}%.`,
-      historicalResult: { ...result[0], validationRunId: validation?.id ?? null, walkForwardStable: validation?.walkForwardStable ?? false, outOfSampleSharpe: validation?.outOfSampleSharpe ?? null },
+      historicalResult: { ...result[0], symbols: validation.symbols, validationEvidence: validation },
       expectedBenefit: 'Evaluate the measured threshold in shadow mode before live promotion.',
       estimatedRisk: 'The optimum can drift as the market regime changes.',
       priority: 'MEDIUM',
       implementationCost: 'LOW',
       rollbackPlan: 'Disable shadow mode; the live confidence threshold is unchanged.',
+      status: validation.passed ? 'PENDING_APPROVAL' : 'VALIDATION_REQUIRED',
     } });
     return result;
   }
@@ -428,8 +479,22 @@ export class QuantIntelligenceService {
       this.prisma.closedTrade.findMany({ where: { userId }, orderBy: { closedAt: 'asc' } }),
     ]);
 
-    const regimeReport = await this.getRegimeIntelligence();
-    const marketRegime = this.normalizeMarketRegime(regimeReport.detectedRegime);
+    const selectedScope = await this.getSelectedResearchScope(userId);
+    const regimeRows = selectedScope.symbols.length ? await this.prisma.marketRegimeState.findMany({
+      where: { symbol: { in: selectedScope.symbols }, interval: { in: selectedScope.timeframes } },
+      orderBy: { detectedAt: 'desc' },
+    }) : [];
+    const latestRegimes = new Map<string, string>();
+    for (const row of regimeRows) {
+      const key = `${row.symbol}:${row.provider ?? 'UNKNOWN'}:${row.interval ?? 'UNKNOWN'}`;
+      if (!latestRegimes.has(key)) latestRegimes.set(key, row.regime);
+    }
+    const regimes = [...latestRegimes.values()];
+    const marketRegime = regimes.some((regime) => ['HIGH_VOLATILITY', 'PANIC', 'EUPHORIA'].includes(regime))
+      ? 'HIGH_VOLATILITY'
+      : regimes.filter((regime) => ['BULL', 'BEAR', 'TRENDING'].includes(regime)).length > regimes.length / 2
+        ? 'TRENDING'
+        : 'SIDEWAYS';
 
     const analysis = analyzePortfolioIntelligence(
       strategies.map((strategy) => {
@@ -498,7 +563,7 @@ export class QuantIntelligenceService {
     });
   }
 
-  async getRegimeIntelligence(symbol = 'BTC-USDT', provider = ExchangeProvider.OKX_FUTURES, interval = ExchangeInterval.FIFTEEN_MINUTES) {
+  async getRegimeIntelligence(symbol: string, provider: ExchangeProvider, interval: ExchangeInterval) {
     const candles = await this.marketData.getHistoricalCandles({ provider, symbol, interval, limit: 200 });
     if (candles.length < 50) throw new BadRequestException(`DATA_UNAVAILABLE: only ${candles.length} real candles are available for regime detection`);
     const detected = detectMarketRegime(candles);
@@ -514,12 +579,18 @@ export class QuantIntelligenceService {
       firstCandleAt: candles[0]?.openTime.toISOString(),
       lastCandleAt: candles.at(-1)?.closeTime.toISOString(),
     };
-    const row = await this.prisma.marketRegimeState.create({ data: { symbol, regime: detectedRegime, confidence: detected.confidence * 100, recommendedConfig } });
+    const row = await this.prisma.marketRegimeState.create({ data: { symbol, provider, interval, regime: detectedRegime, confidence: detected.confidence * 100, recommendedConfig } });
     return { symbol, detectedRegime, confidence: row.confidence, evidence: detected.evidence, recommendedConfig, detectedAt: row.detectedAt.toISOString() };
+  }
+
+  async getSelectedRegimeIntelligence(userId: string, symbol?: string, provider?: ExchangeProvider, interval?: ExchangeInterval) {
+    const target = await this.resolveResearchTarget(userId, symbol, provider, interval);
+    return this.getRegimeIntelligence(target.symbol, target.provider, target.interval);
   }
 
   async getRecommendations(userId?: string): Promise<QuantRecommendation[]> {
     try {
+      if (userId) await this.refreshRecommendations(userId);
       const dbRecs = await this.prisma.quantRecommendation.findMany({
         where: userId ? { userId } : undefined,
         orderBy: { createdAt: 'desc' },
@@ -528,23 +599,7 @@ export class QuantIntelligenceService {
         ...item,
         historicalResult: (item.historicalResult ?? {}) as Record<string, unknown>,
       }));
-      if (normalizedDbRecs.length > 0) {
-        return normalizedDbRecs;
-      }
-
-      if (userId) {
-        await this.refreshRecommendations(userId);
-        const refreshed = await this.prisma.quantRecommendation.findMany({
-          where: { userId },
-          orderBy: { createdAt: 'desc' },
-        });
-        return (refreshed ?? []).map((item: QuantRecommendationRecord) => ({
-          ...item,
-          historicalResult: (item.historicalResult ?? {}) as Record<string, unknown>,
-        }));
-      }
-
-      return [];
+      return normalizedDbRecs;
     } catch (error) {
       this.logger.warn({
         event: 'quant_recommendations_db_error',
@@ -555,22 +610,78 @@ export class QuantIntelligenceService {
     }
   }
 
+  private async multiSymbolValidationEvidence(userId: string, requestedSymbols: string[]) {
+    const scope = await this.getSelectedResearchScope(userId);
+    const configured = new Set(scope.symbols);
+    const requested = requestedSymbols
+      .map((value) => value.trim().toUpperCase().replace(/[/_]/g, '-'))
+      .filter((value) => configured.has(value));
+    const symbols = [...new Set(requested.length ? requested : scope.symbols)];
+    const timeframes = scope.timeframes;
+    const rows = symbols.length && timeframes.length
+      ? await this.prisma.researchValidationRun.findMany({
+          where: { userId, symbol: { in: symbols }, interval: { in: timeframes } },
+          orderBy: { createdAt: 'desc' },
+        })
+      : [];
+    const latestByPair = new Map<string, (typeof rows)[number]>();
+    for (const row of rows) {
+      const key = `${row.symbol}:${row.interval}`;
+      if (!latestByPair.has(key)) latestByPair.set(key, row);
+    }
+    const latest = [...latestByPair.values()];
+    const passing = latest.filter((row) => row.walkForwardStable && row.outOfSampleSharpe > 0);
+    const requiredPairs = symbols.length * timeframes.length;
+    const coveragePct = requiredPairs ? latest.length / requiredPairs * 100 : 0;
+    const passRatePct = latest.length ? passing.length / latest.length * 100 : 0;
+    const averageSharpe = latest.length ? latest.reduce((sum, row) => sum + row.outOfSampleSharpe, 0) / latest.length : null;
+    const symbolsWithPassingEvidence = [...new Set(passing.map((row) => row.symbol))];
+    const everySymbolCovered = symbols.length > 0 && symbols.every((symbol) => symbolsWithPassingEvidence.includes(symbol));
+    const passed = requiredPairs > 0 && coveragePct === 100 && passRatePct >= 50 && everySymbolCovered && averageSharpe !== null && averageSharpe > 0;
+    return {
+      source: 'MULTI_SYMBOL_REAL_CANDLE_VALIDATION',
+      symbols,
+      timeframes,
+      requiredPairs,
+      availablePairs: latest.length,
+      passingPairs: passing.length,
+      coveragePct: Number(coveragePct.toFixed(2)),
+      passRatePct: Number(passRatePct.toFixed(2)),
+      averageOutOfSampleSharpe: averageSharpe === null ? null : Number(averageSharpe.toFixed(4)),
+      everySymbolCovered,
+      symbolsWithPassingEvidence,
+      validationRunIds: latest.map((row) => row.id),
+      passingValidationRunIds: passing.map((row) => row.id),
+      passed,
+    };
+  }
+
   async refreshRecommendations(userId: string) {
-    const [strategies, validation] = await Promise.all([
-      this.prisma.portfolioStrategy.findMany({
-        where: { userId },
-        include: { performance: true, allocation: true, livePositions: true },
-        orderBy: { createdAt: 'asc' },
-      }),
-      this.prisma.researchValidationRun.findFirst({ where: { userId }, orderBy: { createdAt: 'desc' } }),
-    ]);
-
-    const regimeReport = await this.getRegimeIntelligence();
-    const marketRegime = this.normalizeMarketRegime(regimeReport.detectedRegime);
-
-    const recommendations = strategies
+    const strategies = await this.prisma.portfolioStrategy.findMany({
+      where: { userId },
+      include: { performance: true, allocation: true, livePositions: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    const recommendations = await Promise.all(strategies
       .filter((strategy) => (strategy.performance?.totalTrades ?? 0) > 0 || strategy.livePositions.length > 0)
-      .map((strategy) => {
+      .map(async (strategy) => {
+        const validationEvidence = await this.multiSymbolValidationEvidence(userId, strategy.symbols);
+        const regimeRows = validationEvidence.symbols.length ? await this.prisma.marketRegimeState.findMany({
+          where: { symbol: { in: validationEvidence.symbols }, interval: { in: validationEvidence.timeframes } },
+          orderBy: { detectedAt: 'desc' },
+        }) : [];
+        const latestRegimes = new Map<string, string>();
+        for (const row of regimeRows) {
+          const key = `${row.symbol}:${row.provider ?? 'UNKNOWN'}:${row.interval ?? 'UNKNOWN'}`;
+          if (!latestRegimes.has(key)) latestRegimes.set(key, row.regime);
+        }
+        const symbolRegimes = [...latestRegimes.entries()].map(([scope, regime]) => {
+          const [symbol, provider, interval] = scope.split(':');
+          return { symbol, provider, interval, regime };
+        });
+        const highVolatility = symbolRegimes.some((item) => ['HIGH_VOLATILITY', 'PANIC', 'EUPHORIA'].includes(item.regime));
+        const trending = symbolRegimes.filter((item) => ['BULL', 'BEAR', 'TRENDING'].includes(item.regime)).length;
+        const marketRegime = highVolatility ? 'HIGH_VOLATILITY' : trending > symbolRegimes.length / 2 ? 'TRENDING' : 'SIDEWAYS';
         const returnPct = Number(strategy.performance?.returnPct ?? 0);
         const drawdownPct = Number(strategy.performance?.drawdownPct ?? 0);
         const weight = Number(strategy.allocation?.weight ?? 0);
@@ -583,21 +694,21 @@ export class QuantIntelligenceService {
         return buildQuantRecommendation({
           title: `Adjust ${strategy.name} allocation to ${Math.round(recommendedWeight * 100)}%`,
           moduleSource: 'PORTFOLIO_INTELLIGENCE',
-          problemStatement: `Strategy ${strategy.name} should be rebalanced based on live exchange positions and the current ${marketRegime.toLowerCase()} regime.`,
-          evidenceText: `Current weight ${Math.round(weight * 100)}%, live pnl ${(livePnl).toFixed(2)}, return ${(returnPct * 100).toFixed(2)}%, drawdown ${(drawdownPct * 100).toFixed(2)}%.`,
-          historicalResult: { returnPct, drawdownPct, recommendedWeight, marketRegime, livePnl, validationRunId: validation?.id ?? null, walkForwardStable: validation?.walkForwardStable ?? false, outOfSampleSharpe: validation?.outOfSampleSharpe ?? null },
-          expectedBenefit: 'Improves portfolio risk-adjusted returns by reweighting to live performance.',
-          estimatedRisk: 'Medium if market regime changes abruptly.',
+          problemStatement: `Strategy ${strategy.name} should be rebalanced only from its configured symbols and multi-timeframe evidence.`,
+          evidenceText: `${validationEvidence.availablePairs}/${validationEvidence.requiredPairs} symbol-timeframe validations available; ${validationEvidence.passingPairs} pass, coverage ${validationEvidence.coveragePct}%.`,
+          historicalResult: { returnPct, drawdownPct, recommendedWeight, marketRegime, symbolRegimes, livePnl, symbols: validationEvidence.symbols, validationEvidence },
+          expectedBenefit: 'Improves portfolio risk-adjusted returns using validation scoped to the configured investment universe.',
+          estimatedRisk: validationEvidence.passed ? 'Medium if validated symbol regimes change abruptly.' : 'High because multi-symbol validation is incomplete or failing.',
           priority: drawdownPct > 0.05 || marketRegime === 'HIGH_VOLATILITY' ? 'HIGH' : 'MEDIUM',
           implementationCost: 'LOW',
           rollbackPlan: 'Revert the allocation weight using the portfolio rebalance endpoint.',
-          status: isAlreadyApplied ? 'APPROVED' : 'PENDING_APPROVAL',
+          status: !validationEvidence.passed ? 'VALIDATION_REQUIRED' : isAlreadyApplied ? 'APPROVED' : 'PENDING_APPROVAL',
         });
-      });
+      }));
 
     const quantRecommendationModel = this.prisma.quantRecommendation;
 
-    await quantRecommendationModel.deleteMany({ where: { userId } });
+    await quantRecommendationModel.deleteMany({ where: { userId, moduleSource: 'PORTFOLIO_INTELLIGENCE' } });
     await quantRecommendationModel.createMany({
       data: recommendations.map((item) => ({
         userId,
@@ -627,12 +738,12 @@ export class QuantIntelligenceService {
 
     const strategy = strategies.find((item) => item.key === strategyKey);
     if (!strategy) throw new NotFoundException('Portfolio strategy not found');
-    const validation = await this.prisma.researchValidationRun.findFirst({ where: { userId }, orderBy: { createdAt: 'desc' } });
+    const validation = await this.multiSymbolValidationEvidence(userId, strategy.symbols);
     if ((strategy.performance?.totalTrades ?? 0) < 5 || strategy.closedTrades.length < 5) {
       throw new BadRequestException('VALIDATION_REQUIRED: strategy needs at least 5 attributed verified closed trades');
     }
-    if (!validation?.walkForwardStable || !(validation.outOfSampleSharpe > 0)) {
-      throw new BadRequestException('VALIDATION_REQUIRED: passing walk-forward and out-of-sample validation is required');
+    if (!validation.passed) {
+      throw new BadRequestException(`VALIDATION_REQUIRED: multi-symbol validation coverage ${validation.coveragePct}% and pass rate ${validation.passRatePct}% do not satisfy the portfolio gate`);
     }
 
     const requestedWeight = Number.isFinite(targetWeight)
@@ -680,12 +791,12 @@ export class QuantIntelligenceService {
         if (rec) {
           if (action === 'APPROVE') {
             const evidence = jsonObject(rec.historicalResult);
-            const validationId = typeof evidence.validationRunId === 'string' ? evidence.validationRunId : undefined;
-            const validation = validationId
-              ? await this.prisma.researchValidationRun.findFirst({ where: { id: validationId, userId } })
-              : null;
-            if (!validation?.walkForwardStable || !(validation.outOfSampleSharpe > 0)) {
-              throw new BadRequestException('VALIDATION_REQUIRED: recommendation has no passing walk-forward/out-of-sample evidence');
+            const symbols = Array.isArray(evidence.symbols)
+              ? evidence.symbols.filter((value): value is string => typeof value === 'string')
+              : [];
+            const validation = await this.multiSymbolValidationEvidence(userId!, symbols);
+            if (!validation.passed) {
+              throw new BadRequestException(`VALIDATION_REQUIRED: recommendation has ${validation.coveragePct}% multi-symbol coverage and ${validation.passRatePct}% passing walk-forward/out-of-sample evidence`);
             }
             const config = await this.prisma.selfLearningConfiguration.upsert({
               where: { userId: userId! },
@@ -724,9 +835,7 @@ export class QuantIntelligenceService {
   }
 
   async runSimulation(userId: string, request: SimulationRequest & { symbol?: string; provider?: ExchangeProvider; interval?: ExchangeInterval; lookbackCandles?: number }) {
-    const symbol = request.symbol ?? 'BTC-USDT';
-    const provider = request.provider ?? ExchangeProvider.OKX_FUTURES;
-    const interval = request.interval ?? ExchangeInterval.FIFTEEN_MINUTES;
+    const { symbol, provider, interval } = await this.resolveResearchTarget(userId, request.symbol, request.provider, request.interval);
     const candles = await this.marketData.getHistoricalCandles({ provider, symbol, interval, limit: Math.max(100, Math.min(1000, request.lookbackCandles ?? 500)) });
     if (candles.length < 100) throw new BadRequestException(`DATA_UNAVAILABLE: only ${candles.length} real candles are available`);
     const split = Math.floor(candles.length * 0.7);

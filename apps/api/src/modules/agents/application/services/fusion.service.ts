@@ -38,7 +38,8 @@ export interface FusionAnalysisResult {
 export function deriveAssetSymbol(symbol: string): string {
   const canonical = canonicalSymbol(symbol);
   const [baseAsset] = canonical.split('-');
-  return baseAsset || 'BTC';
+  if (!baseAsset) throw new Error('SYMBOL_REQUIRED: fusion analysis requires an explicit BASE-QUOTE symbol');
+  return baseAsset;
 }
 
 import { Optional } from '@nestjs/common';

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { MarketDataModule } from '../../market-data/market-data.module';
+import { ExchangeModule } from '../../exchange/exchange.module';
 import { ResearchService } from './application/research.service';
 import { ResearchController } from './presentation/research.controller';
 import { QuantReportService } from './application/quant-report.service';
@@ -9,7 +10,7 @@ import { QuantIntelligenceController } from './presentation/quant-intelligence.c
 import { QuantResearchSchedulerService } from './application/quant-research-scheduler.service';
 
 @Module({
-  imports: [MarketDataModule],
+  imports: [MarketDataModule, ExchangeModule],
   controllers: [ResearchController, QuantIntelligenceController],
   providers: [
     ResearchService,

@@ -504,9 +504,10 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
 
   async getOrderHistory(
     credentials: ExchangeCredentials,
-    symbols = ["BTC-USDT", "ETH-USDT"],
+    symbols: string[] = [],
     limit = 20,
   ): Promise<ExchangeOrder[]> {
+    if (!symbols.length) return [];
     const historyLimit = Math.min(100, Math.max(1, Math.trunc(limit)));
     const pages = await Promise.all(
       symbols.map((symbol) =>

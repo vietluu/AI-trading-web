@@ -101,6 +101,7 @@ describe('Empirical Verification: 20-Benchmark Suite & Replay Engine', () => {
 
     for (const pt of crashPoints) {
       const res = filter.evaluate({
+        symbol: 'SOL-USDT',
         rsi: pt.rsi,
         atr: pt.atr,
         price: pt.price,

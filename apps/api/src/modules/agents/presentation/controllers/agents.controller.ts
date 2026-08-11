@@ -109,7 +109,7 @@ export class AgentsController {
   ) {
     return this.agentExecutionService.executeSync({
       agentType: AgentType.SYSTEM_DIAGNOSTIC,
-      input: { symbol: body.symbol || 'BTC-USDT', provider: body.provider },
+      input: { ...(body.symbol ? { symbol: body.symbol } : {}), provider: body.provider },
       invocationSource: AgentInvocationSource.SYSTEM_TEST,
     });
   }

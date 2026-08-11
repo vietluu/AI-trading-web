@@ -34,7 +34,8 @@ export class UnifiedAnalystService {
     correlationId?: string;
   }): Promise<UnifiedAnalystResult> {
     const symbol = canonicalSymbol(options.input.symbol);
-    const asset = symbol.split('-')[0] || 'BTC';
+    const asset = symbol.split('-')[0];
+    if (!asset) throw new Error('SYMBOL_REQUIRED: unified analysis requires an explicit BASE-QUOTE symbol');
     const correlationId = options.correlationId ?? randomUUID();
     const common = {
       userId: options.userId,

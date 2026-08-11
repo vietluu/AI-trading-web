@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, UnauthorizedException, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Post, Query, UnauthorizedException, UseGuards } from '@nestjs/common';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { SessionGuard } from '../../../session/session.guard';
 import { QuantIntelligenceService } from '../application/quant-intelligence.service';
@@ -6,13 +6,17 @@ import type { ExperimentType } from '../domain/simulation-lab.engine';
 import type { HypothesisInput } from '../domain/quant-research.engine';
 import type { OptimizedWeightsResult } from '../domain/weight-threshold-optimizer.engine';
 import { ExchangeInterval, ExchangeProvider } from '../../../exchange/domain/exchange.types';
+import { PublicExchangeService } from '../../../exchange/application/public-exchange.service';
 
 type ReportType = 'DAILY' | 'WEEKLY' | 'MONTHLY';
 
 @Controller('quant-intelligence')
 @UseGuards(SessionGuard)
 export class QuantIntelligenceController {
-  constructor(private readonly quantService: QuantIntelligenceService) {}
+  constructor(
+    private readonly quantService: QuantIntelligenceService,
+    private readonly publicExchange: PublicExchangeService,
+  ) {}
 
   @Get('scorecard')
   getScorecard(@CurrentUser() user?: { id: string }) {
@@ -81,13 +85,33 @@ export class QuantIntelligenceController {
   }
 
   @Get('regime')
-  getRegime(@Query('symbol') symbol?: string, @Query('provider') provider?: ExchangeProvider, @Query('interval') interval?: ExchangeInterval) {
-    return this.quantService.getRegimeIntelligence(symbol, provider, interval);
+  getRegime(@CurrentUser() user: { id: string } | undefined, @Query('symbol') symbol?: string, @Query('provider') provider?: ExchangeProvider, @Query('interval') interval?: ExchangeInterval) {
+    return this.quantService.getSelectedRegimeIntelligence(this.requireUserId(user), symbol, provider, interval);
   }
 
   @Get('recommendations')
   getRecommendations(@CurrentUser() user?: { id: string }) {
     return this.quantService.getRecommendations(this.requireUserId(user));
+  }
+
+  @Get('scope')
+  getResearchScope(@CurrentUser() user?: { id: string }) {
+    return this.quantService.getSelectedResearchScope(this.requireUserId(user));
+  }
+
+  @Get('opportunities')
+  async getSelectedSymbolOpportunities(
+    @CurrentUser() user: { id: string } | undefined,
+    @Query('provider') provider?: ExchangeProvider,
+    @Query('limit') limit?: string,
+  ) {
+    const scope = await this.quantService.getSelectedResearchSymbols(this.requireUserId(user));
+    if (!scope.symbols.length) throw new BadRequestException('NO_SYMBOLS_SELECTED: configure preferred symbols or trigger a pipeline first');
+    return this.publicExchange.recommendTopSymbols({
+      provider,
+      limit: limit ? Number(limit) : 10,
+      symbols: scope.symbols,
+    });
   }
 
   @Post('recommendations/:id/review')

@@ -40,6 +40,7 @@ export class MarketStreamManager implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleInit(): Promise<void> {
+    if (process.env.CLI_DISABLE_SCHEDULERS === 'true') return;
     if (!this.marketConfig.isEnabled()) return;
 
     await this.maintainLeadership();

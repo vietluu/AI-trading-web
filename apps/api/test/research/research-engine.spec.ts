@@ -81,6 +81,9 @@ describe('research backtesting engine', () => {
       validationWindow: 12,
       trainWindow: 24,
       initialBalance: 10000,
+      provider: ExchangeProvider.BINANCE_FUTURES,
+      symbol: 'SOL-USDT',
+      interval: ExchangeInterval.FIVE_MINUTES,
     });
 
     expect(monteCarlo.probabilityOfProfit).toBeGreaterThanOrEqual(0);

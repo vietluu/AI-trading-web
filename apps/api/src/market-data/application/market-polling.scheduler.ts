@@ -13,6 +13,7 @@ export class MarketPollingScheduler implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
+    if (process.env.CLI_DISABLE_SCHEDULERS === 'true') return;
     if (!this.configService.isEnabled()) {
       return;
     }

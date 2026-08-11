@@ -21,12 +21,15 @@ export interface JudgeContext {
 export class DecisionJudgeService {
   evaluate(decision: DecisionOutput, analyses: FusionInput, context?: JudgeContext, now = Date.now()): JudgeDecision {
     const reasons: string[] = [];
+    if (!context?.symbol) {
+      return { verdict: 'REQUEST_MORE_DATA', approved: false, reasons: ['SYMBOL_REQUIRED'] };
+    }
     const spreadBps = parseSpreadBps(
       analyses.market?.liquidity?.bidAskSpread ?? analyses.market?.liquidity?.spread,
       context?.referencePrice,
     );
     const policy = adaptiveTradingPolicy({
-      symbol: context?.symbol ?? 'BTC-USDT',
+      symbol: context.symbol,
       provider: context?.provider,
       timeframe: context?.timeframe,
       regime: decision.regime?.type ?? 'RANGING',

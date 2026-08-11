@@ -319,7 +319,7 @@ export class SocialPostsListTool implements ToolDefinition<{ symbol?: string; lo
     }
 
     return {
-      symbol: input.symbol || "BTC",
+      symbol: input.symbol ?? null,
       lookbackHours,
       posts: posts.map((p) => ({
         id: p.id,

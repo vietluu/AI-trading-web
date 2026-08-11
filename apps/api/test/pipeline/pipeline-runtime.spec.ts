@@ -30,16 +30,17 @@ describe('Phase 6.6 pipeline runtime policies', () => {
       dataQuality: 'GOOD',
       conflictLevel: 'LOW',
       opportunityScore: 74,
-      expectedValue: 0.12,
+      expectedValue: 0.2,
       riskScore: 45,
       adaptiveThreshold: 62,
     };
-    expect(service.evaluate(output as never)).toEqual({ actionable: true });
-    expect(service.evaluate({ ...output, confidence: 55 } as never)).toEqual({ actionable: false, reason: 'CONFIDENCE_BELOW_THRESHOLD' });
-    expect(service.evaluate({ ...output, expectedValue: -0.05 } as never)).toEqual({ actionable: false, reason: 'EXPECTED_VALUE_NEGATIVE' });
-    expect(service.evaluate({ ...output, opportunityScore: 58 } as never)).toEqual({ actionable: false, reason: 'OPPORTUNITY_BELOW_THRESHOLD' });
-    expect(service.evaluate({ ...output, dataQuality: 'INSUFFICIENT' } as never)).toEqual({ actionable: false, reason: 'DATA_QUALITY_INSUFFICIENT' });
-    expect(service.evaluate({ ...output, conflictLevel: 'HIGH' } as never)).toEqual({ actionable: false, reason: 'HIGH_CONFLICT' });
+    const context = { symbol: 'ALGO-USDT' };
+    expect(service.evaluate(output as never, context)).toEqual({ actionable: true });
+    expect(service.evaluate({ ...output, confidence: 55 } as never, context)).toEqual({ actionable: false, reason: 'CONFIDENCE_BELOW_THRESHOLD' });
+    expect(service.evaluate({ ...output, expectedValue: -0.05 } as never, context)).toEqual({ actionable: false, reason: 'EXPECTED_VALUE_NEGATIVE' });
+    expect(service.evaluate({ ...output, opportunityScore: 58 } as never, context)).toEqual({ actionable: false, reason: 'OPPORTUNITY_BELOW_THRESHOLD' });
+    expect(service.evaluate({ ...output, dataQuality: 'INSUFFICIENT' } as never, context)).toEqual({ actionable: false, reason: 'DATA_QUALITY_INSUFFICIENT' });
+    expect(service.evaluate({ ...output, conflictLevel: 'HIGH' } as never, context)).toEqual({ actionable: false, reason: 'HIGH_CONFLICT' });
   });
 
   it('uses bounded exponential retry settings for safe research jobs', () => {

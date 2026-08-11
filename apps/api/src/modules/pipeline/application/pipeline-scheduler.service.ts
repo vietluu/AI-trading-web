@@ -27,6 +27,7 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
     @Optional() private readonly taskLock?: DistributedTaskLockService,
   ) {}
   onModuleInit() {
+    if (process.env.CLI_DISABLE_SCHEDULERS === 'true') return;
     if (this.config.enabled) this.scheduleNextTick();
   }
   onModuleDestroy() {

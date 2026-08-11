@@ -23,6 +23,7 @@ export class PortfolioRebalanceScheduler
     @Optional() private readonly taskLock?: DistributedTaskLockService,
   ) {}
   onModuleInit() {
+    if (process.env.CLI_DISABLE_SCHEDULERS === 'true') return;
     this.timer = setInterval(
       () => void this.run(),
       this.config.values.rebalanceIntervalMs,

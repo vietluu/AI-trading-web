@@ -94,15 +94,14 @@ describe("AI Core Components (Prompt, Context, Token, Tool)", () => {
   });
 
   describe("Tool Registry & Executor", () => {
-    it("should list default registered tools and execute get_market_price tool", async () => {
+    it("keeps the legacy market-price name discoverable but rejects its synthetic implementation", async () => {
       const tools = toolRegistry.listTools();
       expect(tools.length).toBeGreaterThan(0);
       expect(tools.some((t) => t.name === "get_market_price")).toBe(true);
 
       const execResult = await toolExecutor.execute("get_market_price", { symbol: "BTC-USDT" });
-      expect(execResult.success).toBe(true);
-      expect(execResult.result?.symbol).toBe("BTC-USDT");
-      expect(execResult.result?.price).toBeDefined();
+      expect(execResult.success).toBe(false);
+      expect(execResult.error).toContain("LEGACY_SYNTHETIC_TOOL_DISABLED");
     });
 
     it("should fail validation when required parameters are missing", async () => {

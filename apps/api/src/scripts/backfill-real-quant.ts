@@ -1,6 +1,40 @@
 import "reflect-metadata";
+import { Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bullmq';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { NestFactory } from "@nestjs/core";
+import { resolve } from 'node:path';
 import { ExchangeInterval, ExchangeProvider } from "../exchange/domain/exchange.types";
+import { validateEnvironment } from '../config/environment';
+import { DatabaseModule } from '../database/database.module';
+import { RedisModule } from '../redis/redis.module';
+import { ResearchModule } from '../modules/research/research.module';
+import { SessionModule } from '../session/session.module';
+import { AuditModule } from '../audit/audit.module';
+import { PrismaService } from '../database/prisma.service';
+import { QuantIntelligenceService } from '../modules/research/application/quant-intelligence.service';
+import { ResearchService } from '../modules/research/application/research.service';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({
+      cache: true,
+      envFilePath: [resolve(__dirname, '../../../../.env'), resolve(__dirname, '../../.env')],
+      isGlobal: true,
+      validate: validateEnvironment,
+    }),
+    BullModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({ connection: { url: config.get<string>('REDIS_URL') ?? 'redis://localhost:6379' } }),
+    }),
+    DatabaseModule,
+    RedisModule,
+    SessionModule,
+    AuditModule,
+    ResearchModule,
+  ],
+})
+class QuantBackfillCliModule {}
 
 async function main(): Promise<void> {
   process.env.REFLECTION_ENABLED = "false";
@@ -12,13 +46,7 @@ async function main(): Promise<void> {
   if (!userId || !/^[0-9a-f-]{36}$/i.test(userId)) {
     throw new Error("Usage: node dist/scripts/backfill-real-quant.js <user-uuid> [symbol] [timeframe]");
   }
-  const [{ AppModule }, { PrismaService }, { QuantIntelligenceService }, { ResearchService }] = await Promise.all([
-    import("../app.module"),
-    import("../database/prisma.service"),
-    import("../modules/research/application/quant-intelligence.service"),
-    import("../modules/research/application/research.service"),
-  ]);
-  const app = await NestFactory.createApplicationContext(AppModule, { logger: ["error", "warn"] });
+  const app = await NestFactory.createApplicationContext(QuantBackfillCliModule, { logger: ["error", "warn"] });
   try {
     const prisma = app.get(PrismaService);
     const quant = app.get(QuantIntelligenceService);
@@ -84,10 +112,19 @@ async function main(): Promise<void> {
       for (const interval of timeframes) {
         const common = { userId, provider, symbol, interval, lookbackCandles: 500, initialBalance: 10_000 };
         try {
+          const existingValidation = await prisma.researchValidationRun.findFirst({
+            where: {
+              userId,
+              symbol,
+              interval,
+              createdAt: { gte: new Date(Date.now() - 24 * 60 * 60_000) },
+            },
+            orderBy: { createdAt: 'desc' },
+          });
           const regime = await quant.getRegimeIntelligence(symbol, provider, interval);
           const strategies = await quant.getDiscoveredStrategies(userId, symbol, provider, interval, 500);
           const benchmark = await research.runBenchmarkAnalysis({ ...common, leverage: 2, riskPerTrade: 0.01, riskRewardRatio: 2 });
-          const validation = await research.runFullQuantValidation(common);
+          const validationRunId = existingValidation?.id ?? (await research.runFullQuantValidation(common)).validationRunId;
           const sensitivity = await research.runSensitivityAnalysis({ ...common, parameterName: "confidenceFloor" });
           const simulation = await quant.runSimulation(userId, {
             name: `${symbol} ${interval} real-candle HYBRID_QUANT validation`,
@@ -107,7 +144,8 @@ async function main(): Promise<void> {
             strategyCount: strategies.length,
             autoBenchmarkCount: autoBenchmarks.length,
             topBenchmark: benchmark.leaderboard[0],
-            validationRunId: validation.validationRunId,
+            validationRunId,
+            validationReused: Boolean(existingValidation),
             sensitivityOptimal: sensitivity.optimalValue,
             simulationPassed: simulation.passedCriteria,
           });

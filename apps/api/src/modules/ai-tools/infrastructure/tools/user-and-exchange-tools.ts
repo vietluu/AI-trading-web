@@ -4,9 +4,12 @@ import type { ToolDefinition } from "../../domain/contracts/tool-definition.cont
 import type { ToolExecutionContext } from "../../domain/contracts/tool-context.contract";
 import { ExchangeConnectionService } from "../../../../exchange/application/exchange-connection.service";
 import { AIConfigService } from "../../../ai/infrastructure/config/ai-config.service";
+import { PrismaService } from "../../../../database/prisma.service";
 
 @Injectable()
 export class UserSettingsGetTool implements ToolDefinition<Record<string, unknown>, Record<string, unknown>> {
+  constructor(private readonly prisma: PrismaService) {}
+
   public readonly name = "user.settings.get";
   public readonly version = 1;
   public readonly displayName = "Get User Settings";
@@ -19,6 +22,8 @@ export class UserSettingsGetTool implements ToolDefinition<Record<string, unknow
     theme: z.string(),
     timezone: z.string(),
     defaultTimeframe: z.string(),
+    preferredSymbols: z.array(z.string()),
+    preferredTimeframes: z.array(z.string()),
   });
 
   public readonly executionMode = "SYNCHRONOUS" as const;
@@ -40,11 +45,14 @@ export class UserSettingsGetTool implements ToolDefinition<Record<string, unknow
     if (!context.userId) {
       throw new Error("User context required");
     }
+    const setting = await this.prisma.userSetting.findUnique({ where: { userId: context.userId } });
     return {
       userId: context.userId,
-      theme: "dark",
-      timezone: "UTC",
-      defaultTimeframe: "1h",
+      theme: setting?.theme ?? "dark",
+      timezone: setting?.timezone ?? "UTC",
+      defaultTimeframe: setting?.preferredTimeframes[0] ?? "",
+      preferredSymbols: setting?.preferredSymbols ?? [],
+      preferredTimeframes: setting?.preferredTimeframes ?? [],
     };
   }
 }
@@ -132,16 +140,18 @@ export class ExchangeAccountSummaryTool implements ToolDefinition<{ connectionId
 
   public async execute(input: { connectionId: string }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
     if (!context.userId) throw new Error("User context required");
-    // Verify connection ownership securely!
     const conn = await this.connectionService.get(context.userId, input.connectionId);
     if (!conn) throw new Error(`Exchange connection '${input.connectionId}' not found or access denied`);
+    const account = await this.connectionService.account(context.userId, input.connectionId, {});
 
     return {
       connectionId: conn.id,
       provider: conn.provider,
-      totalWalletBalance: "15240.50",
-      totalUnrealizedPnl: "+340.20",
-      totalMarginBalance: "15580.70",
+      totalWalletBalance: account.totalEquity,
+      totalUnrealizedPnl: account.totalUnrealizedPnl,
+      totalMarginBalance: account.totalMarginBalance,
+      availableBalance: account.availableBalance,
+      updatedAt: account.updatedAt.toISOString(),
     };
   }
 }
@@ -182,13 +192,16 @@ export class ExchangeAccountBalancesTool implements ToolDefinition<{ connectionI
     if (!context.userId) throw new Error("User context required");
     const conn = await this.connectionService.get(context.userId, input.connectionId);
     if (!conn) throw new Error(`Exchange connection '${input.connectionId}' not found or access denied`);
-
-    return {
-      balances: [
-        { asset: "USDT", walletBalance: "12500.00", availableBalance: "10200.00" },
-        { asset: "BTC", walletBalance: "0.028", availableBalance: "0.028" },
-      ],
-    };
+    const balances = await this.connectionService.balances(context.userId, input.connectionId, {});
+    return { balances: balances.map((balance) => ({
+      provider: balance.provider,
+      asset: balance.asset,
+      walletBalance: balance.total,
+      availableBalance: balance.available,
+      locked: balance.locked,
+      unrealizedPnl: balance.unrealizedPnl,
+      marginBalance: balance.marginBalance,
+    })) };
   }
 }
 
@@ -228,20 +241,21 @@ export class ExchangeAccountPositionsTool implements ToolDefinition<{ connection
     if (!context.userId) throw new Error("User context required");
     const conn = await this.connectionService.get(context.userId, input.connectionId);
     if (!conn) throw new Error(`Exchange connection '${input.connectionId}' not found or access denied`);
-
-    return {
-      positions: [
-        {
-          symbol: "BTC-USDT",
-          side: "LONG",
-          contracts: "0.5",
-          entryPrice: "94200.00",
-          markPrice: "95420.50",
-          unrealizedPnl: "+610.25",
-          leverage: 10,
-        },
-      ],
-    };
+    const positions = await this.connectionService.positions(context.userId, input.connectionId, {});
+    return { positions: positions.map((position) => ({
+      provider: position.provider,
+      symbol: position.symbol,
+      side: position.side,
+      positionMode: position.positionMode,
+      contracts: position.quantity,
+      entryPrice: position.entryPrice,
+      markPrice: position.markPrice,
+      liquidationPrice: position.liquidationPrice,
+      unrealizedPnl: position.unrealizedPnl,
+      realizedPnl: position.realizedPnl,
+      leverage: position.leverage,
+      updatedAt: position.updatedAt.toISOString(),
+    })) };
   }
 }
 
@@ -281,19 +295,21 @@ export class ExchangeAccountOpenOrdersTool implements ToolDefinition<{ connectio
     if (!context.userId) throw new Error("User context required");
     const conn = await this.connectionService.get(context.userId, input.connectionId);
     if (!conn) throw new Error(`Exchange connection '${input.connectionId}' not found or access denied`);
-
-    return {
-      orders: [
-        {
-          orderId: "ord-10023",
-          symbol: "ETH-USDT",
-          side: "BUY",
-          orderType: "LIMIT",
-          price: "3200.00",
-          quantity: "2.0",
-          status: "NEW",
-        },
-      ],
-    };
+    const orders = await this.connectionService.openOrders(context.userId, input.connectionId, {});
+    return { orders: orders.map((order) => ({
+      provider: order.provider,
+      orderId: order.exchangeOrderId,
+      clientOrderId: order.clientOrderId,
+      symbol: order.symbol,
+      side: order.side,
+      orderType: order.type,
+      price: order.price,
+      averagePrice: order.averagePrice,
+      quantity: order.originalQuantity,
+      executedQuantity: order.executedQuantity,
+      status: order.status,
+      reduceOnly: order.reduceOnly,
+      updatedAt: order.updatedAt?.toISOString(),
+    })) };
   }
 }

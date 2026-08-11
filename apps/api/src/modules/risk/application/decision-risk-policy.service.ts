@@ -9,6 +9,7 @@ export type DecisionRiskPolicyReason =
   | 'OPPORTUNITY_BELOW_THRESHOLD'
   | 'RISK_SCORE_TOO_HIGH'
   | 'EXTREME_VOLATILITY'
+  | 'SYMBOL_REQUIRED'
   | 'DECISION_IS_WAIT';
 
 export interface DecisionRiskPolicyResult {
@@ -19,7 +20,8 @@ export interface DecisionRiskPolicyResult {
 
 export class DecisionRiskPolicyService {
   evaluate(output: Pick<DecisionOutput, 'decision' | 'confidence' | 'dataQuality' | 'conflictLevel' | 'opportunityScore' | 'expectedValue' | 'adaptiveThreshold' | 'riskScore' | 'volatilityAdjustment' | 'agreementScore' | 'regime'>, context?: AdaptivePolicyContext): DecisionRiskPolicyResult {
-    const policy = adaptiveTradingPolicy({ symbol: context?.symbol ?? 'BTC-USDT', ...context, regime: output.regime?.type ?? context?.regime ?? 'RANGING' });
+    if (!context?.symbol) return { actionable: false, decision: 'WAIT', reason: 'SYMBOL_REQUIRED' };
+    const policy = adaptiveTradingPolicy({ ...context, symbol: context.symbol, regime: output.regime?.type ?? context.regime ?? 'RANGING' });
     if (output.decision === 'WAIT') {
       return { actionable: false, decision: 'WAIT', reason: 'DECISION_IS_WAIT' };
     }

@@ -38,8 +38,9 @@ export class ToolRegistryService {
         category: "market",
       },
       handler: (params) => {
-        const symbol = typeof params["symbol"] === "string" ? params["symbol"] : "BTC-USDT";
-        return Promise.resolve({ symbol, price: "95420.50", timestamp: new Date().toISOString() });
+        const symbol = typeof params["symbol"] === "string" ? params["symbol"] : undefined;
+        if (!symbol) return Promise.reject(new Error("SYMBOL_REQUIRED"));
+        return Promise.reject(new Error(`LEGACY_SYNTHETIC_TOOL_DISABLED: use market.ticker.get for ${symbol}`));
       },
     });
 
@@ -58,13 +59,8 @@ export class ToolRegistryService {
         category: "technical",
       },
       handler: (params) => {
-        return Promise.resolve({
-          symbol: params["symbol"],
-          timeframe: params["timeframe"] || "1h",
-          rsi: 58.4,
-          ema20: 94800,
-          macdHistogram: 120.5,
-        });
+        if (typeof params["symbol"] !== "string") return Promise.reject(new Error("SYMBOL_REQUIRED"));
+        return Promise.reject(new Error("LEGACY_SYNTHETIC_TOOL_DISABLED: use market.indicators.get"));
       },
     });
   }
