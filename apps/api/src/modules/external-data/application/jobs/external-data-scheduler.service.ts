@@ -15,6 +15,7 @@ export class ExternalDataSchedulerService implements OnApplicationBootstrap {
   ) {}
 
   async onApplicationBootstrap() {
+    if (process.env.CLI_DISABLE_SCHEDULERS === 'true') return;
     this.logger.log('Initializing External Data Queue schedulers and default seed sources...');
     await this.seedDefaultSources();
     await this.scheduleRepeatableJobs();

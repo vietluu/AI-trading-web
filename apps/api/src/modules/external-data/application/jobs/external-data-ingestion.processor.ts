@@ -31,6 +31,9 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
   }
 
   async process(job: Job<any, any, string>): Promise<any> {
+    if (process.env.CLI_DISABLE_SCHEDULERS === 'true') {
+      return { status: 'SKIPPED', reason: 'CLI background workers disabled' };
+    }
     const startTime = Date.now();
     this.logger.debug(`Processing BullMQ job ${job.name} (id: ${job.id})`);
 

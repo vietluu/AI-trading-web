@@ -1,4 +1,4 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
 
@@ -46,7 +46,7 @@ export class ResearchService {
 
   constructor(
     private readonly marketData: MarketDataService,
-    @Optional() private readonly prisma?: PrismaService & ResearchPersistenceClient,
+    @Optional() @Inject(PrismaService) private readonly prisma?: PrismaService & ResearchPersistenceClient,
   ) {}
 
   async runBacktest(input: {
@@ -116,6 +116,9 @@ export class ResearchService {
       riskPerTrade: 0.01,
       riskRewardRatio: 2,
     });
+    if (backtest.trades.length < 5) {
+      throw new BadRequestException('DATA_UNAVAILABLE: fewer than 5 real-candle strategy trades were generated');
+    }
 
     const walkForward = runWalkForwardEngine({
       candles,
@@ -135,16 +138,51 @@ export class ResearchService {
       resamples: 2000,
     });
 
-    const calibration = runConfidenceCalibrationEngine([]);
+    const calibrationRows = input.userId && this.prisma
+      ? await this.prisma.performanceRecord.findMany({
+          where: { userId: input.userId, decision: { in: ['LONG', 'SHORT'] } },
+          select: { confidence: true, outcome: true },
+          orderBy: { evaluatedAt: 'desc' },
+          take: 1000,
+        })
+      : [];
+    const calibration = runConfidenceCalibrationEngine(calibrationRows.map((row) => ({
+      confidence: row.confidence,
+      isWin: row.outcome === 'CORRECT',
+    })));
 
     const regimeStability = runRegimeStabilityAnalyzer(candles);
 
-    const robustness = runCrossSymbolRobustnessEngine();
+    const ledgerTrades = input.userId && this.prisma
+      ? await this.prisma.closedTrade.findMany({ where: { userId: input.userId } })
+      : [];
+    const groupedLedger = new Map<string, typeof ledgerTrades>();
+    for (const trade of ledgerTrades) groupedLedger.set(trade.symbol, [...(groupedLedger.get(trade.symbol) ?? []), trade]);
+    const robustness = runCrossSymbolRobustnessEngine([...groupedLedger.entries()].map(([symbol, rows]) => {
+      const returns = rows.flatMap((row) => row.returnPct === null ? [] : [row.returnPct]);
+      const mean = returns.length ? returns.reduce((sum, value) => sum + value, 0) / returns.length : 0;
+      const variance = returns.length > 1 ? returns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (returns.length - 1) : 0;
+      let equity = 1;
+      let peak = 1;
+      let maxDrawdown = 0;
+      for (const value of returns) {
+        equity *= 1 + value;
+        peak = Math.max(peak, equity);
+        maxDrawdown = Math.max(maxDrawdown, (peak - equity) / peak);
+      }
+      return {
+        symbol,
+        winRate: rows.length ? rows.filter((row) => Number(row.netPnl) > 0).length / rows.length * 100 : 0,
+        totalReturn: (equity - 1) * 100,
+        sharpeRatio: variance > 0 ? mean / Math.sqrt(variance) * Math.sqrt(returns.length) : 0,
+        maxDrawdown: maxDrawdown * 100,
+      };
+    }));
 
     const oos = runOutOfSampleEngine(candles);
 
     const ruin = runProbabilityOfRuinEngine({
-      winRate: backtest.metrics.winRate / 100 || 0.55,
+      winRate: backtest.metrics.winRate,
       riskRewardRatio: 2.0,
       riskPerTradeFraction: 0.02,
       capital: input.initialBalance,
@@ -162,9 +200,10 @@ export class ResearchService {
       probabilityOfRuin: ruin,
     };
 
+    let validationRunId: string | null = null;
     if (this.prisma) {
       try {
-        await this.prisma.researchValidationRun.create({
+        const persisted = await this.prisma.researchValidationRun.create({
           data: {
             userId: input.userId,
             symbol: input.symbol,
@@ -186,6 +225,7 @@ export class ResearchService {
             metricsJson: toInputJson(result),
           },
         });
+        validationRunId = (persisted as { id?: string }).id ?? null;
       } catch (err) {
         this.logger.warn(`Failed to persist ResearchValidationRun to DB: ${(err as Error).message}`);
       }
@@ -199,7 +239,7 @@ export class ResearchService {
       ruinPct: ruin.probabilityOfRuinPct,
     });
 
-    return result;
+    return { ...result, validationRunId, provenance: { source: 'REAL_EXCHANGE_CANDLES_AND_VERIFIED_RUNTIME_RECORDS', provider: input.provider, symbol: input.symbol, interval: input.interval, lookbackCandles: candles.length } };
   }
 
   async runSensitivityAnalysis(input: {

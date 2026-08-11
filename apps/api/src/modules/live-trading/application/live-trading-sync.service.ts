@@ -26,6 +26,7 @@ export class LiveTradingSyncService
   ) {}
 
   onApplicationBootstrap(): void {
+    if (process.env.CLI_DISABLE_SCHEDULERS === 'true') return;
     if (!this.config.values.syncEnabled) return;
     void this.syncAll();
     this.timer = setInterval(

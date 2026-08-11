@@ -36,6 +36,7 @@ import {
   getReflectionData,
   getReflectionInsights,
   getReflectionProposals,
+  getSelfLearningLifecycle,
   getRiskDashboard,
   killLiveTrading,
   replayPipelineRun,
@@ -240,6 +241,14 @@ export function useReflectionData() {
   return useQuery<Awaited<ReturnType<typeof getReflectionData>>>({
     queryKey: queryKeys.ai.reflection(),
     queryFn: getReflectionData,
+  });
+}
+
+export function useSelfLearningLifecycle() {
+  return useQuery<Awaited<ReturnType<typeof getSelfLearningLifecycle>>>({
+    queryKey: queryKeys.ai.selfLearningLifecycle(),
+    queryFn: getSelfLearningLifecycle,
+    refetchInterval: 60_000,
   });
 }
 

@@ -1,5 +1,6 @@
 import type { NormalizedCandle } from '../../../market-data/domain/market-data.types';
-import type { BacktestTrade } from './backtest-engine';
+import { ExchangeInterval, ExchangeProvider } from '../../../exchange/domain/exchange.types';
+import { runHistoricalBacktest, type BacktestTrade } from './backtest-engine';
 
 // ============================================================
 // 1. Walk Forward Engine
@@ -133,7 +134,8 @@ export interface MonteCarloEngineResult {
 export function runMonteCarloEngine(req: MonteCarloRequest): MonteCarloEngineResult {
   const simCount = req.simulations ?? 10000;
   const initial = req.initialBalance;
-  const trades = req.trades.length > 0 ? req.trades : generateDefaultTradeSet();
+  if (req.trades.length === 0) throw new Error('INSUFFICIENT_REAL_TRADES_FOR_MONTE_CARLO');
+  const trades = req.trades;
 
   const finalBalances: number[] = new Array<number>(simCount);
   const maxDrawdowns: number[] = new Array<number>(simCount);
@@ -202,22 +204,6 @@ export function runMonteCarloEngine(req: MonteCarloRequest): MonteCarloEngineRes
   };
 }
 
-function generateDefaultTradeSet(): BacktestTrade[] {
-  return Array.from({ length: 30 }, (_, i) => ({
-    entryTime: new Date(Date.now() - (30 - i) * 3600000).toISOString(),
-    exitTime: new Date(Date.now() - (29 - i) * 3600000).toISOString(),
-    entryPrice: 50000 + i * 100,
-    exitPrice: 50000 + i * 100 + (i % 2 === 0 ? 300 : -200),
-    pnl: i % 2 === 0 ? 150 : -100,
-    holdingTime: 1,
-    maxFavorableExcursion: 300,
-    maxAdverseExcursion: 100,
-    riskReward: 1.5,
-    expectedValue: 25,
-    tradeQualityScore: 70,
-  }));
-}
-
 // ============================================================
 // 3. Bootstrap Resampling Engine
 // ============================================================
@@ -236,7 +222,8 @@ export interface BootstrapEngineResult {
 
 export function runBootstrapEngine(req: BootstrapRequest): BootstrapEngineResult {
   const samples = req.resamples ?? 2000;
-  const trades = req.trades.length > 0 ? req.trades : generateDefaultTradeSet();
+  if (req.trades.length === 0) throw new Error('INSUFFICIENT_REAL_TRADES_FOR_BOOTSTRAP');
+  const trades = req.trades;
 
   const pfList: number[] = [];
   const expList: number[] = [];
@@ -332,18 +319,26 @@ export function runSensitivityEngine(
 
   const grid = req.gridValues ?? defaultGrids[req.parameterName] ?? [1, 2, 3, 4, 5];
   const heatmap: SensitivityHeatmapPoint[] = grid.map((val) => {
-    const baseMult = val / (grid[Math.floor(grid.length / 2)] ?? 1);
-    const returnVal = 12.5 * baseMult - (baseMult - 1) ** 2 * 5;
-    const sharpe = Math.max(0.2, 1.8 - Math.abs(baseMult - 1.1) * 0.6);
-    const dd = Math.min(30, 8.0 + baseMult * 4);
-    const winRate = Math.min(85, Math.max(35, 60 + (1 - Math.abs(baseMult - 1)) * 15));
-
+    const summary = runHistoricalBacktest({
+      candles: req.candles,
+      provider: ExchangeProvider.BINANCE_FUTURES,
+      symbol: 'SENSITIVITY-SAMPLE',
+      interval: ExchangeInterval.FIFTEEN_MINUTES,
+      initialBalance: 10_000,
+      leverage: 2,
+      riskPerTrade: 0.01,
+      riskRewardRatio: req.parameterName === 'riskRewardRatio' ? val : 2,
+      atrMultiplier: req.parameterName === 'atrMultiplier' ? val : 1.5,
+      rsiPeriod: req.parameterName === 'rsiPeriod' ? val : 14,
+      confidenceFloor: req.parameterName === 'confidenceFloor' ? val : 60,
+      strategyName: req.parameterName === 'rsiPeriod' ? 'RSI_MEAN_REVERSION' : 'HYBRID_QUANT',
+    });
     return {
       paramValue: val,
-      totalReturn: Number(returnVal.toFixed(2)),
-      sharpeRatio: Number(sharpe.toFixed(2)),
-      maxDrawdown: Number(dd.toFixed(2)),
-      winRate: Number(winRate.toFixed(2)),
+      totalReturn: Number((summary.metrics.totalReturn * 100).toFixed(2)),
+      sharpeRatio: Number(summary.metrics.sharpeRatio.toFixed(2)),
+      maxDrawdown: Number((summary.metrics.maxDrawdown * 100).toFixed(2)),
+      winRate: Number((summary.metrics.winRate * 100).toFixed(2)),
     };
   });
 
@@ -383,13 +378,7 @@ export interface CalibrationEngineResult {
 export function runConfidenceCalibrationEngine(
   decisions: Array<{ confidence: number; isWin: boolean }>,
 ): CalibrationEngineResult {
-  const sampleDecisions =
-    decisions.length >= 10
-      ? decisions
-      : Array.from({ length: 40 }, (_, i) => ({
-          confidence: 50 + (i % 5) * 10,
-          isWin: (50 + (i % 5) * 10) * 0.8 + (Math.random() - 0.5) * 20 > 50,
-        }));
+  const sampleDecisions = decisions;
 
   const binRanges = [
     { min: 50, max: 60, label: '50-60%' },
@@ -406,7 +395,7 @@ export function runConfidenceCalibrationEngine(
     );
     const count = items.length;
     const wins = items.filter((d) => d.isWin).length;
-    const observedWinRate = count > 0 ? (wins / count) * 100 : range.min + 5;
+    const observedWinRate = count > 0 ? (wins / count) * 100 : 0;
     const forecastConfidence = (range.min + range.max) / 2;
 
     items.forEach((item) => {
@@ -468,16 +457,39 @@ export function runRegimeStabilityAnalyzer(
     'LOW_VOLATILITY',
   ];
 
-  const regimes: RegimePerformance[] = regimeTypes.map((regime, idx) => {
-    const baseWin = 65 - idx * 3;
-    const baseReturn = 18 - idx * 4;
-    const baseDd = 5 + idx * 3;
+  const observations = regimeTypes.map((regime) => ({ regime, returns: [] as number[] }));
+  for (let index = 20; index < candles.length - 1; index += 1) {
+    const window = candles.slice(index - 20, index + 1).map((item) => Number(item.close));
+    const first = window[0] ?? 0;
+    const last = window.at(-1) ?? first;
+    const drift = first > 0 ? last / first - 1 : 0;
+    const changes = window.slice(1).map((value, offset) => value / Math.max(1e-12, window[offset] ?? value) - 1);
+    const volatility = Math.sqrt(changes.reduce((sum, value) => sum + value ** 2, 0) / Math.max(1, changes.length));
+    const regime: RegimePerformance['regime'] = volatility > 0.025
+      ? 'HIGH_VOLATILITY'
+      : volatility < 0.004
+        ? 'LOW_VOLATILITY'
+        : drift > 0.025
+          ? 'BULL_TREND'
+          : drift < -0.025 ? 'BEAR_TREND' : 'SIDEWAYS';
+    const next = Number(candles[index + 1]?.close ?? last);
+    observations.find((item) => item.regime === regime)?.returns.push(last > 0 ? next / last - 1 : 0);
+  }
+  const regimes: RegimePerformance[] = observations.map(({ regime, returns }) => {
+    let equity = 1;
+    let peak = 1;
+    let drawdown = 0;
+    for (const value of returns) {
+      equity *= 1 + value;
+      peak = Math.max(peak, equity);
+      drawdown = Math.max(drawdown, peak > 0 ? (peak - equity) / peak : 0);
+    }
     return {
       regime,
-      winRate: Number(baseWin.toFixed(1)),
-      totalReturn: Number(baseReturn.toFixed(2)),
-      maxDrawdown: Number(baseDd.toFixed(2)),
-      sampleCandles: Math.floor(candles.length / 5) || 100,
+      winRate: returns.length ? Number((returns.filter((value) => value > 0).length / returns.length * 100).toFixed(1)) : 0,
+      totalReturn: Number(((equity - 1) * 100).toFixed(2)),
+      maxDrawdown: Number((drawdown * 100).toFixed(2)),
+      sampleCandles: returns.length,
     };
   });
 
@@ -514,25 +526,14 @@ export interface CrossSymbolRobustnessResult {
 }
 
 export function runCrossSymbolRobustnessEngine(
-  targetSymbols = ['BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT', 'XRP-USDT', 'DOGE-USDT', 'LINK-USDT', 'ADA-USDT', 'AVAX-USDT', 'SUI-USDT'],
+  actualResults: Array<Omit<SymbolRobustness, 'robustnessRank'>> = [],
 ): CrossSymbolRobustnessResult {
-  const symbols: SymbolRobustness[] = targetSymbols.map((symbol, i) => {
-    const returnVal = 22.0 - i * 1.5;
-    const winRate = 68.0 - i * 1.0;
-    const sharpe = 2.1 - i * 0.1;
-    const dd = 6.0 + i * 0.8;
-    return {
-      symbol,
-      winRate: Number(winRate.toFixed(1)),
-      totalReturn: Number(returnVal.toFixed(2)),
-      sharpeRatio: Number(sharpe.toFixed(2)),
-      maxDrawdown: Number(dd.toFixed(2)),
-      robustnessRank: i + 1,
-    };
-  });
+  const symbols = [...actualResults]
+    .sort((left, right) => right.sharpeRatio - left.sharpeRatio)
+    .map((item, index) => ({ ...item, robustnessRank: index + 1 }));
 
   const positiveReturns = symbols.filter((s) => s.totalReturn > 0).length;
-  const robustnessScore = Number(((positiveReturns / symbols.length) * 100).toFixed(1));
+  const robustnessScore = symbols.length ? Number(((positiveReturns / symbols.length) * 100).toFixed(1)) : 0;
 
   return {
     symbols,
@@ -559,16 +560,23 @@ export function runOutOfSampleEngine(candles: NormalizedCandle[]): OutOfSampleRe
   const isCandles = candles.slice(0, splitIdx);
   const oosCandles = candles.slice(splitIdx);
 
-  const isFirst = Number(isCandles[0]?.close ?? 1);
-  const isLast = Number(isCandles[isCandles.length - 1]?.close ?? 1);
-  const isReturn = isCandles.length ? ((isLast - isFirst) / isFirst) * 100 : 15;
-
-  const oosFirst = Number(oosCandles[0]?.close ?? 1);
-  const oosLast = Number(oosCandles[oosCandles.length - 1]?.close ?? 1);
-  const oosReturn = oosCandles.length ? ((oosLast - oosFirst) / oosFirst) * 100 : 10;
-
-  const isSharpe = 1.8;
-  const oosSharpe = 1.4;
+  const evaluate = (sample: NormalizedCandle[]) => runHistoricalBacktest({
+    candles: sample,
+    provider: ExchangeProvider.BINANCE_FUTURES,
+    symbol: 'OOS-SAMPLE',
+    interval: ExchangeInterval.FIFTEEN_MINUTES,
+    initialBalance: 10_000,
+    leverage: 2,
+    riskPerTrade: 0.01,
+    riskRewardRatio: 2,
+    strategyName: 'HYBRID_QUANT',
+  }).metrics;
+  const inSample = evaluate(isCandles);
+  const outOfSample = evaluate(oosCandles);
+  const isReturn = inSample.totalReturn * 100;
+  const oosReturn = outOfSample.totalReturn * 100;
+  const isSharpe = inSample.sharpeRatio;
+  const oosSharpe = outOfSample.sharpeRatio;
   const degradation = isReturn !== 0 ? ((isReturn - oosReturn) / Math.abs(isReturn)) * 100 : 0;
 
   return {

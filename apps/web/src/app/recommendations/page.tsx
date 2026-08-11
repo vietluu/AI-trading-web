@@ -17,7 +17,8 @@ interface RecommendationItem {
   priority: string;
   implementationCost: string;
   rollbackPlan: string;
-  status: "PENDING_APPROVAL" | "APPROVED" | "REJECTED";
+  historicalResult?: Record<string, unknown>;
+  status: "PENDING_APPROVAL" | "APPROVED" | "SHADOW" | "CANARY" | "REJECTED" | "DEPLOYED" | "ROLLED_BACK";
 }
 
 interface SymbolRecommendation {
@@ -37,6 +38,56 @@ export default function RecommendationsPage() {
   const [exchangeRecs, setExchangeRecs] = useState<SymbolRecommendation[]>([]);
   const [loading, setLoading] = useState(true);
   const [actioningId, setActioningId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const priorityLabels: Record<string, string> = {
+    LOW: t.quant.recommendationPriorities.low,
+    MEDIUM: t.quant.recommendationPriorities.medium,
+    HIGH: t.quant.recommendationPriorities.high,
+    CRITICAL: t.quant.recommendationPriorities.critical,
+  };
+  const statusLabels: Record<string, string> = {
+    PENDING_APPROVAL: t.quant.recommendationStatuses.pendingApproval,
+    APPROVED: t.quant.recommendationStatuses.approved,
+    SHADOW: t.quant.recommendationStatuses.shadow,
+    CANARY: t.quant.recommendationStatuses.canary,
+    REJECTED: t.quant.recommendationStatuses.rejected,
+    DEPLOYED: t.quant.recommendationStatuses.deployed,
+    ROLLED_BACK: t.quant.recommendationStatuses.rolledBack,
+  };
+  const moduleLabels: Record<string, string> = {
+    THRESHOLD_OPTIMIZER: t.quant.recommendationModules.thresholdOptimizer,
+    WEIGHT_OPTIMIZER: t.quant.recommendationModules.weightOptimizer,
+    SELF_LEARNING_AUTO: t.quant.recommendationModules.selfLearningAuto,
+    PORTFOLIO_INTELLIGENCE: t.quant.recommendationModules.portfolioOptimizer,
+  };
+  const interpolate = (template: string, values: Record<string, string | number>) =>
+    Object.entries(values).reduce((result, [key, value]) => result.replaceAll(`{${key}}`, String(value)), template);
+  const localizeReason = (reason: string) => {
+    if (reason === "Ultra-high liquidity ($500M+ 24h vol)") return t.quant.ultraHighLiquidity;
+    if (reason === "Strong liquidity ($100M+ 24h vol)") return t.quant.strongLiquidity;
+    if (reason === "Supported on both Binance & OKX") return t.quant.supportedOnBothExchanges;
+    if (reason === "Major market benchmark") return t.quant.majorMarketBenchmark;
+    if (reason.startsWith("High trading momentum")) {
+      const detail = reason.match(/\((.+)\)/)?.[1];
+      return detail ? `${t.quant.highTradingMomentum} (${detail})` : t.quant.highTradingMomentum;
+    }
+    return reason;
+  };
+  const localizedRecommendation = (rec: RecommendationItem) => {
+    if (rec.moduleSource !== "THRESHOLD_OPTIMIZER") return rec;
+    const value = Number(rec.historicalResult?.optimizedValue ?? rec.title.match(/\d+(?:\.\d+)?/)?.[0] ?? 0);
+    const sample = Number(rec.historicalResult?.sampleSize ?? 0);
+    const accuracy = Number(rec.historicalResult?.observedAccuracy ?? 0).toFixed(2);
+    return {
+      ...rec,
+      title: interpolate(t.quant.thresholdRecommendationTitle, { value }),
+      problemStatement: t.quant.thresholdRecommendationProblem,
+      evidenceText: interpolate(t.quant.thresholdRecommendationEvidence, { sample, accuracy }),
+      expectedBenefit: t.quant.thresholdRecommendationBenefit,
+      estimatedRisk: t.quant.thresholdRecommendationRisk,
+      rollbackPlan: t.quant.thresholdRecommendationRollback,
+    };
+  };
 
   useEffect(() => {
     async function loadData() {
@@ -60,15 +111,14 @@ export default function RecommendationsPage() {
 
   async function handleReview(id: string, action: "APPROVE" | "REJECT") {
     setActioningId(id);
+    setActionError(null);
     try {
       await reviewRecommendation(id, action);
       setRecommendations((prev) =>
         prev.map((r) => (r.id === id ? { ...r, status: action === "APPROVE" ? "APPROVED" : "REJECTED" } : r))
       );
-    } catch {
-      setRecommendations((prev) =>
-        prev.map((r) => (r.id === id ? { ...r, status: action === "APPROVE" ? "APPROVED" : "REJECTED" } : r))
-      );
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Recommendation review failed");
     } finally {
       setActioningId(null);
     }
@@ -88,6 +138,7 @@ export default function RecommendationsPage() {
           </p>
         </div>
       </div>
+      {actionError && <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-300">{actionError}</div>}
 
       {/* Top AI Exchange Symbol Recommendations */}
       {exchangeRecs.length > 0 && (
@@ -95,9 +146,9 @@ export default function RecommendationsPage() {
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-bold tracking-tight flex items-center gap-2">
               <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-              Top AI Exchange Opportunity Recommendations
+              {t.quant.opportunityRecommendationsTitle}
             </h2>
-            <span className="text-xs text-muted-foreground">Scanned from Binance & OKX</span>
+            <span className="text-xs text-muted-foreground">{t.quant.scannedFromExchanges}</span>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
             {exchangeRecs.map((item) => (
@@ -108,7 +159,7 @@ export default function RecommendationsPage() {
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-sm text-foreground">{item.symbol}</span>
                   <span className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-bold text-emerald-300">
-                    EV Score: {item.opportunityScore}/100
+                    {t.quant.evScore}: {item.opportunityScore}/100
                   </span>
                 </div>
                 <div className="flex items-baseline justify-between text-xs">
@@ -127,7 +178,7 @@ export default function RecommendationsPage() {
                 <div className="space-y-1 pt-1 border-t border-border/50">
                   {item.reasons.map((r, i) => (
                     <p key={i} className="text-[11px] text-muted-foreground flex items-center gap-1">
-                      <span className="text-emerald-400">•</span> {r}
+                      <span className="text-emerald-400">•</span> {localizeReason(r)}
                     </p>
                   ))}
                 </div>
@@ -145,17 +196,19 @@ export default function RecommendationsPage() {
         </div>
       ) : (
         <div className="space-y-4">
-          {recommendations.map((rec) => (
+          {recommendations.map((item) => {
+            const rec = localizedRecommendation(item);
+            return (
             <div key={rec.id} className="rounded-2xl border border-border bg-card p-6 shadow-sm space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold px-2 py-0.5 rounded bg-primary/10 text-primary">{rec.moduleSource}</span>
+                  <span className="text-xs font-bold px-2 py-0.5 rounded bg-primary/10 text-primary">{moduleLabels[rec.moduleSource] ?? rec.moduleSource.replaceAll("_", " ")}</span>
                   <span className={`text-xs font-bold px-2 py-0.5 rounded ${rec.priority === "CRITICAL" ? "bg-rose-500/10 text-rose-500" : "bg-amber-500/10 text-amber-500"}`}>
-                    Priority: {rec.priority}
+                    {t.quant.priorityLabel}: {priorityLabels[rec.priority] ?? rec.priority}
                   </span>
                 </div>
                 <span className={`text-xs font-bold px-3 py-1 rounded-full ${rec.status === "APPROVED" ? "bg-emerald-500/10 text-emerald-500" : rec.status === "REJECTED" ? "bg-rose-500/10 text-rose-500" : "bg-amber-500/10 text-amber-500"}`}>
-                  Status: {rec.status}
+                  {t.quant.statusLabel}: {statusLabels[rec.status] ?? rec.status}
                 </span>
               </div>
 
@@ -176,7 +229,7 @@ export default function RecommendationsPage() {
                 </div>
                 <div className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-3">
                   <strong className="text-xs text-rose-500 uppercase block mb-1">{t.quant.estimatedRisk}</strong>
-                  <p>{rec.estimatedRisk} <br /><span className="text-xs text-muted-foreground">Rollback: {rec.rollbackPlan}</span></p>
+                  <p>{rec.estimatedRisk} <br /><span className="text-xs text-muted-foreground">{t.quant.rollbackLabel}: {rec.rollbackPlan}</span></p>
                 </div>
               </div>
 
@@ -199,7 +252,8 @@ export default function RecommendationsPage() {
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

@@ -446,6 +446,25 @@ export class ExchangeConnectionService {
     );
   }
 
+  tradeFills(
+    userId: string,
+    id: string,
+    context: RequestMetadata,
+    symbols?: string[],
+    limit?: number,
+    before?: Date,
+  ) {
+    return this.privateCall(
+      userId,
+      id,
+      "TRADE_FILLS",
+      context,
+      (adapter, credentials) =>
+        adapter.getTradeFills?.(credentials, symbols, limit, before) ??
+        Promise.resolve([]),
+    );
+  }
+
   order(
     userId: string,
     id: string,

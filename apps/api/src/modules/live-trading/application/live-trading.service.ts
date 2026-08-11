@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
@@ -16,6 +17,7 @@ import { PublicExchangeService } from "../../../exchange/application/public-exch
 import {
   ExchangeEnvironment,
   ExchangeProvider,
+  type ExchangeOrder,
   type ExchangePosition,
   type OrderSide,
 } from "../../../exchange/domain/exchange.types";
@@ -32,8 +34,13 @@ import { LiveTradingGateway } from "../presentation/live-trading.gateway";
 import type { TradePlanMarketContext } from "../../risk/domain/trade-plan-engine";
 import type { TradePlan } from "../../risk/domain/trade-plan-engine";
 import { evaluatePositionManagement } from "../domain/position-manager";
+import { ExchangeTradeLedgerService } from "./exchange-trade-ledger.service";
 
 const RECENT_TRADE_HISTORY_LIMIT = 20;
+const ORDER_RECONCILIATION_LIMIT = 100;
+const ACTIVE_ORDER_STATUSES = ["SUBMITTING", "NEW", "PARTIALLY_FILLED"];
+const TRADE_BACKFILL_PAGE_SIZE = 1000;
+const DEFAULT_TRADE_BACKFILL_MAX_PAGES = 100;
 
 @Injectable()
 export class LiveTradingService {
@@ -50,7 +57,197 @@ export class LiveTradingService {
     private readonly portfolio: PortfolioService,
     private readonly publicExchanges: PublicExchangeService,
     private readonly gateway?: LiveTradingGateway,
+    @Optional() private readonly tradeLedger?: ExchangeTradeLedgerService,
   ) {}
+
+  /**
+   * Import private execution history in descending time pages. The regular sync
+   * deliberately stays small; this operation is intended for an explicit
+   * recovery/backfill and is idempotent through the exchange-fill unique key.
+   */
+  async backfillTradeLedger(
+    userId: string,
+    connectionId: string,
+    context: RequestMetadata = {},
+  ): Promise<{
+    status: "COMPLETED" | "NO_SYMBOLS_SELECTED" | "LEDGER_UNAVAILABLE";
+    symbols: string[];
+    pages: number;
+    processedFills: number;
+    rebuiltClosedTrades: number;
+    reachedHistoryEnd: boolean;
+  }> {
+    if (!this.tradeLedger) {
+      return {
+        status: "LEDGER_UNAVAILABLE",
+        symbols: [],
+        pages: 0,
+        processedFills: 0,
+        rebuiltClosedTrades: 0,
+        reachedHistoryEnd: false,
+      };
+    }
+    const connection = await this.connections.get(userId, connectionId);
+    const recentCutoff = new Date(Date.now() - 30 * 24 * 60 * 60_000);
+    const [setting, pipelineRuns, orders, positions] = await Promise.all([
+      this.prisma.userSetting.findUnique({
+        where: { userId },
+        select: { preferredSymbols: true },
+      }),
+      this.prisma.pipelineRun.findMany({
+        where: { userId, createdAt: { gte: recentCutoff } },
+        select: { symbol: true },
+        distinct: ["symbol"],
+      }),
+      this.prisma.liveOrder.findMany({
+        where: { userId, connectionId },
+        select: { symbol: true },
+        distinct: ["symbol"],
+      }),
+      this.prisma.livePosition.findMany({
+        where: { userId, connectionId },
+        select: { symbol: true },
+        distinct: ["symbol"],
+      }),
+    ]);
+    const normalize = (value: string) =>
+      value.trim().toUpperCase().replace(/[/_]/g, "-");
+    const symbols = [
+      ...new Set(
+        [
+          ...(setting?.preferredSymbols ?? []),
+          ...pipelineRuns.map((item) => item.symbol),
+          ...orders.map((item) => item.symbol),
+          ...positions.map((item) => item.symbol),
+        ]
+          .map(normalize)
+          .filter((value) => /^[A-Z0-9]+-[A-Z0-9]+$/.test(value)),
+      ),
+    ].sort();
+    // OKX returns account-wide fill history, so an empty filter is useful for
+    // discovering traded instruments. Binance requires an explicit symbol.
+    if (connection.provider === ExchangeProvider.BINANCE_FUTURES && !symbols.length) {
+      return {
+        status: "NO_SYMBOLS_SELECTED",
+        symbols,
+        pages: 0,
+        processedFills: 0,
+        rebuiltClosedTrades: 0,
+        reachedHistoryEnd: false,
+      };
+    }
+    const configuredMaxPages = Number(process.env.TRADE_LEDGER_BACKFILL_MAX_PAGES);
+    const maxPages = Number.isFinite(configuredMaxPages)
+      ? Math.min(1000, Math.max(1, Math.trunc(configuredMaxPages)))
+      : DEFAULT_TRADE_BACKFILL_MAX_PAGES;
+    const symbolBatches: Array<string[] | undefined> =
+      connection.provider === ExchangeProvider.OKX_FUTURES
+        ? [undefined]
+        : symbols.map((symbol) => [symbol]);
+    let pages = 0;
+    let processedFills = 0;
+    let rebuiltClosedTrades = 0;
+    let reachedHistoryEnd = true;
+    const discoveredSymbols = new Set(symbols);
+
+    for (const symbolBatch of symbolBatches) {
+      const symbolKey = symbolBatch?.[0] ?? "*";
+      const checkpoint = await this.prisma.tradeLedgerBackfillCheckpoint.findUnique({
+        where: { connectionId_symbolKey: { connectionId, symbolKey } },
+      });
+      if (checkpoint?.status === "COMPLETED") continue;
+      let before = checkpoint?.cursorBefore ?? undefined;
+      let previousOldest = before?.getTime() ?? Number.POSITIVE_INFINITY;
+      let batchReachedEnd = false;
+      try {
+        for (let page = 0; page < maxPages; page++) {
+          const fills = await this.connections.tradeFills(
+            userId,
+            connectionId,
+            context,
+            symbolBatch,
+            TRADE_BACKFILL_PAGE_SIZE,
+            before,
+          );
+          pages++;
+          if (!fills.length) {
+            batchReachedEnd = true;
+            await this.prisma.tradeLedgerBackfillCheckpoint.upsert({
+              where: { connectionId_symbolKey: { connectionId, symbolKey } },
+              create: { userId, connectionId, symbolKey, status: "COMPLETED", completedAt: new Date() },
+              update: { status: "COMPLETED", completedAt: new Date(), lastError: null },
+            });
+            break;
+          }
+          fills.forEach((fill) => discoveredSymbols.add(fill.symbol));
+          const ingested = await this.tradeLedger.ingest(userId, connection, fills, { refreshDerived: false });
+          processedFills += ingested.fills;
+          rebuiltClosedTrades += ingested.closedTrades;
+          const oldest = Math.min(...fills.map((fill) => fill.executedAt.getTime()));
+          if (!Number.isFinite(oldest) || oldest >= previousOldest) {
+            this.logger.warn({
+              event: "trade_ledger_backfill_cursor_stalled",
+              userId,
+              connectionId,
+              symbols: symbolBatch,
+              oldest,
+            });
+            break;
+          }
+          previousOldest = oldest;
+          before = new Date(oldest - 1);
+          batchReachedEnd = fills.length < TRADE_BACKFILL_PAGE_SIZE;
+          await this.prisma.tradeLedgerBackfillCheckpoint.upsert({
+            where: { connectionId_symbolKey: { connectionId, symbolKey } },
+            create: {
+              userId,
+              connectionId,
+              symbolKey,
+              cursorBefore: before,
+              status: batchReachedEnd ? "COMPLETED" : "RUNNING",
+              processedPages: 1,
+              processedFills: fills.length,
+              completedAt: batchReachedEnd ? new Date() : null,
+            },
+            update: {
+              cursorBefore: before,
+              status: batchReachedEnd ? "COMPLETED" : "RUNNING",
+              processedPages: { increment: 1 },
+              processedFills: { increment: fills.length },
+              completedAt: batchReachedEnd ? new Date() : null,
+              lastError: null,
+            },
+          });
+          if (batchReachedEnd) break;
+        }
+      } catch (error) {
+        const safeError = this.safeError(error);
+        await this.prisma.tradeLedgerBackfillCheckpoint.upsert({
+          where: { connectionId_symbolKey: { connectionId, symbolKey } },
+          create: {
+            userId,
+            connectionId,
+            symbolKey,
+            cursorBefore: before,
+            status: "FAILED",
+            lastError: `${safeError.code}: ${safeError.message}`,
+          },
+          update: { cursorBefore: before, status: "FAILED", lastError: `${safeError.code}: ${safeError.message}` },
+        });
+        throw error;
+      }
+      reachedHistoryEnd &&= batchReachedEnd;
+    }
+    if (processedFills > 0) await this.tradeLedger.refreshDerivedData(userId);
+    return {
+      status: "COMPLETED",
+      symbols: [...discoveredSymbols].sort(),
+      pages,
+      processedFills,
+      rebuiltClosedTrades,
+      reachedHistoryEnd,
+    };
+  }
 
   /** Build the execution approval exclusively from synchronized exchange data. */
   async assessPipelineDecision(input: {
@@ -556,46 +753,109 @@ export class LiveTradingService {
 
   async sync(userId: string, connectionId: string, context: RequestMetadata) {
     const connection = await this.connections.get(userId, connectionId);
-    const previousSnapshot = await this.prisma.liveAccountSnapshot.findFirst({
-      where: { userId, connectionId },
-      orderBy: { syncedAt: "desc" },
-      select: { syncedAt: true },
-    });
-    const historyDue =
-      !previousSnapshot ||
-      Date.now() - previousSnapshot.syncedAt.getTime() >= 60_000;
     // Fetch positions first so we can pass their symbols to orderHistory
-    const [account, positions, openOrders] = await Promise.all([
+    const [account, positions, openOrders, trackedRows, localActiveOrders] = await Promise.all([
       this.connections.account(userId, connectionId, context),
       this.connections.positions(userId, connectionId, context),
       this.connections.openOrders(userId, connectionId, context),
-    ]);
-    // Build symbol list from active positions plus any symbols already tracked
-    // in liveOrders. This ensures history is imported for all traded symbols.
-    const trackedSymbols = await this.prisma.liveOrder
-      .findMany({
+      this.prisma.liveOrder.findMany({
         where: { userId, connectionId },
         select: { symbol: true },
         distinct: ["symbol"],
         orderBy: { createdAt: "desc" },
-        take: 20,
-      })
-      .then((rows) => rows.map((r) => r.symbol));
+        take: 100,
+      }),
+      this.prisma.liveOrder.findMany({
+        where: {
+          userId,
+          connectionId,
+          status: { in: ACTIVE_ORDER_STATUSES },
+          exchangeOrderId: { not: null },
+          // Give OKX a short eventual-consistency window after submission.
+          updatedAt: { lt: new Date(Date.now() - 15_000) },
+        },
+        select: {
+          id: true,
+          symbol: true,
+          exchangeOrderId: true,
+          clientOrderId: true,
+        },
+        orderBy: { updatedAt: "asc" },
+        take: ORDER_RECONCILIATION_LIMIT,
+      }),
+    ]);
+    // Build symbol list from active positions plus any symbols already tracked
+    // in liveOrders. This ensures history is imported for all traded symbols.
+    const trackedSymbols = trackedRows.map((row) => row.symbol);
     const positionSymbols = positions
       .filter((p) => Number(p.quantity) > 0)
       .map((p) => p.symbol);
     const historySymbols = [
       ...new Set([...positionSymbols, ...trackedSymbols]),
     ];
-    const orderHistory = historyDue
-      ? await this.connections.orderHistory(
-          userId,
-          connectionId,
-          context,
-          historySymbols.length > 0 ? historySymbols : undefined,
-          RECENT_TRADE_HISTORY_LIMIT,
-        )
+    // Always reconcile history. Tying this to account-snapshot age prevented
+    // history from ever running when account sync was more frequent than 60s.
+    const orderHistory = await this.connections.orderHistory(
+      userId,
+      connectionId,
+      context,
+      historySymbols.length > 0 ? historySymbols : undefined,
+      ORDER_RECONCILIATION_LIMIT,
+    );
+    const tradeFills = this.tradeLedger
+      ? await this.connections
+          .tradeFills(
+            userId,
+            connectionId,
+            context,
+            historySymbols.length > 0 ? historySymbols : undefined,
+            process.env.TRADE_LEDGER_BACKFILL === "true" ? 1000 : 100,
+          )
+          .catch((error: unknown) => {
+            this.logger.error({
+              event: "exchange_fill_sync_failed",
+              connectionId,
+              error: this.safeError(error),
+            });
+            return [];
+          })
       : [];
+    const visibleOrderIds = new Set(
+      [...openOrders, ...orderHistory].flatMap((order) => [
+        order.exchangeOrderId,
+        ...(order.clientOrderId ? [order.clientOrderId] : []),
+      ]),
+    );
+    const reconciledOrders: ExchangeOrder[] = [];
+    // Exact lookup closes the gap when a busy account pushes an old terminal
+    // order outside the exchange history page. Run sequentially to avoid a
+    // burst against OKX private endpoints.
+    for (const localOrder of localActiveOrders) {
+      if (
+        !localOrder.exchangeOrderId ||
+        visibleOrderIds.has(localOrder.exchangeOrderId) ||
+        visibleOrderIds.has(localOrder.clientOrderId)
+      ) continue;
+      try {
+        reconciledOrders.push(
+          await this.connections.order(
+            userId,
+            connectionId,
+            localOrder.exchangeOrderId,
+            localOrder.symbol,
+            context,
+          ),
+        );
+      } catch (error) {
+        this.logger.warn({
+          event: "live_order_reconciliation_failed",
+          connectionId,
+          localOrderId: localOrder.id,
+          exchangeOrderId: localOrder.exchangeOrderId,
+          error: this.safeError(error),
+        });
+      }
+    }
     const syncedAt = new Date();
     await this.prisma.$transaction(async (tx) => {
       await tx.liveAccountSnapshot.create({
@@ -682,7 +942,7 @@ export class LiveTradingService {
           data: { status: order.status, averagePrice: order.averagePrice },
         });
       }
-      for (const order of orderHistory.slice(0, RECENT_TRADE_HISTORY_LIMIT)) {
+      for (const order of orderHistory.slice(0, ORDER_RECONCILIATION_LIMIT)) {
         const clientOrderId =
           order.clientOrderId || `external-${order.exchangeOrderId}`;
         const matched = await tx.liveOrder.updateMany({
@@ -721,7 +981,28 @@ export class LiveTradingService {
           });
         }
       }
+      for (const order of reconciledOrders) {
+        await tx.liveOrder.updateMany({
+          where: {
+            connectionId,
+            OR: [
+              { exchangeOrderId: order.exchangeOrderId },
+              ...(order.clientOrderId
+                ? [{ clientOrderId: order.clientOrderId }]
+                : []),
+            ],
+          },
+          data: {
+            status: order.status,
+            averagePrice: order.averagePrice,
+            updatedAt: order.updatedAt ?? syncedAt,
+          },
+        });
+      }
     });
+    const ledgerSummary = this.tradeLedger
+      ? await this.tradeLedger.ingest(userId, connection, tradeFills)
+      : { fills: 0, closedTrades: 0 };
     const persistedOrders = await this.prisma.liveOrder.findMany({
       where: { userId, connectionId },
       orderBy: { createdAt: "desc" },
@@ -735,12 +1016,18 @@ export class LiveTradingService {
       connectionId,
       positionCount: positions.length,
       openOrderCount: openOrders.length,
+      reconciledOrderCount: reconciledOrders.length,
+      exchangeFillCount: ledgerSummary.fills,
+      closedTradeCount: ledgerSummary.closedTrades,
     });
     const summary = {
       syncedAt: syncedAt.toISOString(),
       positions: positions.length,
       openOrders: openOrders.length,
       importedOrders: orderHistory.length,
+      reconciledOrders: reconciledOrders.length,
+      exchangeFills: ledgerSummary.fills,
+      closedTrades: ledgerSummary.closedTrades,
     };
     const connections = await this.connections.list(userId);
     const snapshot = {

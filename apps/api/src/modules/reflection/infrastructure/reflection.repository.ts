@@ -10,6 +10,9 @@ export class ReflectionRepository {
     return this.prisma.performanceRecord.findMany({ where: { userId, ...(horizon ? { horizon } : {}), ...(symbol ? { symbol } : {}) }, orderBy: { evaluatedAt: 'desc' }, take });
   }
   allRecords(take = 5000) { return this.prisma.performanceRecord.findMany({ orderBy: { evaluatedAt: 'desc' }, take }); }
+  closedTrades(userId: string, take = 5000) {
+    return this.prisma.closedTrade.findMany({ where: { userId }, orderBy: { closedAt: 'desc' }, take });
+  }
   completedRuns(cutoff: Date) {
     return this.prisma.pipelineRun.findMany({
       where: {

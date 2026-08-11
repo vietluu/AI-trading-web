@@ -28,6 +28,8 @@ export class ReflectionController {
   evaluate() { return this.performance.evaluateDue(); }
   @Get('self-learning/experiments')
   experiments(@CurrentUser() user: { id: string }) { return this.selfLearning.listExperiments(user.id); }
+  @Get('self-learning/lifecycle')
+  lifecycle(@CurrentUser() user: { id: string }) { return this.selfLearning.lifecycleStatus(user.id); }
 
   @Get('reflection')
   overview(@CurrentUser() user: { id: string }) { return this.reflection.generate(user.id, false); }

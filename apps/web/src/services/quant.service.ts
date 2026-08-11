@@ -16,7 +16,7 @@ interface RecommendationItem {
   priority: string;
   implementationCost: string;
   rollbackPlan: string;
-  status: "PENDING_APPROVAL" | "APPROVED" | "REJECTED";
+  status: "PENDING_APPROVAL" | "APPROVED" | "SHADOW" | "CANARY" | "REJECTED" | "DEPLOYED" | "ROLLED_BACK";
 }
 
 export async function reviewRecommendation(id: string, action: "APPROVE" | "REJECT") {

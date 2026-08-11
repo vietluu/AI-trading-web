@@ -27,10 +27,10 @@ export class KnowledgeBaseService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async listArchives(category?: string): Promise<KnowledgeArchiveItem[]> {
+  async listArchives(userId: string, category?: string): Promise<KnowledgeArchiveItem[]> {
     try {
       const rows = await this.prisma.knowledgeArchive.findMany({
-        where: category ? { category } : undefined,
+        where: { userId, ...(category ? { category } : {}) },
         orderBy: { createdAt: 'desc' },
         take: 50,
       });

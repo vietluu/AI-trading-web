@@ -32,17 +32,16 @@ export default function StrategyLabPage() {
   const [strategies, setStrategies] = useState<StrategyCandidate[]>([]);
   const [simulationResult, setSimulationResult] = useState<SimulationResultData | null>(null);
   const [simulating, setSimulating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadData() {
       try {
         const strats = await apiRequest<StrategyCandidate[]>("/quant-intelligence/strategies");
         setStrategies(strats);
-      } catch {
-        setStrategies([
-          { key: "hybrid-ai", name: "Hybrid AI Strategy", kind: "HYBRID_AI", score: 92, expectedValue: 1.85, profitFactor: 2.35, sharpeRatio: 2.45, maxDrawdown: 6.5 },
-          { key: "trend-following", name: "Trend Following Strategy", kind: "TREND_FOLLOWING", score: 85, expectedValue: 1.42, profitFactor: 1.95, sharpeRatio: 1.88, maxDrawdown: 11.2 },
-        ]);
+      } catch (cause) {
+        setStrategies([]);
+        setError(cause instanceof Error ? cause.message : "Verified strategy evidence is unavailable.");
       }
     }
     void loadData();
@@ -56,21 +55,17 @@ export default function StrategyLabPage() {
         body: JSON.stringify({
           name: "Virtual Prompt & Threshold Test",
           experimentType: "THRESHOLD",
-          config: { confidenceThreshold: 68, stopLossPct: 0.018 },
+          symbol: "BTC-USDT",
+          provider: "OKX_FUTURES",
+          interval: "15m",
+          lookbackCandles: 500,
+          config: { strategyName: "HYBRID_QUANT", confidenceThreshold: 68, atrMultiplier: 1.8 },
         }),
       });
       setSimulationResult(res);
-    } catch {
-      setSimulationResult({
-        name: "Virtual Prompt & Threshold Test",
-        experimentType: "THRESHOLD",
-        passedCriteria: true,
-        baselineExpectedValue: 1.45,
-        simulatedExpectedValue: 1.95,
-        baselineSharpe: 1.85,
-        simulatedSharpe: 2.55,
-        summary: "Simulation passed validation criteria. Expected Value improved by +34.5%.",
-      });
+    } catch (cause) {
+      setSimulationResult(null);
+      setError(cause instanceof Error ? cause.message : "Historical simulation failed.");
     } finally {
       setSimulating(false);
     }
@@ -95,6 +90,8 @@ export default function StrategyLabPage() {
           <Play className="h-4 w-4" /> {simulating ? t.quant.simulating : t.quant.runSimulation}
         </button>
       </div>
+
+      {error && <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-sm text-red-200">{error}</div>}
 
       {simulationResult && (
         <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-5 space-y-2">

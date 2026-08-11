@@ -239,6 +239,29 @@ export interface ExchangeOrder {
   protectiveClientOrderId?: string;
 }
 
+/** An immutable private-account execution reported by the exchange. */
+export interface ExchangeFill {
+  provider: ExchangeProvider;
+  symbol: string;
+  exchangeTradeId: string;
+  exchangeOrderId: string;
+  clientOrderId?: string;
+  side: OrderSide;
+  positionSide?: PositionSide;
+  price: string;
+  quantity: string;
+  quoteQuantity?: string;
+  /** Gross realized PnL reported by the exchange, before this fill's fee. */
+  realizedPnl: string;
+  /** Signed settlement-asset cash flow: negative fee, positive rebate. */
+  fee: string;
+  feeAsset?: string;
+  isMaker?: boolean;
+  /** Explicit when the exchange position side makes open/close unambiguous. */
+  isClosing?: boolean;
+  executedAt: Date;
+}
+
 export interface ExchangeAccountConfiguration {
   provider: ExchangeProvider;
   positionMode: PositionMode;

@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { SessionGuard } from '../../../session/session.guard';
+import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { ResearchService } from '../application/research.service';
 import { ExchangeInterval, ExchangeProvider } from '../../../exchange/domain/exchange.types';
 
@@ -25,7 +26,7 @@ export class ResearchController {
   }
 
   @Post('validate')
-  async validate(@Body() body: unknown) {
+  async validate(@CurrentUser() user: { id: string }, @Body() body: unknown) {
     const input = body as {
       provider: ExchangeProvider;
       symbol: string;
@@ -35,11 +36,11 @@ export class ResearchController {
       trainWindow?: number;
       validationWindow?: number;
     };
-    return this.researchService.runFullQuantValidation(input);
+    return this.researchService.runFullQuantValidation({ ...input, userId: user.id });
   }
 
   @Post('validate-full')
-  async validateFull(@Body() body: unknown) {
+  async validateFull(@CurrentUser() user: { id: string }, @Body() body: unknown) {
     const input = body as {
       provider: ExchangeProvider;
       symbol: string;
@@ -49,11 +50,11 @@ export class ResearchController {
       trainWindow?: number;
       validationWindow?: number;
     };
-    return this.researchService.runFullQuantValidation(input);
+    return this.researchService.runFullQuantValidation({ ...input, userId: user.id });
   }
 
   @Post('sensitivity')
-  async sensitivity(@Body() body: unknown) {
+  async sensitivity(@CurrentUser() user: { id: string }, @Body() body: unknown) {
     const input = body as {
       provider: ExchangeProvider;
       symbol: string;
@@ -62,11 +63,11 @@ export class ResearchController {
       parameterName: 'confidenceFloor' | 'riskRewardRatio' | 'atrMultiplier' | 'rsiPeriod';
       gridValues?: number[];
     };
-    return this.researchService.runSensitivityAnalysis(input);
+    return this.researchService.runSensitivityAnalysis({ ...input, userId: user.id });
   }
 
   @Post('benchmark')
-  async benchmark(@Body() body: unknown) {
+  async benchmark(@CurrentUser() user: { id: string }, @Body() body: unknown) {
     const input = body as {
       provider: ExchangeProvider;
       symbol: string;
@@ -77,7 +78,7 @@ export class ResearchController {
       riskPerTrade: number;
       riskRewardRatio: number;
     };
-    return this.researchService.runBenchmarkAnalysis(input);
+    return this.researchService.runBenchmarkAnalysis({ ...input, userId: user.id });
   }
 
   @Get('health')

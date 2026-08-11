@@ -50,7 +50,7 @@ function generateCandles(basePrice: number, count: number): NormalizedCandle[] {
 }
 
 describe('Empirical Verification: 20-Benchmark Suite & Replay Engine', () => {
-  it('evaluates 20 benchmark strategies on BTC-USDT and ranks HYBRID_QUANT at top', () => {
+  it('evaluates and objectively ranks 20 benchmark strategies on BTC-USDT', () => {
     const candles = generateCandles(65000, 300);
     const suite = runBenchmarkSuite({
       candles,

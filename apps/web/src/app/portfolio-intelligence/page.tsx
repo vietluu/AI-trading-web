@@ -10,17 +10,35 @@ interface AllocationItem {
   strategyName: string;
   currentCapitalAllocationPct: number;
   recommendedCapitalAllocationPct: number;
-  correlationWithPortfolio: number;
-  diversificationBenefitScore: number;
+  correlationWithPortfolio: number | null;
+  diversificationBenefitScore: number | null;
 }
 
 interface PortfolioData {
-  overallSharpeRatio: number;
-  overallProfitFactor: number;
-  expectedValue: number;
-  maxPortfolioDrawdownPct: number;
+  overallSharpeRatio: number | null;
+  overallProfitFactor: number | null;
+  expectedValue: number | null;
+  maxPortfolioDrawdownPct: number | null;
   allocations: AllocationItem[];
   recommendedActions: string[];
+  actualTrading: {
+    totalTrades: number;
+    completeTrades: number;
+    assignedTrades: number;
+    unassignedTrades: number;
+    netPnl: number;
+    winRate: number;
+    profitFactor: number | null;
+  };
+}
+
+function metric(value: number | null | undefined, suffix = "") {
+  return value === null || value === undefined ? "—" : `${value}${suffix}`;
+}
+
+function signedMetric(value: number | null | undefined, suffix = "") {
+  if (value === null || value === undefined) return "—";
+  return `${value > 0 ? "+" : ""}${value}${suffix}`;
 }
 
 export default function PortfolioIntelligencePage() {
@@ -111,19 +129,29 @@ export default function PortfolioIntelligencePage() {
       <div className="grid gap-4 sm:grid-cols-4">
         <div className="rounded-xl border border-border p-4">
           <span className="text-xs text-muted-foreground">Portfolio Sharpe</span>
-          <p className="text-xl font-bold text-emerald-500">{portfolio?.overallSharpeRatio}</p>
+          <p className="text-xl font-bold text-emerald-500">{metric(portfolio?.overallSharpeRatio)}</p>
         </div>
         <div className="rounded-xl border border-border p-4">
           <span className="text-xs text-muted-foreground">{t.quant.profitFactor}</span>
-          <p className="text-xl font-bold">{portfolio?.overallProfitFactor}</p>
+          <p className="text-xl font-bold">{portfolio?.overallProfitFactor === null && (portfolio?.actualTrading.totalTrades ?? 0) > 0 ? "∞" : metric(portfolio?.overallProfitFactor)}</p>
         </div>
         <div className="rounded-xl border border-border p-4">
           <span className="text-xs text-muted-foreground">Portfolio EV</span>
-          <p className="text-xl font-bold text-emerald-500">+{portfolio?.expectedValue}</p>
+          <p className="text-xl font-bold text-emerald-500">{signedMetric(portfolio?.expectedValue, "%")}</p>
         </div>
         <div className="rounded-xl border border-border p-4">
           <span className="text-xs text-muted-foreground">Max Portfolio DD</span>
-          <p className="text-xl font-bold text-emerald-500">{portfolio?.maxPortfolioDrawdownPct}%</p>
+          <p className="text-xl font-bold text-emerald-500">{metric(portfolio?.maxPortfolioDrawdownPct, "%")}</p>
+        </div>
+      </div>
+      <div className="rounded-2xl border border-border bg-card p-5">
+        <h2 className="font-semibold">Verified exchange trade history</h2>
+        <div className="mt-3 grid gap-3 sm:grid-cols-5 text-sm">
+          <div>Trades: <strong>{portfolio?.actualTrading.totalTrades ?? 0}</strong></div>
+          <div>Complete: <strong>{portfolio?.actualTrading.completeTrades ?? 0}</strong></div>
+          <div>Win rate: <strong>{portfolio?.actualTrading.winRate ?? 0}%</strong></div>
+          <div>Net PnL: <strong>{portfolio?.actualTrading.netPnl ?? 0}</strong></div>
+          <div>Unassigned: <strong>{portfolio?.actualTrading.unassignedTrades ?? 0}</strong></div>
         </div>
       </div>
 
@@ -146,7 +174,9 @@ export default function PortfolioIntelligencePage() {
             <div key={i} className="flex items-center justify-between p-3 rounded-xl border border-border">
               <div>
                 <p className="font-bold text-sm">{a.strategyName}</p>
-                <span className="text-xs text-muted-foreground">Correlation: {a.correlationWithPortfolio} · Diversification Score: {a.diversificationBenefitScore}/100</span>
+                <span className="text-xs text-muted-foreground">
+                  Correlation: {a.correlationWithPortfolio ?? "insufficient real trades"} · Diversification Score: {a.diversificationBenefitScore ?? "—"}/100
+                </span>
               </div>
               <div className="text-right space-y-2">
                 <div>

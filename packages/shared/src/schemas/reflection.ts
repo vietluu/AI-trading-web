@@ -26,6 +26,16 @@ export const ReflectionOutputSchema = z.object({
   patterns: z.array(z.string()),
   suggestions: z.array(z.string()),
   generatedAt: z.string().datetime(),
+  actualTrading: z.object({
+    source: z.literal('EXCHANGE_CLOSED_TRADE_LEDGER'),
+    totalTrades: z.number().int().nonnegative(),
+    completeTrades: z.number().int().nonnegative(),
+    winRate: z.number().min(0).max(100),
+    grossPnl: z.number(),
+    fees: z.number(),
+    netPnl: z.number(),
+    profitFactor: z.number().nullable(),
+  }).optional(),
 });
 export type ReflectionOutput = z.infer<typeof ReflectionOutputSchema>;
 

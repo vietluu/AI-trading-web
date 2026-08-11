@@ -1,0 +1,10 @@
+ALTER TABLE "quant_hypotheses" ADD COLUMN "provenance" JSONB;
+ALTER TABLE "discovered_strategies" ADD COLUMN "provenance" JSONB;
+ALTER TABLE "factor_evaluations" ADD COLUMN "sampleSize" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "factor_evaluations" ADD COLUMN "provenance" JSONB;
+ALTER TABLE "auto_benchmark_records" ADD COLUMN "provenance" JSONB;
+ALTER TABLE "weight_optimization_records" ADD COLUMN "sampleSize" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "weight_optimization_records" ADD COLUMN "evidenceJson" JSONB;
+ALTER TABLE "threshold_optimization_records" ADD COLUMN "sampleSize" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "threshold_optimization_records" ADD COLUMN "evidenceJson" JSONB;
+ALTER TABLE "simulation_experiments" ADD COLUMN "provenance" JSONB;

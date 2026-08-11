@@ -5,12 +5,14 @@ import { ROUTES } from "@/constants/routes";
 import {
   useReflectionActions,
   useReflectionData,
+  useSelfLearningLifecycle,
 } from "@/hooks/ai/useAiFeature";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 
 export default function ReflectionPage() {
   const { t } = useTranslation();
   const reflection = useReflectionData();
+  const lifecycle = useSelfLearningLifecycle();
   const {
     insights,
     proposals,
@@ -30,13 +32,13 @@ export default function ReflectionPage() {
         </div>
         <div className="flex gap-3">
           <Link
-            className="text-primary hover:underline"
+            className="text-nowrap rounded bg-primary px-4 py-2 font-medium text-primary-foreground hover:bg-primary/90"
             href={ROUTES.ai.performance}
           >
             {t.ai.reflectionLink}
           </Link>
           <button
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+            className="rounded-lg bg-muted-foreground px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
             disabled={runMutation.isPending || !data?.ready}
             onClick={() => runMutation.mutate()}
           >
@@ -57,6 +59,56 @@ export default function ReflectionPage() {
             {t.ai.moreRecordsRequired}
           </p>
         )}
+      </div>
+      <div className="rounded-lg border bg-card p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-semibold">Automated deployment lifecycle</h2>
+            <p className="mt-1 text-xs text-muted-foreground">Shadow has 0% live impact; canary uses a bounded percentage before full promotion.</p>
+          </div>
+          <span className="rounded-full border px-3 py-1 text-xs font-bold">{lifecycle.data?.stage ?? "LOADING"}</span>
+        </div>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
+          {[
+            ["Live version", lifecycle.data?.liveVersion ?? "-"],
+            ["Candidate", lifecycle.data?.candidateVersion ?? "-"],
+            ["Candidate impact", `${lifecycle.data?.candidateImpactPct ?? 0}%`],
+            ["Shadow evaluated", lifecycle.data?.evidence.evaluatedShadowSignals ?? 0],
+            ["Canary records", lifecycle.data?.evidence.canaryRecords ?? 0],
+            ["Live records", lifecycle.data?.evidence.liveRecords ?? 0],
+          ].map(([label, value]) => (
+            <div key={label}>
+              <p className="text-xs text-muted-foreground">{label}</p>
+              <p className="mt-1 font-semibold">{value}</p>
+            </div>
+          ))}
+        </div>
+        {lifecycle.data?.shadowPerformance && (
+          <p className="mt-4 text-xs text-muted-foreground">
+            Shadow: {lifecycle.data.shadowPerformance.tradesCount} outcomes · accuracy {lifecycle.data.shadowPerformance.accuracy.toFixed(2)}% · PF {lifecycle.data.shadowPerformance.profitFactor.toFixed(2)} · return {lifecycle.data.shadowPerformance.totalReturn.toFixed(4)}%
+          </p>
+        )}
+      </div>
+      <div className="rounded-lg border bg-card p-6">
+        <h2 className="font-semibold">Actual exchange trading</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Calculated only from synchronized exchange fills, not virtual pipeline returns.
+        </p>
+        <div className="mt-4 grid gap-4 sm:grid-cols-3 lg:grid-cols-6">
+          {[
+            ["Closed trades", data?.actualTrading?.totalTrades ?? 0],
+            ["Complete", data?.actualTrading?.completeTrades ?? 0],
+            ["Win rate", `${data?.actualTrading?.winRate ?? 0}%`],
+            ["Gross PnL", data?.actualTrading?.grossPnl ?? 0],
+            ["Fees/rebates", data?.actualTrading?.fees ?? 0],
+            ["Net PnL", data?.actualTrading?.netPnl ?? 0],
+          ].map(([label, value]) => (
+            <div key={label}>
+              <p className="text-xs text-muted-foreground">{label}</p>
+              <p className="mt-1 font-semibold">{value}</p>
+            </div>
+          ))}
+        </div>
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
         {[

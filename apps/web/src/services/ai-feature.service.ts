@@ -240,6 +240,8 @@ export interface PortfolioDashboard {
     createdAt: string;
   }>;
   unassignedExposure: number;
+  unassignedClosedTrades: number;
+  unassignedRealizedPnl: number;
 }
 
 export interface ReflectionSummary {
@@ -252,6 +254,46 @@ export interface ReflectionSummary {
   generatedAt: string;
   recordCount: number;
   ready: boolean;
+  actualTrading?: {
+    source: "EXCHANGE_CLOSED_TRADE_LEDGER";
+    totalTrades: number;
+    completeTrades: number;
+    winRate: number;
+    grossPnl: number;
+    fees: number;
+    netPnl: number;
+    profitFactor: number | null;
+  };
+}
+
+export interface SelfLearningLifecycle {
+  stage: "LIVE" | "SHADOW" | "CANARY";
+  isEnabled: boolean;
+  liveVersion: number;
+  candidateVersion: number | null;
+  liveImpactPct: number;
+  candidateImpactPct: number;
+  shadowPerformance: null | {
+    tradesCount: number;
+    accuracy: number;
+    totalReturn: number;
+    profitFactor: number;
+    sharpeRatio: number;
+    maxDrawdown: number;
+  };
+  evidence: {
+    pendingShadowSignals: number;
+    evaluatedShadowSignals: number;
+    canaryRecords: number;
+    liveRecords: number;
+  };
+  startedAt: string | null;
+  lastPromotionAt: string | null;
+  experiment: null | {
+    version: number;
+    recommendation: null | { id: string; status: string; title: string };
+    events: Array<{ eventType: string; createdAt: string }>;
+  };
 }
 
 export interface ReflectionInsight {
@@ -524,6 +566,10 @@ export async function updatePortfolioStrategyStatus(key: string, next: string) {
 
 export async function getReflectionData() {
   return apiRequest<ReflectionSummary>(API_ENDPOINTS.ai.reflection);
+}
+
+export async function getSelfLearningLifecycle() {
+  return apiRequest<SelfLearningLifecycle>(API_ENDPOINTS.ai.selfLearningLifecycle);
 }
 
 export async function getReflectionInsights() {
