@@ -12,6 +12,7 @@ import { SignalFilterService } from "./application/signal-filter.service";
 import { PipelineAlertService } from "./application/pipeline-alert.service";
 import { PipelineRunnerService } from "./application/pipeline-runner.service";
 import { DecisionJudgeService } from "./application/decision-judge.service";
+import { QuantExecutionPolicyService } from "./application/quant-execution-policy.service";
 import { DecisionRiskPolicyService } from "../risk/application/decision-risk-policy.service";
 import { PipelineService } from "./application/pipeline.service";
 import { PipelineSchedulerService } from "./application/pipeline-scheduler.service";
@@ -56,6 +57,7 @@ import { SettingsModule } from "../../settings/settings.module";
     DecisionRiskPolicyService,
     PipelineRunnerService,
     DecisionJudgeService,
+    QuantExecutionPolicyService,
     PipelineService,
     PipelineSchedulerService,
     PipelineHealthService,

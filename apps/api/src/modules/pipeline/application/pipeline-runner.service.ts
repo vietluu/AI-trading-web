@@ -21,11 +21,12 @@ import type { PipelineJob } from "../infrastructure/pipeline-queue.service";
 import { LiveTradingService } from "../../live-trading/application/live-trading.service";
 import {
   analysisParams,
-  decisionForStrategy,
+  selectStrategyDecision,
 } from "../../portfolio/domain/strategy-decision";
 import { MarketDataService } from "../../../market-data/application/market-data.service";
 import { RedisService } from "../../../redis/redis.service";
 import { DecisionJudgeService } from "./decision-judge.service";
+import { QuantExecutionPolicyService } from "./quant-execution-policy.service";
 import { preferredTradePlanAtr, timeframeMilliseconds } from "../domain/adaptive-trading-policy";
 import { SettingsService } from "../../../settings/settings.service";
 import {
@@ -55,6 +56,7 @@ export class PipelineRunnerService {
     private readonly redis: RedisService,
     @Optional() private readonly judge?: DecisionJudgeService,
     @Optional() private readonly settings?: SettingsService,
+    @Optional() private readonly quantPolicy?: QuantExecutionPolicyService,
   ) {}
 
   async run(job: PipelineJob): Promise<void> {
@@ -258,15 +260,18 @@ export class PipelineRunnerService {
         timeframe: String(interval),
         referencePrice: lastPrice,
       });
-      const strategyKey =
-        typeof job.params?.strategyId === "string"
-          ? job.params.strategyId
-          : "ai-core";
-      const output = decisionForStrategy(
-        strategyKey,
+      const requestedStrategyKeys = Array.isArray(job.params?.strategyIds)
+        ? job.params.strategyIds.filter((item): item is string => typeof item === "string")
+        : typeof job.params?.strategyId === "string"
+          ? [job.params.strategyId]
+          : ["ai-core"];
+      const strategySelection = selectStrategyDecision(
+        requestedStrategyKeys,
         synthesizedOutput,
         analyses,
       );
+      const strategyKey = strategySelection.selectedStrategyKey;
+      const output = strategySelection.decision;
       const decisionCompletedAt = new Date();
       const policyContext = { symbol, provider: job.provider, timeframe: String(interval), regime: output.regime.type };
       const thresholdFilter = this.threshold.evaluate(output, policyContext);
@@ -277,10 +282,28 @@ export class PipelineRunnerService {
         timeframe: String(interval),
         referencePrice: lastPrice,
         sourceTimestamp: indicatorSnapshot?.candleCloseTime ?? recentCandles[0]?.closeTime,
+        requireCalibratedConfidence: true,
       }) ?? { verdict: 'APPROVE' as const, approved: true, reasons: [] };
+      const quant = this.quantPolicy
+        ? await this.quantPolicy.evaluate({
+            userId: job.userId,
+            symbol,
+            provider: job.provider,
+            timeframe: String(interval),
+            decision: output,
+          }).catch((error: unknown) => {
+            this.logger.error({
+              event: "quant_execution_policy_failed",
+              runId,
+              symbol,
+              message: error instanceof Error ? error.message : "Unknown quant policy error",
+            });
+            return { allowed: false as const, reason: "QUANT_POLICY_UNAVAILABLE" as const };
+          })
+        : { allowed: false as const, reason: "QUANT_VALIDATION_MISSING" as const };
       const multiTimeframeFilter = evaluateMultiTimeframeDecision(output.decision, multiTimeframe);
-      const actionable = thresholdFilter.actionable && filter.actionable && judge.approved && multiTimeframeFilter.allowed;
-      const reason = thresholdFilter.reason ?? filter.reason ?? judge.reasons[0] ?? multiTimeframeFilter.reason;
+      const actionable = thresholdFilter.actionable && filter.actionable && judge.approved && quant.allowed && multiTimeframeFilter.allowed;
+      const reason = thresholdFilter.reason ?? filter.reason ?? judge.reasons[0] ?? quant.reason ?? multiTimeframeFilter.reason;
       await this.finishStep(runId, "decision", output, decisionCompletedAt);
       this.analytics.recordStageTelemetry({
         pipelineId: job.pipelineId,
@@ -289,8 +312,8 @@ export class PipelineRunnerService {
         exchange: String(job.provider),
         timeframe: String(job.params?.interval ?? definition.defaultParams.interval),
         stageName: 'decision',
-        inputSummary: `regime=${output.regime.type}; conflict=${output.conflictLevel}`,
-        outputSummary: `${output.decision}; confidence=${output.confidence}; ev=${output.expectedValue}`,
+        inputSummary: `regime=${output.regime.type}; conflict=${output.conflictLevel}; strategies=${requestedStrategyKeys.join(',')}`,
+        outputSummary: `${output.decision}; strategy=${strategyKey}; confidence=${output.confidence}; ev=${output.expectedValue}`,
         confidence: output.confidence,
         opportunityScore: output.opportunityScore,
         riskScore: output.riskScore,
@@ -342,8 +365,8 @@ export class PipelineRunnerService {
             learningStage: output.learningConfiguration?.stage,
             timeframe: String(interval),
             skippedReason: 'EXECUTION_LOCK_BUSY',
-            storedContext: { analyses, fusionOutput, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue },
-            result: { ...output, decision: 'WAIT' as const, actionable: false, skippedReason: 'EXECUTION_LOCK_BUSY', multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue },
+            storedContext: { analyses, fusionOutput, strategySelection: strategySelection as unknown as Prisma.InputJsonValue, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue },
+            result: { ...output, decision: 'WAIT' as const, actionable: false, selectedStrategyKey: strategyKey, strategySelection: strategySelection as unknown as Prisma.InputJsonValue, skippedReason: 'EXECUTION_LOCK_BUSY', multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue },
           });
           return;
         }
@@ -355,9 +378,7 @@ export class PipelineRunnerService {
             symbol,
             provider: job.provider as unknown as ExchangeProvider,
             decision: executionDecision,
-            ...(typeof job.params?.strategyId === "string"
-              ? { strategyKey: job.params.strategyId }
-              : {}),
+            strategyKey,
             ...(volatilityAtr !== undefined
               ? { volatilityAtr }
               : {}),
@@ -444,9 +465,11 @@ export class PipelineRunnerService {
         learningStage: output.learningConfiguration?.stage,
         timeframe: String(interval),
         skippedReason: finalSkippedReason,
-        storedContext: { analyses, fusionOutput, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue },
+        storedContext: { analyses, fusionOutput, strategySelection: strategySelection as unknown as Prisma.InputJsonValue, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue },
         result: {
           ...output,
+          selectedStrategyKey: strategyKey,
+          strategySelection: strategySelection as unknown as Prisma.InputJsonValue,
           actionable,
           skippedReason: finalSkippedReason,
           signalFilter: {
@@ -462,6 +485,7 @@ export class PipelineRunnerService {
           riskAssessment,
           liveExecution,
           judge: judge as unknown as Prisma.InputJsonValue,
+          quant: quant as unknown as Prisma.InputJsonValue,
         },
       });
       await this.alerts.contextual(runId, symbol, analyses);

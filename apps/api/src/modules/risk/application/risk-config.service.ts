@@ -31,18 +31,38 @@ export class RiskConfigService {
         this.config.get<number>("ABNORMAL_VOLATILITY_THRESHOLD") ?? 0.15,
       highVolatilitySizeFactor:
         this.config.get<number>("HIGH_VOLATILITY_SIZE_FACTOR") ?? 0.6,
+      estimatedRoundTripCostPct:
+        this.config.get<number>("ESTIMATED_ROUND_TRIP_COST_PCT") ?? 0.0008,
+      maxStopLossRoe:
+        this.config.get<number>("MAX_STOP_LOSS_ROE") ?? 0.03,
+      rangeScalpRoeMultiplier:
+        this.config.get<number>("RANGE_SCALP_ROE_MULTIPLIER") ?? 2,
+      minLiquidationBufferPct:
+        this.config.get<number>("MIN_LIQUIDATION_BUFFER_PCT") ?? 0.01,
     };
   }
 
   async getUserLimits(userId?: string): Promise<RiskLimits> {
     const defaults = this.defaultLimits();
     if (!userId || !this.prisma) return defaults;
+    // Missing preference data must not expose a user to a permissive global
+    // leverage setting. Use the conservative execution default until the
+    // user's explicit hard ceiling can be loaded.
+    const defaultExecutionLeverage =
+      this.config.get<number>("DEFAULT_LEVERAGE") ?? 3;
+    const safeUserDefaults: RiskLimits = {
+      ...defaults,
+      riskPerTrade: Math.min(defaults.riskPerTrade, 0.02),
+      maxExposure: Math.min(defaults.maxExposure, 0.6),
+      stopLossPct: Math.min(defaults.stopLossPct, 0.02),
+      maxLeverage: Math.min(defaults.maxLeverage, defaultExecutionLeverage),
+    };
 
     try {
       const setting = await this.prisma.userSetting.findUnique({
         where: { userId },
       });
-      if (!setting) return defaults;
+      if (!setting) return safeUserDefaults;
 
       let riskPerTrade = defaults.riskPerTrade;
       let maxExposure = defaults.maxExposure;
@@ -62,9 +82,12 @@ export class RiskConfigService {
         stopLossPct = 0.03;
       }
 
-      const userLeverage = setting.defaultLeverage
+      const requestedLeverage = setting.defaultLeverage
         ? Math.min(Math.max(1, setting.defaultLeverage), 125)
         : defaults.maxLeverage;
+      // The stored leverage is a hard ceiling, not the leverage used blindly.
+      // RiskEngine derives the actual value from stop, strategy and liquidation.
+      const userLeverage = Math.min(requestedLeverage, defaults.maxLeverage);
 
       return {
         ...defaults,
@@ -74,7 +97,7 @@ export class RiskConfigService {
         maxLeverage: userLeverage,
       };
     } catch {
-      return defaults;
+      return safeUserDefaults;
     }
   }
 }

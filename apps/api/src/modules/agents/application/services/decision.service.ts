@@ -97,9 +97,29 @@ export class DecisionService {
       metadata.timeframe,
       decision.regime.type,
     );
+    const empiricalProbability = confidenceCalibration.status === 'CALIBRATED'
+      ? confidenceCalibration.empiricalProbability
+      : undefined;
+    const expectedWinProbability = this.clamp(empiricalProbability ?? 0.5, 0, 1);
+    const expectedValue = this.clamp(
+      expectedWinProbability * decision.expectedReward -
+        (1 - expectedWinProbability) * decision.expectedLoss -
+        decision.executionCost,
+      -3,
+      3,
+    );
+    const profitFactorEstimate = this.clamp(
+      (expectedWinProbability * decision.expectedReward) /
+        Math.max((1 - expectedWinProbability) * decision.expectedLoss, 0.05),
+      0.1,
+      10,
+    );
     const calibratedDecision: DecisionOutput = {
       ...decision,
       confidenceCalibration,
+      expectedWinProbability: Number(expectedWinProbability.toFixed(3)),
+      expectedValue: Number(expectedValue.toFixed(3)),
+      profitFactorEstimate: Number(profitFactorEstimate.toFixed(3)),
       ...(config ? {
         learningConfiguration: {
           version: useCanary ? config.canaryVersion! : config.liveVersion,
@@ -308,7 +328,10 @@ export class DecisionService {
     // WAIT is still a decision: retain the composite confidence in staying out.
     // Truly insufficient evidence is reduced by the quality deduction below,
     // instead of every neutral market being displayed as an unexplained 0/100.
-    const confidence = Math.round(this.clamp(rawConfidence, 0, 100));
+    const confidenceCeiling = dataQuality === 'PARTIAL'
+      ? DECISION_THRESHOLDS.PARTIAL_DATA_CONFIDENCE_CEILING
+      : 100;
+    const confidence = Math.round(this.clamp(rawConfidence, 0, confidenceCeiling));
 
     const minConfidence = customOptions?.confidenceThreshold ?? DECISION_THRESHOLDS.MINIMUM_CONFIDENCE_THRESHOLD;
     if (confidence < minConfidence && candidate !== 'WAIT') {
@@ -320,12 +343,19 @@ export class DecisionService {
     const risks = this.risks(input, votes, dataQuality, conflictLevel);
     const opportunityScore = this.calculateOpportunityScore(input, regime, votes, weighting, dataQuality);
     const { adaptiveThreshold, calibrationAdjustment } = this.calculateAdaptiveThresholds(input, regime, confidence, opportunityScore, conflictLevel);
-    const calibratedConfidence = this.clamp(confidence + calibrationAdjustment, 0, 100);
-    const expectedWinProbability = this.clamp((calibratedConfidence / 100) * 0.75 + opportunityScore / 100 * 0.2, 0, 1);
+    const calibratedConfidence = this.clamp(confidence + calibrationAdjustment, 0, confidenceCeiling);
+    // Composite confidence is not a win probability. Until reflection has
+    // enough outcomes, use a neutral prior and let the Judge block auto-trading.
+    const expectedWinProbability = 0.5;
     const expectedReward = this.clamp((opportunityScore / 100) * 3 + 0.5, 0.2, 5);
     const expectedLoss = this.clamp((100 - opportunityScore) / 100 * 1.4 + 0.4, 0.2, 3);
     const grossExpectedValue = expectedWinProbability * expectedReward - (1 - expectedWinProbability) * expectedLoss;
-    const profitFactorEstimate = this.clamp(expectedReward / Math.max(expectedLoss, 0.05), 0.1, 10);
+    const profitFactorEstimate = this.clamp(
+      (expectedWinProbability * expectedReward) /
+        Math.max((1 - expectedWinProbability) * expectedLoss, 0.05),
+      0.1,
+      10,
+    );
     const riskScore = this.clamp(50 + (volatilityAdjustment * -0.4) + (conflictLevel === 'HIGH' ? 15 : conflictLevel === 'MEDIUM' ? 8 : 0) + Math.max(0, 100 - opportunityScore) * 0.2, 0, 100);
     const executionCost = this.estimateExecutionCost(input, opportunityScore, regime.type);
     const expectedValue = this.clamp(grossExpectedValue - executionCost, -3, 3);

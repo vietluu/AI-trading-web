@@ -30,6 +30,7 @@ export default function RiskPage(): React.JSX.Element {
   const approved = assessments.filter((item) => item.approved).length;
   const rejected = assessments.length - approved;
   const cards = [
+    ["Risk preference", config.riskPreference],
     ["Risk per trade", percent(config.riskPerTrade)],
     [
       "Portfolio exposure",
@@ -41,6 +42,8 @@ export default function RiskPage(): React.JSX.Element {
     ],
     ["Open positions", `${portfolio.openPositions} / ${config.maxPositions}`],
     ["Gross exposure", money.format(portfolio.exposure)],
+    ["Base stop ROE", percent(config.maxStopLossRoe)],
+    ["Liquidation buffer", percent(config.minLiquidationBufferPct)],
     ["Maximum leverage", `${config.maxLeverage}×`],
     ["Approved", String(approved)],
     ["Rejected", String(rejected)],

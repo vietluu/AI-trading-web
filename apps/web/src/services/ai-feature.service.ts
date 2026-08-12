@@ -314,12 +314,16 @@ export interface ReflectionProposal {
 
 export interface RiskDashboard {
   config: {
+    riskPreference: string;
     riskPerTrade: number;
     maxPositions: number;
     maxLeverage: number;
     maxDrawdown: number;
     maxExposure: number;
     cooldownMs: number;
+    maxStopLossRoe: number;
+    rangeScalpRoeMultiplier: number;
+    minLiquidationBufferPct: number;
   };
   portfolio: {
     balance: number;

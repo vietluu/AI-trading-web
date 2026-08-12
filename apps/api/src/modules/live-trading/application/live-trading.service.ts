@@ -28,6 +28,10 @@ import type {
   ExecuteApprovedOrderDto,
 } from "./live-trading.dto";
 import { RiskConfigService } from "../../risk/application/risk-config.service";
+import {
+  estimatedLiquidationLeverageLimit,
+  maxStopLossRoeForStrategy,
+} from "../../risk/domain/risk-engine";
 import { RiskManagementService } from "../../risk/application/risk-management.service";
 import { PortfolioService } from "../../portfolio/application/portfolio.service";
 import { LiveTradingGateway } from "../presentation/live-trading.gateway";
@@ -1343,6 +1347,12 @@ export class LiveTradingService {
         symbol: command.symbol,
         side: command.side,
         purpose,
+        protectiveClientOrderId: order.protectiveClientOrderId,
+        stopLoss: command.stopLoss,
+        takeProfit: command.takeProfit,
+        protectionMode: command.stopLoss || command.takeProfit
+          ? "NATIVE_WITH_LOCAL_REDUCE_ONLY_FALLBACK"
+          : undefined,
       });
       this.logger.log({
         event: "order_executed",
@@ -1577,9 +1587,9 @@ export class LiveTradingService {
           }
         }
       }
-      // OKX has a native attached algo order. Binance protection is monitored
-      // here and submitted as reduce-only when the ratcheted level is crossed.
-      if (position.provider !== ExchangeProvider.BINANCE_FUTURES) continue;
+      // Native exchange protection is the first line of defence. This local,
+      // reduce-only exit is mandatory for every provider so an unacknowledged,
+      // rejected, or delayed native algo order cannot leave a position exposed.
       const stop = source.stopLoss ? Number(source.stopLoss) : undefined;
       const take = source.takeProfit ? Number(source.takeProfit) : undefined;
       const stopHit =
@@ -1590,6 +1600,16 @@ export class LiveTradingService {
         (position.side === "LONG" ? mark >= take : mark <= take);
       if (!stopHit && !takeHit) continue;
       const purpose = stopHit ? "STOP_LOSS" : "TAKE_PROFIT";
+      this.logger.warn({
+        event: "local_protective_fallback_triggered",
+        connectionId: connection.id,
+        provider: position.provider,
+        symbol: position.symbol,
+        purpose,
+        markPrice: mark,
+        triggerPrice: stopHit ? stop : take,
+        protectiveClientOrderId: source.protectiveClientOrderId,
+      });
       const clientOrderId = this.derivedId(
         source.clientOrderId,
         stopHit ? "sl" : "tp",
@@ -1665,6 +1685,13 @@ export class LiveTradingService {
           symbol: source.symbol,
           protectiveClientOrderId: source.protectiveClientOrderId,
         }, context);
+        await this.audit.record("PROTECTIVE_ORDER_CANCELLED", userId, context, {
+          sourceOrderId: source.id,
+          connectionId: connection.id,
+          symbol: source.symbol,
+          protectiveClientOrderId: source.protectiveClientOrderId,
+          reason: "POSITION_NO_LONGER_OPEN",
+        });
         await this.prisma.liveOrder.update({
           where: { id: source.id },
           data: { protectiveClientOrderId: null },
@@ -1688,6 +1715,8 @@ export class LiveTradingService {
       positionSize: Prisma.Decimal | null;
       leverage: number | null;
       referencePrice: Prisma.Decimal;
+      stopLoss: Prisma.Decimal | null;
+      tradePlan?: Prisma.JsonValue | null;
     },
   ): Promise<{ positionSize: number; leverage: number; referencePrice: number }> {
     if (!assessment.positionSize || !assessment.leverage) {
@@ -1711,7 +1740,7 @@ export class LiveTradingService {
         "Exchange preflight failed: synchronized account state is unavailable",
       );
     }
-    const limits = this.riskConfig.values;
+    const limits = await this.riskConfig.getUserLimits(userId);
     const equity = Number(snapshot.totalEquity);
     const peakEquity = Number(peak._max.totalEquity ?? snapshot.totalEquity);
     if (!Number.isFinite(equity) || equity <= 0) {
@@ -1743,6 +1772,52 @@ export class LiveTradingService {
     if (assessment.leverage > limits.maxLeverage) {
       throw new ForbiddenException(
         "Exchange preflight failed: leverage exceeds configured maximum",
+      );
+    }
+    const stopLoss = Number(assessment.stopLoss);
+    if (!Number.isFinite(stopLoss) || stopLoss <= 0) {
+      throw new ForbiddenException(
+        "Exchange preflight failed: protective stop loss is required",
+      );
+    }
+    const referencePrice = Number(assessment.referencePrice);
+    const plannedLoss = requestedPositionSize * (
+      Math.abs(referencePrice - stopLoss) +
+      referencePrice * limits.estimatedRoundTripCostPct
+    );
+    const plannedEquityRiskPct = plannedLoss / equity;
+    const requiredMarginForRisk = requestedNotional / requestedLeverage;
+    const plannedMarginRoe = plannedLoss / requiredMarginForRisk;
+    const tradePlan = assessment.tradePlan as { strategy?: string; timeframeMs?: number } | null | undefined;
+    const effectiveMaxStopLossRoe = maxStopLossRoeForStrategy(
+      limits,
+      tradePlan?.strategy,
+      tradePlan?.timeframeMs,
+    );
+    const stopDistancePct = Math.abs(referencePrice - stopLoss) / referencePrice;
+    const liquidationLeverageLimit = estimatedLiquidationLeverageLimit(
+      stopDistancePct,
+      limits.minLiquidationBufferPct,
+    );
+    if (
+      !Number.isFinite(plannedEquityRiskPct) ||
+      plannedEquityRiskPct > limits.riskPerTrade + 1e-8
+    ) {
+      throw new ForbiddenException(
+        "Exchange preflight failed: risk per trade exceeded",
+      );
+    }
+    if (
+      !Number.isFinite(plannedMarginRoe) ||
+      plannedMarginRoe > effectiveMaxStopLossRoe + 1e-8
+    ) {
+      throw new ForbiddenException(
+        "Exchange preflight failed: stop-loss margin ROE exceeded",
+      );
+    }
+    if (requestedLeverage > liquidationLeverageLimit) {
+      throw new ForbiddenException(
+        "Exchange preflight failed: liquidation buffer is insufficient",
       );
     }
     const retained = positions.filter(
