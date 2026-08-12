@@ -659,7 +659,15 @@ export class QuantIntelligenceService {
   async refreshRecommendations(userId: string) {
     const strategies = await this.prisma.portfolioStrategy.findMany({
       where: { userId },
-      include: { performance: true, allocation: true, livePositions: true },
+      include: {
+        performance: true,
+        allocation: true,
+        livePositions: true,
+        closedTrades: {
+          where: { sourceDataComplete: true },
+          select: { id: true },
+        },
+      },
       orderBy: { createdAt: 'asc' },
     });
     const recommendations = await Promise.all(strategies
@@ -691,18 +699,24 @@ export class QuantIntelligenceService {
         const delta = Math.max(-0.12, Math.min(0.12, returnPct * 0.08 - drawdownPct * 0.2 + liveSignal + regimeSignal));
         const recommendedWeight = Math.max(0.05, Math.min(0.4, weight + delta));
         const isAlreadyApplied = Math.abs(delta) < 0.005 || Math.abs(weight - recommendedWeight) < 0.005;
+        const verifiedAttributedTrades = strategy.closedTrades.length;
+        const hasMinimumTradeEvidence = verifiedAttributedTrades >= 5;
         return buildQuantRecommendation({
           title: `Adjust ${strategy.name} allocation to ${Math.round(recommendedWeight * 100)}%`,
           moduleSource: 'PORTFOLIO_INTELLIGENCE',
           problemStatement: `Strategy ${strategy.name} should be rebalanced only from its configured symbols and multi-timeframe evidence.`,
-          evidenceText: `${validationEvidence.availablePairs}/${validationEvidence.requiredPairs} symbol-timeframe validations available; ${validationEvidence.passingPairs} pass, coverage ${validationEvidence.coveragePct}%.`,
-          historicalResult: { returnPct, drawdownPct, recommendedWeight, marketRegime, symbolRegimes, livePnl, symbols: validationEvidence.symbols, validationEvidence },
+          evidenceText: `${verifiedAttributedTrades}/5 attributed verified closed trades; ${validationEvidence.availablePairs}/${validationEvidence.requiredPairs} symbol-timeframe validations available; ${validationEvidence.passingPairs} pass, coverage ${validationEvidence.coveragePct}%.`,
+          historicalResult: { returnPct, drawdownPct, recommendedWeight, marketRegime, symbolRegimes, livePnl, symbols: validationEvidence.symbols, verifiedAttributedTrades, validationEvidence },
           expectedBenefit: 'Improves portfolio risk-adjusted returns using validation scoped to the configured investment universe.',
           estimatedRisk: validationEvidence.passed ? 'Medium if validated symbol regimes change abruptly.' : 'High because multi-symbol validation is incomplete or failing.',
           priority: drawdownPct > 0.05 || marketRegime === 'HIGH_VOLATILITY' ? 'HIGH' : 'MEDIUM',
           implementationCost: 'LOW',
           rollbackPlan: 'Revert the allocation weight using the portfolio rebalance endpoint.',
-          status: !validationEvidence.passed ? 'VALIDATION_REQUIRED' : isAlreadyApplied ? 'APPROVED' : 'PENDING_APPROVAL',
+          status: !hasMinimumTradeEvidence || !validationEvidence.passed
+            ? 'VALIDATION_REQUIRED'
+            : isAlreadyApplied
+              ? 'APPROVED'
+              : 'PENDING_APPROVAL',
         });
       }));
 
@@ -739,8 +753,13 @@ export class QuantIntelligenceService {
     const strategy = strategies.find((item) => item.key === strategyKey);
     if (!strategy) throw new NotFoundException('Portfolio strategy not found');
     const validation = await this.multiSymbolValidationEvidence(userId, strategy.symbols);
-    if ((strategy.performance?.totalTrades ?? 0) < 5 || strategy.closedTrades.length < 5) {
-      throw new BadRequestException('VALIDATION_REQUIRED: strategy needs at least 5 attributed verified closed trades');
+    const verifiedAttributedTrades = strategy.closedTrades.filter(
+      (trade) => trade.sourceDataComplete,
+    ).length;
+    if (verifiedAttributedTrades < 5) {
+      throw new BadRequestException(
+        `VALIDATION_REQUIRED: strategy has ${verifiedAttributedTrades}/5 attributed verified closed trades`,
+      );
     }
     if (!validation.passed) {
       throw new BadRequestException(`VALIDATION_REQUIRED: multi-symbol validation coverage ${validation.coveragePct}% and pass rate ${validation.passRatePct}% do not satisfy the portfolio gate`);
