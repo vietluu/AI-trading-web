@@ -17,6 +17,9 @@ export class GeminiProvider implements LLMProvider {
   private readonly logger = new Logger(GeminiProvider.name);
   private lastSuccessAt: Date | null = null;
   private lastError: string | null = null;
+  private activeRequests = 0;
+  private readonly requestWaiters: Array<() => void> = [];
+  private cooldownUntil = 0;
 
   constructor(
     private readonly configService: ConfigService,
@@ -38,6 +41,16 @@ export class GeminiProvider implements LLMProvider {
   }
 
   public async chat(options: LLMRequestOptions): Promise<LLMResponse> {
+    await this.acquireRequestSlot();
+    try {
+      this.assertCircuitClosed();
+      return await this.chatWithinSlot(options);
+    } finally {
+      this.releaseRequestSlot();
+    }
+  }
+
+  private async chatWithinSlot(options: LLMRequestOptions): Promise<LLMResponse> {
     const apiKey = this.getApiKey();
     const startTime = Date.now();
     const model = options.model || "gemini-3.1-flash-lite";
@@ -100,7 +113,14 @@ export class GeminiProvider implements LLMProvider {
         const status = response.status;
         this.lastError = `HTTP ${status}: ${errorText}`;
         const err = new Error(`Gemini API error (${status}): ${errorText}`);
-        Object.assign(err, { status });
+        const retryAfterMs = this.retryAfterMs(response.headers.get('retry-after'));
+        if (status === 429) {
+          this.cooldownUntil = Math.max(
+            this.cooldownUntil,
+            Date.now() + retryAfterMs,
+          );
+        }
+        Object.assign(err, { status, retryAfterMs, providerRequestSent: true });
         throw err;
       }
 
@@ -167,6 +187,62 @@ export class GeminiProvider implements LLMProvider {
       }
       throw err;
     }
+  }
+
+  private maxConcurrentRequests(): number {
+    const configured = Number(this.configService.get<string>('GEMINI_MAX_CONCURRENCY'));
+    return Number.isFinite(configured) && configured > 0
+      ? Math.max(1, Math.floor(configured))
+      : 2;
+  }
+
+  private cooldownMs(): number {
+    const configured = Number(this.configService.get<string>('GEMINI_429_COOLDOWN_MS'));
+    return Number.isFinite(configured) && configured >= 1_000
+      ? configured
+      : 60_000;
+  }
+
+  private retryAfterMs(header: string | null): number {
+    if (header) {
+      const seconds = Number(header);
+      if (Number.isFinite(seconds) && seconds > 0) {
+        return Math.max(this.cooldownMs(), Math.ceil(seconds * 1_000));
+      }
+      const dateMs = Date.parse(header);
+      if (Number.isFinite(dateMs) && dateMs > Date.now()) {
+        return Math.max(this.cooldownMs(), dateMs - Date.now());
+      }
+    }
+    return this.cooldownMs();
+  }
+
+  private assertCircuitClosed(): void {
+    const remainingMs = this.cooldownUntil - Date.now();
+    if (remainingMs <= 0) return;
+
+    const error = new Error(
+      `Gemini provider is cooling down after HTTP 429 (${Math.ceil(remainingMs / 1_000)}s remaining)`,
+    );
+    Object.assign(error, {
+      status: 429,
+      retryAfterMs: remainingMs,
+      providerRequestSent: false,
+      code: 'AI_PROVIDER_COOLDOWN',
+    });
+    throw error;
+  }
+
+  private async acquireRequestSlot(): Promise<void> {
+    if (this.activeRequests >= this.maxConcurrentRequests()) {
+      await new Promise<void>((resolve) => this.requestWaiters.push(resolve));
+    }
+    this.activeRequests += 1;
+  }
+
+  private releaseRequestSlot(): void {
+    this.activeRequests = Math.max(0, this.activeRequests - 1);
+    this.requestWaiters.shift()?.();
   }
 
   public async *stream(

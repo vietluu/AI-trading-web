@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import {
   FusionInputSchema,
   FusionOutputSchema,
@@ -42,29 +42,46 @@ export function deriveAssetSymbol(symbol: string): string {
   return baseAsset;
 }
 
-import { Optional } from '@nestjs/common';
 import { RedisService } from '../../../../redis/redis.service';
 
-/** TTL in seconds for global (market-wide) agent output cache. */
-const GLOBAL_CTX_TTL_SECONDS = 300; // 5 minutes
+const ANALYSIS_TTL_SECONDS: Record<AnalysisName, number> = {
+  market: 30,
+  technical: 30,
+  news: 300,
+  sentiment: 300,
+  macro: 900,
+  onchain: 300,
+};
+const ANALYSIS_LOCK_TTL_SECONDS = 45;
+const ANALYSIS_LOCK_WAIT_MS = 35_000;
+const ANALYSIS_LOCK_POLL_MS = 100;
 
 @Injectable()
 export class FusionService {
+  private readonly inFlightAnalyses = new Map<string, Promise<unknown>>();
+
   constructor(
     private readonly agentExecutionService: AgentExecutionService,
     @Optional() private readonly redis?: RedisService,
   ) {}
 
-  // ─── Global Context Cache helpers ────────────────────────────────────────────
-  /** Agents whose output is market-wide (not per-symbol) and safe to cache. */
-  private readonly GLOBAL_AGENTS = new Set(['news', 'sentiment', 'macro'] as const);
-
-  private globalCacheKey(name: string, lookbackHours: number, assetSymbol: string): string {
-    const scope = name === 'macro' ? 'market-wide' : assetSymbol;
-    return `fusion:context:${name}:${scope}:lh${lookbackHours}`;
+  private analysisCacheKey(
+    name: AnalysisName,
+    input: FusionRunInput,
+    assetSymbol: string,
+    userId?: string,
+  ): string {
+    const userScope = userId ?? 'public';
+    if (name === 'macro') {
+      return `fusion:analysis:${userScope}:macro:market-wide:lh${input.lookbackHours}`;
+    }
+    if (name === 'news' || name === 'sentiment' || name === 'onchain') {
+      return `fusion:analysis:${userScope}:${name}:${assetSymbol}:lh${input.lookbackHours}:mi${input.maxItems}`;
+    }
+    return `fusion:analysis:${userScope}:${name}:${input.provider}:${input.symbol}:${input.interval}:lc${input.lookbackCandles}`;
   }
 
-  private async getGlobalCache<T>(key: string): Promise<T | null> {
+  private async getAnalysisCache<T>(key: string): Promise<T | null> {
     if (!this.redis) return null;
     try {
       const raw = await this.redis.get(key);
@@ -74,13 +91,83 @@ export class FusionService {
     }
   }
 
-  private async setGlobalCache(key: string, value: unknown): Promise<void> {
+  private async setAnalysisCache(
+    key: string,
+    value: unknown,
+    ttlSeconds: number,
+  ): Promise<void> {
     if (!this.redis) return;
     try {
-      await this.redis.setWithTtl(key, JSON.stringify(value), GLOBAL_CTX_TTL_SECONDS);
+      await this.redis.setWithTtl(key, JSON.stringify(value), ttlSeconds);
     } catch {
       // Cache write failures must never break the pipeline
     }
+  }
+
+  private async rememberAnalysis<T>(
+    key: string,
+    ttlSeconds: number,
+    load: () => Promise<T>,
+  ): Promise<T> {
+    const cached = await this.getAnalysisCache<T>(key);
+    if (cached !== null) return cached;
+
+    const existing = this.inFlightAnalyses.get(key) as Promise<T> | undefined;
+    if (existing) return existing;
+
+    const pending = this.loadWithDistributedLock(key, ttlSeconds, load);
+    this.inFlightAnalyses.set(key, pending);
+    try {
+      return await pending;
+    } finally {
+      if (this.inFlightAnalyses.get(key) === pending) {
+        this.inFlightAnalyses.delete(key);
+      }
+    }
+  }
+
+  private async loadWithDistributedLock<T>(
+    key: string,
+    ttlSeconds: number,
+    load: () => Promise<T>,
+  ): Promise<T> {
+    if (!this.redis) return load();
+
+    const lockKey = `${key}:lock`;
+    const token = randomUUID();
+    const deadline = Date.now() + ANALYSIS_LOCK_WAIT_MS;
+    while (Date.now() < deadline) {
+      const cached = await this.getAnalysisCache<T>(key);
+      if (cached !== null) return cached;
+
+      let acquired = false;
+      try {
+        acquired = await this.redis.setNx(
+          lockKey,
+          token,
+          ANALYSIS_LOCK_TTL_SECONDS,
+        );
+      } catch {
+        // Redis is an optimization; an outage must not break analysis.
+        const value = await load();
+        await this.setAnalysisCache(key, value, ttlSeconds);
+        return value;
+      }
+      if (acquired) {
+        try {
+          const value = await load();
+          await this.setAnalysisCache(key, value, ttlSeconds);
+          return value;
+        } finally {
+          await this.redis.compareAndDelete(lockKey, token).catch(() => false);
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, ANALYSIS_LOCK_POLL_MS));
+    }
+
+    const value = await load();
+    await this.setAnalysisCache(key, value, ttlSeconds);
+    return value;
   }
 
   public async run(options: RunFusionOptions): Promise<FusionOutput> {
@@ -160,32 +247,28 @@ export class FusionService {
     const analyses: Partial<FusionInput> = {};
     const results = await Promise.allSettled(
       requests.map(async (request) => {
-        // ── Global context cache: reuse market-wide agent results across symbols ──
-        if (this.GLOBAL_AGENTS.has(request.name as 'news' | 'sentiment' | 'macro')) {
-          const cacheKey = this.globalCacheKey(request.name, input.lookbackHours ?? 24, assetSymbol);
-          const cached = await this.getGlobalCache<unknown>(cacheKey);
-          if (cached) {
-            const parsed = request.schema.safeParse(cached);
-            if (parsed.success) return { name: request.name, data: parsed.data };
-          }
-          const run = await this.agentExecutionService.executeSync({
-            ...common,
-            agentType: request.agentType,
-            input: request.input,
-          });
-          const parsed = request.schema.safeParse(run.output);
-          if (!parsed.success) throw new Error(`Invalid output from ${request.name}`);
-          await this.setGlobalCache(cacheKey, parsed.data);
-          return { name: request.name, data: parsed.data };
-        }
-        // ── Per-symbol agents run fresh every time ─────────────────────────────
-        const run = await this.agentExecutionService.executeSync({
-          ...common,
-          agentType: request.agentType,
-          input: request.input,
-        });
-        const parsed = request.schema.safeParse(run.output);
-        if (!parsed.success) throw new Error(`Invalid output from ${request.name}`);
+        const cacheKey = this.analysisCacheKey(
+          request.name,
+          input,
+          assetSymbol,
+          options.userId,
+        );
+        const data = await this.rememberAnalysis(
+          cacheKey,
+          ANALYSIS_TTL_SECONDS[request.name],
+          async () => {
+            const run = await this.agentExecutionService.executeSync({
+              ...common,
+              agentType: request.agentType,
+              input: request.input,
+            });
+            const parsed = request.schema.safeParse(run.output);
+            if (!parsed.success) throw new Error(`Invalid output from ${request.name}`);
+            return parsed.data;
+          },
+        );
+        const parsed = request.schema.safeParse(data);
+        if (!parsed.success) throw new Error(`Invalid cached output from ${request.name}`);
         return { name: request.name, data: parsed.data };
       })
     );

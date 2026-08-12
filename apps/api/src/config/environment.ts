@@ -314,6 +314,13 @@ const environmentSchema = z
     DEFAULT_MAX_TOKENS: z.coerce.number().int().default(2048),
     DEFAULT_TEMPERATURE: z.coerce.number().default(0.7),
     DEFAULT_TIMEOUT: z.coerce.number().int().default(30000),
+    GEMINI_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(10).default(2),
+    GEMINI_429_COOLDOWN_MS: z.coerce
+      .number()
+      .int()
+      .min(1_000)
+      .max(3_600_000)
+      .default(60_000),
 
     // Phase 6.2: AI Tool Calling Framework
     AI_TOOL_CALLING_ENABLED: z

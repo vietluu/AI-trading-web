@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import type { ConfigService } from "@nestjs/config";
 import { ModelRegistryService } from "../../src/modules/ai/infrastructure/registry/model-registry.service";
 import { OpenAIProvider } from "../../src/modules/ai/infrastructure/provider/openai.provider";
@@ -14,6 +14,10 @@ describe("AI Providers & LLMProviderFactory", () => {
   let geminiProvider: GeminiProvider;
   let ollamaProvider: OllamaProvider;
   let factory: LLMProviderFactory;
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
 
   beforeEach(() => {
     const mockConfig = { get: () => undefined } as unknown as ConfigService;
@@ -63,5 +67,48 @@ describe("AI Providers & LLMProviderFactory", () => {
     const openAiHealth = await openAIProvider.health();
     expect(openAiHealth.provider).toBe("OPENAI");
     expect(openAiHealth.models.length).toBeGreaterThan(0);
+  });
+
+  it("opens a quota circuit and prevents queued Gemini calls after the first 429", async () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+    const originalMockResponses = process.env.MOCK_AI_RESPONSES;
+    process.env.NODE_ENV = "production";
+    delete process.env.MOCK_AI_RESPONSES;
+    try {
+      const config = {
+        get: (key: string) => {
+          if (key === "GOOGLE_API_KEY") return "test-key";
+          if (key === "GEMINI_MAX_CONCURRENCY") return "1";
+          if (key === "GEMINI_429_COOLDOWN_MS") return "60000";
+          return undefined;
+        },
+      } as unknown as ConfigService;
+      const provider = new GeminiProvider(config, modelRegistry);
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response('{"error":{"code":429,"message":"quota exceeded"}}', {
+          status: 429,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const results = await Promise.allSettled([
+        provider.chat({ model: "gemini-test", userPrompt: "one" }),
+        provider.chat({ model: "gemini-test", userPrompt: "two" }),
+        provider.chat({ model: "gemini-test", userPrompt: "three" }),
+      ]);
+
+      expect(results.every((result) => result.status === "rejected")).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const queuedError = (results[1] as PromiseRejectedResult).reason as Error & {
+        providerRequestSent?: boolean;
+      };
+      expect(queuedError.providerRequestSent).toBe(false);
+    } finally {
+      if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = originalNodeEnv;
+      if (originalMockResponses === undefined) delete process.env.MOCK_AI_RESPONSES;
+      else process.env.MOCK_AI_RESPONSES = originalMockResponses;
+    }
   });
 });
