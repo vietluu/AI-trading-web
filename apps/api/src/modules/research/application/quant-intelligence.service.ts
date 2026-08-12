@@ -83,6 +83,43 @@ export function calculateLedgerPortfolioMetrics(
   };
 }
 
+export function resolveStrategyAllocationTarget(input: {
+  requestedWeight: number;
+  currentWeight: number;
+  verifiedAttributedTrades: number;
+  maxStrategyExposure?: number;
+  canaryDelta?: number;
+}) {
+  const minimumWeight = 0.05;
+  const maximumWeight = Math.max(
+    minimumWeight,
+    Math.min(0.95, input.maxStrategyExposure ?? 0.25),
+  );
+  const requestedWeight = Math.max(
+    minimumWeight,
+    Math.min(maximumWeight, input.requestedWeight),
+  );
+  if (input.verifiedAttributedTrades >= 5) {
+    return { mode: 'FULL' as const, targetWeight: requestedWeight, requestedWeight };
+  }
+  const currentWeight = Math.max(
+    minimumWeight,
+    Math.min(maximumWeight, input.currentWeight),
+  );
+  const canaryDelta = Math.max(0.005, Math.min(0.05, input.canaryDelta ?? 0.02));
+  return {
+    mode: 'CANARY' as const,
+    targetWeight: Number(Math.max(
+      minimumWeight,
+      Math.min(
+        maximumWeight,
+        Math.max(currentWeight - canaryDelta, Math.min(requestedWeight, currentWeight + canaryDelta)),
+      ),
+    ).toFixed(6)),
+    requestedWeight,
+  };
+}
+
 type ReportType = 'DAILY' | 'WEEKLY' | 'MONTHLY';
 import { buildQuantRecommendation } from '../domain/explainability-governance.engine';
 import type { HypothesisInput } from '../domain/quant-research.engine';
@@ -496,6 +533,10 @@ export class QuantIntelligenceService {
         ? 'TRENDING'
         : 'SIDEWAYS';
 
+    const configuredStrategyCap = Number(process.env.MAX_STRATEGY_EXPOSURE ?? 0.25);
+    const maxStrategyAllocation = Number.isFinite(configuredStrategyCap)
+      ? Math.max(0.05, Math.min(1, configuredStrategyCap))
+      : 0.25;
     const analysis = analyzePortfolioIntelligence(
       strategies.map((strategy) => {
         const livePositions = strategy.livePositions ?? [];
@@ -529,10 +570,55 @@ export class QuantIntelligenceService {
           marketRegime,
         };
       }),
+      maxStrategyAllocation,
+    );
+    const allocationValidation = await Promise.all(
+      strategies.map(async (strategy) => {
+        const validation = await this.multiSymbolValidationEvidence(
+          userId,
+          strategy.symbols,
+          strategy.key,
+        );
+        const verifiedAttributedTrades = strategy.closedTrades.filter(
+          (trade) => trade.sourceDataComplete,
+        ).length;
+        return {
+          strategyKey: strategy.key,
+          validationStatus: !validation.passed
+            ? 'VALIDATION_REQUIRED' as const
+            : verifiedAttributedTrades < 5
+              ? 'CANARY' as const
+              : 'FULL' as const,
+          canApply: validation.passed,
+          verifiedAttributedTrades,
+          tradesRequiredForFullAllocation: Math.max(0, 5 - verifiedAttributedTrades),
+          validation: {
+            coveragePct: validation.coveragePct,
+            passRatePct: validation.passRatePct,
+            passingPairs: validation.passingPairs,
+            requiredPairs: validation.requiredPairs,
+          },
+        };
+      }),
+    );
+    const validationByStrategy = new Map(
+      allocationValidation.map((item) => [item.strategyKey, item]),
     );
     const ledgerMetrics = calculateLedgerPortfolioMetrics(allClosedTrades);
     return {
       ...analysis,
+      allocations: analysis.allocations.map((allocation) => {
+        const lifecycle = validationByStrategy.get(allocation.strategyKey);
+        return {
+          ...allocation,
+          ...lifecycle,
+          canApply: Boolean(lifecycle?.canApply) &&
+            Math.abs(
+              allocation.recommendedCapitalAllocationPct -
+              allocation.currentCapitalAllocationPct,
+            ) >= 0.01,
+        };
+      }),
       overallSharpeRatio: ledgerMetrics.sharpeRatio,
       overallProfitFactor: ledgerMetrics.profitFactor,
       expectedValue: ledgerMetrics.expectedValuePct,
@@ -610,7 +696,11 @@ export class QuantIntelligenceService {
     }
   }
 
-  private async multiSymbolValidationEvidence(userId: string, requestedSymbols: string[]) {
+  private async multiSymbolValidationEvidence(
+    userId: string,
+    requestedSymbols: string[],
+    strategyKey = 'ai-core',
+  ) {
     const scope = await this.getSelectedResearchScope(userId);
     const configured = new Set(scope.symbols);
     const requested = requestedSymbols
@@ -620,7 +710,12 @@ export class QuantIntelligenceService {
     const timeframes = scope.timeframes;
     const rows = symbols.length && timeframes.length
       ? await this.prisma.researchValidationRun.findMany({
-          where: { userId, symbol: { in: symbols }, interval: { in: timeframes } },
+          where: {
+            userId,
+            strategyKey,
+            symbol: { in: symbols },
+            interval: { in: timeframes },
+          },
           orderBy: { createdAt: 'desc' },
         })
       : [];
@@ -673,7 +768,11 @@ export class QuantIntelligenceService {
     const recommendations = await Promise.all(strategies
       .filter((strategy) => (strategy.performance?.totalTrades ?? 0) > 0 || strategy.livePositions.length > 0)
       .map(async (strategy) => {
-        const validationEvidence = await this.multiSymbolValidationEvidence(userId, strategy.symbols);
+        const validationEvidence = await this.multiSymbolValidationEvidence(
+          userId,
+          strategy.symbols,
+          strategy.key,
+        );
         const regimeRows = validationEvidence.symbols.length ? await this.prisma.marketRegimeState.findMany({
           where: { symbol: { in: validationEvidence.symbols }, interval: { in: validationEvidence.timeframes } },
           orderBy: { detectedAt: 'desc' },
@@ -706,15 +805,17 @@ export class QuantIntelligenceService {
           moduleSource: 'PORTFOLIO_INTELLIGENCE',
           problemStatement: `Strategy ${strategy.name} should be rebalanced only from its configured symbols and multi-timeframe evidence.`,
           evidenceText: `${verifiedAttributedTrades}/5 attributed verified closed trades; ${validationEvidence.availablePairs}/${validationEvidence.requiredPairs} symbol-timeframe validations available; ${validationEvidence.passingPairs} pass, coverage ${validationEvidence.coveragePct}%.`,
-          historicalResult: { returnPct, drawdownPct, recommendedWeight, marketRegime, symbolRegimes, livePnl, symbols: validationEvidence.symbols, verifiedAttributedTrades, validationEvidence },
+          historicalResult: { strategyKey: strategy.key, returnPct, drawdownPct, recommendedWeight, marketRegime, symbolRegimes, livePnl, symbols: validationEvidence.symbols, verifiedAttributedTrades, validationEvidence },
           expectedBenefit: 'Improves portfolio risk-adjusted returns using validation scoped to the configured investment universe.',
           estimatedRisk: validationEvidence.passed ? 'Medium if validated symbol regimes change abruptly.' : 'High because multi-symbol validation is incomplete or failing.',
           priority: drawdownPct > 0.05 || marketRegime === 'HIGH_VOLATILITY' ? 'HIGH' : 'MEDIUM',
           implementationCost: 'LOW',
           rollbackPlan: 'Revert the allocation weight using the portfolio rebalance endpoint.',
-          status: !hasMinimumTradeEvidence || !validationEvidence.passed
+          status: !validationEvidence.passed
             ? 'VALIDATION_REQUIRED'
-            : isAlreadyApplied
+            : !hasMinimumTradeEvidence
+              ? 'CANARY'
+              : isAlreadyApplied
               ? 'APPROVED'
               : 'PENDING_APPROVAL',
         });
@@ -752,27 +853,47 @@ export class QuantIntelligenceService {
 
     const strategy = strategies.find((item) => item.key === strategyKey);
     if (!strategy) throw new NotFoundException('Portfolio strategy not found');
-    const validation = await this.multiSymbolValidationEvidence(userId, strategy.symbols);
+    const validation = await this.multiSymbolValidationEvidence(
+      userId,
+      strategy.symbols,
+      strategy.key,
+    );
     const verifiedAttributedTrades = strategy.closedTrades.filter(
       (trade) => trade.sourceDataComplete,
     ).length;
-    if (verifiedAttributedTrades < 5) {
-      throw new BadRequestException(
-        `VALIDATION_REQUIRED: strategy has ${verifiedAttributedTrades}/5 attributed verified closed trades`,
-      );
-    }
     if (!validation.passed) {
-      throw new BadRequestException(`VALIDATION_REQUIRED: multi-symbol validation coverage ${validation.coveragePct}% and pass rate ${validation.passRatePct}% do not satisfy the portfolio gate`);
+      return {
+        applied: false,
+        strategyKey,
+        mode: 'VALIDATION_REQUIRED' as const,
+        reason: 'MULTI_SYMBOL_VALIDATION_NOT_PASSED' as const,
+        verifiedAttributedTrades,
+        tradesRequiredForFullAllocation: Math.max(0, 5 - verifiedAttributedTrades),
+        validation: {
+          coveragePct: validation.coveragePct,
+          passRatePct: validation.passRatePct,
+          availablePairs: validation.availablePairs,
+          requiredPairs: validation.requiredPairs,
+          passingPairs: validation.passingPairs,
+        },
+      };
     }
 
+    const currentWeight = Number(strategy.allocation?.weight ?? 0.2);
     const requestedWeight = Number.isFinite(targetWeight)
-      ? Math.max(0.05, Math.min(0.95, Number(targetWeight)))
-      : Math.max(0.05, Math.min(0.95, Number(strategy.allocation?.weight ?? 0.2)));
+      ? Number(targetWeight)
+      : currentWeight;
+    const allocationTarget = resolveStrategyAllocationTarget({
+      requestedWeight,
+      currentWeight,
+      verifiedAttributedTrades,
+    });
+    const appliedWeight = allocationTarget.targetWeight;
     const others = strategies.filter((item) => item.id !== strategy.id);
-    const remainingWeight = Math.max(0.01, 1 - requestedWeight);
+    const remainingWeight = Math.max(0.01, 1 - appliedWeight);
     const otherCurrentWeight = others.reduce((sum, item) => sum + Math.max(0.01, Number(item.allocation?.weight ?? 0.01)), 0);
     const normalizedWeights = strategies.map((item) => {
-      if (item.id === strategy.id) return requestedWeight;
+      if (item.id === strategy.id) return appliedWeight;
       if (!others.length) return 0;
       const currentWeight = Math.max(0.01, Number(item.allocation?.weight ?? 0.01));
       const proportionalWeight = otherCurrentWeight > 0
@@ -798,7 +919,15 @@ export class QuantIntelligenceService {
     );
 
     await this.refreshRecommendations(userId);
-    return { applied: true, strategyKey, targetWeight: requestedWeight };
+    return {
+      applied: true,
+      strategyKey,
+      mode: allocationTarget.mode,
+      targetWeight: appliedWeight,
+      requestedTargetWeight: allocationTarget.requestedWeight,
+      verifiedAttributedTrades,
+      tradesRequiredForFullAllocation: Math.max(0, 5 - verifiedAttributedTrades),
+    };
   }
 
   async reviewRecommendation(id: string, action: 'APPROVE' | 'REJECT', userId?: string, reason?: string) {
@@ -813,7 +942,14 @@ export class QuantIntelligenceService {
             const symbols = Array.isArray(evidence.symbols)
               ? evidence.symbols.filter((value): value is string => typeof value === 'string')
               : [];
-            const validation = await this.multiSymbolValidationEvidence(userId!, symbols);
+            const strategyKey = typeof evidence.strategyKey === 'string'
+              ? evidence.strategyKey
+              : 'ai-core';
+            const validation = await this.multiSymbolValidationEvidence(
+              userId!,
+              symbols,
+              strategyKey,
+            );
             if (!validation.passed) {
               throw new BadRequestException(`VALIDATION_REQUIRED: recommendation has ${validation.coveragePct}% multi-symbol coverage and ${validation.passRatePct}% passing walk-forward/out-of-sample evidence`);
             }

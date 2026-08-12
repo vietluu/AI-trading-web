@@ -64,6 +64,7 @@ function normalizeStrategy(strategy: PortfolioIntelligenceSnapshot, index: numbe
 
 export function analyzePortfolioIntelligence(
   strategies: PortfolioIntelligenceSnapshot[] = [],
+  maxStrategyAllocation = 1,
 ): PortfolioIntelligenceAnalysis {
   const normalized = strategies.length > 0
     ? strategies.map((strategy, index) => normalizeStrategy(strategy, index))
@@ -99,9 +100,13 @@ export function analyzePortfolioIntelligence(
     return Math.max(0.05, Math.min(0.4, adjusted));
   });
   const totalWeight = rawWeights.reduce((sum, value) => sum + value, 0) || 1;
-  const recommendedWeights = normalized.length === 1
+  const normalizedRecommendations = normalized.length === 1
     ? [Math.max(0.2, Math.min(0.95, rawWeights[0] ?? 0.5))]
     : rawWeights.map((weight) => weight / totalWeight);
+  const recommendedWeights = capAndRedistributeWeights(
+    normalizedRecommendations,
+    maxStrategyAllocation,
+  );
 
   const allocations = normalized.map((strategy, index) => {
     const currentWeight = strategy.currentCapitalPct / 100;
@@ -192,6 +197,41 @@ export function analyzePortfolioIntelligence(
         : 'Insufficient strategy-attributed exchange trades; keep allocations unchanged until verified evidence is available.',
     ],
   };
+}
+
+function capAndRedistributeWeights(weights: number[], requestedCap: number): number[] {
+  if (!weights.length) return [];
+  if (weights.length === 1) {
+    return [Math.max(0, Math.min(requestedCap, weights[0] ?? 0))];
+  }
+  const cap = Math.max(1 / weights.length, Math.min(1, requestedCap));
+  const result = weights.map((weight) => Math.max(0, weight));
+  let remaining = 1;
+  let active = result.map((_, index) => index);
+  const output = Array<number>(weights.length).fill(0);
+  while (active.length && remaining > 1e-12) {
+    const scoreTotal = active.reduce((sum, index) => sum + (result[index] ?? 0), 0);
+    const capped: number[] = [];
+    for (const index of active) {
+      const proposed = scoreTotal > 0
+        ? ((result[index] ?? 0) / scoreTotal) * remaining
+        : remaining / active.length;
+      if (proposed >= cap) {
+        output[index] = cap;
+        remaining -= cap;
+      } else capped.push(index);
+    }
+    if (capped.length === active.length) {
+      for (const index of capped) {
+        output[index] = scoreTotal > 0
+          ? ((result[index] ?? 0) / scoreTotal) * remaining
+          : remaining / capped.length;
+      }
+      remaining = 0;
+    }
+    active = capped;
+  }
+  return output;
 }
 
 function returnCorrelation(

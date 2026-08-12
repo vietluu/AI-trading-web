@@ -81,4 +81,24 @@ describe("analyzePortfolioIntelligence", () => {
       trendAllocation.recommendedCapitalAllocationPct,
     );
   });
+
+  it("redistributes recommendations without exceeding the configured strategy cap", () => {
+    const result = analyzePortfolioIntelligence(
+      ["ai-core", "trend", "mean-reversion", "breakout", "news"].map((key, index) => ({
+        key,
+        name: key,
+        allocation: { weight: 0.2 },
+        performance: {
+          totalTrades: 10,
+          returnPct: index === 0 ? 0.8 : 0.01,
+          drawdownPct: 0.02,
+          winRate: index === 0 ? 0.9 : 0.51,
+        },
+      })),
+      0.25,
+    );
+
+    expect(Math.max(...result.allocations.map((item) => item.recommendedCapitalAllocationPct))).toBeLessThanOrEqual(25);
+    expect(result.allocations.reduce((sum, item) => sum + item.recommendedCapitalAllocationPct, 0)).toBeCloseTo(100, 1);
+  });
 });

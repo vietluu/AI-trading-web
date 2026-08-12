@@ -77,35 +77,39 @@ export class QuantResearchSchedulerService implements OnApplicationBootstrap, On
         });
         const latestByPair = new Map<string, Date>();
         for (const row of latestRows) {
-          const key = `${row.symbol}:${row.interval}`;
+          const key = `${row.strategyKey}:${row.symbol}:${row.interval}`;
           if (!latestByPair.has(key)) latestByPair.set(key, row.createdAt);
         }
-        for (const symbol of scope.symbols) {
-          for (const interval of scope.timeframes) {
-            if (validationAttempts >= maxValidationsPerSweep) break;
-            const previous = latestByPair.get(`${symbol}:${interval}`);
-            if (previous && previous >= validationCutoff) continue;
-            const recentProvider = scope.recentRuns.find((run) => run.symbol === symbol)?.provider;
-            const connection = connections.find((item) => item.provider === recentProvider) ?? connections[0]!;
-            const provider = connection.provider === 'BINANCE_FUTURES'
-              ? ExchangeProvider.BINANCE_FUTURES
-              : ExchangeProvider.OKX_FUTURES;
-            validationAttempts += 1;
-            try {
-              await this.quant.getRegimeIntelligence(symbol, provider, interval);
-              await this.quant.getDiscoveredStrategies(userId, symbol, provider, interval, 500);
-              await this.research.runFullQuantValidation({
-                userId,
-                provider,
-                symbol,
-                interval,
-                lookbackCandles: 500,
-                initialBalance: 10_000,
-              });
-              validations += 1;
-            } catch (error) {
-              unavailable += 1;
-              this.logger.warn({ event: 'quant_research_pair_refresh_failed', userId, symbol, interval, error: error instanceof Error ? error.message : String(error) });
+        const strategyKeys = ['ai-core', 'trend', 'mean-reversion', 'breakout'];
+        for (const strategyKey of strategyKeys) {
+          for (const symbol of scope.symbols) {
+            for (const interval of scope.timeframes) {
+              if (validationAttempts >= maxValidationsPerSweep) break;
+              const previous = latestByPair.get(`${strategyKey}:${symbol}:${interval}`);
+              if (previous && previous >= validationCutoff) continue;
+              const recentProvider = scope.recentRuns.find((run) => run.symbol === symbol)?.provider;
+              const connection = connections.find((item) => item.provider === recentProvider) ?? connections[0]!;
+              const provider = connection.provider === 'BINANCE_FUTURES'
+                ? ExchangeProvider.BINANCE_FUTURES
+                : ExchangeProvider.OKX_FUTURES;
+              validationAttempts += 1;
+              try {
+                await this.quant.getRegimeIntelligence(symbol, provider, interval);
+                await this.quant.getDiscoveredStrategies(userId, symbol, provider, interval, 500);
+                await this.research.runFullQuantValidation({
+                  userId,
+                  provider,
+                  symbol,
+                  interval,
+                  lookbackCandles: 500,
+                  initialBalance: 10_000,
+                  strategyKey,
+                });
+                validations += 1;
+              } catch (error) {
+                unavailable += 1;
+                this.logger.warn({ event: 'quant_research_pair_refresh_failed', userId, symbol, interval, strategyKey, error: error instanceof Error ? error.message : String(error) });
+              }
             }
           }
         }

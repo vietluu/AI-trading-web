@@ -1,6 +1,9 @@
 import { ForbiddenException } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
-import { LiveTradingService } from "../../src/modules/live-trading/application/live-trading.service";
+import {
+  LiveTradingService,
+  processInBatches,
+} from "../../src/modules/live-trading/application/live-trading.service";
 
 const limits = {
   riskPerTrade: 0.02,
@@ -13,6 +16,25 @@ const limits = {
   rangeScalpRoeMultiplier: 2,
   minLiquidationBufferPct: 0.01,
 };
+
+describe("bounded live reconciliation batches", () => {
+  it("processes every row without exceeding the database concurrency limit", async () => {
+    let active = 0;
+    let maximumActive = 0;
+    const processed: number[] = [];
+
+    await processInBatches([...Array(25).keys()], 10, async (row) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await Promise.resolve();
+      processed.push(row);
+      active -= 1;
+    });
+
+    expect(processed.sort((left, right) => left - right)).toEqual([...Array(25).keys()]);
+    expect(maximumActive).toBe(10);
+  });
+});
 
 interface LiveTradingInternals {
   monitorProtection: (

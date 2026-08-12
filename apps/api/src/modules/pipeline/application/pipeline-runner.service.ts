@@ -290,6 +290,7 @@ export class PipelineRunnerService {
             symbol,
             provider: job.provider,
             timeframe: String(interval),
+            strategyKey,
             decision: output,
           }).catch((error: unknown) => {
             this.logger.error({

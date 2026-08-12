@@ -12,6 +12,10 @@ export interface WalkForwardRequest {
   validationWindow: number;
   stepSize?: number;
   initialBalance: number;
+  provider?: ExchangeProvider;
+  symbol?: string;
+  interval?: ExchangeInterval;
+  strategyName?: string;
 }
 
 export interface WalkForwardWindow {
@@ -54,22 +58,22 @@ export function runWalkForwardEngine(req: WalkForwardRequest): WalkForwardEngine
     const valStart = valCandles[0]?.openTime.toISOString() ?? '';
     const valEnd = valCandles[valCandles.length - 1]?.openTime.toISOString() ?? '';
 
-    const trainFirst = Number(trainCandles[0]?.close ?? 1);
-    const trainLast = Number(trainCandles[trainCandles.length - 1]?.close ?? 1);
-    const trainReturn = ((trainLast - trainFirst) / trainFirst) * 100;
-
-    const valFirst = Number(valCandles[0]?.close ?? 1);
-    const valLast = Number(valCandles[valCandles.length - 1]?.close ?? 1);
-    const valReturn = ((valLast - valFirst) / valFirst) * 100;
-
-    let peak = valFirst;
-    let maxDd = 0;
-    for (const c of valCandles) {
-      const price = Number(c.close);
-      if (price > peak) peak = price;
-      const dd = ((peak - price) / peak) * 100;
-      if (dd > maxDd) maxDd = dd;
-    }
+    const backtest = (sample: NormalizedCandle[]) => runHistoricalBacktest({
+      candles: sample,
+      provider: req.provider ?? ExchangeProvider.BINANCE_FUTURES,
+      symbol: req.symbol ?? 'WALK-FORWARD-SAMPLE',
+      interval: req.interval ?? ExchangeInterval.FIFTEEN_MINUTES,
+      initialBalance: req.initialBalance,
+      leverage: 2,
+      riskPerTrade: 0.01,
+      riskRewardRatio: 2,
+      strategyName: req.strategyName ?? 'HYBRID_QUANT',
+    }).metrics;
+    const trainMetrics = backtest(trainCandles);
+    const validationMetrics = backtest(valCandles);
+    const trainReturn = trainMetrics.totalReturn * 100;
+    const valReturn = validationMetrics.totalReturn * 100;
+    const maxDd = validationMetrics.maxDrawdown * 100;
 
     const efficiencyRatio = trainReturn !== 0 ? Math.max(-2, Math.min(2, valReturn / trainReturn)) : 1;
 
@@ -555,21 +559,29 @@ export interface OutOfSampleResult {
   passedValidation: boolean;
 }
 
-export function runOutOfSampleEngine(candles: NormalizedCandle[]): OutOfSampleResult {
+export function runOutOfSampleEngine(
+  candles: NormalizedCandle[],
+  options: {
+    provider?: ExchangeProvider;
+    symbol?: string;
+    interval?: ExchangeInterval;
+    strategyName?: string;
+  } = {},
+): OutOfSampleResult {
   const splitIdx = Math.floor(candles.length * 0.7);
   const isCandles = candles.slice(0, splitIdx);
   const oosCandles = candles.slice(splitIdx);
 
   const evaluate = (sample: NormalizedCandle[]) => runHistoricalBacktest({
     candles: sample,
-    provider: ExchangeProvider.BINANCE_FUTURES,
-    symbol: 'OOS-SAMPLE',
-    interval: ExchangeInterval.FIFTEEN_MINUTES,
+    provider: options.provider ?? ExchangeProvider.BINANCE_FUTURES,
+    symbol: options.symbol ?? 'OOS-SAMPLE',
+    interval: options.interval ?? ExchangeInterval.FIFTEEN_MINUTES,
     initialBalance: 10_000,
     leverage: 2,
     riskPerTrade: 0.01,
     riskRewardRatio: 2,
-    strategyName: 'HYBRID_QUANT',
+    strategyName: options.strategyName ?? 'HYBRID_QUANT',
   }).metrics;
   const inSample = evaluate(isCandles);
   const outOfSample = evaluate(oosCandles);

@@ -45,6 +45,17 @@ const ORDER_RECONCILIATION_LIMIT = 100;
 const ACTIVE_ORDER_STATUSES = ["SUBMITTING", "NEW", "PARTIALLY_FILLED"];
 const TRADE_BACKFILL_PAGE_SIZE = 1000;
 const DEFAULT_TRADE_BACKFILL_MAX_PAGES = 100;
+const RECONCILIATION_DB_BATCH_SIZE = 10;
+
+export async function processInBatches<T>(
+  rows: readonly T[],
+  batchSize: number,
+  worker: (row: T) => Promise<unknown>,
+): Promise<void> {
+  for (let index = 0; index < rows.length; index += batchSize) {
+    await Promise.all(rows.slice(index, index + batchSize).map(worker));
+  }
+}
 
 @Injectable()
 export class LiveTradingService {
@@ -932,78 +943,94 @@ export class LiveTradingService {
         });
       }
 
-      for (const order of openOrders) {
-        await tx.liveOrder.updateMany({
-          where: {
-            connectionId,
-            OR: [
-              { exchangeOrderId: order.exchangeOrderId },
-              ...(order.clientOrderId
-                ? [{ clientOrderId: order.clientOrderId }]
-                : []),
-            ],
-          },
-          data: { status: order.status, averagePrice: order.averagePrice },
-        });
-      }
-      for (const order of orderHistory.slice(0, ORDER_RECONCILIATION_LIMIT)) {
+    });
+    // Order history can contain hundreds of rows. Keeping this work inside an
+    // interactive Prisma transaction caused the transaction to expire midway
+    // through reconciliation. Each write is idempotent, so bounded batches are
+    // both safer and faster without holding a database transaction open.
+    await processInBatches(
+      openOrders,
+      RECONCILIATION_DB_BATCH_SIZE,
+      (order) => this.prisma.liveOrder.updateMany({
+        where: {
+          connectionId,
+          OR: [
+            { exchangeOrderId: order.exchangeOrderId },
+            ...(order.clientOrderId
+              ? [{ clientOrderId: order.clientOrderId }]
+              : []),
+          ],
+        },
+        data: { status: order.status, averagePrice: order.averagePrice },
+      }),
+    );
+    await processInBatches(
+      orderHistory.slice(0, ORDER_RECONCILIATION_LIMIT),
+      RECONCILIATION_DB_BATCH_SIZE,
+      async (order) => {
         const clientOrderId =
           order.clientOrderId || `external-${order.exchangeOrderId}`;
-        const matched = await tx.liveOrder.updateMany({
+        const updateData = {
+          exchangeOrderId: order.exchangeOrderId,
+          status: order.status,
+          averagePrice: order.averagePrice,
+          updatedAt: order.updatedAt ?? syncedAt,
+        };
+        const matched = await this.prisma.liveOrder.updateMany({
           where: {
             connectionId,
             OR: [{ exchangeOrderId: order.exchangeOrderId }, { clientOrderId }],
           },
-          data: {
-            exchangeOrderId: order.exchangeOrderId,
-            status: order.status,
-            averagePrice: order.averagePrice,
-            updatedAt: order.updatedAt ?? syncedAt,
-          },
+          data: updateData,
         });
-        if (matched.count === 0) {
-          await tx.liveOrder.create({
-            data: {
-              userId,
-              connectionId,
-              clientOrderId,
-              exchangeOrderId: order.exchangeOrderId,
-              provider: connection.provider,
-              environment: connection.environment,
-              symbol: order.symbol,
-              side: order.side,
-              type: order.type,
-              quantity: order.originalQuantity,
-              leverage: 1,
-              averagePrice: order.averagePrice,
-              status: order.status,
-              purpose: "IMPORTED",
-              reduceOnly: order.reduceOnly ?? false,
-              createdAt: order.createdAt ?? syncedAt,
-              updatedAt: order.updatedAt ?? syncedAt,
-            },
-          });
-        }
-      }
-      for (const order of reconciledOrders) {
-        await tx.liveOrder.updateMany({
+        if (matched.count > 0) return;
+        await this.prisma.liveOrder.upsert({
           where: {
-            connectionId,
-            OR: [
-              { exchangeOrderId: order.exchangeOrderId },
-              ...(order.clientOrderId
-                ? [{ clientOrderId: order.clientOrderId }]
-                : []),
-            ],
+            connectionId_clientOrderId: { connectionId, clientOrderId },
           },
-          data: {
-            status: order.status,
+          update: updateData,
+          create: {
+            userId,
+            connectionId,
+            clientOrderId,
+            exchangeOrderId: order.exchangeOrderId,
+            provider: connection.provider,
+            environment: connection.environment,
+            symbol: order.symbol,
+            side: order.side,
+            type: order.type,
+            quantity: order.originalQuantity,
+            leverage: 1,
             averagePrice: order.averagePrice,
+            status: order.status,
+            purpose: "IMPORTED",
+            reduceOnly: order.reduceOnly ?? false,
+            createdAt: order.createdAt ?? syncedAt,
             updatedAt: order.updatedAt ?? syncedAt,
           },
         });
-      }
-    });
+      },
+    );
+    await processInBatches(
+      reconciledOrders,
+      RECONCILIATION_DB_BATCH_SIZE,
+      (order) => this.prisma.liveOrder.updateMany({
+        where: {
+          connectionId,
+          OR: [
+            { exchangeOrderId: order.exchangeOrderId },
+            ...(order.clientOrderId
+              ? [{ clientOrderId: order.clientOrderId }]
+              : []),
+          ],
+        },
+        data: {
+          status: order.status,
+          averagePrice: order.averagePrice,
+          updatedAt: order.updatedAt ?? syncedAt,
+        },
+      }),
+    );
     const ledgerSummary = this.tradeLedger
       ? await this.tradeLedger.ingest(userId, connection, tradeFills)
       : { fills: 0, closedTrades: 0 };

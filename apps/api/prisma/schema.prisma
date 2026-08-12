@@ -1848,6 +1848,7 @@ model AgentQuotaUsage {
 model ResearchValidationRun {
   id                    String   @id @default(uuid()) @db.Uuid
   userId                String?  @db.Uuid
+  strategyKey           String   @default("ai-core")
   symbol                String
   provider              String
   interval              String
@@ -1870,6 +1871,7 @@ model ResearchValidationRun {
   user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+  @@index([userId, strategyKey, symbol, provider, interval, createdAt])
   @@index([symbol, provider])
   @@map("research_validation_runs")
 }

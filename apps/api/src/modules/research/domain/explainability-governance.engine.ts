@@ -1,5 +1,5 @@
 type RecommendationPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
-type RecommendationStatus = 'VALIDATION_REQUIRED' | 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED' | 'DEPLOYED' | 'ROLLED_BACK';
+type RecommendationStatus = 'VALIDATION_REQUIRED' | 'PENDING_APPROVAL' | 'APPROVED' | 'SHADOW' | 'CANARY' | 'REJECTED' | 'DEPLOYED' | 'ROLLED_BACK';
 
 export interface FullQuantRecommendation {
   id?: string;
