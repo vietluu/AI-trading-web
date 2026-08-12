@@ -29,7 +29,7 @@ export class AIConfigService {
         timeoutMs: 30000,
         dailyBudget: 10.0,
         monthlyBudget: 100.0,
-        tokenBudget: 10000000,
+        tokenBudget: 0,
         requestBudget: 1000,
         fallbackEnabled: false,
         fallbackProviders: [],
