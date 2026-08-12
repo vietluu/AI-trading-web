@@ -30,7 +30,7 @@ export class BudgetManagerService {
     const dailyLimit = config ? Number(config.dailyBudget) : 10.0;
     const monthlyLimit = config ? Number(config.monthlyBudget) : 100.0;
     const requestLimit = config?.requestBudget ?? 1000;
-    const tokenLimit = config?.tokenBudget ?? 1_000_000;
+    const tokenLimit = config?.tokenBudget ?? 10_000_000;
 
     const todayStr = new Date().toISOString().slice(0, 10);
     const todayUsage = await this.prisma.aIUsage.findUnique({
