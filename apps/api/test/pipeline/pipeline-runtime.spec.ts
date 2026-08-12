@@ -130,7 +130,7 @@ describe('Phase 6.6 pipeline runtime policies', () => {
       userId: 'user-1',
       provider: 'BINANCE_FUTURES',
       symbol: 'BTC-USDT',
-      params: { interval: '1h' },
+      params: { interval: '1h', strategyIds: ['ai-core', 'trend', 'breakout'] },
       trigger: 'EVENT',
     } as never);
 
@@ -139,6 +139,7 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     expect(repository.updateRun).toHaveBeenCalledWith('run-1', expect.objectContaining({
       status: 'COMPLETED', decision: 'WAIT', skippedReason: 'CONFIDENCE_BELOW_THRESHOLD',
     }));
+    expect(JSON.stringify(repository.updateRun.mock.calls)).toContain('"selectedStrategyKey":"trend"');
   });
 
   it('uses BullMQ-safe pipeline queue names', () => {
@@ -209,7 +210,7 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     };
     const triggerMock = vi.fn().mockImplementation(() => {
       const callCount = triggerMock.mock.calls.length;
-      if (callCount === 3) return Promise.resolve({});
+      if (callCount === 2) return Promise.resolve({});
       return Promise.reject(new Error('queue down'));
     });
     const pipeline = {
@@ -220,7 +221,17 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     await service.tick(new Date('2026-08-03T09:30:00Z'));
     await service.tick(new Date('2026-08-03T09:30:05Z'));
 
-    expect(pipeline.trigger).toHaveBeenCalledTimes(4);
+    expect(pipeline.trigger).toHaveBeenCalledTimes(2);
+    expect(triggerMock).toHaveBeenNthCalledWith(
+      1,
+      'user-1',
+      expect.objectContaining({
+        symbol: 'BTC-USDT',
+        params: { strategyIds: ['ai-core', 'trend'] },
+      }),
+      'SCHEDULE',
+      expect.objectContaining({ scheduleId: 'schedule-1' }),
+    );
     expect(prisma.pipelineSchedule.update).toHaveBeenCalledTimes(1);
   });
 });

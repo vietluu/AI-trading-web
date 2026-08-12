@@ -27,6 +27,34 @@ const rounded = (
   digits: number = RISK_ENGINE_CONSTANTS.DEFAULT_PRECISION_DIGITS,
 ): number => Number(value.toFixed(digits));
 
+export function maxStopLossRoeForStrategy(
+  limits: Pick<RiskLimits, "maxStopLossRoe" | "rangeScalpRoeMultiplier">,
+  strategy?: string,
+  timeframeMs?: number,
+): number {
+  const horizonFactor = timeframeMs !== undefined && timeframeMs >= 4 * 3_600_000
+    ? 0.5
+    : timeframeMs !== undefined && timeframeMs >= 3_600_000
+      ? 0.75
+      : 1;
+  const rangeFactor = strategy === "RANGE_REVERSAL"
+    ? timeframeMs !== undefined && timeframeMs > 15 * 60_000
+      ? 1
+      : timeframeMs !== undefined && timeframeMs > 5 * 60_000
+        ? Math.min(1.5, limits.rangeScalpRoeMultiplier)
+        : Math.max(1, limits.rangeScalpRoeMultiplier)
+    : 1;
+  return limits.maxStopLossRoe * horizonFactor * rangeFactor;
+}
+
+export function estimatedLiquidationLeverageLimit(
+  stopDistancePct: number,
+  minimumBufferPct: number,
+): number {
+  const protectedDistance = Math.max(0, stopDistancePct) + Math.max(0, minimumBufferPct);
+  return Math.max(1, Math.floor(1 / Math.max(protectedDistance, Number.EPSILON)));
+}
+
 export function calculateDrawdown(equity: number, peakEquity: number): number {
   return peakEquity > 0 ? clamp((peakEquity - equity) / peakEquity, 0, 1) : 1;
 }
@@ -52,11 +80,14 @@ export function calculatePositionSize(
   riskPerTrade: number,
   entryPrice: number,
   stopLoss: number,
+  estimatedRoundTripCostPct = 0,
 ): number {
   const distance = Math.abs(entryPrice - stopLoss);
-  return distance > 0
+  const costPerUnit = entryPrice * Math.max(0, estimatedRoundTripCostPct);
+  const lossPerUnit = distance + costPerUnit;
+  return lossPerUnit > 0
     ? rounded(
-        (balance * riskPerTrade) / distance,
+        (balance * riskPerTrade) / lossPerUnit,
         RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
       )
     : 0;
@@ -203,6 +234,7 @@ export function evaluateRisk(
     limits.riskPerTrade,
     marketData.price,
     stopLoss,
+    limits.estimatedRoundTripCostPct,
   );
   const highVolatility = marketData.volatility >= limits.highVolatility;
   if (highVolatility)
@@ -210,15 +242,6 @@ export function evaluateRisk(
       positionSize * limits.highVolatilitySizeFactor,
       RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
     );
-  const idealNotional = Math.max(positionSize * marketData.price, 0);
-  const leverageBudget = Math.min(
-    limits.maxLeverage,
-    Math.max(1, Math.floor(idealNotional / Math.max(account.equity * 0.25, 1))),
-  );
-  const leverage = highVolatility
-    ? Math.max(1, Math.min(leverageBudget, Math.floor(limits.maxLeverage / 2)))
-    : leverageBudget;
-
   const retainedExposure = retainedPositions.reduce(
     (sum, position) => sum + Math.abs(position.size * position.markPrice),
     0,
@@ -235,12 +258,48 @@ export function evaluateRisk(
     ),
   );
   if (!finitePositive(positionSize))
-    return reject("MAX_PORTFOLIO_EXPOSURE_EXCEEDED", leverage);
+    return reject("MAX_PORTFOLIO_EXPOSURE_EXCEEDED");
+
+  const stopDistancePct = Math.abs(marketData.price - stopLoss) / marketData.price;
+  const lossPctOfNotional = stopDistancePct + limits.estimatedRoundTripCostPct;
+  const effectiveMaxStopLossRoe = maxStopLossRoeForStrategy(
+    limits,
+    plan.strategy,
+    plan.timeframeMs,
+  );
+  const roeLeverageLimit = Math.floor(
+    effectiveMaxStopLossRoe / Math.max(lossPctOfNotional, Number.EPSILON),
+  );
+  if (roeLeverageLimit < 1) return reject("STOP_LOSS_ROE_EXCEEDS_LIMIT");
+  const liquidationLeverageLimit = estimatedLiquidationLeverageLimit(
+    stopDistancePct,
+    limits.minLiquidationBufferPct,
+  );
+  const volatilityLeverageLimit = highVolatility
+    ? Math.max(1, Math.floor(limits.maxLeverage / 2))
+    : limits.maxLeverage;
+  const leverage = Math.max(
+    1,
+    Math.min(
+      limits.maxLeverage,
+      volatilityLeverageLimit,
+      roeLeverageLimit,
+      liquidationLeverageLimit,
+    ),
+  );
 
   const projectedExposure = retainedExposure + positionSize * marketData.price;
   const exposurePct = projectedExposure / account.equity;
   if (exposurePct > limits.maxExposure + RISK_ENGINE_CONSTANTS.EXPOSURE_TOLERANCE_EPSILON)
     return reject("MAX_PORTFOLIO_EXPOSURE_EXCEEDED", leverage);
+
+  const plannedLoss = positionSize * marketData.price * lossPctOfNotional;
+  const plannedEquityRiskPct = plannedLoss / account.equity;
+  const plannedMarginRoe = plannedLoss / ((positionSize * marketData.price) / leverage);
+  if (plannedEquityRiskPct > limits.riskPerTrade + 1e-8)
+    return reject("RISK_PER_TRADE_EXCEEDED", leverage);
+  if (plannedMarginRoe > effectiveMaxStopLossRoe + 1e-8)
+    return reject("STOP_LOSS_ROE_EXCEEDS_LIMIT", leverage);
 
   return {
     approved: true,
@@ -257,6 +316,9 @@ export function evaluateRisk(
     ),
     exposurePct: rounded(exposurePct, 6),
     drawdownPct: rounded(drawdownPct, 6),
+    plannedLoss: rounded(plannedLoss, 8),
+    plannedEquityRiskPct: rounded(plannedEquityRiskPct, 8),
+    plannedMarginRoe: rounded(plannedMarginRoe, 8),
     tradePlan: plan,
   };
 }

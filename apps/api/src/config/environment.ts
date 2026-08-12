@@ -516,6 +516,14 @@ const environmentSchema = z
       .min(0.5)
       .max(0.7)
       .default(0.6),
+    ESTIMATED_ROUND_TRIP_COST_PCT: z.coerce
+      .number()
+      .min(0)
+      .max(0.05)
+      .default(0.0008),
+    MAX_STOP_LOSS_ROE: z.coerce.number().positive().max(1).default(0.03),
+    RANGE_SCALP_ROE_MULTIPLIER: z.coerce.number().min(1).max(5).default(2),
+    MIN_LIQUIDATION_BUFFER_PCT: z.coerce.number().positive().max(0.2).default(0.01),
     // Phase 10: portfolio-wide limits (weights and drawdowns are fractions)
     MAX_STRATEGIES: z.coerce.number().int().min(1).max(20).default(5),
     MAX_TOTAL_EXPOSURE: z.coerce.number().min(0.5).max(0.7).default(0.6),

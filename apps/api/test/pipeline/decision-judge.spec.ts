@@ -34,6 +34,21 @@ describe('DecisionJudgeService', () => {
     expect(result.reasons).toContain('EXPECTED_VALUE_TOO_LOW');
   });
 
+  it('blocks automatic execution until confidence has empirical calibration', () => {
+    const generatedAt = new Date().toISOString();
+    const good = { dataQuality: 'GOOD', generatedAt };
+    const result = judge.evaluate({
+      decision: 'SHORT', dataQuality: 'GOOD', conflictLevel: 'LOW', confidence: 84,
+      expectedValue: 0.8, profitFactorEstimate: 1.8, riskScore: 30,
+      confidenceCalibration: { status: 'INSUFFICIENT_HISTORY', sampleSize: 0 },
+    } as never, {
+      market: good, technical: good, news: good, sentiment: good, macro: good, onchain: good,
+    } as never, { symbol: 'ETH-USDT', requireCalibratedConfidence: true });
+
+    expect(result).toEqual(expect.objectContaining({ approved: false, verdict: 'REQUEST_MORE_DATA' }));
+    expect(result.reasons).toContain('CONFIDENCE_NOT_CALIBRATED');
+  });
+
   it('requests fresh source data when the underlying candle is stale for its timeframe', () => {
     const now = Date.parse('2026-08-08T12:00:00.000Z');
     const good = { dataQuality: 'GOOD', generatedAt: new Date(now).toISOString() };

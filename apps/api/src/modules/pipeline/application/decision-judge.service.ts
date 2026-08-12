@@ -14,6 +14,8 @@ export interface JudgeContext {
   timeframe?: string;
   referencePrice?: number;
   sourceTimestamp?: Date | string;
+  /** Set for any decision that can reach automatic exchange execution. */
+  requireCalibratedConfidence?: boolean;
 }
 
 /** Deterministic final validation gate. It never creates a trading signal. */
@@ -69,6 +71,11 @@ export class DecisionJudgeService {
     if (decision.riskScore >= policy.maxRiskScore) reasons.push('DECISION_RISK_TOO_HIGH');
     if (spreadBps !== undefined && spreadBps > policy.maxSpreadBps) reasons.push('SPREAD_TOO_WIDE');
     if (
+      context?.requireCalibratedConfidence &&
+      decision.decision !== 'WAIT' &&
+      decision.confidenceCalibration?.status !== 'CALIBRATED'
+    ) reasons.push('CONFIDENCE_NOT_CALIBRATED');
+    if (
       decision.decision !== 'WAIT' &&
       decision.confidenceCalibration?.status === 'CALIBRATED' &&
       (decision.confidenceCalibration.empiricalProbability ?? 0) < policy.minCalibratedProbability
@@ -78,7 +85,7 @@ export class DecisionJudgeService {
       (decision.confidenceCalibration.brierScore ?? 0) > 0.3
     ) reasons.push('CALIBRATION_UNRELIABLE');
 
-    if (reasons.some((reason) => reason.includes('DATA') || reason.includes('STALE') || reason.includes('USABLE') || reason.includes('CALIBRATION_UNRELIABLE'))) {
+    if (reasons.some((reason) => reason.includes('DATA') || reason.includes('STALE') || reason.includes('USABLE') || reason.includes('CALIBRAT'))) {
       return { verdict: 'REQUEST_MORE_DATA', approved: false, reasons };
     }
     if (reasons.length > 0) return { verdict: 'REJECT', approved: false, reasons };

@@ -139,6 +139,17 @@ describe('DecisionService', () => {
     expect(output.overrides).toContain('Insufficient data forced WAIT.');
   });
 
+  it('caps composite confidence when decision data is only partial', () => {
+    const input = decisionInput();
+    input.fusionOutput.dataQuality = 'PARTIAL';
+    input.news!.dataQuality = 'PARTIAL';
+    const output = new DecisionService({} as never).decide(input);
+
+    expect(output.dataQuality).toBe('PARTIAL');
+    expect(output.confidence).toBeLessThanOrEqual(75);
+    expect(output.expectedWinProbability).toBe(0.5);
+  });
+
   it('does not let strong conviction bypass a high-volatility guardrail', () => {
     const input = decisionInput();
     input.market!.volatility.level = 'HIGH';

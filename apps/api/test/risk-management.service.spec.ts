@@ -20,7 +20,7 @@ describe("RiskManagementService", () => {
       },
     };
 
-    const mockLimits = { riskPerTrade: 0.01, maxPositions: 3, maxLeverage: 10, maxDrawdown: 0.2, maxExposure: 1, cooldownMs: 0, stopLossPct: 0.02, riskRewardRatio: 1.5, highVolatility: 0.04, abnormalVolatility: 0.15, highVolatilitySizeFactor: 0.6, minimumConfidence: 60 };
+    const mockLimits = { riskPerTrade: 0.01, maxPositions: 3, maxLeverage: 10, maxDrawdown: 0.2, maxExposure: 1, cooldownMs: 0, stopLossPct: 0.02, riskRewardRatio: 1.5, highVolatility: 0.04, abnormalVolatility: 0.15, highVolatilitySizeFactor: 0.6, minimumConfidence: 60, estimatedRoundTripCostPct: 0.0008, maxStopLossRoe: 0.03, rangeScalpRoeMultiplier: 2, minLiquidationBufferPct: 0.01 };
     const service = new RiskManagementService(
       {} as never,
       { values: mockLimits, getUserLimits: vi.fn().mockResolvedValue(mockLimits) } as never,

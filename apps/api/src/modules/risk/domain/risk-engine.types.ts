@@ -47,10 +47,21 @@ export interface RiskLimits {
   highVolatility: number;
   abnormalVolatility: number;
   highVolatilitySizeFactor: number;
+  /** Estimated entry + exit fees/slippage as a fraction of notional. */
+  estimatedRoundTripCostPct: number;
+  /** Maximum planned stop loss as a fraction of the margin committed. */
+  maxStopLossRoe: number;
+  /** Extra stop-ROE budget for short-lived, boundary-confirmed range trades. */
+  rangeScalpRoeMultiplier: number;
+  /** Required estimated price distance between the stop and liquidation. */
+  minLiquidationBufferPct: number;
 }
 
 export interface RiskEvaluation extends RiskOutput {
   exposurePct: number;
   drawdownPct: number;
+  plannedLoss?: number;
+  plannedEquityRiskPct?: number;
+  plannedMarginRoe?: number;
   tradePlan?: TradePlan;
 }

@@ -64,6 +64,24 @@ describe("adaptive trade plan engine", () => {
     });
   });
 
+  it.each([
+    ["5m", 5 * 60_000, 8],
+    ["15m", 15 * 60_000, 8],
+    ["1h", 60 * 60_000, 2],
+    ["4h", 4 * 60 * 60_000, 1],
+  ])("caps %s range holding time at roughly two hours", (_label, timeframeMs, expectedCandles) => {
+    const plan = buildAdaptiveTradePlan({
+      side: "LONG",
+      entryPrice: 98.6,
+      decision: decision("LONG", "RANGING"),
+      market: { atr: 0.5, support: 98, resistance: 102, marketStructure: "RANGE", timeframeMs },
+      configuredStopLossPct: 0.02,
+      configuredRiskRewardRatio: 1.5,
+    });
+    expect(plan.approved).toBe(true);
+    expect(plan.maxHoldingCandles).toBe(expectedCandles);
+  });
+
   it("uses an ATR tolerance near a range boundary but still enforces net risk/reward", () => {
     const plan = buildAdaptiveTradePlan({
       side: "SHORT",

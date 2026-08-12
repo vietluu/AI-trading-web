@@ -22,6 +22,10 @@ const limits: RiskLimits = {
   highVolatility: 0.04,
   abnormalVolatility: 0.15,
   highVolatilitySizeFactor: 0.6,
+  estimatedRoundTripCostPct: 0.0008,
+  maxStopLossRoe: 0.03,
+  rangeScalpRoeMultiplier: 2,
+  minLiquidationBufferPct: 0.01,
 };
 
 const decision = (overrides: Partial<DecisionOutput> = {}): DecisionOutput => ({
@@ -81,9 +85,123 @@ describe("risk engine", () => {
     const result = evaluateRisk(input(), limits);
     expect(result.approved).toBe(true);
     expect(result.positionSize).toBe(0.08); // $4,000 = 40% of equity
-    expect(result.leverage).toBe(3);
+    expect(result.leverage).toBe(1);
     expect(result.stopLoss).toBe(49_000);
     expect(result.takeProfit).toBe(52_500);
+    expect(result.plannedEquityRiskPct).toBeLessThanOrEqual(0.02);
+    expect(result.plannedMarginRoe).toBeLessThanOrEqual(0.03);
+  });
+
+  it("includes round-trip costs in sizing and never exceeds the equity risk budget", () => {
+    const result = evaluateRisk(input(), { ...limits, maxExposure: 1 });
+    expect(result.approved).toBe(true);
+    expect(result.positionSize).toBeCloseTo(200 / 1040, 8);
+    expect(result.plannedLoss).toBeCloseTo(200, 5);
+    expect(result.plannedEquityRiskPct).toBeCloseTo(0.02, 8);
+  });
+
+  it("caps leverage from stop-loss margin ROE after final position sizing", () => {
+    const result = evaluateRisk(input(), {
+      ...limits,
+      maxLeverage: 50,
+      maxExposure: 1,
+      maxStopLossRoe: 0.03,
+    });
+    expect(result.approved).toBe(true);
+    expect(result.leverage).toBe(1);
+    expect(result.plannedMarginRoe).toBeCloseTo(0.0208, 8);
+  });
+
+  it("allows higher dynamic leverage for a boundary-confirmed range scalp", () => {
+    const rangeInput = input({
+      marketData: {
+        price: 100,
+        volatility: 0.01,
+        tradePlanContext: {
+          atr: 0.2,
+          support: 99.8,
+          resistance: 101.5,
+          marketStructure: "RANGE",
+          timeframeMs: 60_000,
+        },
+      },
+      decision: decision({ regime: { type: "RANGING" } }),
+    });
+    const result = evaluateRisk(rangeInput, {
+      ...limits,
+      maxLeverage: 50,
+      maxExposure: 1,
+    });
+
+    expect(result.approved).toBe(true);
+    expect(result.tradePlan?.strategy).toBe("RANGE_REVERSAL");
+    expect(result.leverage).toBeGreaterThan(5);
+    expect(result.leverage).toBeLessThanOrEqual(50);
+    expect(result.plannedMarginRoe).toBeLessThanOrEqual(0.06);
+  });
+
+  it("reduces leverage budget for longer timeframe range positions", () => {
+    const make = (timeframeMs: number) => evaluateRisk(input({
+      marketData: {
+        price: 100,
+        volatility: 0.01,
+        tradePlanContext: {
+          atr: 0.2, support: 99.8, resistance: 101.5,
+          marketStructure: "RANGE", timeframeMs,
+        },
+      },
+      decision: decision({ regime: { type: "RANGING" } }),
+    }), { ...limits, maxLeverage: 50, maxExposure: 1 });
+
+    const short = make(5 * 60_000);
+    const long = make(4 * 3_600_000);
+    expect(short.approved).toBe(true);
+    expect(long.approved).toBe(true);
+    expect(short.leverage).toBeGreaterThan(long.leverage ?? 0);
+  });
+
+  it("fails closed when even 1x would exceed the margin ROE limit", () => {
+    const result = evaluateRisk(input(), { ...limits, maxStopLossRoe: 0.015 });
+    expect(result).toMatchObject({
+      approved: false,
+      reason: "STOP_LOSS_ROE_EXCEEDS_LIMIT",
+    });
+  });
+
+  it("regresses the ETH incident: a tight ATR stop cannot produce 34x leverage", () => {
+    const result = evaluateRisk(input({
+      symbol: "ETH-USDT",
+      decision: decision({
+        decision: "SHORT",
+        confidence: 84,
+        dataQuality: "PARTIAL",
+        regime: { type: "RANGING" },
+      }),
+      account: {
+        balance: 77_794.46,
+        equity: 77_794.46,
+        peakEquity: 77_794.46,
+      },
+      marketData: {
+        price: 1_865.5,
+        volatility: 5.3403 / 1_865.5,
+        tradePlanContext: {
+          atr: 5.3403,
+          adx: 25,
+          efficiencyRatio: 0.4,
+          ema20: 1_863,
+          ema50: 1_868,
+          marketStructure: "LH_LL",
+          timeframeMs: 15 * 60_000,
+        },
+      },
+    }), { ...limits, maxLeverage: 5, maxExposure: 0.6 });
+
+    expect(result.approved).toBe(true);
+    expect(result.leverage).toBeLessThanOrEqual(5);
+    expect(result.leverage).not.toBe(34);
+    expect(result.plannedEquityRiskPct).toBeLessThanOrEqual(0.02);
+    expect(result.plannedMarginRoe).toBeLessThanOrEqual(0.03);
   });
 
   it("reduces leverage and raw size in high volatility", () => {

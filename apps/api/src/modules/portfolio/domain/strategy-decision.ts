@@ -15,7 +15,94 @@ export function analysisParams(
 ): Record<string, unknown> {
   const result = { ...params };
   delete result.strategyId;
+  delete result.strategyIds;
   return result;
+}
+
+export interface StrategySelection {
+  selectedStrategyKey: StrategyKey;
+  decision: DecisionOutput;
+  candidates: Array<{
+    strategyKey: StrategyKey;
+    decision: DecisionOutput["decision"];
+    confidence: number;
+    opportunityScore: number;
+    expectedValue: number;
+    score: number;
+  }>;
+  reason: "BEST_REGIME_ADJUSTED_CANDIDATE" | "NO_ACTIONABLE_STRATEGY";
+}
+
+/**
+ * Evaluates every configured strategy against one shared analysis snapshot and
+ * deterministically selects one candidate. This is deliberately pure: the
+ * Judge, Quant and Risk gates still run exactly once after arbitration.
+ */
+export function selectStrategyDecision(
+  requestedKeys: readonly string[],
+  base: DecisionOutput,
+  analyses: FusionInput,
+): StrategySelection {
+  const keys = normalizeStrategyKeys(requestedKeys);
+  const candidates = keys.map((strategyKey) => {
+    const decision = decisionForStrategy(strategyKey, base, analyses);
+    return {
+      strategyKey,
+      decision,
+      score: strategyCandidateScore(strategyKey, decision),
+    };
+  });
+  const active = candidates
+    .filter((candidate) => candidate.decision.decision !== "WAIT")
+    .sort(compareCandidates);
+  const selected = active[0] ??
+    candidates.find((candidate) => candidate.strategyKey === "ai-core") ??
+    candidates[0]!;
+
+  return {
+    selectedStrategyKey: selected.strategyKey,
+    decision: selected.decision,
+    candidates: candidates.map((candidate) => ({
+      strategyKey: candidate.strategyKey,
+      decision: candidate.decision.decision,
+      confidence: candidate.decision.confidence,
+      opportunityScore: candidate.decision.opportunityScore,
+      expectedValue: candidate.decision.expectedValue,
+      score: candidate.score,
+    })),
+    reason: active.length > 0
+      ? "BEST_REGIME_ADJUSTED_CANDIDATE"
+      : "NO_ACTIONABLE_STRATEGY",
+  };
+}
+
+function normalizeStrategyKeys(keys: readonly string[]): StrategyKey[] {
+  const allowed = new Set<string>(STRATEGY_KEYS);
+  const unique = [...new Set(keys)].filter((key): key is StrategyKey => allowed.has(key));
+  return unique.length > 0 ? unique : ["ai-core"];
+}
+
+function compareCandidates(
+  left: { strategyKey: StrategyKey; score: number },
+  right: { strategyKey: StrategyKey; score: number },
+): number {
+  return right.score - left.score ||
+    STRATEGY_KEYS.indexOf(left.strategyKey) - STRATEGY_KEYS.indexOf(right.strategyKey);
+}
+
+function strategyCandidateScore(key: StrategyKey, decision: DecisionOutput): number {
+  const affinity: Record<DecisionOutput["regime"]["type"], Partial<Record<StrategyKey, number>>> = {
+    TRENDING: { "ai-core": 4, trend: 18, breakout: 12, "mean-reversion": -20 },
+    RANGING: { "ai-core": 0, trend: -18, breakout: -14, "mean-reversion": 22 },
+    HIGH_VOLATILITY: { "ai-core": 0, trend: 2, breakout: 12, news: 8, "mean-reversion": -12 },
+  };
+  const boundedEv = Math.max(-1, Math.min(1, decision.expectedValue));
+  return Number((
+    decision.confidence * 0.55 +
+    decision.opportunityScore * 0.25 +
+    boundedEv * 10 +
+    (affinity[decision.regime.type]?.[key] ?? 0)
+  ).toFixed(3));
 }
 
 /** Converts the shared analysis snapshot into an independent strategy decision. */
@@ -88,6 +175,7 @@ export function decisionForStrategy(
     };
 
   if (analyses.market.volatility.level === "HIGH") confidence -= 10;
+  if (base.dataQuality === "PARTIAL") confidence = Math.min(confidence, 75);
   if (base.dataQuality === "INSUFFICIENT") {
     decision = "WAIT";
     confidence = 0;
@@ -129,7 +217,7 @@ function strategyAdjustedEconomics(
 > {
   const opportunityScore = Math.max(base.opportunityScore, opportunityFloor ?? 0);
   const expectedWinProbability = clamp(
-    (confidence / 100) * 0.75 + (opportunityScore / 100) * 0.2,
+    0.5,
     0,
     1,
   );
@@ -150,7 +238,12 @@ function strategyAdjustedEconomics(
     expectedLoss: Number(expectedLoss.toFixed(3)),
     expectedValue: Number(expectedValue.toFixed(3)),
     profitFactorEstimate: Number(
-      clamp(expectedReward / Math.max(expectedLoss, 0.05), 0.1, 10).toFixed(3),
+      clamp(
+        (expectedWinProbability * expectedReward) /
+          Math.max((1 - expectedWinProbability) * expectedLoss, 0.05),
+        0.1,
+        10,
+      ).toFixed(3),
     ),
   };
 }

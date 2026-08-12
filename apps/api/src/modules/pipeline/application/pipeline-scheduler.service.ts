@@ -145,39 +145,39 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
         try {
           const triggerPromises: Promise<boolean>[] = [];
           for (const symbol of schedule.symbols) {
-            for (const strategyId of schedule.strategyIds) {
-              triggerPromises.push(
-                this.pipeline
-                  .trigger(
-                    schedule.userId,
-                    {
-                      pipelineId: schedule.pipelineId,
-                      symbol,
-                      provider: schedule.provider,
-                      params: { strategyId },
-                    },
-                    "SCHEDULE",
-                    {
-                      scheduleId: schedule.id,
-                      maxRunsPerHour: schedule.maxRunsPerHour,
-                    },
-                  )
-                  .then(() => true)
-                  .catch((error: unknown) => {
-                    this.logger.error({
-                      event: "pipeline_schedule_trigger_failed",
-                      scheduleId: schedule.id,
-                      symbol,
-                      strategyId,
-                      message:
-                        error instanceof Error
-                          ? error.message
-                          : "Unknown scheduler error",
-                    });
-                    return false;
-                  }),
-              );
-            }
+            triggerPromises.push(
+              this.pipeline
+                .trigger(
+                  schedule.userId,
+                  {
+                    pipelineId: schedule.pipelineId,
+                    symbol,
+                    provider: schedule.provider,
+                    // One shared agent/fusion snapshot per symbol. Strategy
+                    // arbitration happens inside the runner before the gates.
+                    params: { strategyIds: schedule.strategyIds },
+                  },
+                  "SCHEDULE",
+                  {
+                    scheduleId: schedule.id,
+                    maxRunsPerHour: schedule.maxRunsPerHour,
+                  },
+                )
+                .then(() => true)
+                .catch((error: unknown) => {
+                  this.logger.error({
+                    event: "pipeline_schedule_trigger_failed",
+                    scheduleId: schedule.id,
+                    symbol,
+                    strategyIds: schedule.strategyIds,
+                    message:
+                      error instanceof Error
+                        ? error.message
+                        : "Unknown scheduler error",
+                  });
+                  return false;
+                }),
+            );
           }
 
           const results = await Promise.all(triggerPromises);

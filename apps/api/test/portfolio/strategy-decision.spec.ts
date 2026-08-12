@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   analysisParams,
   decisionForStrategy,
+  selectStrategyDecision,
 } from "../../src/modules/portfolio/domain/strategy-decision";
 
 const base = {
@@ -54,7 +55,7 @@ const analyses = {
 describe("independent strategy decisions", () => {
   it("removes portfolio routing fields before strict analyst validation", () => {
     expect(
-      analysisParams({ strategyId: "trend", interval: "15m", maxItems: 50 }),
+      analysisParams({ strategyId: "trend", strategyIds: ["trend", "news"], interval: "15m", maxItems: 50 }),
     ).toEqual({ interval: "15m", maxItems: 50 });
   });
 
@@ -134,7 +135,37 @@ describe("independent strategy decisions", () => {
     expect(result.decision).toBe("LONG");
     expect(result.opportunityScore).toBe(68);
     expect(result.expectedValue).toBeGreaterThan(0);
-    expect(result.expectedWinProbability).toBeGreaterThan(0.6);
+    expect(result.expectedWinProbability).toBe(0.5);
+  });
+
+  it("cannot recreate confidence above the partial-data ceiling", () => {
+    const partial = { ...base, dataQuality: "PARTIAL" as const };
+    const result = decisionForStrategy("trend", partial, analyses);
+    expect(result.confidence).toBe(75);
+    expect(result.confidenceCalibration).toBeUndefined();
+  });
+
+  it("selects one regime-compatible strategy from a shared ranging snapshot", () => {
+    const rangingBase = {
+      ...base,
+      regime: { type: "RANGING" as const },
+      adaptiveThreshold: 78,
+    };
+
+    const selection = selectStrategyDecision(
+      ["ai-core", "trend", "mean-reversion", "breakout", "news"],
+      rangingBase,
+      rangeAnalyses(),
+    );
+
+    expect(selection.selectedStrategyKey).toBe("mean-reversion");
+    expect(selection.decision.decision).toBe("LONG");
+    expect(selection.candidates).toHaveLength(5);
+  });
+
+  it("deduplicates configured strategies and falls back safely", () => {
+    expect(selectStrategyDecision(["trend", "trend"], base, analyses).candidates).toHaveLength(1);
+    expect(selectStrategyDecision(["unknown"], base, analyses).selectedStrategyKey).toBe("ai-core");
   });
 });
 

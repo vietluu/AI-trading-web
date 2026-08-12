@@ -250,6 +250,10 @@ export class RiskManagementService {
   async dashboard(userId: string) {
     await this.syncActiveConnections(userId);
     const limits = await this.config.getUserLimits(userId);
+    const userSetting = await this.prisma.userSetting.findUnique({
+      where: { userId },
+      select: { riskPreference: true },
+    });
     const connections = await this.prisma.exchangeConnection.findMany({
       where: {
         userId,
@@ -326,12 +330,16 @@ export class RiskManagementService {
       peakEquity > 0 ? Math.max(0, (peakEquity - equity) / peakEquity) : 0;
     return {
       config: {
+        riskPreference: userSetting?.riskPreference ?? "UNKNOWN",
         riskPerTrade: limits.riskPerTrade,
         maxPositions: limits.maxPositions,
         maxLeverage: limits.maxLeverage,
         maxDrawdown: limits.maxDrawdown,
         maxExposure: limits.maxExposure,
         cooldownMs: limits.cooldownMs,
+        maxStopLossRoe: limits.maxStopLossRoe,
+        rangeScalpRoeMultiplier: limits.rangeScalpRoeMultiplier,
+        minLiquidationBufferPct: limits.minLiquidationBufferPct,
       },
       portfolio: {
         source: "EXCHANGE",

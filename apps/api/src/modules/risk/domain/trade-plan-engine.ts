@@ -48,6 +48,10 @@ export interface TradePlan {
 const finitePositive = (value: number | undefined): value is number =>
   value !== undefined && Number.isFinite(value) && value > 0;
 const rounded = (value: number): number => Number(value.toFixed(8));
+const rangeHoldingCandles = (timeframeMs?: number): number =>
+  finitePositive(timeframeMs)
+    ? Math.max(1, Math.min(8, Math.floor((2 * 3_600_000) / timeframeMs)))
+    : 8;
 
 export function resolveTradePlanRegime(
   decision: DecisionOutput,
@@ -152,7 +156,7 @@ export function buildAdaptiveTradePlan(input: {
         reason: "RANGE_ENTRY_NOT_AT_BOUNDARY",
         regime,
         strategy: "RANGE_REVERSAL",
-        maxHoldingCandles: 8,
+        maxHoldingCandles: rangeHoldingCandles(market.timeframeMs),
         breakEvenAtR: 0.8,
         entryLocation: rounded(location),
         boundaryThreshold: rounded(side === "LONG" ? longBoundary : shortBoundary),
@@ -173,7 +177,7 @@ export function buildAdaptiveTradePlan(input: {
         regime,
         strategy: "RANGE_REVERSAL",
         rewardToRisk: rounded(rr),
-        maxHoldingCandles: 8,
+        maxHoldingCandles: rangeHoldingCandles(market.timeframeMs),
         breakEvenAtR: 0.8,
         entryLocation: rounded(location),
         boundaryThreshold: rounded(side === "LONG" ? longBoundary : shortBoundary),
@@ -186,7 +190,7 @@ export function buildAdaptiveTradePlan(input: {
       stopLoss: rounded(stopLoss),
       takeProfit: rounded(takeProfit),
       rewardToRisk: rounded(rr),
-      maxHoldingCandles: 8,
+      maxHoldingCandles: rangeHoldingCandles(market.timeframeMs),
       breakEvenAtR: 0.8,
       atr,
       timeframeMs: market.timeframeMs,
