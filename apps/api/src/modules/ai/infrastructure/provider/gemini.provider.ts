@@ -100,7 +100,10 @@ export class GeminiProvider implements LLMProvider {
         `${this.getBaseUrl()}/models/${model}:generateContent?key=${apiKey}`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": apiKey,
+          },
           body: JSON.stringify(reqBody),
           signal: options.abortSignal || controller.signal,
         }
@@ -276,7 +279,10 @@ export class GeminiProvider implements LLMProvider {
       `${this.getBaseUrl()}/models/${model}:streamGenerateContent?key=${apiKey}`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
         body: JSON.stringify({
           contents: [{ parts: [{ text: options.userPrompt }] }],
         }),
