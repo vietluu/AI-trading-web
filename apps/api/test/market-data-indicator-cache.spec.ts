@@ -6,15 +6,16 @@ import { MarketDataService } from "../src/market-data/application/market-data.se
 
 describe("MarketDataService indicator cache recovery", () => {
   it("restores an expired Redis indicator from PostgreSQL", async () => {
+    const now = Date.now();
     const snapshot: IndicatorSnapshot = {
       provider: ExchangeProvider.OKX_FUTURES,
       symbol: "ZRO-USDT",
       interval: ExchangeInterval.FIFTEEN_MINUTES,
-      candleOpenTime: new Date("2026-08-10T04:00:00Z"),
-      candleCloseTime: new Date("2026-08-10T04:14:59.999Z"),
+      candleOpenTime: new Date(now - 15 * 60_000),
+      candleCloseTime: new Date(now - 1_000),
       status: IndicatorStatus.CLOSED,
       values: { rsi14: "67.29", atr14: "0.00540733" },
-      calculatedAt: new Date("2026-08-10T04:15:35Z"),
+      calculatedAt: new Date(now),
       calculationVersion: 1,
     };
     const cache = {
@@ -45,5 +46,51 @@ describe("MarketDataService indicator cache recovery", () => {
       snapshot,
     );
     expect(exchanges.klines).not.toHaveBeenCalled();
+  });
+
+  it("refreshes stale stored candles from the exchange", async () => {
+    const stale = {
+      provider: ExchangeProvider.OKX_FUTURES,
+      symbol: "OKB-USDT",
+      interval: ExchangeInterval.FIFTEEN_MINUTES,
+      openTime: new Date(Date.now() - 24 * 60 * 60_000),
+      closeTime: new Date(Date.now() - 24 * 60 * 60_000 + 15 * 60_000 - 1),
+      open: "95",
+      high: "96",
+      low: "94",
+      close: "95.5",
+      volume: "100",
+      isClosed: true,
+    };
+    const fresh = {
+      ...stale,
+      openTime: new Date(Date.now() - 15 * 60_000),
+      closeTime: new Date(Date.now() - 1_000),
+      close: "99",
+    };
+    const repository = {
+      getCandles: vi.fn().mockResolvedValue([stale]),
+      upsertCandleBatch: vi.fn().mockResolvedValue(undefined),
+      getClosedCandles: vi.fn().mockResolvedValue([]),
+    };
+    const exchanges = { klines: vi.fn().mockResolvedValue([fresh]) };
+    const service = new MarketDataService(
+      {} as never,
+      {} as never,
+      {} as never,
+      repository as never,
+      exchanges as never,
+    );
+
+    const result = await service.getHistoricalCandles({
+      provider: ExchangeProvider.OKX_FUTURES,
+      symbol: "OKB-USDT",
+      interval: ExchangeInterval.FIFTEEN_MINUTES,
+      limit: 1,
+    });
+
+    expect(result).toEqual([fresh]);
+    expect(exchanges.klines).toHaveBeenCalledTimes(1);
+    expect(repository.upsertCandleBatch).toHaveBeenCalledWith([fresh]);
   });
 });

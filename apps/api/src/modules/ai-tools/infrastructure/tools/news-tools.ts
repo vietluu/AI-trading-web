@@ -210,6 +210,8 @@ export class SentimentMarketGetTool implements ToolDefinition<{ symbol?: string;
 
 @Injectable()
 export class MacroEventsListTool implements ToolDefinition<{ lookbackHours?: number; limit?: number }, Record<string, unknown>> {
+  constructor(private readonly prisma: PrismaService) {}
+
   public readonly name = "macro.events.list";
   public readonly version = 1;
   public readonly displayName = "List Macroeconomic Events";
@@ -240,22 +242,40 @@ export class MacroEventsListTool implements ToolDefinition<{ lookbackHours?: num
   public readonly schemaHash = "hash-macro-events-list-v1";
 
   public async execute(input: { lookbackHours?: number; limit?: number }, context: ToolExecutionContext): Promise<Record<string, unknown>> {
-    await Promise.resolve();
-    return {
-      limit: input.limit || 10,
-      lookbackHours: input.lookbackHours || 24,
-      events: [
-        {
-          id: "macro-1",
-          title: "US CPI Core YoY",
-          category: "CPI",
-          importanceScore: 85,
-          actual: "3.1%",
-          forecast: "2.9%",
-          previous: "3.0%",
-          eventDate: new Date().toISOString(),
+    const lookbackHours = input.lookbackHours || 24;
+    const limit = input.limit || 10;
+    const now = new Date();
+    const windowMs = lookbackHours * 60 * 60_000;
+    const events = await this.prisma.macroEconomicEvent.findMany({
+      where: {
+        scheduledAt: {
+          gte: new Date(now.getTime() - windowMs),
+          lte: new Date(now.getTime() + windowMs),
         },
-      ],
+      },
+      orderBy: { scheduledAt: 'asc' },
+      take: limit,
+    });
+    return {
+      limit,
+      lookbackHours,
+      sourceCoverage: 'MANUAL_IMPORT_ONLY',
+      dataAvailable: events.length > 0,
+      events: events.map((event) => ({
+        id: event.id,
+        name: event.name,
+        provider: event.provider,
+        category: event.category,
+        importance: event.importance,
+        country: event.country,
+        currency: event.currency,
+        scheduledAt: event.scheduledAt.toISOString(),
+        actual: event.actual,
+        forecast: event.forecast,
+        previous: event.previous,
+        unit: event.unit,
+        status: event.status,
+      })),
       invocationId: context.invocationId,
     };
   }

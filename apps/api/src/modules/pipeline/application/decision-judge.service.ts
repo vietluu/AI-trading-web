@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import type { DecisionOutput, FusionInput } from '@platform/shared';
-import { adaptiveTradingPolicy, parseSpreadBps } from '../domain/adaptive-trading-policy';
+import {
+  adaptiveTradingPolicy,
+  parseSpreadBps,
+  timeframeMilliseconds,
+} from '../domain/adaptive-trading-policy';
 
 export interface JudgeDecision {
   verdict: 'APPROVE' | 'REJECT' | 'REQUEST_MORE_DATA';
@@ -38,15 +42,26 @@ export class DecisionJudgeService {
       spreadBps,
     });
     const configured = Object.entries(analyses).filter(([name, analysis]) =>
-      name !== 'onchain' || !(
-        'signals' in analysis &&
-        analysis.signals.some((signal: string) =>
-          /no verified on-chain (?:provider|analysis)|coin metrics returned no verified coverage/i.test(signal),
-        )
-      ),
+      (name !== 'onchain' || !(
+          'signals' in analysis &&
+          analysis.signals.some((signal: string) =>
+            /no verified on-chain (?:provider|analysis)|coin metrics returned no verified coverage/i.test(signal),
+          )
+        )) &&
+      (name !== 'macro' || !/no imported macro data/i.test(analysis.summary)),
     ).map(([, analysis]) => analysis);
     const usable = configured.filter((analysis) => analysis.dataQuality !== 'INSUFFICIENT');
-    const minimumUsable = Math.min(4, configured.length);
+    const coreTechnicalEvidence =
+      analyses.market.dataQuality !== 'INSUFFICIENT' &&
+      analyses.technical.dataQuality !== 'INSUFFICIENT';
+    const shortTerm = timeframeMilliseconds(context.timeframe) <= 60 * 60_000;
+    // For short-term trades, fresh Market + Technical evidence plus one valid
+    // auxiliary observation is a sufficient quorum. Missing Macro/Social data
+    // still lowers confidence, but no longer has an unconditional veto.
+    const minimumUsable = Math.min(
+      coreTechnicalEvidence && shortTerm ? 3 : 4,
+      configured.length,
+    );
     if (usable.length < minimumUsable) reasons.push('INSUFFICIENT_USABLE_ANALYSTS');
     if (decision.dataQuality === 'INSUFFICIENT') reasons.push('INSUFFICIENT_DECISION_DATA');
     if (decision.conflictLevel === 'HIGH') reasons.push('HIGH_SIGNAL_CONFLICT');

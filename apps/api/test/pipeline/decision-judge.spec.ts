@@ -82,4 +82,28 @@ describe('DecisionJudgeService', () => {
     expect(result.reasons).not.toContain('INSUFFICIENT_USABLE_ANALYSTS');
     expect(result.verdict).toBe('APPROVE');
   });
+
+  it('accepts a short-term evidence quorum without requiring macro and social agents', () => {
+    const generatedAt = new Date().toISOString();
+    const good = { dataQuality: 'GOOD', generatedAt };
+    const partial = { dataQuality: 'PARTIAL', generatedAt };
+    const insufficient = { dataQuality: 'INSUFFICIENT', generatedAt };
+    const result = judge.evaluate({
+      decision: 'LONG', dataQuality: 'PARTIAL', conflictLevel: 'LOW', confidence: 75,
+      expectedValue: 0.8, profitFactorEstimate: 1.8, riskScore: 30,
+    } as never, {
+      market: good,
+      technical: good,
+      news: partial,
+      sentiment: insufficient,
+      macro: insufficient,
+      onchain: {
+        ...insufficient,
+        signals: ['No verified on-chain provider is configured.'],
+      },
+    } as never, { symbol: 'OKB-USDT', timeframe: '15m' });
+
+    expect(result.reasons).not.toContain('INSUFFICIENT_USABLE_ANALYSTS');
+    expect(result.approved).toBe(true);
+  });
 });
