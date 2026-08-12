@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   HttpCode,
+  HttpException,
   HttpStatus,
   Post,
   Put,
@@ -91,6 +92,16 @@ export class AIController {
     return this.configService.toSharedDto(updated);
   }
 
+  @Get("test")
+  @ApiOperation({ summary: "Diagnostic check for AI test endpoint" })
+  @ApiResponse({ status: 200, description: "AI Test Status" })
+  public testAIGet(): { status: string; message: string } {
+    return {
+      status: "OK",
+      message: "AI test endpoint is ready. Send a POST request with prompt to test AI generation.",
+    };
+  }
+
   @Post("test")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Test AI execution prompt and structured response" })
@@ -98,8 +109,8 @@ export class AIController {
   public async testAI(
     @CurrentUser() user: User,
     @Body()
-    body: {
-      prompt: string;
+    body?: {
+      prompt?: string;
       systemPrompt?: string;
       provider?: "OPENAI" | "ANTHROPIC" | "GEMINI" | "OLLAMA";
       model?: string;
@@ -108,16 +119,46 @@ export class AIController {
       maxTokens?: number;
     }
   ): Promise<AIResponseDto> {
-    return this.orchestrator.execute({
-      userId: user.id,
-      userPrompt: body.prompt,
-      systemPrompt: body.systemPrompt,
-      provider: body.provider,
-      model: body.model,
-      responseFormat: body.responseFormat,
-      temperature: body.temperature,
-      maxTokens: body.maxTokens,
-    });
+    const userPrompt = body?.prompt && body.prompt.trim().length > 0
+      ? body.prompt
+      : "Hello! Perform a quick AI connectivity test.";
+
+    try {
+      return await this.orchestrator.execute({
+        userId: user.id,
+        userPrompt,
+        systemPrompt: body?.systemPrompt,
+        provider: body?.provider,
+        model: body?.model,
+        responseFormat: body?.responseFormat,
+        temperature: body?.temperature,
+        maxTokens: body?.maxTokens,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const status = (err as Record<string, unknown>)?.status as number | undefined;
+      const code = (err as Record<string, unknown>)?.code as string | undefined;
+
+      if (status === 429 || code === 'ALL_MODELS_QUOTA_EXCEEDED' || msg.includes('429')) {
+        throw new HttpException(
+          { statusCode: 429, message: msg, error: 'TooManyRequests' },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+      if (msg.includes('budget policy') || msg.includes('budget exceeded')) {
+        throw new HttpException(
+          { statusCode: 400, message: msg, error: 'BudgetExceeded' },
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+      if (msg.includes('API key is not configured')) {
+        throw new HttpException(
+          { statusCode: 503, message: msg, error: 'ProviderNotConfigured' },
+          HttpStatus.SERVICE_UNAVAILABLE,
+        );
+      }
+      throw err;
+    }
   }
 
   @Get("usage")

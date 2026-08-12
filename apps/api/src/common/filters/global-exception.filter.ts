@@ -91,6 +91,12 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const context = host.switchToHttp();
     const request = context.getRequest<Request>();
     const response = context.getResponse<Response>();
+    const statusFromObj = typeof (exception as Record<string, unknown>)?.status === "number"
+      ? (exception as Record<string, unknown>).status as number
+      : typeof (exception as Record<string, unknown>)?.statusCode === "number"
+        ? (exception as Record<string, unknown>).statusCode as number
+        : undefined;
+
     const statusCode =
       exception instanceof ExchangeError
         ? exception.statusCode === 401
@@ -100,6 +106,8 @@ export class GlobalExceptionFilter implements ExceptionFilter {
           ? agentErrorStatus(exception.code)
         : exception instanceof HttpException
           ? exception.getStatus()
+        : statusFromObj && statusFromObj >= 400 && statusFromObj < 600
+          ? statusFromObj
           : HttpStatus.INTERNAL_SERVER_ERROR;
     const errorName =
       exception instanceof ExchangeError
@@ -108,7 +116,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
           ? exception.code
         : exception instanceof HttpException
           ? exception.name
-          : "InternalServerError";
+        : (exception as Record<string, unknown>)?.code as string || "InternalServerError";
 
     const body: ApiError = {
       statusCode,
