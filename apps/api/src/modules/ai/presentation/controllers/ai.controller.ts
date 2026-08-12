@@ -151,10 +151,10 @@ export class AIController {
           HttpStatus.BAD_REQUEST,
         );
       }
-      if (msg.includes('API key is not configured')) {
+      if (msg.includes('API key is not configured') || msg.includes('API key not valid') || msg.includes('invalid API key')) {
         throw new HttpException(
-          { statusCode: 503, message: msg, error: 'ProviderNotConfigured' },
-          HttpStatus.SERVICE_UNAVAILABLE,
+          { statusCode: 400, message: msg, error: 'InvalidApiKey' },
+          HttpStatus.BAD_REQUEST,
         );
       }
       throw err;
