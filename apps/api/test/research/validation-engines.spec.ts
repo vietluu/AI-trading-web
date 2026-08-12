@@ -54,6 +54,9 @@ describe('Phase 10.3A Quantitative Research Validation Engines', () => {
     });
 
     expect(result.windows.length).toBeGreaterThan(0);
+    expect(result.usableWindows).toBe(
+      result.windows.filter((window) => window.validationTrades > 0).length,
+    );
     expect(result.averageReturn).toBeDefined();
     expect(typeof result.stable).toBe('boolean');
     expect(result.walkForwardEfficiency).toBeGreaterThanOrEqual(-2);

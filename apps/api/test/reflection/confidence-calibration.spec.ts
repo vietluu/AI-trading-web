@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildReliabilityCurve,
   calibrateConfidence,
+  calibrateConfidenceWithFallback,
 } from '../../src/modules/reflection/domain/confidence-calibration';
 
 describe('confidence calibration', () => {
@@ -24,6 +25,34 @@ describe('confidence calibration', () => {
       { confidence: 80, outcome: 'CORRECT' },
     ]);
     expect(calibration.status).toBe('INSUFFICIENT_HISTORY');
+    expect(calibration.empiricalProbability).toBeNull();
+  });
+
+  it('uses calibrated user history as fallback for a new symbol', () => {
+    const global = Array.from({ length: 60 }, (_, index) => ({
+      confidence: 75,
+      outcome: index < 40 ? 'CORRECT' as const : 'WRONG' as const,
+    }));
+    const calibration = calibrateConfidenceWithFallback(75, [
+      { scope: 'EXACT', records: [] },
+      { scope: 'STRATEGY_CONTEXT', records: [] },
+      { scope: 'STRATEGY_TIMEFRAME', records: [] },
+      { scope: 'USER_GLOBAL', records: global },
+    ]);
+
+    expect(calibration.status).toBe('CALIBRATED');
+    expect(calibration.scope).toBe('USER_GLOBAL');
+    expect(calibration.fallbackUsed).toBe(true);
+  });
+
+  it('marks a completely new account as cold start without inventing probability', () => {
+    const calibration = calibrateConfidenceWithFallback(75, [
+      { scope: 'EXACT', records: [] },
+      { scope: 'USER_GLOBAL', records: [] },
+    ]);
+
+    expect(calibration.status).toBe('INSUFFICIENT_HISTORY');
+    expect(calibration.scope).toBe('NONE');
     expect(calibration.empiricalProbability).toBeNull();
   });
 });

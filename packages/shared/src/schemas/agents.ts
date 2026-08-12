@@ -518,6 +518,14 @@ export const DecisionOutputSchema = z
       sampleSize: z.number().int().nonnegative(),
       bucketSampleSize: z.number().int().nonnegative(),
       brierScore: z.number().min(0).max(1).nullable(),
+      scope: z.enum([
+        'EXACT',
+        'STRATEGY_CONTEXT',
+        'STRATEGY_TIMEFRAME',
+        'USER_GLOBAL',
+        'NONE',
+      ]).optional(),
+      fallbackUsed: z.boolean().optional(),
     }).strict().optional(),
     learningConfiguration: z.object({
       version: z.number().int().positive(),

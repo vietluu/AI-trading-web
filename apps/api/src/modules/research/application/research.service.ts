@@ -1,6 +1,11 @@
 import { BadRequestException, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
+import { RiskConfigService } from '../../risk/application/risk-config.service';
+
+export const MIN_VALIDATION_TRADES = 30;
+export const MIN_OOS_TRADES = 10;
+export const MIN_WALK_FORWARD_WINDOWS = 5;
 
 function toInputJson(val: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(val)) as Prisma.InputJsonValue;
@@ -63,6 +68,7 @@ export class ResearchService {
   constructor(
     private readonly marketData: MarketDataService,
     @Optional() @Inject(PrismaService) private readonly prisma?: PrismaService & ResearchPersistenceClient,
+    @Optional() private readonly riskConfig?: RiskConfigService,
   ) {}
 
   async runBacktest(input: {
@@ -118,6 +124,12 @@ export class ResearchService {
   }) {
     const strategyKey = input.strategyKey ?? 'ai-core';
     const strategyName = validationBacktestStrategy(strategyKey);
+    const liveLimits = await this.riskConfig?.getUserLimits(input.userId);
+    const executionAssumptions = {
+      leverage: liveLimits?.maxLeverage ?? 1,
+      riskPerTrade: Math.min(liveLimits?.riskPerTrade ?? 0.02, 0.02),
+      riskRewardRatio: liveLimits?.riskRewardRatio ?? 1.5,
+    };
     const candles = await this.marketData.getHistoricalCandles({
       provider: input.provider,
       symbol: input.symbol,
@@ -131,13 +143,13 @@ export class ResearchService {
       symbol: input.symbol,
       interval: input.interval,
       initialBalance: input.initialBalance,
-      leverage: 2,
-      riskPerTrade: 0.01,
-      riskRewardRatio: 2,
+      ...executionAssumptions,
       strategyName,
     });
-    if (backtest.trades.length < 5) {
-      throw new BadRequestException('DATA_UNAVAILABLE: fewer than 5 real-candle strategy trades were generated');
+    if (backtest.trades.length < MIN_VALIDATION_TRADES) {
+      throw new BadRequestException(
+        `DATA_UNAVAILABLE: ${backtest.trades.length}/${MIN_VALIDATION_TRADES} independent strategy trades; validation not statistically eligible`,
+      );
     }
 
     const walkForward = runWalkForwardEngine({
@@ -149,6 +161,7 @@ export class ResearchService {
       symbol: input.symbol,
       interval: input.interval,
       strategyName,
+      ...executionAssumptions,
     });
 
     const monteCarlo = runMonteCarloEngine({
@@ -170,10 +183,15 @@ export class ResearchService {
           take: 1000,
         })
       : [];
-    const calibration = runConfidenceCalibrationEngine(calibrationRows.map((row) => ({
+    const rawCalibration = runConfidenceCalibrationEngine(calibrationRows.map((row) => ({
       confidence: row.confidence,
       isWin: row.outcome === 'CORRECT',
     })));
+    const calibration = {
+      ...rawCalibration,
+      sampleSize: calibrationRows.length,
+      evidenceSufficient: calibrationRows.length >= 50,
+    };
 
     const regimeStability = runRegimeStabilityAnalyzer(candles);
 
@@ -208,12 +226,24 @@ export class ResearchService {
       symbol: input.symbol,
       interval: input.interval,
       strategyName,
+      ...executionAssumptions,
     });
+
+    if (walkForward.usableWindows < MIN_WALK_FORWARD_WINDOWS) {
+      throw new BadRequestException(
+        `DATA_UNAVAILABLE: ${walkForward.usableWindows}/${MIN_WALK_FORWARD_WINDOWS} walk-forward windows with out-of-sample trades`,
+      );
+    }
+    if (oos.outOfSampleTrades < MIN_OOS_TRADES) {
+      throw new BadRequestException(
+        `DATA_UNAVAILABLE: ${oos.outOfSampleTrades}/${MIN_OOS_TRADES} out-of-sample trades`,
+      );
+    }
 
     const ruin = runProbabilityOfRuinEngine({
       winRate: backtest.metrics.winRate,
-      riskRewardRatio: 2.0,
-      riskPerTradeFraction: 0.02,
+      riskRewardRatio: executionAssumptions.riskRewardRatio,
+      riskPerTradeFraction: executionAssumptions.riskPerTrade,
       capital: input.initialBalance,
     });
 
@@ -227,6 +257,12 @@ export class ResearchService {
       crossSymbolRobustness: robustness,
       outOfSample: oos,
       probabilityOfRuin: ruin,
+      executionAssumptions,
+      sampleEvidence: {
+        totalTrades: backtest.trades.length,
+        outOfSampleTrades: oos.outOfSampleTrades,
+        walkForwardWindows: walkForward.usableWindows,
+      },
     };
 
     let validationRunId: string | null = null;
@@ -269,7 +305,7 @@ export class ResearchService {
       ruinPct: ruin.probabilityOfRuinPct,
     });
 
-    return { ...result, validationRunId, provenance: { source: 'REAL_EXCHANGE_CANDLES_AND_VERIFIED_RUNTIME_RECORDS', provider: input.provider, symbol: input.symbol, interval: input.interval, lookbackCandles: candles.length } };
+    return { ...result, validationRunId, provenance: { source: 'REAL_EXCHANGE_CANDLES_AND_VERIFIED_RUNTIME_RECORDS', provider: input.provider, symbol: input.symbol, interval: input.interval, lookbackCandles: candles.length, executionAssumptions } };
   }
 
   async runSensitivityAnalysis(input: {

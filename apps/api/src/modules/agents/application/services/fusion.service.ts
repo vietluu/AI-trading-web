@@ -282,7 +282,7 @@ export class FusionService {
         if (!parsed.success) throw new Error(`Invalid cached output from ${request.name}`);
         return {
           name: request.name,
-          data: this.normalizeValidObservation(request.name, parsed.data),
+          data: this.normalizeValidObservation(request.name, parsed.data, input.symbol),
         };
       })
     );
@@ -390,7 +390,28 @@ export class FusionService {
   private normalizeValidObservation(
     name: AnalysisName,
     value: unknown,
+    symbol: string,
   ): unknown {
+    if (name === 'sentiment') {
+      const sentiment = SentimentAgentOutputSchema.parse(value);
+      if (sentiment.sources.marketSentimentIndex && !sentiment.sources.social) {
+        return {
+          ...sentiment,
+          summary: `Global crypto-market Fear & Greed context only; it is not ${symbol}-specific sentiment. ${sentiment.summary}`,
+          sentiment: { overall: 'NEUTRAL' as const, intensity: 'LOW' as const },
+          sources: {
+            ...sentiment.sources,
+            marketSentimentIndex: `GLOBAL_CRYPTO_MARKET_CONTEXT_ONLY: ${sentiment.sources.marketSentimentIndex}`,
+          },
+          anomalies: [
+            ...sentiment.anomalies,
+            `No verified ${symbol}-specific social sentiment was available.`,
+          ],
+          dataQuality: 'PARTIAL' as const,
+        };
+      }
+      return sentiment;
+    }
     if (name !== 'news') return value;
 
     const news = NewsAgentOutputSchema.parse(value);

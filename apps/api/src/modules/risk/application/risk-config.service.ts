@@ -16,7 +16,7 @@ export class RiskConfigService {
 
   private defaultLimits(): RiskLimits {
     return {
-      riskPerTrade: this.config.get<number>("RISK_PER_TRADE") ?? 0.02,
+      riskPerTrade: Math.min(this.config.get<number>("RISK_PER_TRADE") ?? 0.02, 0.02),
       maxPositions: this.config.get<number>("MAX_POSITIONS") ?? 10,
       maxLeverage: this.config.get<number>("MAX_LEVERAGE") ?? 50,
       maxDrawdown: this.config.get<number>("MAX_DRAWDOWN") ?? 0.15,
@@ -77,7 +77,7 @@ export class RiskConfigService {
         maxExposure = 0.6;
         stopLossPct = 0.02;
       } else if (setting.riskPreference === "AGGRESSIVE") {
-        riskPerTrade = 0.04;
+        riskPerTrade = 0.02;
         maxExposure = 0.8;
         stopLossPct = 0.03;
       }
@@ -88,10 +88,14 @@ export class RiskConfigService {
       // The stored leverage is a hard ceiling, not the leverage used blindly.
       // RiskEngine derives the actual value from stop, strategy and liquidation.
       const userLeverage = Math.min(requestedLeverage, defaults.maxLeverage);
+      const hardRiskCeiling = Math.min(
+        0.02,
+        Math.max(0.001, Number(setting.maxRiskPerTrade ?? 0.02)),
+      );
 
       return {
         ...defaults,
-        riskPerTrade,
+        riskPerTrade: Math.min(riskPerTrade, hardRiskCeiling),
         maxExposure,
         stopLossPct,
         maxLeverage: userLeverage,

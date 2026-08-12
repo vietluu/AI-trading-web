@@ -8,9 +8,10 @@ import { KnowledgeBaseService } from './application/knowledge-base.service';
 import { QuantIntelligenceService } from './application/quant-intelligence.service';
 import { QuantIntelligenceController } from './presentation/quant-intelligence.controller';
 import { QuantResearchSchedulerService } from './application/quant-research-scheduler.service';
+import { RiskModule } from '../risk/risk.module';
 
 @Module({
-  imports: [MarketDataModule, ExchangeModule],
+  imports: [MarketDataModule, ExchangeModule, RiskModule],
   controllers: [ResearchController, QuantIntelligenceController],
   providers: [
     ResearchService,

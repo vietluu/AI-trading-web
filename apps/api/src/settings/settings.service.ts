@@ -46,6 +46,7 @@ export class SettingsService {
       aiDailyBudget: setting.aiDailyBudget.toString(),
       defaultLeverage: setting.defaultLeverage,
       riskPreference: setting.riskPreference,
+      maxRiskPerTrade: Number(setting.maxRiskPerTrade),
       updatedAt: setting.updatedAt,
     };
   }

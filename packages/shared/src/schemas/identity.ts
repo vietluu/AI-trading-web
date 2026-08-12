@@ -38,6 +38,7 @@ export const settingsViewSchema = z.object({
   aiDailyBudget: z.string(),
   defaultLeverage: z.number().int(),
   riskPreference: z.enum(["CONSERVATIVE", "MODERATE", "AGGRESSIVE"]),
+  maxRiskPerTrade: z.number().min(0.001).max(0.02),
   updatedAt: z.string().datetime(),
 });
 

@@ -790,6 +790,7 @@ model UserSetting {
   paperTradingBalance Decimal  @default(10000) @db.Decimal(24, 8)
   defaultLeverage     Int      @default(1)
   riskPreference      String   @default("CONSERVATIVE")
+  maxRiskPerTrade     Decimal  @default(0.02) @db.Decimal(6, 5)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)

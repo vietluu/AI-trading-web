@@ -16,6 +16,9 @@ export interface WalkForwardRequest {
   symbol?: string;
   interval?: ExchangeInterval;
   strategyName?: string;
+  leverage?: number;
+  riskPerTrade?: number;
+  riskRewardRatio?: number;
 }
 
 export interface WalkForwardWindow {
@@ -28,6 +31,8 @@ export interface WalkForwardWindow {
   validationReturn: number;
   validationDrawdown: number;
   efficiencyRatio: number;
+  trainTrades: number;
+  validationTrades: number;
 }
 
 export interface WalkForwardEngineResult {
@@ -36,6 +41,7 @@ export interface WalkForwardEngineResult {
   averageReturn: number;
   averageDrawdown: number;
   walkForwardEfficiency: number;
+  usableWindows: number;
 }
 
 export function runWalkForwardEngine(req: WalkForwardRequest): WalkForwardEngineResult {
@@ -64,16 +70,16 @@ export function runWalkForwardEngine(req: WalkForwardRequest): WalkForwardEngine
       symbol: req.symbol ?? 'WALK-FORWARD-SAMPLE',
       interval: req.interval ?? ExchangeInterval.FIFTEEN_MINUTES,
       initialBalance: req.initialBalance,
-      leverage: 2,
-      riskPerTrade: 0.01,
-      riskRewardRatio: 2,
+      leverage: req.leverage ?? 2,
+      riskPerTrade: req.riskPerTrade ?? 0.01,
+      riskRewardRatio: req.riskRewardRatio ?? 2,
       strategyName: req.strategyName ?? 'HYBRID_QUANT',
-    }).metrics;
+    });
     const trainMetrics = backtest(trainCandles);
     const validationMetrics = backtest(valCandles);
-    const trainReturn = trainMetrics.totalReturn * 100;
-    const valReturn = validationMetrics.totalReturn * 100;
-    const maxDd = validationMetrics.maxDrawdown * 100;
+    const trainReturn = trainMetrics.metrics.totalReturn * 100;
+    const valReturn = validationMetrics.metrics.totalReturn * 100;
+    const maxDd = validationMetrics.metrics.maxDrawdown * 100;
 
     const efficiencyRatio = trainReturn !== 0 ? Math.max(-2, Math.min(2, valReturn / trainReturn)) : 1;
 
@@ -87,6 +93,8 @@ export function runWalkForwardEngine(req: WalkForwardRequest): WalkForwardEngine
       validationReturn: Number(valReturn.toFixed(2)),
       validationDrawdown: Number(maxDd.toFixed(2)),
       efficiencyRatio: Number(efficiencyRatio.toFixed(2)),
+      trainTrades: trainMetrics.trades.length,
+      validationTrades: validationMetrics.trades.length,
     });
 
     startIndex += step;
@@ -102,12 +110,14 @@ export function runWalkForwardEngine(req: WalkForwardRequest): WalkForwardEngine
     ? windows.reduce((sum, w) => sum + w.efficiencyRatio, 0) / windows.length
     : 0;
 
+  const usableWindows = windows.filter((window) => window.validationTrades > 0).length;
   return {
     windows,
-    stable: avgEfficiency > 0.3 && avgDrawdown < 20,
+    stable: usableWindows >= 5 && avgEfficiency > 0.3 && avgDrawdown < 20,
     averageReturn: Number(avgReturn.toFixed(2)),
     averageDrawdown: Number(avgDrawdown.toFixed(2)),
     walkForwardEfficiency: Number(avgEfficiency.toFixed(2)),
+    usableWindows,
   };
 }
 
@@ -557,6 +567,8 @@ export interface OutOfSampleResult {
   outOfSampleSharpe: number;
   degradationPct: number;
   passedValidation: boolean;
+  inSampleTrades: number;
+  outOfSampleTrades: number;
 }
 
 export function runOutOfSampleEngine(
@@ -566,6 +578,9 @@ export function runOutOfSampleEngine(
     symbol?: string;
     interval?: ExchangeInterval;
     strategyName?: string;
+    leverage?: number;
+    riskPerTrade?: number;
+    riskRewardRatio?: number;
   } = {},
 ): OutOfSampleResult {
   const splitIdx = Math.floor(candles.length * 0.7);
@@ -578,17 +593,17 @@ export function runOutOfSampleEngine(
     symbol: options.symbol ?? 'OOS-SAMPLE',
     interval: options.interval ?? ExchangeInterval.FIFTEEN_MINUTES,
     initialBalance: 10_000,
-    leverage: 2,
-    riskPerTrade: 0.01,
-    riskRewardRatio: 2,
+    leverage: options.leverage ?? 2,
+    riskPerTrade: options.riskPerTrade ?? 0.01,
+    riskRewardRatio: options.riskRewardRatio ?? 2,
     strategyName: options.strategyName ?? 'HYBRID_QUANT',
-  }).metrics;
+  });
   const inSample = evaluate(isCandles);
   const outOfSample = evaluate(oosCandles);
-  const isReturn = inSample.totalReturn * 100;
-  const oosReturn = outOfSample.totalReturn * 100;
-  const isSharpe = inSample.sharpeRatio;
-  const oosSharpe = outOfSample.sharpeRatio;
+  const isReturn = inSample.metrics.totalReturn * 100;
+  const oosReturn = outOfSample.metrics.totalReturn * 100;
+  const isSharpe = inSample.metrics.sharpeRatio;
+  const oosSharpe = outOfSample.metrics.sharpeRatio;
   const degradation = isReturn !== 0 ? ((isReturn - oosReturn) / Math.abs(isReturn)) * 100 : 0;
 
   return {
@@ -598,6 +613,8 @@ export function runOutOfSampleEngine(
     outOfSampleSharpe: oosSharpe,
     degradationPct: Number(degradation.toFixed(2)),
     passedValidation: degradation < 35.0 && oosSharpe > 1.0,
+    inSampleTrades: inSample.trades.length,
+    outOfSampleTrades: outOfSample.trades.length,
   };
 }
 

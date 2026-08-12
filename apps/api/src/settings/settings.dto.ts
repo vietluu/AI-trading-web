@@ -73,4 +73,12 @@ export class UpdateSettingsDto {
     "aggressive",
   ])
   riskPreference?: string;
+
+  @ApiPropertyOptional({ minimum: 0.001, maximum: 0.02 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 5 })
+  @Min(0.001)
+  @Max(0.02)
+  maxRiskPerTrade?: number;
 }

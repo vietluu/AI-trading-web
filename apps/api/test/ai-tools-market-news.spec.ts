@@ -25,6 +25,32 @@ describe('AI market and news tool fallbacks', () => {
     }
   });
 
+  it('labels Fear and Greed as global context and never fabricates symbol sentiment', async () => {
+    const prisma = {
+      marketSentimentObservation: {
+        findFirst: vi.fn().mockResolvedValue({
+          value: 27,
+          classification: 'Fear',
+          observedAt: new Date('2026-08-12T09:00:00.000Z'),
+          provider: 'alternative.me',
+          indexType: 'FEAR_GREED',
+        }),
+      },
+    };
+    const tool = new SentimentMarketGetTool(prisma as never);
+
+    const output = await tool.execute({ symbol: 'ZRO-USDT' }, {} as never);
+
+    expect(output).toMatchObject({
+      score: 27,
+      dataAvailable: true,
+      scope: 'GLOBAL_CRYPTO_MARKET',
+      symbolApplicability: 'CONTEXT_ONLY',
+      requestedSymbol: 'ZRO-USDT',
+    });
+    expect(output).not.toHaveProperty('symbol');
+  });
+
   it('fetches verified on-chain observations and normalizes the asset symbol', async () => {
     const http = {
       fetch: vi.fn().mockResolvedValue({

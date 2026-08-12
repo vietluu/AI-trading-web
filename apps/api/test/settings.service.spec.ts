@@ -19,6 +19,7 @@ describe("SettingsService", () => {
       paperTradingBalance: new Prisma.Decimal(10000),
       defaultLeverage: 2,
       riskPreference: "CONSERVATIVE",
+      maxRiskPerTrade: new Prisma.Decimal(0.02),
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -33,6 +34,7 @@ describe("SettingsService", () => {
     );
     const result = await service.update("user-id", { theme: "dark" }, {});
     expect(result.aiDailyBudget).toBe("5");
+    expect(result.maxRiskPerTrade).toBe(0.02);
     expect(audit.record).toHaveBeenCalledWith(
       "SETTINGS_UPDATE",
       "user-id",

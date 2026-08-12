@@ -24,6 +24,33 @@ describe('pipeline evaluation and reflection flow', () => {
     expect(createRecord).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'CORRECT', returnPct: 9.9, highVolatility: true }));
   });
 
+  it('evaluates a blocked directional candidate in shadow instead of learning WAIT', async () => {
+    const createRecord = vi.fn().mockResolvedValue({});
+    const repository = {
+      completedRuns: vi.fn().mockResolvedValue([{
+        id: crypto.randomUUID(), userId: crypto.randomUUID(), symbol: 'ZRO-USDT', provider: 'OKX_FUTURES',
+        decision: 'WAIT', confidence: 75, completedAt: new Date(Date.now() - 2 * 60 * 60_000),
+        storedContext: {
+          candidateDecision: {
+            decision: 'SHORT', confidence: 75, strategyKey: 'ai-core',
+            actionable: false, blockedReasons: ['QUANT_WALK_FORWARD_UNSTABLE'],
+          },
+        },
+        performanceRecords: [{ horizon: 'SHORT' }],
+      }]),
+      candleAtOrBefore: vi.fn().mockResolvedValue({ close: new Prisma.Decimal(1) }),
+      candleAtOrAfter: vi.fn().mockResolvedValue({ close: new Prisma.Decimal(0.9) }),
+      createRecord,
+    } as unknown as ReflectionRepository;
+    const config = { get: <T>(_key: string, fallback: T) => fallback } as ConfigService;
+
+    await new PerformanceService(repository, config).evaluateDue();
+
+    expect(createRecord).toHaveBeenCalledWith(expect.objectContaining({
+      decision: 'SHORT', confidence: 75, outcome: 'CORRECT',
+    }));
+  });
+
   it('detects volatility weakness and persists insights without applying changes', async () => {
     const now = new Date();
     const rows = Array.from({ length: 20 }, (_, index) => ({

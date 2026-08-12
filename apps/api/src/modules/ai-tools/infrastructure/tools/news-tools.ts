@@ -150,7 +150,7 @@ export class SentimentMarketGetTool implements ToolDefinition<{ symbol?: string;
   public readonly name = "sentiment.market.get";
   public readonly version = 1;
   public readonly displayName = "Get Market Sentiment";
-  public readonly description = "Fetch Crypto Fear and Greed Index score and classification";
+  public readonly description = "Fetch the global crypto-market Fear and Greed Index; it is not asset-specific sentiment";
   public readonly category = "SENTIMENT" as const;
 
   public readonly inputSchema = z.object({
@@ -159,9 +159,13 @@ export class SentimentMarketGetTool implements ToolDefinition<{ symbol?: string;
   });
 
   public readonly outputSchema = z.object({
-    score: z.number(),
-    classification: z.string(),
+    score: z.number().nullable(),
+    classification: z.string().nullable(),
     timestamp: z.string(),
+    dataAvailable: z.boolean(),
+    scope: z.literal('GLOBAL_CRYPTO_MARKET'),
+    symbolApplicability: z.literal('CONTEXT_ONLY'),
+    requestedSymbol: z.string().optional(),
   });
 
   public readonly executionMode = "SYNCHRONOUS" as const;
@@ -191,17 +195,23 @@ export class SentimentMarketGetTool implements ToolDefinition<{ symbol?: string;
         timestamp: latest.observedAt.toISOString(),
         provider: latest.provider,
         indexType: latest.indexType,
-        symbol: input.symbol,
+        dataAvailable: true,
+        scope: 'GLOBAL_CRYPTO_MARKET',
+        symbolApplicability: 'CONTEXT_ONLY',
+        requestedSymbol: input.symbol,
         lookbackHours: input.lookbackHours || 6,
         invocationId: context.invocationId,
       };
     }
 
     return {
-      score: 50,
-      classification: "Neutral",
+      score: null,
+      classification: null,
       timestamp: new Date().toISOString(),
-      symbol: input.symbol,
+      dataAvailable: false,
+      scope: 'GLOBAL_CRYPTO_MARKET',
+      symbolApplicability: 'CONTEXT_ONLY',
+      requestedSymbol: input.symbol,
       lookbackHours: input.lookbackHours || 6,
       invocationId: context.invocationId,
     };
