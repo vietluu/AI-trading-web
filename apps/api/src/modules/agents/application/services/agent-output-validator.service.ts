@@ -73,6 +73,18 @@ export class AgentOutputValidatorService {
       };
     }
 
+    if (agentType === AgentType.TECHNICAL_ANALYST) {
+      if (output.divergence !== undefined) return parsed;
+
+      return {
+        ...output,
+        divergence: {
+          rsiDivergence: 'NONE',
+          macdDivergence: 'NONE',
+        },
+      };
+    }
+
     if (agentType !== AgentType.MARKET_ANALYST) return parsed;
 
     const missingLiquidity = output.liquidity === undefined;
