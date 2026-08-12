@@ -199,6 +199,70 @@ describe("AI Orchestrator & Fallback Integration", () => {
     expect(chatMock).toHaveBeenCalledTimes(1);
   });
 
+  it("shares a provider quota cooldown and suppresses unsent failure history", async () => {
+    const chatMock = vi.fn().mockRejectedValue(
+      Object.assign(new Error("Rate limit exceeded 429"), {
+        status: 429,
+        retryAfterMs: 60_000,
+        providerRequestSent: true,
+      }),
+    );
+    const provider = {
+      providerType: "OPENAI",
+      chat: chatMock as LLMProvider["chat"],
+    } as unknown as LLMProvider;
+    const factoryWithStub = {
+      getProvider: () => provider,
+    } as unknown as LLMProviderFactory;
+    const baseConfig = await mockConfigService.getOrCreateConfig("user-123");
+    const noFallbackConfig = {
+      getOrCreateConfig: () => Promise.resolve({
+        ...baseConfig,
+        preferredProvider: "OPENAI" as const,
+        fallbackEnabled: false,
+        fallbackProviders: [],
+      }),
+    } as unknown as AIConfigService;
+    const redisValues = new Map<string, string>();
+    const redis = {
+      get: vi.fn((key: string) => Promise.resolve(redisValues.get(key) ?? null)),
+      setWithTtl: vi.fn((key: string, value: string) => {
+        redisValues.set(key, value);
+        return Promise.resolve();
+      }),
+      delete: vi.fn((key: string) => {
+        redisValues.delete(key);
+        return Promise.resolve();
+      }),
+    } as unknown as RedisService;
+    const historyLog = vi.fn().mockResolvedValue(undefined);
+    const history = {
+      logExecution: historyLog,
+    } as unknown as AIHistoryService;
+    const cooldownOrchestrator = new AIOrchestratorService(
+      noFallbackConfig,
+      mockBudgetManager,
+      contextBuilder,
+      promptEngine,
+      factoryWithStub,
+      history,
+      new CostEstimatorService(modelRegistry),
+      redis,
+    );
+
+    await expect(cooldownOrchestrator.execute({
+      userId: "user-123",
+      userPrompt: "first quota request",
+    })).rejects.toThrow("AI Request failed");
+    await expect(cooldownOrchestrator.execute({
+      userId: "user-123",
+      userPrompt: "second request during cooldown",
+    })).rejects.toThrow("quota cooldown is active");
+
+    expect(chatMock).toHaveBeenCalledTimes(1);
+    expect(historyLog).toHaveBeenCalledTimes(1);
+  });
+
   it("should reuse a cached response for the same prompt", async () => {
     const chatMock = vi.fn().mockResolvedValue({
       text: "cached analysis",

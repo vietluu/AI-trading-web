@@ -36,6 +36,7 @@ export class AIOrchestratorService {
   private readonly maxInMemoryPromptCacheEntries = 500;
   private readonly inMemoryPromptCache = new Map<string, { response: AIResponseDto; expiresAt: number }>();
   private readonly inFlightPromptCache = new Map<string, Promise<AIResponseDto>>();
+  private readonly providerCooldownSeconds = 60;
 
   constructor(
     private readonly configService: AIConfigService,
@@ -120,8 +121,18 @@ export class AIOrchestratorService {
 
     let lastError: Error | null = null;
     let response: LLMResponse | null = null;
+    let providerRequestSent = false;
+    const executionStartedAt = Date.now();
     const executionPromise = (async (): Promise<AIResponseDto> => {
       for (const pType of providerTypesToTry) {
+        const cooldownSeconds = await this.getProviderCooldownSeconds(pType);
+        if (cooldownSeconds > 0) {
+          lastError = Object.assign(
+            new Error(`${pType} provider quota cooldown is active (${cooldownSeconds}s remaining)`),
+            { status: 429, providerRequestSent: false, code: 'AI_PROVIDER_COOLDOWN' },
+          );
+          continue;
+        }
         try {
           const provider = this.providerFactory.getProvider(pType);
           response = await this.executeWithRetry(provider, {
@@ -134,10 +145,22 @@ export class AIOrchestratorService {
             jsonSchema: options.jsonSchema,
             timeoutMs: userConfig.timeoutMs,
           });
+          providerRequestSent = true;
           break; // Success!
         } catch (err: unknown) {
           lastError = err instanceof Error ? err : new Error(String(err));
-          const status = (err as Record<string, unknown>)?.status as number | undefined;
+          const errorRecord = err as Record<string, unknown>;
+          const status = errorRecord?.status as number | undefined;
+          const requestWasSent = errorRecord?.providerRequestSent !== false;
+          providerRequestSent ||= requestWasSent;
+
+          if (status === 429) {
+            const retryAfterMs = Number(errorRecord.retryAfterMs);
+            await this.openProviderCooldown(
+              pType,
+              Number.isFinite(retryAfterMs) ? retryAfterMs : undefined,
+            );
+          }
 
           // Never retry 400, 401, 403 errors
           if (status === 400 || status === 401 || status === 403) {
@@ -151,22 +174,24 @@ export class AIOrchestratorService {
 
       if (!response) {
         // Log failure in history
-        await this.aiHistory.logExecution({
-          userId: options.userId,
-          sessionId: options.sessionId,
-          provider: primaryProviderType,
-          model: modelName,
-          prompt: rendered.fullPrompt,
-          systemPrompt: rendered.systemPrompt,
-          response: "",
-          promptTokens: 0,
-          completionTokens: 0,
-          totalTokens: 0,
-          estimatedCost: 0,
-          latencyMs: 0,
-          success: false,
-          error: lastError?.message || "Execution failed across all providers",
-        });
+        if (providerRequestSent) {
+          await this.aiHistory.logExecution({
+            userId: options.userId,
+            sessionId: options.sessionId,
+            provider: primaryProviderType,
+            model: modelName,
+            prompt: rendered.fullPrompt,
+            systemPrompt: rendered.systemPrompt,
+            response: "",
+            promptTokens: 0,
+            completionTokens: 0,
+            totalTokens: 0,
+            estimatedCost: 0,
+            latencyMs: Date.now() - executionStartedAt,
+            success: false,
+            error: lastError?.message || "Execution failed across all providers",
+          });
+        }
 
         throw new Error(`AI Request failed: ${lastError?.message || "All providers unavailable"}`);
       }
@@ -331,6 +356,46 @@ export class AIOrchestratorService {
       await this.redisService.setWithTtl(cacheKey, JSON.stringify({ response, expiresAt }), this.promptCacheTtlSeconds);
     } catch (error) {
       this.logger.warn(`Unable to write cached AI response for ${cacheKey}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private providerCooldownKey(provider: AIProviderType): string {
+    return `ai:provider:${provider}:quota-cooldown`;
+  }
+
+  private async getProviderCooldownSeconds(provider: AIProviderType): Promise<number> {
+    if (!this.redisService) return 0;
+    try {
+      const raw = await this.redisService.get(this.providerCooldownKey(provider));
+      if (!raw) return 0;
+      const until = Number(raw);
+      return Number.isFinite(until)
+        ? Math.max(1, Math.ceil((until - Date.now()) / 1_000))
+        : this.providerCooldownSeconds;
+    } catch {
+      return 0;
+    }
+  }
+
+  private async openProviderCooldown(
+    provider: AIProviderType,
+    retryAfterMs?: number,
+  ): Promise<void> {
+    if (!this.redisService) return;
+    const ttlSeconds = Math.max(
+      this.providerCooldownSeconds,
+      Math.ceil((retryAfterMs ?? 0) / 1_000),
+    );
+    try {
+      await this.redisService.setWithTtl(
+        this.providerCooldownKey(provider),
+        String(Date.now() + ttlSeconds * 1_000),
+        ttlSeconds,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Unable to open ${provider} quota cooldown: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 

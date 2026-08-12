@@ -269,4 +269,135 @@ describe('FusionService', () => {
     expect(output.dataQuality).toBe('INSUFFICIENT');
     expect(FusionOutputSchema.safeParse(output).success).toBe(true);
   });
+
+  it('coalesces concurrent analysis for the same symbol snapshot', async () => {
+    const fixture = analysisFixture();
+    const outputByType: Partial<Record<AgentType, unknown>> = {
+      [AgentType.MARKET_ANALYST]: fixture.market,
+      [AgentType.TECHNICAL_ANALYST]: fixture.technical,
+      [AgentType.NEWS_ANALYST]: fixture.news,
+      [AgentType.SENTIMENT_ANALYST]: fixture.sentiment,
+      [AgentType.MACRO_ANALYST]: fixture.macro,
+      [AgentType.ON_CHAIN_ANALYST]: fixture.onchain,
+    };
+    const executeSync = vi.fn().mockImplementation(
+      async ({ agentType }: { agentType: AgentType }) => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return { output: outputByType[agentType] };
+      },
+    );
+    const service = new FusionService({ executeSync } as never);
+    const options = {
+      input: {
+        symbol: 'BTC-USDT',
+        provider: 'BINANCE_FUTURES' as const,
+        interval: '15m' as const,
+        lookbackCandles: 150,
+        lookbackHours: 6,
+        maxItems: 20,
+      },
+      invocationSource: AgentInvocationSource.SYSTEM_TEST,
+    };
+
+    const [first, second] = await Promise.all([
+      service.runDetailed(options),
+      service.runDetailed(options),
+    ]);
+
+    expect(first.analyses).toEqual(second.analyses);
+    expect(executeSync).toHaveBeenCalledTimes(6);
+  });
+
+  it('uses the Redis lock to coalesce the same snapshot across service instances', async () => {
+    const fixture = analysisFixture();
+    const outputByType: Partial<Record<AgentType, unknown>> = {
+      [AgentType.MARKET_ANALYST]: fixture.market,
+      [AgentType.TECHNICAL_ANALYST]: fixture.technical,
+      [AgentType.NEWS_ANALYST]: fixture.news,
+      [AgentType.SENTIMENT_ANALYST]: fixture.sentiment,
+      [AgentType.MACRO_ANALYST]: fixture.macro,
+      [AgentType.ON_CHAIN_ANALYST]: fixture.onchain,
+    };
+    const executeSync = vi.fn().mockImplementation(
+      async ({ agentType }: { agentType: AgentType }) => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return { output: outputByType[agentType] };
+      },
+    );
+    const values = new Map<string, string>();
+    const locks = new Map<string, string>();
+    const redis = {
+      get: vi.fn((key: string) => Promise.resolve(values.get(key) ?? locks.get(key) ?? null)),
+      setWithTtl: vi.fn((key: string, value: string) => {
+        values.set(key, value);
+        return Promise.resolve();
+      }),
+      setNx: vi.fn((key: string, token: string) => {
+        if (locks.has(key)) return Promise.resolve(false);
+        locks.set(key, token);
+        return Promise.resolve(true);
+      }),
+      compareAndDelete: vi.fn((key: string, token: string) => {
+        if (locks.get(key) !== token) return Promise.resolve(false);
+        locks.delete(key);
+        return Promise.resolve(true);
+      }),
+    };
+    const firstService = new FusionService({ executeSync } as never, redis as never);
+    const secondService = new FusionService({ executeSync } as never, redis as never);
+    const options = {
+      input: {
+        symbol: 'ETH-USDT',
+        provider: 'OKX_FUTURES' as const,
+        interval: '15m' as const,
+        lookbackCandles: 150,
+        lookbackHours: 6,
+        maxItems: 20,
+      },
+      userId: 'user-1',
+      invocationSource: AgentInvocationSource.SYSTEM_TEST,
+    };
+
+    await Promise.all([
+      firstService.runDetailed(options),
+      secondService.runDetailed(options),
+    ]);
+
+    expect(executeSync).toHaveBeenCalledTimes(6);
+    expect(redis.setNx).toHaveBeenCalled();
+  });
+
+  it('does not retry a failed agent load while holding the analysis lock', async () => {
+    const executeSync = vi.fn().mockRejectedValue(new Error('quota exceeded'));
+    const locks = new Map<string, string>();
+    const redis = {
+      get: vi.fn().mockResolvedValue(null),
+      setNx: vi.fn((key: string, token: string) => {
+        locks.set(key, token);
+        return Promise.resolve(true);
+      }),
+      compareAndDelete: vi.fn((key: string) => {
+        locks.delete(key);
+        return Promise.resolve(true);
+      }),
+      setWithTtl: vi.fn().mockResolvedValue(undefined),
+    };
+    const service = new FusionService({ executeSync } as never, redis as never);
+
+    const output = await service.run({
+      input: {
+        symbol: 'SOL-USDT',
+        provider: 'OKX_FUTURES',
+        interval: '15m',
+        lookbackCandles: 100,
+        lookbackHours: 6,
+        maxItems: 10,
+      },
+      userId: 'user-1',
+      invocationSource: AgentInvocationSource.SYSTEM_TEST,
+    });
+
+    expect(output.dataQuality).toBe('INSUFFICIENT');
+    expect(executeSync).toHaveBeenCalledTimes(6);
+  });
 });
