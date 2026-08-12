@@ -195,9 +195,9 @@ export class AIOrchestratorService {
             });
           }
 
-          // Never retry 400, 401, 403 errors
-          if (status === 400 || status === 401 || status === 403) {
-            this.logger.error(`Non-retryable error (${status}) from provider ${pType}: ${lastError.message}`);
+          // Never retry auth errors (401, 403)
+          if (status === 401 || status === 403) {
+            this.logger.error(`Non-retryable auth error (${status}) from provider ${pType}: ${lastError.message}`);
             break;
           }
           if (code === "AI_REQUEST_BUDGET_EXCEEDED") break;
