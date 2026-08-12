@@ -55,3 +55,41 @@ export function calibrateConfidence(rawScore: number, records: CalibrationRecord
     brierScore: curve.brierScore,
   };
 }
+
+export type CalibrationScope =
+  | 'EXACT'
+  | 'STRATEGY_CONTEXT'
+  | 'STRATEGY_TIMEFRAME'
+  | 'USER_GLOBAL'
+  | 'NONE';
+
+export function calibrateConfidenceWithFallback(
+  rawScore: number,
+  scopes: Array<{ scope: Exclude<CalibrationScope, 'NONE'>; records: CalibrationRecord[] }>,
+) {
+  let largest = scopes[0];
+  for (const candidate of scopes) {
+    const calibration = calibrateConfidence(rawScore, candidate.records);
+    if (calibration.status === 'CALIBRATED') {
+      return {
+        ...calibration,
+        scope: candidate.scope,
+        fallbackUsed: candidate.scope !== 'EXACT',
+      };
+    }
+    if (!largest || candidate.records.length > largest.records.length) largest = candidate;
+  }
+  if (!largest || largest.records.length === 0) {
+    return {
+      ...calibrateConfidence(rawScore, []),
+      scope: 'NONE' as const,
+      fallbackUsed: false,
+    };
+  }
+  const diagnostic = calibrateConfidence(rawScore, largest?.records ?? []);
+  return {
+    ...diagnostic,
+    scope: largest.scope,
+    fallbackUsed: Boolean(largest && largest.scope !== 'EXACT'),
+  };
+}

@@ -24,7 +24,10 @@ import {
   REGIME_FACTOR,
 } from '../../domain/constants/decision.constants';
 import { PrismaService } from '../../../../database/prisma.service';
-import { calibrateConfidence } from '../../../reflection/domain/confidence-calibration';
+import {
+  calibrateConfidence,
+  calibrateConfidenceWithFallback,
+} from '../../../reflection/domain/confidence-calibration';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'node:crypto';
 
@@ -175,6 +178,46 @@ export class DecisionService {
     return calibratedDecision;
   }
 
+  /** Recalibrate the strategy selected by the portfolio layer. */
+  public async calibrateForExecution(
+    decision: DecisionOutput,
+    userId: string,
+    metadata: {
+      symbol: string;
+      strategyKey: string;
+      provider?: 'BINANCE_FUTURES' | 'OKX_FUTURES';
+      timeframe?: string;
+    },
+  ): Promise<DecisionOutput> {
+    const confidenceCalibration = await this.confidenceCalibration(
+      userId,
+      metadata.symbol,
+      decision.confidence,
+      metadata.provider,
+      metadata.timeframe,
+      decision.regime.type,
+      metadata.strategyKey,
+    );
+    const empiricalProbability = confidenceCalibration.status === 'CALIBRATED'
+      ? confidenceCalibration.empiricalProbability
+      : undefined;
+    const expectedWinProbability = this.clamp(empiricalProbability ?? 0.5, 0, 1);
+    return {
+      ...decision,
+      confidenceCalibration,
+      expectedWinProbability: Number(expectedWinProbability.toFixed(3)),
+      expectedValue: Number(this.clamp((
+        expectedWinProbability * decision.expectedReward -
+        (1 - expectedWinProbability) * decision.expectedLoss -
+        decision.executionCost
+      ), -3, 3).toFixed(3)),
+      profitFactorEstimate: Number(this.clamp((
+        (expectedWinProbability * decision.expectedReward) /
+        Math.max((1 - expectedWinProbability) * decision.expectedLoss, 0.05)
+      ), 0.1, 10).toFixed(3)),
+    };
+  }
+
   private async confidenceCalibration(
     userId: string | undefined,
     symbol: string,
@@ -182,29 +225,79 @@ export class DecisionService {
     provider?: 'BINANCE_FUTURES' | 'OKX_FUTURES',
     timeframe?: string,
     regime?: 'TRENDING' | 'RANGING' | 'HIGH_VOLATILITY',
+    strategyKey?: string,
   ) {
     if (!userId || !this.prisma) return calibrateConfidence(rawScore, []);
-    const key = `${userId}:${symbol}:${provider ?? 'ANY'}:${timeframe ?? 'ANY'}:${regime ?? 'ANY'}:${Math.floor(rawScore / 10)}`;
+    const key = `${userId}:${symbol}:${strategyKey ?? 'ANY'}:${provider ?? 'ANY'}:${timeframe ?? 'ANY'}:${regime ?? 'ANY'}:${Math.floor(rawScore / 10)}`;
     const cached = this.calibrationCache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
-    const records = await this.prisma.performanceRecord.findMany({
+    const rows = await this.prisma.performanceRecord.findMany({
       where: {
         userId,
-        symbol,
         horizon: 'MID',
         decision: { in: ['LONG', 'SHORT'] },
         outcome: { in: ['CORRECT', 'WRONG'] },
-        ...(regime ? { marketRegime: regime } : {}),
-        run: {
-          ...(provider ? { provider } : {}),
-          ...(timeframe ? { timeframe } : {}),
-        },
       },
-      select: { confidence: true, outcome: true },
+      select: {
+        symbol: true,
+        confidence: true,
+        outcome: true,
+        marketRegime: true,
+        run: { select: { provider: true, timeframe: true, storedContext: true } },
+      },
       orderBy: { evaluatedAt: 'desc' },
-      take: 500,
+      take: 2000,
     });
-    const value = calibrateConfidence(rawScore, records);
+    const strategyOf = (storedContext: unknown): string | undefined => {
+      if (!storedContext || typeof storedContext !== 'object' || Array.isArray(storedContext)) return undefined;
+      const context = storedContext as Record<string, unknown>;
+      const candidate = context.candidateDecision;
+      if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+        const value = (candidate as Record<string, unknown>).strategyKey;
+        if (typeof value === 'string') return value;
+      }
+      const selection = context.strategySelection;
+      if (selection && typeof selection === 'object' && !Array.isArray(selection)) {
+        const value = (selection as Record<string, unknown>).selectedStrategyKey;
+        if (typeof value === 'string') return value;
+      }
+      return undefined;
+    };
+    const records = rows.map((row) => ({
+      ...row,
+      strategyKey: strategyOf(row.run.storedContext),
+    }));
+    const asCalibrationRecords = (items: typeof records) => items.map((row) => ({
+      confidence: row.confidence,
+      outcome: row.outcome,
+    }));
+    const sameStrategy = (row: typeof records[number]) =>
+      !strategyKey || row.strategyKey === strategyKey;
+    const sameProvider = (row: typeof records[number]) =>
+      !provider || row.run.provider === provider;
+    const sameTimeframe = (row: typeof records[number]) =>
+      !timeframe || row.run.timeframe === timeframe;
+    const sameRegime = (row: typeof records[number]) =>
+      !regime || row.marketRegime === regime;
+    const value = calibrateConfidenceWithFallback(rawScore, [
+      {
+        scope: 'EXACT',
+        records: asCalibrationRecords(records.filter((row) =>
+          row.symbol === symbol && sameStrategy(row) && sameProvider(row) &&
+          sameTimeframe(row) && sameRegime(row))),
+      },
+      {
+        scope: 'STRATEGY_CONTEXT',
+        records: asCalibrationRecords(records.filter((row) =>
+          sameStrategy(row) && sameProvider(row) && sameTimeframe(row) && sameRegime(row))),
+      },
+      {
+        scope: 'STRATEGY_TIMEFRAME',
+        records: asCalibrationRecords(records.filter((row) =>
+          sameStrategy(row) && sameTimeframe(row))),
+      },
+      { scope: 'USER_GLOBAL', records: asCalibrationRecords(records) },
+    ]);
     if (this.calibrationCache.size >= 500) {
       const oldest = this.calibrationCache.keys().next().value;
       if (oldest) this.calibrationCache.delete(oldest);

@@ -11,9 +11,23 @@ function service(validation: Record<string, unknown> | null, regime: Record<stri
   } as never), findFirst };
 }
 
+function serviceWithLimits(validation: Record<string, unknown>, limits: Record<string, number>) {
+  return new QuantExecutionPolicyService({
+    researchValidationRun: { findFirst: vi.fn().mockResolvedValue(validation) },
+    marketRegimeState: { findFirst: vi.fn().mockResolvedValue(null) },
+  } as never, { getUserLimits: vi.fn().mockResolvedValue(limits) } as never);
+}
+
 const valid = (overrides: Record<string, unknown> = {}) => ({
   probabilityOfProfit: 62, probabilityOfRuin: 1, outOfSampleSharpe: 1.2,
   walkForwardStable: true, confidenceBrierScore: 0.18,
+  metricsJson: {
+    sampleEvidence: { totalTrades: 50, outOfSampleTrades: 12, walkForwardWindows: 5 },
+    outOfSample: { outOfSampleTrades: 12 },
+    walkForward: { windows: Array.from({ length: 5 }, () => ({})) },
+    executionAssumptions: { leverage: 1, riskPerTrade: 0.02, riskRewardRatio: 1.5 },
+    calibration: { evidenceSufficient: false },
+  },
   createdAt: new Date("2026-08-12T00:00:00Z"), ...overrides,
 });
 
@@ -41,6 +55,33 @@ describe("QuantExecutionPolicyService", () => {
   it("blocks a directional trade against a fresh high-confidence quant regime", async () => {
     const result = await service(valid(), { regime: "BEAR", confidence: 82, detectedAt: new Date("2026-08-12T00:55:00Z") }).policy.evaluate(input);
     expect(result).toMatchObject({ allowed: false, reason: "QUANT_REGIME_CONFLICT" });
+  });
+
+  it("requires a meaningful out-of-sample Sharpe margin instead of merely above zero", async () => {
+    const result = await service(valid({ outOfSampleSharpe: 0.2 })).policy.evaluate(input);
+    expect(result).toMatchObject({ allowed: false, reason: "QUANT_OUT_OF_SAMPLE_EDGE_MISSING" });
+  });
+
+  it("rejects Monte Carlo evidence derived from too few independent trades", async () => {
+    const result = await service(valid({
+      metricsJson: {
+        sampleEvidence: { totalTrades: 5, outOfSampleTrades: 1, walkForwardWindows: 1 },
+        outOfSample: { outOfSampleTrades: 1 },
+        walkForward: { windows: [{}] },
+        executionAssumptions: { leverage: 1, riskPerTrade: 0.02, riskRewardRatio: 1.5 },
+      },
+    })).policy.evaluate(input);
+    expect(result).toMatchObject({ allowed: false, reason: "QUANT_SAMPLE_TOO_SMALL" });
+  });
+
+  it("rejects research assumptions that do not match current live risk settings", async () => {
+    const policy = serviceWithLimits(valid(), {
+      maxLeverage: 50,
+      riskPerTrade: 0.01,
+      riskRewardRatio: 2,
+    });
+    const result = await policy.evaluate(input);
+    expect(result).toMatchObject({ allowed: false, reason: "QUANT_ASSUMPTION_MISMATCH" });
   });
 
   it("reports WAIT as not evaluated instead of a misleading Quant pass", async () => {

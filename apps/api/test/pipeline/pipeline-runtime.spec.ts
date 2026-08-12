@@ -95,6 +95,7 @@ describe('Phase 6.6 pipeline runtime policies', () => {
         executionCost: 0.04,
         generatedAt: new Date().toISOString(),
       }),
+      calibrateForExecution: vi.fn().mockImplementation((value: unknown) => Promise.resolve(value)),
     };
     const threshold = { evaluate: vi.fn().mockReturnValue({ actionable: false, reason: 'CONFIDENCE_BELOW_THRESHOLD' }) };
     const riskPolicy = { evaluate: vi.fn().mockReturnValue({ actionable: true, decision: 'LONG' }) };
@@ -137,10 +138,12 @@ describe('Phase 6.6 pipeline runtime policies', () => {
 
     expect(liveTrading.assessPipelineDecision).not.toHaveBeenCalled();
     expect(liveTrading.executePipeline).not.toHaveBeenCalled();
+    expect(alerts.decision).not.toHaveBeenCalled();
     expect(repository.updateRun).toHaveBeenCalledWith('run-1', expect.objectContaining({
       status: 'COMPLETED', decision: 'WAIT', skippedReason: 'CONFIDENCE_BELOW_THRESHOLD',
     }));
     expect(JSON.stringify(repository.updateRun.mock.calls)).toContain('"selectedStrategyKey":"trend"');
+    expect(JSON.stringify(repository.updateRun.mock.calls)).toContain('"candidateDecision"');
   });
 
   it('uses BullMQ-safe pipeline queue names', () => {

@@ -106,6 +106,9 @@ export default function SettingsPage(): React.JSX.Element {
           ? Number(form.get("defaultLeverage"))
           : undefined,
         riskPreference: form.get("riskPreference"),
+        maxRiskPerTrade: form.get("maxRiskPerTradePct")
+          ? Number(form.get("maxRiskPerTradePct")) / 100
+          : undefined,
       });
       setSuccessMessage("Settings saved successfully!");
     } catch (err) {
@@ -173,8 +176,18 @@ export default function SettingsPage(): React.JSX.Element {
           >
             <option value="CONSERVATIVE">{t.settings.conservative} (1% Risk / Trade)</option>
             <option value="MODERATE">{t.settings.moderate} (2% Risk / Trade)</option>
-            <option value="AGGRESSIVE">{t.settings.aggressive} (4% Risk / Trade)</option>
+            <option value="AGGRESSIVE">{t.settings.aggressive} (higher exposure, hard risk cap applies)</option>
           </SelectField>
+
+          <Field
+            defaultValue={(settingsQuery.data.maxRiskPerTrade ?? 0.02) * 100}
+            label="Maximum risk per trade (%)"
+            max="2"
+            min="0.1"
+            name="maxRiskPerTradePct"
+            step="0.1"
+            type="number"
+          />
 
           {/* Default Leverage */}
           <Field

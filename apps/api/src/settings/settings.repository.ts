@@ -40,6 +40,9 @@ export class SettingsRepository {
         ...(dto.riskPreference === undefined
           ? {}
           : { riskPreference: dto.riskPreference }),
+        ...(dto.maxRiskPerTrade === undefined
+          ? {}
+          : { maxRiskPerTrade: new Prisma.Decimal(dto.maxRiskPerTrade) }),
       },
     });
   }

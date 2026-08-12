@@ -316,7 +316,16 @@ export class PipelineRunnerService {
         analyses,
       );
       const strategyKey = strategySelection.selectedStrategyKey;
-      const output = strategySelection.decision;
+      const output = await this.decision.calibrateForExecution(
+        strategySelection.decision,
+        job.userId,
+        {
+          symbol,
+          strategyKey,
+          provider: job.provider,
+          timeframe: String(interval),
+        },
+      );
       const decisionCompletedAt = new Date();
       const policyContext = { symbol, provider: job.provider, timeframe: String(interval), regime: output.regime.type };
       const thresholdFilter = this.threshold.evaluate(output, policyContext);
@@ -350,6 +359,23 @@ export class PipelineRunnerService {
       const multiTimeframeFilter = evaluateMultiTimeframeDecision(output.decision, multiTimeframe);
       const actionable = thresholdFilter.actionable && filter.actionable && judge.approved && quant.allowed && multiTimeframeFilter.allowed;
       const reason = thresholdFilter.reason ?? filter.reason ?? judge.reasons[0] ?? quant.reason ?? multiTimeframeFilter.reason;
+      const blockedReasons = [
+        thresholdFilter.reason,
+        filter.reason,
+        ...judge.reasons,
+        quant.allowed ? undefined : quant.reason,
+        multiTimeframeFilter.allowed ? undefined : multiTimeframeFilter.reason,
+      ].filter((item): item is string => Boolean(item));
+      const candidateDecision = {
+        decision: output.decision,
+        confidence: output.confidence,
+        strategyKey,
+        provider: job.provider,
+        timeframe: String(interval),
+        marketRegime: output.regime.type,
+        actionable,
+        blockedReasons: [...new Set(blockedReasons)],
+      };
       await this.finishStep(runId, "decision", output, decisionCompletedAt);
       this.analytics.recordStageTelemetry({
         pipelineId: job.pipelineId,
@@ -411,8 +437,8 @@ export class PipelineRunnerService {
             learningStage: output.learningConfiguration?.stage,
             timeframe: String(interval),
             skippedReason: 'EXECUTION_LOCK_BUSY',
-            storedContext: { analyses, fusionOutput, strategySelection: strategySelection as unknown as Prisma.InputJsonValue, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue },
-            result: { ...output, decision: 'WAIT' as const, actionable: false, selectedStrategyKey: strategyKey, strategySelection: strategySelection as unknown as Prisma.InputJsonValue, skippedReason: 'EXECUTION_LOCK_BUSY', multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue },
+            storedContext: { analyses, fusionOutput, candidateDecision, strategySelection: strategySelection as unknown as Prisma.InputJsonValue, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue },
+            result: { ...output, decision: 'WAIT' as const, candidateDecision, actionable: false, selectedStrategyKey: strategyKey, strategySelection: strategySelection as unknown as Prisma.InputJsonValue, skippedReason: 'EXECUTION_LOCK_BUSY', multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue },
           });
           return;
         }
@@ -511,9 +537,10 @@ export class PipelineRunnerService {
         learningStage: output.learningConfiguration?.stage,
         timeframe: String(interval),
         skippedReason: finalSkippedReason,
-        storedContext: { analyses, fusionOutput, strategySelection: strategySelection as unknown as Prisma.InputJsonValue, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue },
+        storedContext: { analyses, fusionOutput, candidateDecision, strategySelection: strategySelection as unknown as Prisma.InputJsonValue, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue },
         result: {
           ...output,
+          candidateDecision,
           selectedStrategyKey: strategyKey,
           strategySelection: strategySelection as unknown as Prisma.InputJsonValue,
           actionable,
@@ -535,7 +562,7 @@ export class PipelineRunnerService {
         },
       });
       await this.alerts.contextual(runId, symbol, analyses);
-      if (filter.actionable)
+      if (actionable && riskApproved)
         await this.alerts.decision(runId, symbol, output);
     } catch (error) {
       const completedAt = new Date();

@@ -25,6 +25,9 @@ export class PerformanceService {
     const evaluatedUserIds = new Set<string>();
     for (const run of runs) {
       if (!run.completedAt || !run.decision || run.confidence == null) continue;
+      const candidate = evaluationCandidate(run.storedContext);
+      const evaluatedDecision = candidate?.decision ?? run.decision;
+      const evaluatedConfidence = candidate?.confidence ?? run.confidence;
       const existing = new Set(run.performanceRecords.map((record) => record.horizon));
       const start = await this.repository.candleAtOrBefore(run.provider, run.symbol, run.completedAt);
       if (!start) { skippedForMissingMarketData++; continue; }
@@ -37,7 +40,7 @@ export class PerformanceService {
         const priceAtDecision = Number(start.close);
         const priceAfter = Number(after.close);
         const result = evaluateDecision(
-          run.decision as Decision,
+          evaluatedDecision as Decision,
           priceAtDecision,
           priceAfter,
           this.config.get<number>('EVALUATION_ROUND_TRIP_COST_PCT', 0.1),
@@ -45,7 +48,7 @@ export class PerformanceService {
         const context = flags(run.storedContext);
         await this.repository.createRecord({
           userId: run.userId, runId: run.id, symbol: run.symbol, horizon: item.horizon,
-          decision: run.decision, confidence: run.confidence, priceAtDecision, priceAfter,
+          decision: evaluatedDecision, confidence: evaluatedConfidence, priceAtDecision, priceAfter,
           ...result, ...context, marketRegime: run.marketRegime,
         });
         evaluated++;
@@ -75,6 +78,19 @@ export class PerformanceService {
     if (metrics.maxDrawdown >= 10) alerts.push({ kind: 'ABNORMAL_DRAWDOWN', severity: metrics.maxDrawdown >= 20 ? 'HIGH' : 'MEDIUM', message: `Simulated drawdown reached ${metrics.maxDrawdown}%.` });
     return alerts;
   }
+}
+
+function evaluationCandidate(value: Prisma.JsonValue | null): {
+  decision: 'LONG' | 'SHORT';
+  confidence: number;
+} | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const candidate = value.candidateDecision;
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return undefined;
+  const decision = candidate.decision;
+  const confidence = candidate.confidence;
+  if ((decision !== 'LONG' && decision !== 'SHORT') || typeof confidence !== 'number') return undefined;
+  return { decision, confidence };
 }
 
 function flags(value: Prisma.JsonValue | null): { highVolatility: boolean; majorNews: boolean } {

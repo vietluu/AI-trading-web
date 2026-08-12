@@ -6,7 +6,7 @@ describe("RiskConfigService user limits", () => {
   it.each([
     ["CONSERVATIVE", 50, 50, 0.01],
     ["MODERATE", 50, 50, 0.02],
-    ["AGGRESSIVE", 50, 50, 0.04],
+    ["AGGRESSIVE", 50, 50, 0.02],
   ])("treats explicit %s leverage as a hard ceiling for dynamic sizing", async (
     riskPreference,
     defaultLeverage,
@@ -15,7 +15,7 @@ describe("RiskConfigService user limits", () => {
   ) => {
     const prisma = {
       userSetting: {
-        findUnique: vi.fn().mockResolvedValue({ riskPreference, defaultLeverage }),
+        findUnique: vi.fn().mockResolvedValue({ riskPreference, defaultLeverage, maxRiskPerTrade: 0.02 }),
       },
     };
     const service = new RiskConfigService(new ConfigService({
@@ -30,6 +30,27 @@ describe("RiskConfigService user limits", () => {
     expect(result.riskPerTrade).toBe(expectedRisk);
     expect(result.estimatedRoundTripCostPct).toBe(0.0008);
     expect(result.maxStopLossRoe).toBe(0.03);
+  });
+
+  it("honors a numeric user ceiling below 2% for every risk preference", async () => {
+    const prisma = {
+      userSetting: {
+        findUnique: vi.fn().mockResolvedValue({
+          riskPreference: "AGGRESSIVE",
+          defaultLeverage: 50,
+          maxRiskPerTrade: 0.0125,
+        }),
+      },
+    };
+    const service = new RiskConfigService(
+      new ConfigService({ MAX_LEVERAGE: 50, RISK_PER_TRADE: 0.02 }),
+      prisma as never,
+    );
+
+    await expect(service.getUserLimits("user-1")).resolves.toMatchObject({
+      riskPerTrade: 0.0125,
+      maxLeverage: 50,
+    });
   });
 
   it("fails safe when the user preference cannot be loaded", async () => {

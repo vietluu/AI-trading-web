@@ -1,7 +1,8 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import type { DecisionOutput } from "@platform/shared";
 import { PrismaService } from "../../../database/prisma.service";
 import { timeframeMilliseconds } from "../domain/adaptive-trading-policy";
+import { RiskConfigService } from "../../risk/application/risk-config.service";
 
 export interface QuantExecutionPolicyResult {
   allowed: boolean;
@@ -10,7 +11,8 @@ export interface QuantExecutionPolicyResult {
     "QUANT_WALK_FORWARD_UNSTABLE" | "QUANT_PROBABILITY_TOO_LOW" |
     "QUANT_RUIN_RISK_TOO_HIGH" | "QUANT_OUT_OF_SAMPLE_EDGE_MISSING" |
     "QUANT_CALIBRATION_UNRELIABLE" | "QUANT_REGIME_CONFLICT" |
-    "QUANT_POLICY_UNAVAILABLE" | "QUANT_NOT_APPLICABLE";
+    "QUANT_POLICY_UNAVAILABLE" | "QUANT_NOT_APPLICABLE" |
+    "QUANT_SAMPLE_TOO_SMALL" | "QUANT_ASSUMPTION_MISMATCH";
   validation?: {
     probabilityOfProfit: number;
     probabilityOfRuin: number;
@@ -25,7 +27,10 @@ export interface QuantExecutionPolicyResult {
 /** Turns persisted quant research into a deterministic auto-execution gate. */
 @Injectable()
 export class QuantExecutionPolicyService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly riskConfig?: RiskConfigService,
+  ) {}
 
   async evaluate(input: {
     userId: string;
@@ -61,6 +66,36 @@ export class QuantExecutionPolicyService {
       }),
     ]);
     if (!validation) return { allowed: false, reason: "QUANT_VALIDATION_MISSING" };
+    const metrics = validation.metricsJson && typeof validation.metricsJson === "object" && !Array.isArray(validation.metricsJson)
+      ? validation.metricsJson as Record<string, unknown>
+      : {};
+    const sampleEvidence = metrics.sampleEvidence && typeof metrics.sampleEvidence === "object" && !Array.isArray(metrics.sampleEvidence)
+      ? metrics.sampleEvidence as Record<string, unknown>
+      : {};
+    const outOfSample = metrics.outOfSample && typeof metrics.outOfSample === "object" && !Array.isArray(metrics.outOfSample)
+      ? metrics.outOfSample as Record<string, unknown>
+      : {};
+    const walkForward = metrics.walkForward && typeof metrics.walkForward === "object" && !Array.isArray(metrics.walkForward)
+      ? metrics.walkForward as Record<string, unknown>
+      : {};
+    const windows = Array.isArray(walkForward.windows) ? walkForward.windows.length : 0;
+    if (
+      Number(sampleEvidence.totalTrades ?? 0) < 30 ||
+      Number(sampleEvidence.outOfSampleTrades ?? outOfSample.outOfSampleTrades ?? 0) < 10 ||
+      Number(sampleEvidence.walkForwardWindows ?? windows) < 5
+    ) return { allowed: false, reason: "QUANT_SAMPLE_TOO_SMALL" };
+    const assumptions = metrics.executionAssumptions && typeof metrics.executionAssumptions === "object" && !Array.isArray(metrics.executionAssumptions)
+      ? metrics.executionAssumptions as Record<string, unknown>
+      : undefined;
+    const calibration = metrics.calibration && typeof metrics.calibration === "object" && !Array.isArray(metrics.calibration)
+      ? metrics.calibration as Record<string, unknown>
+      : undefined;
+    const liveLimits = await this.riskConfig?.getUserLimits(input.userId);
+    if (!assumptions || (liveLimits && (
+      Number(assumptions.leverage) !== liveLimits.maxLeverage ||
+      Math.abs(Number(assumptions.riskPerTrade) - liveLimits.riskPerTrade) > 1e-9 ||
+      Math.abs(Number(assumptions.riskRewardRatio) - liveLimits.riskRewardRatio) > 1e-9
+    ))) return { allowed: false, reason: "QUANT_ASSUMPTION_MISMATCH" };
     const evidence = {
       probabilityOfProfit: validation.probabilityOfProfit,
       probabilityOfRuin: validation.probabilityOfRuin,
@@ -78,9 +113,9 @@ export class QuantExecutionPolicyService {
       return { allowed: false, reason: "QUANT_PROBABILITY_TOO_LOW", validation: evidence };
     if (validation.probabilityOfRuin > 5)
       return { allowed: false, reason: "QUANT_RUIN_RISK_TOO_HIGH", validation: evidence };
-    if (validation.outOfSampleSharpe <= 0)
+    if (validation.outOfSampleSharpe <= 0.3)
       return { allowed: false, reason: "QUANT_OUT_OF_SAMPLE_EDGE_MISSING", validation: evidence };
-    if (validation.confidenceBrierScore > 0.3)
+    if (calibration?.evidenceSufficient === true && validation.confidenceBrierScore > 0.3)
       return { allowed: false, reason: "QUANT_CALIBRATION_UNRELIABLE", validation: evidence };
 
     const regimeEvidence = regime

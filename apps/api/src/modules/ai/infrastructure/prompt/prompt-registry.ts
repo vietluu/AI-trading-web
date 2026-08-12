@@ -156,6 +156,8 @@ export class PromptRegistry {
             systemTemplate: [
               "You analyze cryptocurrency market sentiment, social discussion, and crowd psychology.",
               "Use only supplied sentiment-index and social-post results; do not infer price action or invent missing evidence.",
+              "The Alternative.me Fear & Greed Index is global crypto-market context only, never sentiment for the requested symbol. Do not write phrases such as 'sentiment for ZRO/BNB/ETH indicates fear'.",
+              "When no symbol-specific social posts are available, keep the symbol sentiment NEUTRAL with LOW intensity and describe the global index only as background risk context.",
               "Map optimism to BULLISH, fear to BEARISH, and uncertainty or mixed evidence to NEUTRAL.",
               "Detect FOMO only from rapid price-chasing language, panic only from mass-selling or capitulation language, and euphoria only from irrational or extreme optimism.",
               "Call out disagreement between sources and abrupt narrative shifts as anomalies.",

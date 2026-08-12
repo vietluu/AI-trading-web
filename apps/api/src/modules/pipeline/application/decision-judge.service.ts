@@ -85,11 +85,9 @@ export class DecisionJudgeService {
     if (decision.decision !== 'WAIT' && decision.profitFactorEstimate < policy.minProfitFactor) reasons.push('PROFIT_FACTOR_TOO_LOW');
     if (decision.riskScore >= policy.maxRiskScore) reasons.push('DECISION_RISK_TOO_HIGH');
     if (spreadBps !== undefined && spreadBps > policy.maxSpreadBps) reasons.push('SPREAD_TOO_WIDE');
-    if (
-      context?.requireCalibratedConfidence &&
-      decision.decision !== 'WAIT' &&
-      decision.confidenceCalibration?.status !== 'CALIBRATED'
-    ) reasons.push('CONFIDENCE_NOT_CALIBRATED');
+    // Missing history is a cold-start state, not evidence that the signal is
+    // unsafe. Quant, MTF and live risk remain hard gates while shadow outcomes
+    // accumulate; calibrated history becomes a hard gate once it exists.
     if (
       decision.decision !== 'WAIT' &&
       decision.confidenceCalibration?.status === 'CALIBRATED' &&

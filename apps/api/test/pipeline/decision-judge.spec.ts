@@ -34,7 +34,7 @@ describe('DecisionJudgeService', () => {
     expect(result.reasons).toContain('EXPECTED_VALUE_TOO_LOW');
   });
 
-  it('blocks automatic execution until confidence has empirical calibration', () => {
+  it('does not deadlock a cold-start signal when empirical calibration is not ready', () => {
     const generatedAt = new Date().toISOString();
     const good = { dataQuality: 'GOOD', generatedAt };
     const result = judge.evaluate({
@@ -45,8 +45,7 @@ describe('DecisionJudgeService', () => {
       market: good, technical: good, news: good, sentiment: good, macro: good, onchain: good,
     } as never, { symbol: 'ETH-USDT', requireCalibratedConfidence: true });
 
-    expect(result).toEqual(expect.objectContaining({ approved: false, verdict: 'REQUEST_MORE_DATA' }));
-    expect(result.reasons).toContain('CONFIDENCE_NOT_CALIBRATED');
+    expect(result).toEqual({ approved: true, verdict: 'APPROVE', reasons: [] });
   });
 
   it('requests fresh source data when the underlying candle is stale for its timeframe', () => {
