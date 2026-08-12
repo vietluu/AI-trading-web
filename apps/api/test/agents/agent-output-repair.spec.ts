@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { MarketAgentOutputSchema, OnChainAgentOutputSchema } from '@platform/shared';
+import {
+  MarketAgentOutputSchema,
+  OnChainAgentOutputSchema,
+  TechnicalAgentOutputSchema,
+} from '@platform/shared';
 import { AgentOutputValidatorService } from '../../src/modules/agents/application/services/agent-output-validator.service';
 import { AgentType } from '../../src/modules/agents/domain/enums';
 
@@ -83,5 +87,37 @@ describe('AgentOutputValidatorService structural repair', () => {
     expect(validation.errors).toEqual(expect.arrayContaining([
       expect.stringContaining('flows'),
     ]));
+  });
+
+  it('repairs an omitted Technical divergence section with neutral values', () => {
+    const validation = new AgentOutputValidatorService().validate({
+      rawOutput: {
+        summary: 'Price is ranging with neutral momentum.',
+        trend: { direction: 'SIDEWAYS', strength: 'WEAK' },
+        momentum: {
+          rsi: '48.66',
+          rsiState: 'NEUTRAL',
+          macd: { trend: 'NEUTRAL', crossover: 'NONE' },
+        },
+        movingAverages: { alignment: 'MIXED', pricePosition: 'INSIDE' },
+        volatility: { bollinger: { position: 'MIDDLE', squeeze: false } },
+        structure: { marketStructure: 'RANGE' },
+        signals: [],
+        dataQuality: 'GOOD',
+        usedTools: ['market.indicators.get', 'market.candles.list'],
+        generatedAt: new Date().toISOString(),
+      },
+      outputSchema: TechnicalAgentOutputSchema,
+      agentType: AgentType.TECHNICAL_ANALYST,
+      runId: 'technical-divergence-repair-test',
+    });
+
+    expect(validation.valid).toBe(true);
+    expect(validation.validatedOutput).toEqual(expect.objectContaining({
+      divergence: {
+        rsiDivergence: 'NONE',
+        macdDivergence: 'NONE',
+      },
+    }));
   });
 });

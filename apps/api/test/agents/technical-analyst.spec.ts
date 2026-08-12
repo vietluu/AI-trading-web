@@ -77,6 +77,16 @@ describe('Technical Analyst Agent', () => {
   it('strictly validates structured, non-trading output', () => {
     expect(TechnicalAgentOutputSchema.parse(output)).toEqual(output);
     expect(
+      TechnicalAgentOutputSchema.parse(
+        Object.fromEntries(
+          Object.entries(output).filter(([key]) => key !== 'divergence'),
+        ),
+      ),
+    ).toEqual({
+      ...output,
+      divergence: {},
+    });
+    expect(
       TechnicalAgentOutputSchema.safeParse({ ...output, signal: 'LONG' })
         .success,
     ).toBe(false);

@@ -7,7 +7,7 @@ const CONTRACTS: Partial<Record<AgentType, string>> = {
   ].join(' '),
   [AgentType.TECHNICAL_ANALYST]: [
     'Return exactly this JSON shape:',
-    '{"summary":string,"trend":{"direction":"UP|DOWN|SIDEWAYS","strength":"WEAK|MODERATE|STRONG"},"momentum":{"rsi":string,"rsiState":"OVERBOUGHT|OVERSOLD|NEUTRAL","macd":{"trend":"BULLISH|BEARISH|NEUTRAL","crossover"?:"BULLISH|BEARISH|NONE"}},"movingAverages":{"alignment":"BULLISH|BEARISH|MIXED","pricePosition":"ABOVE|BELOW|INSIDE"},"volatility":{"atr"?:string,"bollinger":{"position":"UPPER|MIDDLE|LOWER","squeeze":boolean}},"structure":{"marketStructure":"HH_HL|LH_LL|RANGE","breakout"?:boolean},"divergence":{"rsiDivergence"?:"BULLISH|BEARISH|NONE","macdDivergence"?:"BULLISH|BEARISH|NONE"},"signals":string[],"dataQuality":"GOOD|PARTIAL|INSUFFICIENT","usedTools":string[],"generatedAt":ISO-8601-string}.',
+    '{"summary":string,"trend":{"direction":"UP|DOWN|SIDEWAYS","strength":"WEAK|MODERATE|STRONG"},"momentum":{"rsi":string,"rsiState":"OVERBOUGHT|OVERSOLD|NEUTRAL","macd":{"trend":"BULLISH|BEARISH|NEUTRAL","crossover"?:"BULLISH|BEARISH|NONE"}},"movingAverages":{"alignment":"BULLISH|BEARISH|MIXED","pricePosition":"ABOVE|BELOW|INSIDE"},"volatility":{"atr"?:string,"bollinger":{"position":"UPPER|MIDDLE|LOWER","squeeze":boolean}},"structure":{"marketStructure":"HH_HL|LH_LL|LL_LH|RANGE","breakout"?:boolean},"divergence":{"rsiDivergence":"BULLISH|BEARISH|NONE","macdDivergence":"BULLISH|BEARISH|NONE"},"signals":string[],"dataQuality":"GOOD|PARTIAL|INSUFFICIENT","usedTools":string[],"generatedAt":ISO-8601-string}. Always include divergence and use NONE when divergence is not supported by the supplied data.',
   ].join(' '),
   [AgentType.NEWS_ANALYST]: [
     'Return exactly this JSON shape:',

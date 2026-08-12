@@ -204,6 +204,7 @@ export class PromptRegistry {
               "Determine MACD trend from its histogram and report a crossover only when the supplied series proves one.",
               "EMA20 above EMA50 is bullish alignment; EMA20 below EMA50 is bearish alignment.",
               "Identify HH/HL, LH/LL, range, breakout, Bollinger position and squeeze, and price/RSI or price/MACD divergence only when the supplied data supports them.",
+              "Always include the divergence object; set each unsupported or absent divergence value to NONE.",
               "Signals must be descriptive observations, never trading signals.",
               "Return one JSON object matching the required schema exactly, with no markdown or extra text.",
               "If indicators are missing set dataQuality to INSUFFICIENT; if some inputs are missing or stale set it to PARTIAL.",

@@ -282,7 +282,8 @@ export const TechnicalAgentOutputSchema = z
         rsiDivergence: z.enum(['BULLISH', 'BEARISH', 'NONE']).optional(),
         macdDivergence: z.enum(['BULLISH', 'BEARISH', 'NONE']).optional(),
       })
-      .strict(),
+      .strict()
+      .default({}),
     signals: z.array(z.string()),
     dataQuality: z.enum(['GOOD', 'PARTIAL', 'INSUFFICIENT']),
     usedTools: z.array(TechnicalAgentToolNameSchema).max(2),
