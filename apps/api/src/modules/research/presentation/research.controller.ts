@@ -35,6 +35,7 @@ export class ResearchController {
       initialBalance: number;
       trainWindow?: number;
       validationWindow?: number;
+      strategyKey?: string;
     };
     return this.researchService.runFullQuantValidation({ ...input, userId: user.id });
   }
@@ -49,6 +50,7 @@ export class ResearchController {
       initialBalance: number;
       trainWindow?: number;
       validationWindow?: number;
+      strategyKey?: string;
     };
     return this.researchService.runFullQuantValidation({ ...input, userId: user.id });
   }

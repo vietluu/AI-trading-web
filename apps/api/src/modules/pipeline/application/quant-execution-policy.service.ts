@@ -31,6 +31,7 @@ export class QuantExecutionPolicyService {
     symbol: string;
     provider: string;
     timeframe: string;
+    strategyKey?: string;
     decision: Pick<DecisionOutput, "decision" | "regime">;
     now?: Date;
   }): Promise<QuantExecutionPolicyResult> {
@@ -38,7 +39,13 @@ export class QuantExecutionPolicyService {
     const now = input.now ?? new Date();
     const [validation, regime] = await Promise.all([
       this.prisma.researchValidationRun.findFirst({
-        where: { userId: input.userId, symbol: input.symbol, provider: input.provider, interval: input.timeframe },
+        where: {
+          userId: input.userId,
+          strategyKey: input.strategyKey ?? 'ai-core',
+          symbol: input.symbol,
+          provider: input.provider,
+          interval: input.timeframe,
+        },
         orderBy: { createdAt: "desc" },
       }),
       this.prisma.marketRegimeState.findFirst({

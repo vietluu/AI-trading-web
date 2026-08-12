@@ -4,10 +4,11 @@ import { QuantExecutionPolicyService } from "../../src/modules/pipeline/applicat
 const decision = (side: "LONG" | "SHORT" = "LONG", regime = "TRENDING") => ({ decision: side, regime: { type: regime } });
 
 function service(validation: Record<string, unknown> | null, regime: Record<string, unknown> | null = null) {
-  return new QuantExecutionPolicyService({
-    researchValidationRun: { findFirst: vi.fn().mockResolvedValue(validation) },
+  const findFirst = vi.fn().mockResolvedValue(validation);
+  return { policy: new QuantExecutionPolicyService({
+    researchValidationRun: { findFirst },
     marketRegimeState: { findFirst: vi.fn().mockResolvedValue(regime) },
-  } as never);
+  } as never), findFirst };
 }
 
 const valid = (overrides: Record<string, unknown> = {}) => ({
@@ -23,22 +24,30 @@ describe("QuantExecutionPolicyService", () => {
   };
 
   it("fails closed when exact symbol/provider/timeframe validation is missing", async () => {
-    await expect(service(null).evaluate(input)).resolves.toMatchObject({ allowed: false, reason: "QUANT_VALIDATION_MISSING" });
+    await expect(service(null).policy.evaluate(input)).resolves.toMatchObject({ allowed: false, reason: "QUANT_VALIDATION_MISSING" });
   });
 
   it("blocks the observed ETH-quality evidence when walk-forward is unstable", async () => {
-    const result = await service(valid({ probabilityOfProfit: 30.94, probabilityOfRuin: 100, walkForwardStable: false })).evaluate(input);
+    const result = await service(valid({ probabilityOfProfit: 30.94, probabilityOfRuin: 100, walkForwardStable: false })).policy.evaluate(input);
     expect(result).toMatchObject({ allowed: false, reason: "QUANT_WALK_FORWARD_UNSTABLE" });
   });
 
   it("allows validated out-of-sample edge that agrees with fresh quant regime", async () => {
-    const result = await service(valid(), { regime: "BULL", confidence: 82, detectedAt: new Date("2026-08-12T00:55:00Z") }).evaluate(input);
+    const result = await service(valid(), { regime: "BULL", confidence: 82, detectedAt: new Date("2026-08-12T00:55:00Z") }).policy.evaluate(input);
     expect(result.allowed).toBe(true);
     expect(result.validation?.outOfSampleSharpe).toBe(1.2);
   });
 
   it("blocks a directional trade against a fresh high-confidence quant regime", async () => {
-    const result = await service(valid(), { regime: "BEAR", confidence: 82, detectedAt: new Date("2026-08-12T00:55:00Z") }).evaluate(input);
+    const result = await service(valid(), { regime: "BEAR", confidence: 82, detectedAt: new Date("2026-08-12T00:55:00Z") }).policy.evaluate(input);
     expect(result).toMatchObject({ allowed: false, reason: "QUANT_REGIME_CONFLICT" });
+  });
+
+  it("requires validation for the exact selected strategy", async () => {
+    const { policy, findFirst } = service(valid());
+    await policy.evaluate({ ...input, strategyKey: "trend" });
+    expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ strategyKey: "trend" }) as unknown,
+    }));
   });
 });

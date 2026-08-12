@@ -12,6 +12,16 @@ interface AllocationItem {
   recommendedCapitalAllocationPct: number;
   correlationWithPortfolio: number | null;
   diversificationBenefitScore: number | null;
+  validationStatus: "VALIDATION_REQUIRED" | "CANARY" | "FULL";
+  canApply: boolean;
+  verifiedAttributedTrades: number;
+  tradesRequiredForFullAllocation: number;
+  validation: {
+    coveragePct: number;
+    passRatePct: number;
+    passingPairs: number;
+    requiredPairs: number;
+  };
 }
 
 interface PortfolioData {
@@ -32,6 +42,20 @@ interface PortfolioData {
   };
 }
 
+interface StrategyApplyResult {
+  applied: boolean;
+  strategyKey: string;
+  mode: "VALIDATION_REQUIRED" | "CANARY" | "FULL";
+  verifiedAttributedTrades: number;
+  tradesRequiredForFullAllocation: number;
+  validation?: {
+    coveragePct: number;
+    passRatePct: number;
+    passingPairs: number;
+    requiredPairs: number;
+  };
+}
+
 function metric(value: number | null | undefined, suffix = "") {
   return value === null || value === undefined ? "—" : `${value}${suffix}`;
 }
@@ -48,6 +72,7 @@ export default function PortfolioIntelligencePage() {
   const [applying, setApplying] = useState(false);
   const [applyingStrategy, setApplyingStrategy] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadPortfolio() {
@@ -69,15 +94,26 @@ export default function PortfolioIntelligencePage() {
   async function applyRecommendation() {
     try {
       setApplying(true);
-      for (const allocation of portfolio?.allocations ?? []) {
-        await apiRequest(`/quant-intelligence/portfolio/strategies/${encodeURIComponent(allocation.strategyKey)}/apply`, {
+      const blocked: StrategyApplyResult[] = [];
+      const applicable = (portfolio?.allocations ?? []).filter(
+        (allocation) => allocation.canApply &&
+          Math.abs(allocation.recommendedCapitalAllocationPct - allocation.currentCapitalAllocationPct) >= 0.01,
+      );
+      for (const allocation of applicable) {
+        const result = await apiRequest<StrategyApplyResult>(`/quant-intelligence/portfolio/strategies/${encodeURIComponent(allocation.strategyKey)}/apply`, {
           method: "POST",
           body: JSON.stringify({ targetWeight: allocation.recommendedCapitalAllocationPct / 100 }),
         });
+        if (!result.applied) blocked.push(result);
       }
       const refreshed = await apiRequest<PortfolioData>("/quant-intelligence/portfolio");
       setPortfolio(refreshed);
       setErrorMessage(null);
+      setStatusMessage(blocked.length
+        ? `${blocked.length} strategies remain unchanged: Quant validation has not passed.`
+        : applicable.length
+          ? "Portfolio recommendations applied."
+          : "No allocation was changed because no strategy currently has applicable Quant validation.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to apply recommendations.";
       setErrorMessage(message);
@@ -89,13 +125,16 @@ export default function PortfolioIntelligencePage() {
   async function applyStrategyRecommendation(strategyKey: string, recommendedWeightPct: number) {
     try {
       setApplyingStrategy(strategyKey);
-      await apiRequest(`/quant-intelligence/portfolio/strategies/${encodeURIComponent(strategyKey)}/apply`, {
+      const result = await apiRequest<StrategyApplyResult>(`/quant-intelligence/portfolio/strategies/${encodeURIComponent(strategyKey)}/apply`, {
         method: "POST",
         body: JSON.stringify({ targetWeight: recommendedWeightPct / 100 }),
       });
       const refreshed = await apiRequest<PortfolioData>("/quant-intelligence/portfolio");
       setPortfolio(refreshed);
       setErrorMessage(null);
+      setStatusMessage(result.applied
+        ? `${strategyKey} allocation applied in ${result.mode} mode.`
+        : `${strategyKey} remains unchanged: ${result.validation?.passingPairs ?? 0}/${result.validation?.requiredPairs ?? 0} validations pass; ${result.verifiedAttributedTrades}/5 verified attributed trades.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to apply strategy recommendation.";
       setErrorMessage(message);
@@ -122,6 +161,12 @@ export default function PortfolioIntelligencePage() {
       {errorMessage && (
         <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-sm text-red-200">
           {errorMessage}
+        </div>
+      )}
+
+      {statusMessage && (
+        <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
+          {statusMessage}
         </div>
       )}
 
@@ -162,7 +207,7 @@ export default function PortfolioIntelligencePage() {
           <button
             type="button"
             onClick={() => void applyRecommendation()}
-            disabled={applying}
+            disabled={applying || !(portfolio?.allocations.some((allocation) => allocation.canApply) ?? false)}
             className="inline-flex items-center gap-2 rounded-lg border border-emerald-400/40 bg-emerald-400/10 px-3 py-2 text-sm font-semibold text-emerald-300 disabled:opacity-50"
           >
             <CheckCircle2 className="h-4 w-4" />
@@ -174,6 +219,13 @@ export default function PortfolioIntelligencePage() {
             <div key={i} className="flex items-center justify-between p-3 rounded-xl border border-border">
               <div>
                 <p className="font-bold text-sm">{a.strategyName}</p>
+                <p className={`mb-1 text-xs ${a.canApply ? "text-emerald-300" : "text-amber-300"}`}>
+                  {a.validationStatus === "FULL"
+                    ? `FULL · ${a.verifiedAttributedTrades} verified trades`
+                    : a.validationStatus === "CANARY"
+                      ? `CANARY · ${a.verifiedAttributedTrades}/5 verified trades`
+                      : `BLOCKED · ${a.validation.passingPairs}/${a.validation.requiredPairs} Quant validations pass`}
+                </p>
                 <span className="text-xs text-muted-foreground">
                   Correlation: {a.correlationWithPortfolio ?? "insufficient real trades"} · Diversification Score: {a.diversificationBenefitScore ?? "—"}/100
                 </span>
@@ -186,10 +238,14 @@ export default function PortfolioIntelligencePage() {
                 <button
                   type="button"
                   onClick={() => void applyStrategyRecommendation(a.strategyKey, a.recommendedCapitalAllocationPct)}
-                  disabled={applying || applyingStrategy === a.strategyKey}
+                  disabled={applying || applyingStrategy === a.strategyKey || !a.canApply}
                   className="rounded-lg border border-emerald-400/40 bg-emerald-400/10 px-3 py-2 text-sm font-semibold text-emerald-300 disabled:opacity-50"
                 >
-                  {applyingStrategy === a.strategyKey ? "Applying…" : "Apply this strategy"}
+                  {applyingStrategy === a.strategyKey
+                    ? "Applying…"
+                    : a.canApply
+                      ? `Apply ${a.validationStatus}`
+                      : "Validation required"}
                 </button>
               </div>
             </div>

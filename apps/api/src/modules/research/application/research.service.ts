@@ -6,6 +6,22 @@ function toInputJson(val: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(val)) as Prisma.InputJsonValue;
 }
 
+export function validationBacktestStrategy(strategyKey: string): string {
+  const strategies: Record<string, string> = {
+    'ai-core': 'HYBRID_QUANT',
+    trend: 'TREND_FOLLOWING',
+    'mean-reversion': 'RSI_MEAN_REVERSION',
+    breakout: 'BREAKOUT',
+  };
+  const strategyName = strategies[strategyKey];
+  if (!strategyName) {
+    throw new BadRequestException(
+      `DATA_UNAVAILABLE: ${strategyKey} requires strategy-specific event history`,
+    );
+  }
+  return strategyName;
+}
+
 type ResearchPersistenceClient = {
   researchValidationRun: {
     create(args: { data: Record<string, unknown> }): Promise<unknown>;
@@ -98,7 +114,10 @@ export class ResearchService {
     initialBalance: number;
     trainWindow?: number;
     validationWindow?: number;
+    strategyKey?: string;
   }) {
+    const strategyKey = input.strategyKey ?? 'ai-core';
+    const strategyName = validationBacktestStrategy(strategyKey);
     const candles = await this.marketData.getHistoricalCandles({
       provider: input.provider,
       symbol: input.symbol,
@@ -115,6 +134,7 @@ export class ResearchService {
       leverage: 2,
       riskPerTrade: 0.01,
       riskRewardRatio: 2,
+      strategyName,
     });
     if (backtest.trades.length < 5) {
       throw new BadRequestException('DATA_UNAVAILABLE: fewer than 5 real-candle strategy trades were generated');
@@ -125,6 +145,10 @@ export class ResearchService {
       trainWindow: input.trainWindow ?? 100,
       validationWindow: input.validationWindow ?? 30,
       initialBalance: input.initialBalance,
+      provider: input.provider,
+      symbol: input.symbol,
+      interval: input.interval,
+      strategyName,
     });
 
     const monteCarlo = runMonteCarloEngine({
@@ -179,7 +203,12 @@ export class ResearchService {
       };
     }));
 
-    const oos = runOutOfSampleEngine(candles);
+    const oos = runOutOfSampleEngine(candles, {
+      provider: input.provider,
+      symbol: input.symbol,
+      interval: input.interval,
+      strategyName,
+    });
 
     const ruin = runProbabilityOfRuinEngine({
       winRate: backtest.metrics.winRate,
@@ -206,6 +235,7 @@ export class ResearchService {
         const persisted = await this.prisma.researchValidationRun.create({
           data: {
             userId: input.userId,
+            strategyKey,
             symbol: input.symbol,
             provider: input.provider,
             interval: input.interval,
