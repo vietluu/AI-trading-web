@@ -99,6 +99,48 @@ export class ModelRegistryService {
 
     // Google Gemini Models
     this.registerModel({
+      name: "gemini-3.6-flash",
+      displayName: "Gemini 3.6 Flash",
+      provider: "GEMINI",
+      contextWindow: 1048576,
+      maxOutput: 65536,
+      supportsTools: true,
+      supportsVision: true,
+      supportsStreaming: true,
+      supportsJSON: true,
+      inputCostPer1k: 0.000075,
+      outputCostPer1k: 0.0003,
+    });
+
+    this.registerModel({
+      name: "gemini-3.5-flash",
+      displayName: "Gemini 3.5 Flash",
+      provider: "GEMINI",
+      contextWindow: 1048576,
+      maxOutput: 65536,
+      supportsTools: true,
+      supportsVision: true,
+      supportsStreaming: true,
+      supportsJSON: true,
+      inputCostPer1k: 0.000075,
+      outputCostPer1k: 0.0003,
+    });
+
+    this.registerModel({
+      name: "gemini-3.5-flash-lite",
+      displayName: "Gemini 3.5 Flash Lite",
+      provider: "GEMINI",
+      contextWindow: 1048576,
+      maxOutput: 65536,
+      supportsTools: true,
+      supportsVision: true,
+      supportsStreaming: true,
+      supportsJSON: true,
+      inputCostPer1k: 0,
+      outputCostPer1k: 0,
+    });
+
+    this.registerModel({
       name: "gemini-3.1-flash-lite",
       displayName: "Gemini 3.1 Flash Lite",
       provider: "GEMINI",
@@ -110,6 +152,76 @@ export class ModelRegistryService {
       supportsJSON: true,
       inputCostPer1k: 0,
       outputCostPer1k: 0,
+    });
+
+    this.registerModel({
+      name: "gemini-3-flash",
+      displayName: "Gemini 3 Flash",
+      provider: "GEMINI",
+      contextWindow: 1048576,
+      maxOutput: 65536,
+      supportsTools: true,
+      supportsVision: true,
+      supportsStreaming: true,
+      supportsJSON: true,
+      inputCostPer1k: 0.000075,
+      outputCostPer1k: 0.0003,
+    });
+
+    this.registerModel({
+      name: "gemini-2.5-flash",
+      displayName: "Gemini 2.5 Flash",
+      provider: "GEMINI",
+      contextWindow: 1048576,
+      maxOutput: 8192,
+      supportsTools: true,
+      supportsVision: true,
+      supportsStreaming: true,
+      supportsJSON: true,
+      inputCostPer1k: 0.000075,
+      outputCostPer1k: 0.0003,
+    });
+
+    this.registerModel({
+      name: "gemini-2.5-flash-lite",
+      displayName: "Gemini 2.5 Flash Lite",
+      provider: "GEMINI",
+      contextWindow: 1048576,
+      maxOutput: 8192,
+      supportsTools: true,
+      supportsVision: true,
+      supportsStreaming: true,
+      supportsJSON: true,
+      inputCostPer1k: 0,
+      outputCostPer1k: 0,
+    });
+
+    this.registerModel({
+      name: "gemini-2.0-flash",
+      displayName: "Gemini 2.0 Flash",
+      provider: "GEMINI",
+      contextWindow: 1048576,
+      maxOutput: 8192,
+      supportsTools: true,
+      supportsVision: true,
+      supportsStreaming: true,
+      supportsJSON: true,
+      inputCostPer1k: 0.0001,
+      outputCostPer1k: 0.0004,
+    });
+
+    this.registerModel({
+      name: "gemini-1.5-flash",
+      displayName: "Gemini 1.5 Flash",
+      provider: "GEMINI",
+      contextWindow: 1048576,
+      maxOutput: 8192,
+      supportsTools: true,
+      supportsVision: true,
+      supportsStreaming: true,
+      supportsJSON: true,
+      inputCostPer1k: 0.000075,
+      outputCostPer1k: 0.0003,
     });
 
     this.registerModel({

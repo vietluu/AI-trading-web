@@ -46,12 +46,12 @@ import { RedisService } from '../../../../redis/redis.service';
 import { PrismaService } from '../../../../database/prisma.service';
 
 const ANALYSIS_TTL_SECONDS: Record<AnalysisName, number> = {
-  market: 30,
-  technical: 30,
-  news: 300,
-  sentiment: 300,
-  macro: 900,
-  onchain: 300,
+  market: 300,
+  technical: 300,
+  news: 1800,
+  sentiment: 1800,
+  macro: 3600,
+  onchain: 3600,
 };
 const ANALYSIS_LOCK_TTL_SECONDS = 45;
 const ANALYSIS_LOCK_WAIT_MS = 35_000;
@@ -192,7 +192,8 @@ export class FusionService {
       input.lookbackHours,
     );
 
-    const requests = [
+    // --- STAGE 1: Technical & Market Analysis ---
+    const stage1Requests = [
       {
         name: 'market' as const,
         agentType: AgentType.MARKET_ANALYST,
@@ -215,6 +216,9 @@ export class FusionService {
         },
         schema: TechnicalAgentOutputSchema,
       },
+    ];
+
+    const stage2Requests = [
       {
         name: 'news' as const,
         agentType: AgentType.NEWS_ANALYST,
@@ -250,14 +254,10 @@ export class FusionService {
     ];
 
     const analyses: Partial<FusionInput> = {};
-    const results = await Promise.allSettled(
-      requests.map(async (request) => {
-        if (request.name === 'macro' && !macroEvidenceAvailable) {
-          return {
-            name: request.name,
-            data: this.unavailableMacroImportAnalysis(),
-          };
-        }
+
+    // Execute Stage 1
+    const stage1Results = await Promise.allSettled(
+      stage1Requests.map(async (request) => {
         const cacheKey = this.analysisCacheKey(
           request.name,
           input,
@@ -287,9 +287,86 @@ export class FusionService {
       })
     );
 
-    for (let i = 0; i < results.length; i++) {
-      const result = results[i]!;
-      const request = requests[i]!;
+    for (let i = 0; i < stage1Results.length; i++) {
+      const result = stage1Results[i]!;
+      const request = stage1Requests[i]!;
+      if (result.status === 'fulfilled') {
+        Object.assign(analyses, { [result.value.name]: result.value.data });
+      } else {
+        Object.assign(analyses, {
+          [request.name]: this.unavailableAnalysis(request.name),
+        });
+      }
+    }
+
+    // Check if Stage 1 produces a directional market signal
+    const marketDir = analyses.market && 'trend' in analyses.market ? analyses.market.trend?.direction : undefined;
+    const techDir = analyses.technical && 'trend' in analyses.technical ? analyses.technical.trend?.direction : undefined;
+    const hasDirectionalSignal =
+      (marketDir && marketDir !== 'SIDEWAYS') ||
+      (techDir && techDir !== 'SIDEWAYS');
+
+    // --- STAGE 2: Secondary Analysis (News, Sentiment, Macro, On-chain) ---
+    // If Stage 1 is SIDEWAYS/NEUTRAL, reuse cache if present or default to neutral observation to avoid extra AI calls
+    const stage2Results = await Promise.allSettled(
+      stage2Requests.map(async (request) => {
+        if (request.name === 'macro' && !macroEvidenceAvailable) {
+          return {
+            name: request.name,
+            data: this.unavailableMacroImportAnalysis(),
+          };
+        }
+        const cacheKey = this.analysisCacheKey(
+          request.name,
+          input,
+          assetSymbol,
+          options.userId,
+        );
+
+        // If no directional signal and not in cache, skip live AI call and fallback to neutral analysis
+        if (!hasDirectionalSignal) {
+          const cached = await this.getAnalysisCache(cacheKey);
+          if (cached !== null) {
+            const parsed = request.schema.safeParse(cached);
+            if (parsed.success) {
+              return {
+                name: request.name,
+                data: this.normalizeValidObservation(request.name, parsed.data, input.symbol),
+              };
+            }
+          }
+          return {
+            name: request.name,
+            data: this.unavailableAnalysis(request.name),
+          };
+        }
+
+        const data = await this.rememberAnalysis(
+          cacheKey,
+          ANALYSIS_TTL_SECONDS[request.name],
+          async () => {
+            const run = await this.agentExecutionService.executeSync({
+              ...common,
+              agentType: request.agentType,
+              input: request.input,
+            });
+            const parsed = request.schema.safeParse(run.output);
+            if (!parsed.success) throw new Error(`Invalid output from ${request.name}`);
+            return parsed.data;
+          },
+        );
+        const parsed = request.schema.safeParse(data);
+        if (!parsed.success) throw new Error(`Invalid cached output from ${request.name}`);
+        return {
+          name: request.name,
+          data: this.normalizeValidObservation(request.name, parsed.data, input.symbol),
+        };
+      })
+    );
+
+    for (let i = 0; i < stage2Results.length; i++) {
+      const result = stage2Results[i]!;
+      const request = stage2Requests[i]!;
       if (result.status === 'fulfilled') {
         Object.assign(analyses, { [result.value.name]: result.value.data });
       } else {

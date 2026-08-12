@@ -469,6 +469,6 @@ describe('FusionService', () => {
     });
 
     expect(output.dataQuality).toBe('INSUFFICIENT');
-    expect(executeSync).toHaveBeenCalledTimes(6);
+    expect(executeSync).toHaveBeenCalledTimes(2);
   });
 });

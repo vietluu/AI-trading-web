@@ -59,6 +59,7 @@ describe("AI Orchestrator & Fallback Integration", () => {
 
     mockBudgetManager = {
       checkBudget: () => Promise.resolve({ allowed: true, status: "OK" }),
+      reserveRequest: () => Promise.resolve(),
       recordUsage: () => Promise.resolve(),
     } as unknown as BudgetManagerService;
 

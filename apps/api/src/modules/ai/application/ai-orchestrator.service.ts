@@ -36,7 +36,16 @@ export class AIOrchestratorService {
   private readonly maxInMemoryPromptCacheEntries = 500;
   private readonly inMemoryPromptCache = new Map<string, { response: AIResponseDto; expiresAt: number }>();
   private readonly inFlightPromptCache = new Map<string, Promise<AIResponseDto>>();
-  private readonly providerCooldownSeconds = 60;
+  private readonly geminiFallbackModels = [
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3-flash",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+  ];
+  private readonly inMemoryModelCooldowns = new Map<string, number>();
 
   constructor(
     private readonly configService: AIConfigService,
@@ -117,26 +126,31 @@ export class AIOrchestratorService {
       throw new Error(`AI Request blocked by budget policy: ${budgetCheck.reason}`);
     }
 
-    const providerTypesToTry = [primaryProviderType, ...fallbackTypes.filter((p) => p !== primaryProviderType)];
+    const candidates = this.buildCandidates(
+      primaryProviderType,
+      modelName,
+      fallbackTypes,
+    );
 
     let lastError: Error | null = null;
     let response: LLMResponse | null = null;
-    let providerRequestSent = false;
     const executionStartedAt = Date.now();
     const executionPromise = (async (): Promise<AIResponseDto> => {
-      for (const pType of providerTypesToTry) {
-        const cooldownSeconds = await this.getProviderCooldownSeconds(pType);
+      for (const candidate of candidates) {
+        const { provider: pType, model } = candidate;
+        const cooldownSeconds = await this.getModelCooldownSeconds(pType, model);
         if (cooldownSeconds > 0) {
           lastError = Object.assign(
-            new Error(`${pType} provider quota cooldown is active (${cooldownSeconds}s remaining)`),
+            new Error(`${pType}/${model} quota cooldown is active (${cooldownSeconds}s remaining)`),
             { status: 429, providerRequestSent: false, code: 'AI_PROVIDER_COOLDOWN' },
           );
           continue;
         }
         try {
+          await this.budgetManager.reserveRequest(options.userId);
           const provider = this.providerFactory.getProvider(pType);
           response = await this.executeWithRetry(provider, {
-            model: modelName,
+            model,
             systemPrompt: rendered.systemPrompt,
             userPrompt: rendered.userPrompt,
             temperature: options.temperature ?? userConfig.temperature,
@@ -145,21 +159,40 @@ export class AIOrchestratorService {
             jsonSchema: options.jsonSchema,
             timeoutMs: userConfig.timeoutMs,
           });
-          providerRequestSent = true;
           break; // Success!
         } catch (err: unknown) {
           lastError = err instanceof Error ? err : new Error(String(err));
           const errorRecord = err as Record<string, unknown>;
           const status = errorRecord?.status as number | undefined;
           const requestWasSent = errorRecord?.providerRequestSent !== false;
-          providerRequestSent ||= requestWasSent;
+          const code = errorRecord?.code as string | undefined;
 
           if (status === 429) {
-            const retryAfterMs = Number(errorRecord.retryAfterMs);
-            await this.openProviderCooldown(
+            const retryAfterMs = errorRecord?.retryAfterMs as number | undefined;
+            await this.openModelCooldown(
               pType,
-              Number.isFinite(retryAfterMs) ? retryAfterMs : undefined,
+              model,
+              retryAfterMs,
             );
+          }
+
+          if (requestWasSent) {
+            await this.aiHistory.logExecution({
+              userId: options.userId,
+              sessionId: options.sessionId,
+              provider: pType,
+              model,
+              prompt: rendered.fullPrompt,
+              systemPrompt: rendered.systemPrompt,
+              response: "",
+              promptTokens: 0,
+              completionTokens: 0,
+              totalTokens: 0,
+              estimatedCost: 0,
+              latencyMs: Date.now() - executionStartedAt,
+              success: false,
+              error: lastError.message,
+            });
           }
 
           // Never retry 400, 401, 403 errors
@@ -167,32 +200,21 @@ export class AIOrchestratorService {
             this.logger.error(`Non-retryable error (${status}) from provider ${pType}: ${lastError.message}`);
             break;
           }
+          if (code === "AI_REQUEST_BUDGET_EXCEEDED") break;
 
-          this.logger.warn(`Provider ${pType} failed: ${lastError.message}. Attempting fallback...`);
+          this.logger.warn(`${pType}/${model} failed: ${lastError.message}. Attempting fallback...`);
         }
       }
 
       if (!response) {
-        // Log failure in history
-        if (providerRequestSent) {
-          await this.aiHistory.logExecution({
-            userId: options.userId,
-            sessionId: options.sessionId,
-            provider: primaryProviderType,
-            model: modelName,
-            prompt: rendered.fullPrompt,
-            systemPrompt: rendered.systemPrompt,
-            response: "",
-            promptTokens: 0,
-            completionTokens: 0,
-            totalTokens: 0,
-            estimatedCost: 0,
-            latencyMs: Date.now() - executionStartedAt,
-            success: false,
-            error: lastError?.message || "Execution failed across all providers",
-          });
+        const lastErrRecord = lastError as Record<string, unknown> | null;
+        const isQuotaExceeded = lastErrRecord?.status === 429 || lastErrRecord?.code === 'AI_PROVIDER_COOLDOWN';
+        if (isQuotaExceeded) {
+          this.logger.error(`All candidate AI models hit HTTP 429 quota limits or active cooldowns. Stopping AI calls for this cycle.`);
+          const quotaErr = new Error(`AI Request failed: All candidate AI models hit 429 quota limits (${lastError?.message})`);
+          Object.assign(quotaErr, { status: 429, code: 'ALL_MODELS_QUOTA_EXCEEDED', providerRequestSent: false });
+          throw quotaErr;
         }
-
         throw new Error(`AI Request failed: ${lastError?.message || "All providers unavailable"}`);
       }
 
@@ -359,44 +381,120 @@ export class AIOrchestratorService {
     }
   }
 
-  private providerCooldownKey(provider: AIProviderType): string {
-    return `ai:provider:${provider}:quota-cooldown`;
+  private buildCandidates(
+    primaryProvider: AIProviderType,
+    primaryModel: string,
+    fallbackProviders: AIProviderType[],
+  ): Array<{ provider: AIProviderType; model: string }> {
+    const candidates = [{ provider: primaryProvider, model: primaryModel }];
+    if (primaryProvider === "GEMINI") {
+      for (const model of this.geminiFallbackModels) {
+        if (model !== primaryModel) candidates.push({ provider: primaryProvider, model });
+      }
+    }
+    for (const provider of fallbackProviders) {
+      if (provider !== primaryProvider) candidates.push({ provider, model: primaryModel });
+    }
+    return candidates;
   }
 
-  private async getProviderCooldownSeconds(provider: AIProviderType): Promise<number> {
+  private modelCooldownKey(provider: AIProviderType, model: string): string {
+    return `ai:model:${provider}:${model}:quota-cooldown`;
+  }
+
+  private async getModelCooldownSeconds(provider: AIProviderType, model: string): Promise<number> {
+    const key = `${provider}:${model}`;
+    const memUntil = this.inMemoryModelCooldowns.get(key);
+    if (memUntil && memUntil > Date.now()) {
+      return Math.max(1, Math.ceil((memUntil - Date.now()) / 1_000));
+    }
+    if (memUntil && memUntil <= Date.now()) {
+      this.inMemoryModelCooldowns.delete(key);
+    }
     if (!this.redisService) return 0;
     try {
-      const raw = await this.redisService.get(this.providerCooldownKey(provider));
+      const raw = await this.redisService.get(this.modelCooldownKey(provider, model));
       if (!raw) return 0;
       const until = Number(raw);
-      return Number.isFinite(until)
+      return Number.isFinite(until) && until > Date.now()
         ? Math.max(1, Math.ceil((until - Date.now()) / 1_000))
-        : this.providerCooldownSeconds;
+        : 0;
     } catch {
       return 0;
     }
   }
 
-  private async openProviderCooldown(
+  private async openModelCooldown(
     provider: AIProviderType,
+    model: string,
     retryAfterMs?: number,
   ): Promise<void> {
+    // Default cooldown is 5 minutes (300s) for rate limit recovery,
+    // allowing automatic resumption on subsequent scheduler cycles.
+    const cooldownMs = retryAfterMs && retryAfterMs > 0 ? retryAfterMs : 300_000;
+    const resetAt = Date.now() + cooldownMs;
+    const key = `${provider}:${model}`;
+    this.inMemoryModelCooldowns.set(key, resetAt);
+
     if (!this.redisService) return;
-    const ttlSeconds = Math.max(
-      this.providerCooldownSeconds,
-      Math.ceil((retryAfterMs ?? 0) / 1_000),
-    );
+    const ttlSeconds = Math.max(60, Math.ceil(cooldownMs / 1_000));
     try {
       await this.redisService.setWithTtl(
-        this.providerCooldownKey(provider),
-        String(Date.now() + ttlSeconds * 1_000),
+        this.modelCooldownKey(provider, model),
+        String(resetAt),
         ttlSeconds,
       );
     } catch (error) {
       this.logger.warn(
-        `Unable to open ${provider} quota cooldown: ${error instanceof Error ? error.message : String(error)}`,
+        `Unable to open ${provider}/${model} quota cooldown: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  }
+
+  /** Gemini RPD quotas reset at midnight in America/Los_Angeles. */
+  private nextPacificMidnight(now = new Date()): number {
+    const timeZone = "America/Los_Angeles";
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(now);
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    const nextDay = new Date(Date.UTC(
+      Number(values.year),
+      Number(values.month) - 1,
+      Number(values.day) + 1,
+    ));
+    const localMidnightAsUtc = Date.UTC(
+      nextDay.getUTCFullYear(),
+      nextDay.getUTCMonth(),
+      nextDay.getUTCDate(),
+    );
+    const probeParts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(new Date(localMidnightAsUtc));
+    const probe = Object.fromEntries(probeParts.map((part) => [part.type, part.value]));
+    const represented = Date.UTC(
+      Number(probe.year),
+      Number(probe.month) - 1,
+      Number(probe.day),
+      Number(probe.hour),
+      Number(probe.minute),
+      Number(probe.second),
+    );
+    return localMidnightAsUtc - (represented - localMidnightAsUtc);
   }
 
   private async executeWithRetry(
