@@ -131,6 +131,51 @@ export class PipelineRunnerService {
         })),
       );
 
+      const nowMs = Date.now();
+      const staleTimeframes = timeframeMarketData
+        .filter((item) => {
+          const candle = item.candles[0];
+          const candleTime = candle?.closeTime?.getTime();
+          const indicatorTime = item.snapshot?.candleCloseTime?.getTime();
+          const maxAgeMs = timeframeMilliseconds(item.timeframe) * 2;
+          return (
+            !Number.isFinite(candleTime) ||
+            !Number.isFinite(indicatorTime) ||
+            nowMs - Number(candleTime) > maxAgeMs ||
+            nowMs - Number(indicatorTime) > maxAgeMs
+          );
+        })
+        .map((item) => item.timeframe);
+
+      if (staleTimeframes.length > 0) {
+        const completedAt = new Date();
+        const reason = `STALE_MARKET_DATA:${staleTimeframes.join(',')}`;
+        this.logger.warn({
+          event: 'pipeline_stale_market_data_rejected',
+          runId,
+          symbol,
+          staleTimeframes,
+        });
+        await this.repository.updateRun(runId, {
+          status: 'COMPLETED',
+          completedAt,
+          durationMs: completedAt.getTime() - startedAt.getTime(),
+          decision: 'WAIT',
+          confidence: 0,
+          dataQuality: 'INSUFFICIENT',
+          timeframe: String(interval),
+          skippedReason: reason,
+          result: {
+            decision: 'WAIT',
+            reason,
+            actionable: false,
+            staleTimeframes,
+            multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue,
+          },
+        });
+        return;
+      }
+
       const signalFilter = this.signalFilter.evaluate({
         price: lastPrice,
         symbol,

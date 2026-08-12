@@ -270,6 +270,77 @@ describe('FusionService', () => {
     expect(FusionOutputSchema.safeParse(output).success).toBe(true);
   });
 
+  it('treats verified absence of news as a partial neutral observation', async () => {
+    const fixture = analysisFixture();
+    const noNews = {
+      ...fixture.news,
+      summary: 'No recent news articles or high-importance events were identified.',
+      impact: { level: 'LOW' as const, direction: 'NEUTRAL' as const },
+      keyEvents: [],
+      riskSignals: [],
+      dataQuality: 'INSUFFICIENT' as const,
+      usedTools: ['news.articles.list', 'news.high_importance.list'] as const,
+    };
+    const outputByType: Partial<Record<AgentType, unknown>> = {
+      [AgentType.MARKET_ANALYST]: fixture.market,
+      [AgentType.TECHNICAL_ANALYST]: fixture.technical,
+      [AgentType.NEWS_ANALYST]: noNews,
+      [AgentType.SENTIMENT_ANALYST]: fixture.sentiment,
+      [AgentType.MACRO_ANALYST]: fixture.macro,
+      [AgentType.ON_CHAIN_ANALYST]: fixture.onchain,
+    };
+    const service = new FusionService({
+      executeSync: vi.fn(({ agentType }: { agentType: AgentType }) =>
+        Promise.resolve({ output: outputByType[agentType] }),
+      ),
+    } as never);
+
+    const result = await service.runDetailed({
+      input: {
+        symbol: 'OKB-USDT', provider: 'OKX_FUTURES', interval: '15m',
+        lookbackCandles: 100, lookbackHours: 24, maxItems: 20,
+      },
+      invocationSource: AgentInvocationSource.SYSTEM_TEST,
+    });
+
+    expect(result.analyses.news.dataQuality).toBe('PARTIAL');
+    expect(result.analyses.news.impact.direction).toBe('NEUTRAL');
+  });
+
+  it('omits Macro without imported evidence instead of calling a synthetic analyst', async () => {
+    const fixture = analysisFixture();
+    const outputByType: Partial<Record<AgentType, unknown>> = {
+      [AgentType.MARKET_ANALYST]: fixture.market,
+      [AgentType.TECHNICAL_ANALYST]: fixture.technical,
+      [AgentType.NEWS_ANALYST]: fixture.news,
+      [AgentType.SENTIMENT_ANALYST]: fixture.sentiment,
+      [AgentType.ON_CHAIN_ANALYST]: fixture.onchain,
+    };
+    const executeSync = vi.fn(({ agentType }: { agentType: AgentType }) =>
+      Promise.resolve({ output: outputByType[agentType] }),
+    );
+    const service = new FusionService(
+      { executeSync } as never,
+      undefined,
+      { macroEconomicEvent: { count: vi.fn().mockResolvedValue(0) } } as never,
+    );
+
+    const result = await service.runDetailed({
+      input: {
+        symbol: 'OKB-USDT', provider: 'OKX_FUTURES', interval: '15m',
+        lookbackCandles: 100, lookbackHours: 24, maxItems: 20,
+      },
+      invocationSource: AgentInvocationSource.SYSTEM_TEST,
+    });
+
+    expect(result.analyses.macro.dataQuality).toBe('INSUFFICIENT');
+    expect(result.analyses.macro.summary).toMatch(/no imported macro data/i);
+    expect(executeSync).toHaveBeenCalledTimes(5);
+    expect(executeSync).not.toHaveBeenCalledWith(
+      expect.objectContaining({ agentType: AgentType.MACRO_ANALYST }),
+    );
+  });
+
   it('coalesces concurrent analysis for the same symbol snapshot', async () => {
     const fixture = analysisFixture();
     const outputByType: Partial<Record<AgentType, unknown>> = {

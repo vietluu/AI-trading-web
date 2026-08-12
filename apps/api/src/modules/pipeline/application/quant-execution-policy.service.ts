@@ -5,11 +5,12 @@ import { timeframeMilliseconds } from "../domain/adaptive-trading-policy";
 
 export interface QuantExecutionPolicyResult {
   allowed: boolean;
+  evaluated?: boolean;
   reason?: "QUANT_VALIDATION_MISSING" | "QUANT_VALIDATION_STALE" |
     "QUANT_WALK_FORWARD_UNSTABLE" | "QUANT_PROBABILITY_TOO_LOW" |
     "QUANT_RUIN_RISK_TOO_HIGH" | "QUANT_OUT_OF_SAMPLE_EDGE_MISSING" |
     "QUANT_CALIBRATION_UNRELIABLE" | "QUANT_REGIME_CONFLICT" |
-    "QUANT_POLICY_UNAVAILABLE";
+    "QUANT_POLICY_UNAVAILABLE" | "QUANT_NOT_APPLICABLE";
   validation?: {
     probabilityOfProfit: number;
     probabilityOfRuin: number;
@@ -35,7 +36,13 @@ export class QuantExecutionPolicyService {
     decision: Pick<DecisionOutput, "decision" | "regime">;
     now?: Date;
   }): Promise<QuantExecutionPolicyResult> {
-    if (input.decision.decision === "WAIT") return { allowed: true };
+    if (input.decision.decision === "WAIT") {
+      return {
+        allowed: false,
+        evaluated: false,
+        reason: "QUANT_NOT_APPLICABLE",
+      };
+    }
     const now = input.now ?? new Date();
     const [validation, regime] = await Promise.all([
       this.prisma.researchValidationRun.findFirst({
@@ -90,6 +97,11 @@ export class QuantExecutionPolicyService {
       if (conflict)
         return { allowed: false, reason: "QUANT_REGIME_CONFLICT", validation: evidence, regime: regimeEvidence };
     }
-    return { allowed: true, validation: evidence, ...(regimeEvidence ? { regime: regimeEvidence } : {}) };
+    return {
+      allowed: true,
+      evaluated: true,
+      validation: evidence,
+      ...(regimeEvidence ? { regime: regimeEvidence } : {}),
+    };
   }
 }

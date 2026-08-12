@@ -43,6 +43,21 @@ describe("QuantExecutionPolicyService", () => {
     expect(result).toMatchObject({ allowed: false, reason: "QUANT_REGIME_CONFLICT" });
   });
 
+  it("reports WAIT as not evaluated instead of a misleading Quant pass", async () => {
+    const { policy, findFirst } = service(valid());
+    const result = await policy.evaluate({
+      ...input,
+      decision: { decision: "WAIT", regime: { type: "RANGING" } } as never,
+    });
+
+    expect(result).toEqual({
+      allowed: false,
+      evaluated: false,
+      reason: "QUANT_NOT_APPLICABLE",
+    });
+    expect(findFirst).not.toHaveBeenCalled();
+  });
+
   it("requires validation for the exact selected strategy", async () => {
     const { policy, findFirst } = service(valid());
     await policy.evaluate({ ...input, strategyKey: "trend" });

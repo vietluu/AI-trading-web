@@ -54,7 +54,10 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
     limit: number;
   }): Promise<NormalizedCandle[]> {
     const stored = await this.repository.getCandles(query);
-    if (stored.length >= query.limit) return stored;
+    if (
+      stored.length >= query.limit &&
+      this.hasFreshClosedCandle(stored, query.interval)
+    ) return stored;
 
     let candles: NormalizedCandle[] = [];
     try {
@@ -72,7 +75,10 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
         symbol: query.symbol,
         error: error instanceof Error ? error.message : String(error),
       });
-      return [];
+      // Preserve the stale observation for diagnostics. The pipeline freshness
+      // gate will reject it; callers must never mistake an empty array for a
+      // healthy market with no movement.
+      return stored;
     }
 
     if (candles.length > 0) {
@@ -98,14 +104,16 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
     interval: ExchangeInterval,
   ): Promise<IndicatorSnapshot | null> {
     const cached = await this.cache.getIndicator(provider, symbol, interval);
-    if (cached) return cached;
+    if (cached && this.isFreshTimestamp(cached.candleCloseTime, interval)) {
+      return cached;
+    }
 
     const persisted = await this.repository.getLatestIndicatorSnapshot(
       provider,
       symbol,
       interval,
     );
-    if (persisted) {
+    if (persisted && this.isFreshTimestamp(persisted.candleCloseTime, interval)) {
       await this.cache.setIndicator(provider, symbol, interval, persisted);
       return persisted;
     }
@@ -132,6 +140,42 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
       );
     }
     return this.cache.getIndicator(provider, symbol, interval);
+  }
+
+  private hasFreshClosedCandle(
+    candles: NormalizedCandle[],
+    interval: ExchangeInterval,
+  ): boolean {
+    const latestClosed = candles
+      .filter((candle) => candle.isClosed)
+      .reduce<NormalizedCandle | undefined>(
+        (latest, candle) =>
+          !latest || candle.closeTime > latest.closeTime ? candle : latest,
+        undefined,
+      );
+    return Boolean(
+      latestClosed && this.isFreshTimestamp(latestClosed.closeTime, interval),
+    );
+  }
+
+  private isFreshTimestamp(
+    timestamp: Date,
+    interval: ExchangeInterval,
+  ): boolean {
+    const ageMs = Date.now() - timestamp.getTime();
+    return ageMs >= -60_000 && ageMs <= this.intervalMilliseconds(interval) * 2;
+  }
+
+  private intervalMilliseconds(interval: ExchangeInterval): number {
+    const match = /^(\d+)([mhdwM])$/.exec(interval);
+    if (!match) return 15 * 60_000;
+    const amount = Number(match[1]);
+    const unit = match[2];
+    if (unit === 'm') return amount * 60_000;
+    if (unit === 'h') return amount * 3_600_000;
+    if (unit === 'd') return amount * 86_400_000;
+    if (unit === 'w') return amount * 7 * 86_400_000;
+    return amount * 30 * 86_400_000;
   }
 
   onModuleInit(): void {

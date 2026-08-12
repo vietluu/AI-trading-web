@@ -1,4 +1,4 @@
-import { Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import {
   FusionInputSchema,
   FusionOutputSchema,
@@ -43,6 +43,7 @@ export function deriveAssetSymbol(symbol: string): string {
 }
 
 import { RedisService } from '../../../../redis/redis.service';
+import { PrismaService } from '../../../../database/prisma.service';
 
 const ANALYSIS_TTL_SECONDS: Record<AnalysisName, number> = {
   market: 30,
@@ -63,6 +64,7 @@ export class FusionService {
   constructor(
     private readonly agentExecutionService: AgentExecutionService,
     @Optional() private readonly redis?: RedisService,
+    @Optional() @Inject(PrismaService) private readonly prisma?: PrismaService,
   ) {}
 
   private analysisCacheKey(
@@ -186,6 +188,9 @@ export class FusionService {
       invocationSource: options.invocationSource,
       correlationId,
     };
+    const macroEvidenceAvailable = await this.hasImportedMacroEvidence(
+      input.lookbackHours,
+    );
 
     const requests = [
       {
@@ -247,6 +252,12 @@ export class FusionService {
     const analyses: Partial<FusionInput> = {};
     const results = await Promise.allSettled(
       requests.map(async (request) => {
+        if (request.name === 'macro' && !macroEvidenceAvailable) {
+          return {
+            name: request.name,
+            data: this.unavailableMacroImportAnalysis(),
+          };
+        }
         const cacheKey = this.analysisCacheKey(
           request.name,
           input,
@@ -269,7 +280,10 @@ export class FusionService {
         );
         const parsed = request.schema.safeParse(data);
         if (!parsed.success) throw new Error(`Invalid cached output from ${request.name}`);
-        return { name: request.name, data: parsed.data };
+        return {
+          name: request.name,
+          data: this.normalizeValidObservation(request.name, parsed.data),
+        };
       })
     );
 
@@ -318,8 +332,11 @@ export class FusionService {
     const onChainConfigured = !input.onchain.signals.some((signal) =>
       /no verified on-chain (?:provider|analysis)|coin metrics returned no verified coverage/i.test(signal),
     );
+    const macroConfigured = !/no imported macro data/i.test(input.macro.summary);
     const expectedNames = (Object.keys(votes) as AnalysisName[]).filter(
-      (name) => name !== 'onchain' || onChainConfigured,
+      (name) =>
+        (name !== 'onchain' || onChainConfigured) &&
+        (name !== 'macro' || macroConfigured),
     );
     const usableNames = expectedNames.filter(
       (name) => qualities[name] !== 'INSUFFICIENT',
@@ -368,6 +385,60 @@ export class FusionService {
       dataQuality,
       generatedAt: new Date().toISOString(),
     });
+  }
+
+  private normalizeValidObservation(
+    name: AnalysisName,
+    value: unknown,
+  ): unknown {
+    if (name !== 'news') return value;
+
+    const news = NewsAgentOutputSchema.parse(value);
+    const verifiedEmptyObservation =
+      news.dataQuality === 'INSUFFICIENT' &&
+      news.usedTools.includes('news.articles.list') &&
+      news.usedTools.includes('news.high_importance.list') &&
+      news.keyEvents.length === 0 &&
+      news.riskSignals.length === 0 &&
+      /no recent news|no .*articles|no .*events .*identified|no material news/i.test(
+        news.summary,
+      );
+
+    // Successful sources returning zero matching events is evidence of a
+    // neutral news state, not an agent outage. Keep it PARTIAL so absence of
+    // news can participate without inflating confidence.
+    return verifiedEmptyObservation
+      ? { ...news, dataQuality: 'PARTIAL' as const }
+      : news;
+  }
+
+  private async hasImportedMacroEvidence(lookbackHours: number): Promise<boolean> {
+    if (!this.prisma) return true;
+    const windowMs = lookbackHours * 60 * 60_000;
+    const now = Date.now();
+    try {
+      return (await this.prisma.macroEconomicEvent.count({
+        where: {
+          scheduledAt: {
+            gte: new Date(now - windowMs),
+            lte: new Date(now + windowMs),
+          },
+        },
+      })) > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  private unavailableMacroImportAnalysis(): FusionInput['macro'] {
+    return {
+      summary: 'Macro analysis omitted because no imported macro data covers the active window.',
+      macroTrend: 'NEUTRAL',
+      keyEvents: [],
+      riskFactors: ['No imported macro data is available for this analysis window.'],
+      dataQuality: 'INSUFFICIENT',
+      generatedAt: new Date().toISOString(),
+    };
   }
 
   private marketBias(input: FusionInput): AnalysisBias {

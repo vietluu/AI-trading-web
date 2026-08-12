@@ -231,7 +231,9 @@ export class DecisionService {
     customOptions?: { weights?: Weighting; confidenceThreshold?: number; volatilityPenalty?: number },
   ): DecisionOutput {
     const input = DecisionInputSchema.parse(rawInput);
-    const names = Object.keys(BASE_WEIGHTS) as AnalystName[];
+    const names = (Object.keys(BASE_WEIGHTS) as AnalystName[]).filter(
+      (name) => name !== 'macro' || this.macroConfigured(input),
+    );
     const regime = this.detectRegime(input);
     const weighting = this.dynamicWeights(regime.type, customOptions?.weights);
     const active = names.filter((name) => {
@@ -549,7 +551,12 @@ export class DecisionService {
     const onChainConfigured = !input.onchain?.signals.some((signal) =>
       /no verified on-chain (?:provider|analysis)|coin metrics returned no verified coverage/i.test(signal),
     );
-    return onChainConfigured ? 6 : 5;
+    const macroConfigured = this.macroConfigured(input);
+    return (onChainConfigured ? 6 : 5) - (macroConfigured ? 0 : 1);
+  }
+
+  private macroConfigured(input: DecisionInput): boolean {
+    return !/no imported macro data/i.test(input.macro?.summary ?? '');
   }
 
   private calculateOpportunityScore(
