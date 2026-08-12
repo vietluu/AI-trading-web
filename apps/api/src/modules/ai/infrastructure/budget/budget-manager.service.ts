@@ -74,14 +74,7 @@ export class BudgetManagerService {
       };
     }
 
-    if (tokenLimit > 0 && tokenCount >= tokenLimit) {
-      return {
-        allowed: false,
-        status: "BLOCK",
-        reason: `Daily AI token budget exceeded (${tokenCount} / ${tokenLimit})`,
-        ...common,
-      };
-    }
+    // Note: Daily token limit blocking is disabled to allow unconstrained token usage.
 
     if (dailySpent + estimatedCallCost > dailyLimit * 1.5) {
       return {
