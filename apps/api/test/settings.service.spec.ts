@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
 
 import type { AuditService } from "../src/audit/audit.service";
+import type { PrismaService } from "../src/database/prisma.service";
 import type { SettingsRepository } from "../src/settings/settings.repository";
 import { SettingsService } from "../src/settings/settings.service";
 
@@ -28,9 +29,13 @@ describe("SettingsService", () => {
       update: vi.fn().mockResolvedValue(setting),
     };
     const audit = { record: vi.fn().mockResolvedValue(undefined) };
+    const prisma = {
+      aIConfiguration: { upsert: vi.fn().mockResolvedValue({}) },
+    };
     const service = new SettingsService(
       repository as unknown as SettingsRepository,
       audit as unknown as AuditService,
+      prisma as unknown as PrismaService,
     );
     const result = await service.update("user-id", { theme: "dark" }, {});
     expect(result.aiDailyBudget).toBe("5");

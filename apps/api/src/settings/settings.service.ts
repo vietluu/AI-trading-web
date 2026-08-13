@@ -3,6 +3,7 @@ import type { UserSetting } from "@prisma/client";
 
 import { AuditService } from "../audit/audit.service";
 import type { RequestMetadata } from "../common/request-context";
+import { PrismaService } from "../database/prisma.service";
 import type { UpdateSettingsDto } from "./settings.dto";
 import { SettingsRepository } from "./settings.repository";
 
@@ -11,6 +12,7 @@ export class SettingsService {
   constructor(
     private readonly repository: SettingsRepository,
     private readonly audit: AuditService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async get(userId: string) {
@@ -30,6 +32,22 @@ export class SettingsService {
         : {}),
     };
     const setting = await this.repository.update(userId, normalizedDto);
+
+    if (dto.aiDailyBudget !== undefined && !isNaN(Number(dto.aiDailyBudget))) {
+      const budgetVal = Number(dto.aiDailyBudget);
+      await this.prisma.aIConfiguration.upsert({
+        where: { userId },
+        create: { userId, dailyBudget: budgetVal },
+        update: { dailyBudget: budgetVal },
+      }).catch(() => null);
+
+      await this.prisma.aIConfiguration.upsert({
+        where: { userId: "system" },
+        create: { userId: "system", dailyBudget: budgetVal },
+        update: { dailyBudget: budgetVal },
+      }).catch(() => null);
+    }
+
     await this.audit.record("SETTINGS_UPDATE", userId, context, {
       fields: Object.keys(dto),
     });
