@@ -29,7 +29,8 @@ export class BudgetManagerService {
 
     const dailyLimit = config ? Number(config.dailyBudget) : 10.0;
     const monthlyLimit = config ? Number(config.monthlyBudget) : 100.0;
-    const requestLimit = config?.requestBudget ?? 1000;
+    const rawRequestLimit = config?.requestBudget ?? 5000;
+    const requestLimit = rawRequestLimit > 0 && rawRequestLimit <= 1000 ? 5000 : rawRequestLimit;
     const tokenLimit = config?.tokenBudget ?? 0;
 
     const todayStr = new Date().toISOString().slice(0, 10);
@@ -126,7 +127,8 @@ export class BudgetManagerService {
       where: { userId: targetUserId },
       select: { requestBudget: true },
     });
-    const requestLimit = config?.requestBudget ?? 5000;
+    const rawRequestLimit = config?.requestBudget ?? 5000;
+    const requestLimit = rawRequestLimit > 0 && rawRequestLimit <= 1000 ? 5000 : rawRequestLimit;
     const date = new Date().toISOString().slice(0, 10);
 
     if (requestLimit <= 0) {
