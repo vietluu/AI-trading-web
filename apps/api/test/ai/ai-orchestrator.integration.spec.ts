@@ -157,6 +157,7 @@ describe("AI Orchestrator & Fallback Integration", () => {
     ).toEqual([
       "OPENAI:gpt-5-mini",
       "ANTHROPIC:claude-3-5-sonnet-20241022",
+      "GEMINI:gemini-3.1-flash-lite",
     ]);
   });
 
