@@ -57,22 +57,35 @@ export class AIConfigService {
   public async updateConfig(userId: string, dto: UpdateAIConfigDto): Promise<AIConfiguration> {
     await this.getOrCreateConfig(userId);
 
-    return this.prisma.aIConfiguration.update({
+    const updateData = {
+      preferredProvider: dto.preferredProvider,
+      preferredModel: dto.preferredModel,
+      temperature: dto.temperature,
+      maxTokens: dto.maxTokens,
+      timeoutMs: dto.timeoutMs,
+      dailyBudget: dto.dailyBudget !== undefined ? dto.dailyBudget : undefined,
+      monthlyBudget: dto.monthlyBudget !== undefined ? dto.monthlyBudget : undefined,
+      tokenBudget: dto.tokenBudget,
+      requestBudget: dto.requestBudget,
+      fallbackEnabled: dto.fallbackEnabled,
+      fallbackProviders: dto.fallbackProviders,
+    };
+
+    const updated = await this.prisma.aIConfiguration.update({
       where: { userId },
-      data: {
-        preferredProvider: dto.preferredProvider,
-        preferredModel: dto.preferredModel,
-        temperature: dto.temperature,
-        maxTokens: dto.maxTokens,
-        timeoutMs: dto.timeoutMs,
-        dailyBudget: dto.dailyBudget !== undefined ? dto.dailyBudget : undefined,
-        monthlyBudget: dto.monthlyBudget !== undefined ? dto.monthlyBudget : undefined,
-        tokenBudget: dto.tokenBudget,
-        requestBudget: dto.requestBudget,
-        fallbackEnabled: dto.fallbackEnabled,
-        fallbackProviders: dto.fallbackProviders,
-      },
+      data: updateData,
     });
+
+    // Synchronize settings with background system user so pipeline uses Settings UI in real-time
+    if (userId !== "system") {
+      await this.prisma.aIConfiguration.upsert({
+        where: { userId: "system" },
+        create: { userId: "system", ...updateData },
+        update: updateData,
+      }).catch(() => null);
+    }
+
+    return updated;
   }
 
   public toSharedDto(config: AIConfiguration): AIConfigDto {
