@@ -37,10 +37,10 @@ export class AIOrchestratorService {
   private readonly inMemoryPromptCache = new Map<string, { response: AIResponseDto; expiresAt: number }>();
   private readonly inFlightPromptCache = new Map<string, Promise<AIResponseDto>>();
   private readonly geminiFallbackModels = [
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
     "gemini-3-flash",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
@@ -135,15 +135,19 @@ export class AIOrchestratorService {
     let lastError: Error | null = null;
     let response: LLMResponse | null = null;
     const executionStartedAt = Date.now();
+    const attemptedCandidates: Array<{ provider: AIProviderType; model: string; outcome: "tried" | "skipped"; reason?: string; status?: number; code?: string }> = [];
     const executionPromise = (async (): Promise<AIResponseDto> => {
       for (const candidate of candidates) {
         const { provider: pType, model } = candidate;
         const cooldownSeconds = await this.getModelCooldownSeconds(pType, model);
         if (cooldownSeconds > 0) {
-          lastError = Object.assign(
+          const cooldownErr = Object.assign(
             new Error(`${pType}/${model} quota cooldown is active (${cooldownSeconds}s remaining)`),
             { status: 429, providerRequestSent: false, code: 'AI_PROVIDER_COOLDOWN' },
           );
+          lastError = cooldownErr;
+          attemptedCandidates.push({ provider: pType, model, outcome: "skipped", reason: `${cooldownSeconds}s remaining`, status: 429, code: 'AI_PROVIDER_COOLDOWN' });
+          this.logger.warn(`AI fallback skipped ${pType}/${model} because it is still in quota cooldown (${cooldownSeconds}s remaining).`);
           continue;
         }
         try {
@@ -159,6 +163,7 @@ export class AIOrchestratorService {
             jsonSchema: options.jsonSchema,
             timeoutMs: userConfig.timeoutMs,
           });
+          attemptedCandidates.push({ provider: pType, model, outcome: "tried" });
           break; // Success!
         } catch (err: unknown) {
           lastError = err instanceof Error ? err : new Error(String(err));
@@ -166,6 +171,7 @@ export class AIOrchestratorService {
           const status = errorRecord?.status as number | undefined;
           const requestWasSent = errorRecord?.providerRequestSent !== false;
           const code = errorRecord?.code as string | undefined;
+          attemptedCandidates.push({ provider: pType, model, outcome: "tried", status, code, reason: lastError.message });
 
           if (status === 429) {
             const retryAfterMs = errorRecord?.retryAfterMs as number | undefined;
@@ -208,10 +214,27 @@ export class AIOrchestratorService {
 
       if (!response) {
         const lastErrRecord = lastError as Record<string, unknown> | null;
-        const isQuotaExceeded = lastErrRecord?.status === 429 || lastErrRecord?.code === 'AI_PROVIDER_COOLDOWN';
+        const triedQuotaFailures = attemptedCandidates.filter(
+          (candidate) => candidate.outcome === "tried" && (candidate.status === 429 || candidate.code === "AI_PROVIDER_COOLDOWN"),
+        );
+        const skippedCooldowns = attemptedCandidates.filter(
+          (candidate) => candidate.outcome === "skipped" && candidate.status === 429,
+        );
+        const isQuotaExceeded = lastErrRecord?.status === 429 || lastErrRecord?.code === 'AI_PROVIDER_COOLDOWN' || triedQuotaFailures.length > 0 || skippedCooldowns.length > 0;
         if (isQuotaExceeded) {
-          this.logger.error(`All candidate AI models hit HTTP 429 quota limits or active cooldowns. Stopping AI calls for this cycle.`);
-          const quotaErr = new Error(`AI Request failed: All candidate AI models hit 429 quota limits (${lastError?.message})`);
+          const candidateSummary = attemptedCandidates.length > 0
+            ? attemptedCandidates.map((candidate) => `${candidate.provider}/${candidate.model}:${candidate.outcome}${candidate.status ? `:${candidate.status}` : ""}`).join("; ")
+            : "none";
+
+          if (lastErrRecord?.code === 'AI_PROVIDER_COOLDOWN' || skippedCooldowns.length > 0 && triedQuotaFailures.length === 0) {
+            this.logger.error(`AI quota cooldown prevented the request for all remaining candidates. Tried/fallback chain: ${candidateSummary}`);
+            throw lastError ?? new Error(`AI Request failed: quota cooldown is active`);
+          }
+
+          this.logger.error(`All candidate AI models hit HTTP 429 quota limits or active cooldowns. Tried/fallback chain: ${candidateSummary}`);
+          const quotaErr = new Error(
+            `AI Request failed: all candidate models exhausted by quota/cooldown. Tried/fallback chain: ${candidateSummary}`,
+          );
           Object.assign(quotaErr, { status: 429, code: 'ALL_MODELS_QUOTA_EXCEEDED', providerRequestSent: false });
           throw quotaErr;
         }
@@ -386,14 +409,23 @@ export class AIOrchestratorService {
     primaryModel: string,
     fallbackProviders: AIProviderType[],
   ): Array<{ provider: AIProviderType; model: string }> {
-    const candidates = [{ provider: primaryProvider, model: primaryModel }];
+    const seen = new Set<string>();
+    const candidates: Array<{ provider: AIProviderType; model: string }> = [];
+    const push = (provider: AIProviderType, model: string) => {
+      const key = `${provider}:${model}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      candidates.push({ provider, model });
+    };
+
+    push(primaryProvider, primaryModel);
     if (primaryProvider === "GEMINI") {
       for (const model of this.geminiFallbackModels) {
-        if (model !== primaryModel) candidates.push({ provider: primaryProvider, model });
+        if (model !== primaryModel) push(primaryProvider, model);
       }
     }
     for (const provider of fallbackProviders) {
-      if (provider !== primaryProvider) candidates.push({ provider, model: primaryModel });
+      if (provider !== primaryProvider) push(provider, primaryModel);
     }
     return candidates;
   }
