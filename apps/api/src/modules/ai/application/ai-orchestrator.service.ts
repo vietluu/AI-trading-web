@@ -16,6 +16,11 @@ export interface AIExecuteOptions {
   sessionId?: string;
   provider?: AIProviderType;
   model?: string;
+  symbol?: string;
+  timeframe?: string;
+  contextHash?: string;
+  correlationId?: string;
+  cycleKey?: string;
   templateId?: string;
   templateVersion?: number;
   userPrompt?: string;
@@ -45,6 +50,12 @@ export class AIOrchestratorService {
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
   ];
+  private readonly defaultModelsByProvider: Record<AIProviderType, string> = {
+    OPENAI: "gpt-5-mini",
+    ANTHROPIC: "claude-3-5-sonnet-20241022",
+    GEMINI: "gemini-3.1-flash-lite",
+    OLLAMA: "llama3",
+  };
   private readonly inMemoryModelCooldowns = new Map<string, number>();
 
   constructor(
@@ -99,6 +110,11 @@ export class AIOrchestratorService {
       userId: options.userId,
       provider: primaryProviderType,
       model: modelName,
+      symbol: options.symbol,
+      timeframe: options.timeframe,
+      contextHash: options.contextHash,
+      correlationId: options.correlationId,
+      cycleKey: options.cycleKey,
       systemPrompt: rendered.systemPrompt,
       userPrompt: rendered.userPrompt,
       fullPrompt: rendered.fullPrompt,
@@ -320,6 +336,11 @@ export class AIOrchestratorService {
     userId: string;
     provider: AIProviderType;
     model: string;
+    symbol?: string;
+    timeframe?: string;
+    contextHash?: string;
+    correlationId?: string;
+    cycleKey?: string;
     systemPrompt?: string;
     userPrompt?: string;
     fullPrompt?: string;
@@ -332,6 +353,11 @@ export class AIOrchestratorService {
       userId: params.userId,
       provider: params.provider,
       model: params.model,
+      symbol: params.symbol ?? "",
+      timeframe: params.timeframe ?? "",
+      contextHash: params.contextHash ?? "",
+      correlationId: params.correlationId ?? "",
+      cycleKey: params.cycleKey ?? "",
       systemPrompt: params.systemPrompt || "",
       userPrompt: params.userPrompt || "",
       fullPrompt: params.fullPrompt || "",
@@ -418,15 +444,21 @@ export class AIOrchestratorService {
       candidates.push({ provider, model });
     };
 
-    push(primaryProvider, primaryModel);
+    const normalizedPrimaryModel = primaryModel || this.defaultModelsByProvider[primaryProvider];
+    push(primaryProvider, normalizedPrimaryModel);
+
     if (primaryProvider === "GEMINI") {
       for (const model of this.geminiFallbackModels) {
-        if (model !== primaryModel) push(primaryProvider, model);
+        if (model !== normalizedPrimaryModel) push(primaryProvider, model);
       }
     }
+
     for (const provider of fallbackProviders) {
-      if (provider !== primaryProvider) push(provider, primaryModel);
+      if (provider === primaryProvider) continue;
+      const fallbackModel = this.defaultModelsByProvider[provider] || normalizedPrimaryModel;
+      push(provider, fallbackModel);
     }
+
     return candidates;
   }
 

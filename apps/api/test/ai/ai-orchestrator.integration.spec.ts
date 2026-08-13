@@ -135,6 +135,16 @@ describe("AI Orchestrator & Fallback Integration", () => {
     expect(res.provider).toBe("ANTHROPIC");
   });
 
+  it("should use provider-specific default models when building the fallback chain", () => {
+    const candidates = (orchestrator as any).buildCandidates("OPENAI", "gpt-5-mini", ["ANTHROPIC", "GEMINI"]);
+
+    expect(candidates.map((candidate: { provider: string; model: string }) => `${candidate.provider}:${candidate.model}`)).toEqual([
+      "OPENAI:gpt-5-mini",
+      "ANTHROPIC:claude-3-5-sonnet-20241022",
+      "GEMINI:gemini-3.1-flash-lite",
+    ]);
+  });
+
   it("should fail fast and NOT retry on a non-retryable 401 Unauthorized error", async () => {
     openAIProvider.chat = () => {
       const err = new Error("Invalid API key (401)");

@@ -15,7 +15,24 @@ export class AIConfigService {
     const existing = await this.prisma.aIConfiguration.findUnique({
       where: { userId },
     });
-    if (existing) return existing;
+
+    if (existing) {
+      const shouldNormalizeFallback =
+        existing.fallbackEnabled === false &&
+        (!existing.fallbackProviders || existing.fallbackProviders.length === 0);
+
+      if (shouldNormalizeFallback) {
+        return this.prisma.aIConfiguration.update({
+          where: { userId },
+          data: {
+            fallbackEnabled: true,
+            fallbackProviders: ["ANTHROPIC", "GEMINI", "OLLAMA"],
+          },
+        });
+      }
+
+      return existing;
+    }
 
     return this.prisma.aIConfiguration.create({
       data: {
@@ -31,8 +48,8 @@ export class AIConfigService {
         monthlyBudget: 100.0,
         tokenBudget: 0,
         requestBudget: 1000,
-        fallbackEnabled: false,
-        fallbackProviders: [],
+        fallbackEnabled: true,
+        fallbackProviders: ["ANTHROPIC", "GEMINI", "OLLAMA"],
       },
     });
   }
