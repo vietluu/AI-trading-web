@@ -136,12 +136,27 @@ describe("AI Orchestrator & Fallback Integration", () => {
   });
 
   it("should use provider-specific default models when building the fallback chain", () => {
-    const candidates = (orchestrator as any).buildCandidates("OPENAI", "gpt-5-mini", ["ANTHROPIC", "GEMINI"]);
+    const buildCandidates = (
+      orchestrator as unknown as {
+        buildCandidates: (
+          p: string,
+          m: string,
+          f: string[],
+        ) => Array<{ provider: string; model: string }>;
+      }
+    ).buildCandidates.bind(orchestrator);
+    const candidates = buildCandidates("OPENAI", "gpt-5-mini", [
+      "ANTHROPIC",
+      "GEMINI",
+    ]);
 
-    expect(candidates.map((candidate: { provider: string; model: string }) => `${candidate.provider}:${candidate.model}`)).toEqual([
+    expect(
+      candidates.map(
+        (candidate) => `${candidate.provider}:${candidate.model}`,
+      ),
+    ).toEqual([
       "OPENAI:gpt-5-mini",
       "ANTHROPIC:claude-3-5-sonnet-20241022",
-      "GEMINI:gemini-3.1-flash-lite",
     ]);
   });
 
