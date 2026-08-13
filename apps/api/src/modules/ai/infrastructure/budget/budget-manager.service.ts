@@ -65,7 +65,7 @@ export class BudgetManagerService {
       tokenLimit,
     };
 
-    if (requestCount >= requestLimit) {
+    if (requestLimit > 0 && requestCount >= requestLimit) {
       return {
         allowed: false,
         status: "BLOCK",
@@ -126,15 +126,18 @@ export class BudgetManagerService {
       where: { userId: targetUserId },
       select: { requestBudget: true },
     });
-    const requestLimit = config?.requestBudget ?? 1000;
+    const requestLimit = config?.requestBudget ?? 5000;
+    const date = new Date().toISOString().slice(0, 10);
+
     if (requestLimit <= 0) {
-      throw Object.assign(
-        new Error(`AI Request blocked by request budget policy: 0 / ${requestLimit}`),
-        { code: "AI_REQUEST_BUDGET_EXCEEDED", providerRequestSent: false },
-      );
+      await this.prisma.aIUsage.upsert({
+        where: { userId_date: { userId: targetUserId, date } },
+        create: { userId: targetUserId, date, requestCount: 1 },
+        update: { requestCount: { increment: 1 } },
+      });
+      return;
     }
 
-    const date = new Date().toISOString().slice(0, 10);
     const usage = await this.prisma.aIUsage.upsert({
       where: { userId_date: { userId: targetUserId, date } },
       create: { userId: targetUserId, date },

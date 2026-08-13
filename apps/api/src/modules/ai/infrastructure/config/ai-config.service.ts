@@ -47,7 +47,7 @@ export class AIConfigService {
         dailyBudget: 10.0,
         monthlyBudget: 100.0,
         tokenBudget: 0,
-        requestBudget: 1000,
+        requestBudget: 5000,
         fallbackEnabled: true,
         fallbackProviders: ["ANTHROPIC", "GEMINI", "OLLAMA"],
       },
