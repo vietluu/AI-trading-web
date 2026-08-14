@@ -7,7 +7,6 @@ import { SessionModule } from "../../session/session.module";
 import { PipelineController } from "./presentation/pipeline.controller";
 import { PipelineSystemController } from "./presentation/pipeline-system.controller";
 import { PipelineConfigService } from "./application/pipeline-config.service";
-import { PipelineThresholdService } from "./application/pipeline-threshold.service";
 import { SignalFilterService } from "./application/signal-filter.service";
 import { PipelineAlertService } from "./application/pipeline-alert.service";
 import { PipelineRunnerService } from "./application/pipeline-runner.service";
@@ -51,7 +50,6 @@ import { SettingsModule } from "../../settings/settings.module";
   controllers: [PipelineController, PipelineSystemController],
   providers: [
     PipelineConfigService,
-    PipelineThresholdService,
     SignalFilterService,
     PipelineAlertService,
     DecisionRiskPolicyService,

@@ -6,7 +6,6 @@ import {
   NotFoundException,
   Optional,
 } from "@nestjs/common";
-import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import type { DecisionOutput, RiskOutput } from "@platform/shared";
 import { AuditService } from "../../../audit/audit.service";
@@ -338,6 +337,8 @@ export class LiveTradingService {
             where: {
               userId: input.userId,
               connectionId: connection.id,
+              symbol: input.symbol,
+              side: input.decision.decision === "LONG" ? "BUY" : "SELL",
               purpose: { in: ["OPEN", "REVERSE"] },
               status: { not: "FAILED" },
             },
@@ -499,6 +500,7 @@ export class LiveTradingService {
     userId: string,
     dto: ExecuteApprovedOrderDto,
     context: RequestMetadata,
+    options: { skipPreExecutionSync?: boolean } = {},
   ) {
     const connection = await this.connections.get(userId, dto.connectionId);
     this.config.assertExecutionAllowed(connection.environment);
@@ -530,8 +532,13 @@ export class LiveTradingService {
     const existingApproval = await this.prisma.liveOrder.findUnique({
       where: { riskAssessmentId: assessment.id },
     });
-    if (existingApproval)
+    if (existingApproval && existingApproval.status !== "FAILED")
       throw new ConflictException("Risk approval has already been consumed");
+    // Refresh exchange state before position-based guards. A stale local row
+    // for a position already closed at the exchange must not veto a new order.
+    if (!options.skipPreExecutionSync) {
+      await this.sync(userId, dto.connectionId, context);
+    }
     const existingOpenPosition = await this.prisma.livePosition.findFirst({
       where: {
         userId,
@@ -553,7 +560,7 @@ export class LiveTradingService {
         connectionId: dto.connectionId,
         symbol: assessment.symbol,
         purpose: { in: ["OPEN", "REVERSE"] },
-        status: { not: "FAILED" },
+        status: { in: ACTIVE_ORDER_STATUSES },
         stopLoss: assessment.stopLoss,
         takeProfit: assessment.takeProfit,
       },
@@ -580,7 +587,6 @@ export class LiveTradingService {
       throw new ConflictException("Trade cooldown is active");
     }
 
-    await this.sync(userId, dto.connectionId, context);
     const positions = await this.prisma.livePosition.findMany({
       where: {
         userId,
@@ -703,8 +709,10 @@ export class LiveTradingService {
       connection = connections.find((item) => item.isEnabled && item.isVerified);
     }
     if (!connection) return { outcome: "NO_ELIGIBLE_EXCHANGE_CONNECTION" };
+    // Keep the id stable across BullMQ retries. If an exchange accepted a
+    // request but its response was lost, the retry cannot create a second order.
     const clientOrderId = this.normalizeClientOrderId(
-      `p9${this.removeHyphens(randomUUID()).slice(0, 28)}`,
+      `p9${this.removeHyphens(pipelineRunId).slice(0, 28)}`,
     );
     try {
       const order = await this.execute(
@@ -715,6 +723,7 @@ export class LiveTradingService {
           clientOrderId,
         },
         {},
+        { skipPreExecutionSync: true },
       );
       return { outcome: "ORDER_SUBMITTED", order };
     } catch (error) {
@@ -729,6 +738,7 @@ export class LiveTradingService {
         outcome: "EXECUTION_FAILED",
         errorCode: safe.code,
         errorMessage: safe.message,
+        retryable: safe.retryable,
       };
     }
   }
@@ -1377,8 +1387,12 @@ export class LiveTradingService {
   ) {
     let row;
     try {
-      row = await this.prisma.liveOrder.create({
-        data: {
+      const failedAttempt = assessment
+        ? await this.prisma.liveOrder.findUnique({
+            where: { riskAssessmentId: assessment.id },
+          })
+        : null;
+      const data = {
           userId,
           connectionId: connection.id,
           riskAssessmentId: assessment?.id,
@@ -1399,8 +1413,15 @@ export class LiveTradingService {
           tradePlan: assessment?.tradePlan === null || assessment?.tradePlan === undefined
             ? Prisma.JsonNull
             : (assessment.tradePlan as Prisma.InputJsonValue),
-        },
-      });
+          errorCode: null,
+          errorMessage: null,
+        };
+      row = failedAttempt?.status === "FAILED"
+        ? await this.prisma.liveOrder.update({
+            where: { id: failedAttempt.id },
+            data,
+          })
+        : await this.prisma.liveOrder.create({ data });
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -2094,7 +2115,7 @@ export class LiveTradingService {
     return value.replace(/-/g, "");
   }
 
-  private safeError(error: unknown): { code: string; message: string } {
+  private safeError(error: unknown): { code: string; message: string; retryable: boolean } {
     if (error instanceof ExchangeError) {
       const detail = [
         error.message,
@@ -2102,17 +2123,19 @@ export class LiveTradingService {
       ]
         .filter(Boolean)
         .join(" | ");
-      return { code: error.code, message: detail.slice(0, 300) };
+      return { code: error.code, message: detail.slice(0, 300), retryable: error.retryable };
     }
     if (error instanceof Error) {
       return {
         code: "EXECUTION_FAILED",
         message: error.message.slice(0, 300),
+        retryable: false,
       };
     }
     return {
       code: "EXECUTION_FAILED",
       message: "Exchange order execution failed",
+      retryable: false,
     };
   }
 }

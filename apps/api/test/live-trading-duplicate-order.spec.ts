@@ -1,6 +1,8 @@
 import { ConflictException } from "@nestjs/common";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
+import { ExchangeError, ExchangeErrorCode } from "../src/exchange/domain/exchange.error";
+import { ExchangeProvider } from "../src/exchange/domain/exchange.types";
 import { LiveTradingService } from "../src/modules/live-trading/application/live-trading.service";
 
 const createPrisma = () => ({
@@ -73,6 +75,7 @@ describe("live trading duplicate order protection", () => {
       { assessTrade: vi.fn() } as never,
       { ticker: vi.fn(), prepareStrategy: vi.fn().mockResolvedValue({ id: "strategy-1" }) } as never,
     );
+    vi.spyOn(service as unknown as { sync: (...args: unknown[]) => Promise<void> }, "sync").mockResolvedValue(undefined);
 
     await expect(
       service.execute(
@@ -85,6 +88,9 @@ describe("live trading duplicate order protection", () => {
         {},
       ),
     ).rejects.toBeInstanceOf(ConflictException);
+    expect(JSON.stringify(prisma.liveOrder.findFirst.mock.calls)).toContain(
+      '"status":{"in":["SUBMITTING","NEW","PARTIALLY_FILLED"]}',
+    );
   });
 
   it("returns an empty dashboard snapshot when the user id is not a valid UUID", async () => {
@@ -214,10 +220,79 @@ describe("live trading duplicate order protection", () => {
     ).mockResolvedValue({ id: "order-1" });
 
     await service.executePipeline("user-1", "run-1");
+    await service.executePipeline("user-1", "run-1");
 
     const [, dto] = executeSpy.mock.calls[0] as [string, { clientOrderId: string }];
+    const [, retryDto] = executeSpy.mock.calls[1] as [string, { clientOrderId: string }];
     expect(dto.clientOrderId).toMatch(/^[A-Za-z0-9]+$/);
     expect(dto.clientOrderId.length).toBeLessThanOrEqual(32);
+    expect(retryDto.clientOrderId).toBe(dto.clientOrderId);
+  });
+
+  it("marks exchange 429/503-class failures as retryable for the pipeline", async () => {
+    const prisma = createPrisma();
+    prisma.riskAssessment.findUnique.mockResolvedValue({
+      id: "risk-1", userId: "user-1", approved: true, reason: "ok",
+    });
+    const service = new LiveTradingService(
+      prisma as never,
+      { list: vi.fn().mockResolvedValue([{
+        id: "conn-1", provider: "OKX_FUTURES", environment: "DEMO",
+        isEnabled: true, isVerified: true,
+      }]) } as never,
+      { values: { mode: "DEMO", runtimeEnabled: true } } as never,
+      { record: vi.fn() } as never,
+      {} as never, {} as never, {} as never, {} as never,
+    );
+    vi.spyOn(service as never, "execute").mockRejectedValue(new ExchangeError(
+      ExchangeErrorCode.RATE_LIMITED,
+      ExchangeProvider.OKX_FUTURES,
+      true,
+      429,
+      "rate limited",
+    ));
+
+    await expect(service.executePipeline("user-1", "run-1")).resolves.toMatchObject({
+      outcome: "EXECUTION_FAILED",
+      errorCode: "EXCHANGE_RATE_LIMITED",
+      retryable: true,
+    });
+  });
+
+  it("reuses the failed local order row when a retry uses the same approval", async () => {
+    const prisma = createPrisma();
+    prisma.liveOrder.findUnique.mockResolvedValue({ id: "order-1", status: "FAILED" });
+    const timestamp = new Date();
+    prisma.liveOrder.update
+      .mockResolvedValueOnce({ id: "order-1", status: "SUBMITTING", createdAt: timestamp, updatedAt: timestamp })
+      .mockResolvedValueOnce({ id: "order-1", status: "NEW", exchangeOrderId: "exchange-1", createdAt: timestamp, updatedAt: timestamp });
+    const connections = {
+      placeOrder: vi.fn().mockResolvedValue({ exchangeOrderId: "exchange-1", status: "NEW" }),
+    };
+    const service = new LiveTradingService(
+      prisma as never, connections as never, {} as never,
+      { record: vi.fn() } as never,
+      {} as never, {} as never, {} as never, {} as never,
+    );
+
+    await (service as unknown as {
+      submit: (...args: unknown[]) => Promise<unknown>;
+    }).submit(
+      "user-1",
+      { id: "conn-1", provider: "OKX_FUTURES", environment: "DEMO" },
+      { symbol: "ETH-USDT", side: "BUY", quantity: "0.1", leverage: 2, clientOrderId: "stable1" },
+      "OPEN",
+      { id: "risk-1", stopLoss: null, takeProfit: null, tradePlan: null },
+      "strategy-1",
+      {},
+    );
+
+    expect(prisma.liveOrder.create).not.toHaveBeenCalled();
+    expect(prisma.liveOrder.update).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      where: { id: "order-1" },
+      data: expect.objectContaining({ status: "SUBMITTING", clientOrderId: "stable1" }) as unknown,
+    }));
+    expect(connections.placeOrder).toHaveBeenCalledTimes(1);
   });
 
   it("auto-reduces size to fit available balance when margin is insufficient", () => {
@@ -369,6 +444,9 @@ vi.spyOn(service as unknown as { sync: (...args: unknown[]) => Promise<void> }, 
     });
 
     expect(prisma.riskAssessment.updateMany).toHaveBeenCalled();
+    expect(JSON.stringify(prisma.liveOrder.findFirst.mock.calls)).toContain(
+      '"symbol":"BTC-USDT","side":"BUY"',
+    );
     expect(JSON.stringify(prisma.riskAssessment.update.mock.calls)).toContain(
       '"pipelineRunId":"new-run"',
     );

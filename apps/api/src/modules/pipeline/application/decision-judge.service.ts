@@ -49,8 +49,8 @@ export class DecisionJudgeService {
           )
         )) &&
       (name !== 'macro' || !/no imported macro data/i.test(analysis.summary)),
-    ).map(([, analysis]) => analysis);
-    const usable = configured.filter((analysis) => analysis.dataQuality !== 'INSUFFICIENT');
+    );
+    const usable = configured.filter(([, analysis]) => analysis.dataQuality !== 'INSUFFICIENT');
     const coreTechnicalEvidence =
       analyses.market.dataQuality !== 'INSUFFICIENT' &&
       analyses.technical.dataQuality !== 'INSUFFICIENT';
@@ -62,15 +62,22 @@ export class DecisionJudgeService {
       coreTechnicalEvidence && shortTerm ? 3 : 4,
       configured.length,
     );
-    if (usable.length < minimumUsable) reasons.push('INSUFFICIENT_USABLE_ANALYSTS');
-    if (decision.dataQuality === 'INSUFFICIENT') reasons.push('INSUFFICIENT_DECISION_DATA');
-    if (decision.conflictLevel === 'HIGH') reasons.push('HIGH_SIGNAL_CONFLICT');
-
-    const stale = usable.some((analysis) => {
+    const freshUsable = usable.filter(([, analysis]) => {
+      const generatedAt = Date.parse(analysis.generatedAt);
+      return Number.isFinite(generatedAt) && now - generatedAt <= policy.staleAfterMs;
+    });
+    const staleCoreAnalysis = usable.some(([name, analysis]) => {
+      if (name !== 'market' && name !== 'technical') return false;
       const generatedAt = Date.parse(analysis.generatedAt);
       return !Number.isFinite(generatedAt) || now - generatedAt > policy.staleAfterMs;
     });
-    if (stale) reasons.push('STALE_ANALYSIS');
+    // Optional observations age at different cadences. Exclude stale optional
+    // evidence from the quorum instead of letting one old social/macro/on-chain
+    // result veto otherwise fresh Market + Technical evidence.
+    if (freshUsable.length < minimumUsable) reasons.push('INSUFFICIENT_USABLE_ANALYSTS');
+    if (decision.dataQuality === 'INSUFFICIENT') reasons.push('INSUFFICIENT_DECISION_DATA');
+    if (decision.conflictLevel === 'HIGH') reasons.push('HIGH_SIGNAL_CONFLICT');
+    if (staleCoreAnalysis) reasons.push('STALE_ANALYSIS');
 
     if (context?.sourceTimestamp) {
       const sourceTime = context.sourceTimestamp instanceof Date
@@ -85,17 +92,24 @@ export class DecisionJudgeService {
     if (decision.decision !== 'WAIT' && decision.profitFactorEstimate < policy.minProfitFactor) reasons.push('PROFIT_FACTOR_TOO_LOW');
     if (decision.riskScore >= policy.maxRiskScore) reasons.push('DECISION_RISK_TOO_HIGH');
     if (spreadBps !== undefined && spreadBps > policy.maxSpreadBps) reasons.push('SPREAD_TOO_WIDE');
-    // Missing history is a cold-start state, not evidence that the signal is
-    // unsafe. Quant, MTF and live risk remain hard gates while shadow outcomes
-    // accumulate; calibrated history becomes a hard gate once it exists.
+    // A fallback calibration is portfolio-level evidence, not proof that this
+    // exact symbol/strategy/context is unreliable. Keep it as telemetry and
+    // only grant calibration veto power to a sufficiently sampled EXACT scope.
+    const calibration = decision.confidenceCalibration;
+    const exactCalibration =
+      calibration?.status === 'CALIBRATED' &&
+      calibration.scope === 'EXACT' &&
+      calibration.fallbackUsed !== true
+        ? calibration
+        : undefined;
     if (
       decision.decision !== 'WAIT' &&
-      decision.confidenceCalibration?.status === 'CALIBRATED' &&
-      (decision.confidenceCalibration.empiricalProbability ?? 0) < policy.minCalibratedProbability
+      exactCalibration &&
+      (exactCalibration.empiricalProbability ?? 0) < policy.minCalibratedProbability
     ) reasons.push('CALIBRATED_PROBABILITY_TOO_LOW');
     if (
-      decision.confidenceCalibration?.status === 'CALIBRATED' &&
-      (decision.confidenceCalibration.brierScore ?? 0) > 0.3
+      exactCalibration &&
+      (exactCalibration.brierScore ?? 0) > 0.3
     ) reasons.push('CALIBRATION_UNRELIABLE');
 
     if (reasons.some((reason) => reason.includes('DATA') || reason.includes('STALE') || reason.includes('USABLE') || reason.includes('CALIBRAT'))) {

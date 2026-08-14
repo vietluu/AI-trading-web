@@ -24,10 +24,7 @@ import {
   REGIME_FACTOR,
 } from '../../domain/constants/decision.constants';
 import { PrismaService } from '../../../../database/prisma.service';
-import {
-  calibrateConfidence,
-  calibrateConfidenceWithFallback,
-} from '../../../reflection/domain/confidence-calibration';
+import { calibrateConfidenceWithFallback } from '../../../reflection/domain/confidence-calibration';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'node:crypto';
 
@@ -42,7 +39,7 @@ export type {
 @Injectable()
 export class DecisionService {
   private readonly logger = new Logger(DecisionService.name);
-  private readonly calibrationCache = new Map<string, { expiresAt: number; value: ReturnType<typeof calibrateConfidence> }>();
+  private readonly calibrationCache = new Map<string, { expiresAt: number; value: ReturnType<typeof calibrateConfidenceWithFallback> }>();
 
   constructor(
     private readonly fusionService: FusionService,
@@ -100,9 +97,7 @@ export class DecisionService {
       metadata.timeframe,
       decision.regime.type,
     );
-    const empiricalProbability = confidenceCalibration.status === 'CALIBRATED'
-      ? confidenceCalibration.empiricalProbability
-      : undefined;
+    const empiricalProbability = this.exactEmpiricalProbability(confidenceCalibration);
     const expectedWinProbability = this.clamp(empiricalProbability ?? 0.5, 0, 1);
     const expectedValue = this.clamp(
       expectedWinProbability * decision.expectedReward -
@@ -198,9 +193,7 @@ export class DecisionService {
       decision.regime.type,
       metadata.strategyKey,
     );
-    const empiricalProbability = confidenceCalibration.status === 'CALIBRATED'
-      ? confidenceCalibration.empiricalProbability
-      : undefined;
+    const empiricalProbability = this.exactEmpiricalProbability(confidenceCalibration);
     const expectedWinProbability = this.clamp(empiricalProbability ?? 0.5, 0, 1);
     return {
       ...decision,
@@ -227,7 +220,7 @@ export class DecisionService {
     regime?: 'TRENDING' | 'RANGING' | 'HIGH_VOLATILITY',
     strategyKey?: string,
   ) {
-    if (!userId || !this.prisma) return calibrateConfidence(rawScore, []);
+    if (!userId || !this.prisma) return calibrateConfidenceWithFallback(rawScore, []);
     const key = `${userId}:${symbol}:${strategyKey ?? 'ANY'}:${provider ?? 'ANY'}:${timeframe ?? 'ANY'}:${regime ?? 'ANY'}:${Math.floor(rawScore / 10)}`;
     const cached = this.calibrationCache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
@@ -304,6 +297,16 @@ export class DecisionService {
     }
     this.calibrationCache.set(key, { expiresAt: Date.now() + 5 * 60_000, value });
     return value;
+  }
+
+  private exactEmpiricalProbability(
+    calibration: Awaited<ReturnType<DecisionService['confidenceCalibration']>>,
+  ): number | undefined {
+    return calibration.status === 'CALIBRATED' &&
+      calibration.scope === 'EXACT' &&
+      calibration.fallbackUsed !== true
+      ? calibration.empiricalProbability ?? undefined
+      : undefined;
   }
 
   private validWeights(value: unknown): Weighting | undefined {
