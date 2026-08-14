@@ -31,6 +31,7 @@ export interface AssessRiskInput {
   volatility: number;
   tradePlanContext?: TradePlanMarketContext;
   lastTradeAt?: Date;
+  recentClosedTrades?: Array<{ netPnl: Prisma.Decimal; closedAt: Date }>;
 }
 
 import { DataRetentionService } from "../../system/data-retention.service";
@@ -74,6 +75,10 @@ export class RiskManagementService {
           tradePlanContext: input.tradePlanContext,
         },
         lastTradeAt: input.lastTradeAt,
+        recentClosedTrades: input.recentClosedTrades?.map((trade) => ({
+          netPnl: Number(trade.netPnl),
+          closedAt: trade.closedAt,
+        })),
       },
       userLimits,
     );

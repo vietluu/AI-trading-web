@@ -499,6 +499,22 @@ const environmentSchema = z
       .min(10_000)
       .max(3_600_000)
       .default(300_000),
+    OKX_MAKER_FIRST_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((v) => v === "true"),
+    OKX_MAKER_FIRST_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(500)
+      .max(10_000)
+      .default(2_500),
+    OKX_MAKER_FIRST_POLL_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(100)
+      .max(1_000)
+      .default(250),
     RISK_PER_TRADE: z.coerce.number().positive().max(1).default(0.02),
     DEFAULT_LEVERAGE: z.coerce.number().int().min(1).max(125).default(3),
     TRADE_COOLDOWN_MS: z.coerce
@@ -507,6 +523,12 @@ const environmentSchema = z
       .min(0)
       .max(86_400_000)
       .default(60_000),
+    LOSS_REENTRY_COOLDOWN_MS: z.coerce
+      .number()
+      .int()
+      .min(60_000)
+      .max(86_400_000)
+      .default(900_000),
     STOP_LOSS_PCT: z.coerce.number().positive().max(1).default(0.02),
     TAKE_PROFIT_PCT: z.coerce.number().positive().max(10).default(0.04),
     // Phase 8: mandatory pre-execution portfolio risk controls
@@ -534,7 +556,12 @@ const environmentSchema = z
       .number()
       .min(0)
       .max(0.05)
-      .default(0.0008),
+      .default(0.001),
+    MAX_ROUND_TRIP_COST_TO_STOP_RATIO: z.coerce
+      .number()
+      .min(0.1)
+      .max(1)
+      .default(0.35),
     MAX_STOP_LOSS_ROE: z.coerce.number().positive().max(1).default(0.03),
     RANGE_SCALP_ROE_MULTIPLIER: z.coerce.number().min(1).max(5).default(2),
     MIN_LIQUIDATION_BUFFER_PCT: z.coerce.number().positive().max(0.2).default(0.01),

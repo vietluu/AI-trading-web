@@ -27,7 +27,10 @@ export function evaluatePositionManagement(input: PositionManagementInput) {
   const currentR = currentProfit / risk;
   let candidate = input.currentStopLoss;
   if (peakR >= input.plan.breakEvenAtR) {
-    const feeBuffer = input.entryPrice * 0.0008;
+    // A stop exactly at gross break-even can still realize a net loss. Keep a
+    // 25% safety margin over the conservative round-trip fee/slippage estimate.
+    const feeBuffer = input.entryPrice *
+      (input.plan.estimatedRoundTripCostPct ?? 0.001) * 1.25;
     candidate = input.side === "LONG"
       ? Math.max(candidate, input.entryPrice + feeBuffer)
       : Math.min(candidate, input.entryPrice - feeBuffer);

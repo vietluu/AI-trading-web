@@ -321,7 +321,7 @@ export class LiveTradingService {
 
     const result = await this.prisma.$transaction(
       async (tx) => {
-        const [snapshot, peak, positions, latestOrder] = await Promise.all([
+        const [snapshot, peak, positions, latestOrder, recentClosedTrades] = await Promise.all([
           tx.liveAccountSnapshot.findFirst({
             where: { userId: input.userId, connectionId: connection.id },
             orderBy: { syncedAt: "desc" },
@@ -343,6 +343,16 @@ export class LiveTradingService {
               status: { not: "FAILED" },
             },
             orderBy: { createdAt: "desc" },
+          }),
+          tx.closedTrade.findMany({
+            where: {
+              userId: input.userId,
+              connectionId: connection.id,
+              symbol: input.symbol,
+            },
+            select: { netPnl: true, closedAt: true },
+            orderBy: { closedAt: "desc" },
+            take: 3,
           }),
         ]);
         if (!snapshot) throw new Error("EXCHANGE_ACCOUNT_SNAPSHOT_UNAVAILABLE");
@@ -379,6 +389,7 @@ export class LiveTradingService {
               : {}),
           },
           lastTradeAt: latestOrder?.createdAt,
+          recentClosedTrades,
         });
         if (
           risk.approved &&
@@ -1385,6 +1396,17 @@ export class LiveTradingService {
     strategyId: string | null | undefined,
     context: RequestMetadata,
   ) {
+    // Validate against the connection's actual environment before reserving a
+    // risk approval or creating a SUBMITTING row. OKX Demo exposes a smaller
+    // instrument set than production (for example OKB-USDT-SWAP).
+    if (typeof this.connections.instrument === "function") {
+      await this.connections.instrument(
+        userId,
+        connection.id,
+        command.symbol,
+        context,
+      );
+    }
     let row;
     try {
       const failedAttempt = assessment

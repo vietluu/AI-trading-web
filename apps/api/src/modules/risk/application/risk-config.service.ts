@@ -22,6 +22,8 @@ export class RiskConfigService {
       maxDrawdown: this.config.get<number>("MAX_DRAWDOWN") ?? 0.15,
       maxExposure: this.config.get<number>("MAX_EXPOSURE") ?? 0.6,
       cooldownMs: this.config.get<number>("TRADE_COOLDOWN_MS") ?? 60_000,
+      lossReentryCooldownMs:
+        this.config.get<number>("LOSS_REENTRY_COOLDOWN_MS") ?? 900_000,
       minimumConfidence: this.config.get<number>("MIN_CONFIDENCE") ?? 60,
       stopLossPct: this.config.get<number>("STOP_LOSS_PCT") ?? 0.02,
       riskRewardRatio: this.config.get<number>("RISK_REWARD_RATIO") ?? 1.5,
@@ -32,7 +34,9 @@ export class RiskConfigService {
       highVolatilitySizeFactor:
         this.config.get<number>("HIGH_VOLATILITY_SIZE_FACTOR") ?? 0.6,
       estimatedRoundTripCostPct:
-        this.config.get<number>("ESTIMATED_ROUND_TRIP_COST_PCT") ?? 0.0008,
+        this.config.get<number>("ESTIMATED_ROUND_TRIP_COST_PCT") ?? 0.001,
+      maxRoundTripCostToStopRatio:
+        this.config.get<number>("MAX_ROUND_TRIP_COST_TO_STOP_RATIO") ?? 0.35,
       maxStopLossRoe:
         this.config.get<number>("MAX_STOP_LOSS_ROE") ?? 0.03,
       rangeScalpRoeMultiplier:

@@ -263,7 +263,7 @@ describe("adaptive trade plan engine", () => {
       approved: true,
       strategy: "LEGACY_FALLBACK",
       stopLoss: 98,
-      takeProfit: 103,
+      takeProfit: 103.2,
     });
   });
 });

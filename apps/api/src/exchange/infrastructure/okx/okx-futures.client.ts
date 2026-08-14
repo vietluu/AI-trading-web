@@ -34,12 +34,16 @@ export class OkxFuturesClient {
   async publicGet(
     path: string,
     parameters: Record<string, string | number | undefined> = {},
+    environment = ExchangeEnvironment.PRODUCTION,
   ): Promise<unknown> {
     const requestPath = this.path(path, parameters);
     const response = await this.http.request({
       provider: this.provider,
       operation: path,
       url: `${this.baseUrl}${requestPath}`,
+      ...(environment === ExchangeEnvironment.DEMO
+        ? { init: { headers: { "x-simulated-trading": "1" } } }
+        : {}),
     });
     return this.unwrap(response.data, response.correlationId);
   }

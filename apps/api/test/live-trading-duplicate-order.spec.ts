@@ -24,6 +24,9 @@ const createPrisma = () => ({
     findMany: vi.fn(),
     findFirst: vi.fn(),
   },
+  closedTrade: {
+    findMany: vi.fn().mockResolvedValue([]),
+  },
   pipelineRun: {
     findUnique: vi.fn(),
   },
@@ -293,6 +296,53 @@ describe("live trading duplicate order protection", () => {
       data: expect.objectContaining({ status: "SUBMITTING", clientOrderId: "stable1" }) as unknown,
     }));
     expect(connections.placeOrder).toHaveBeenCalledTimes(1);
+  });
+
+  it("checks environment-specific instrument support before creating an order row", async () => {
+    const prisma = createPrisma();
+    const unavailable = new ExchangeError(
+      ExchangeErrorCode.INVALID_SYMBOL,
+      ExchangeProvider.OKX_FUTURES,
+      false,
+      400,
+      "Exchange symbol OKB-USDT is unavailable in DEMO",
+    );
+    const connections = {
+      instrument: vi.fn().mockRejectedValue(unavailable),
+      placeOrder: vi.fn(),
+    };
+    const service = new LiveTradingService(
+      prisma as never,
+      connections as never,
+      {} as never,
+      { record: vi.fn() } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+
+    await expect(
+      (service as unknown as {
+        submit: (...args: unknown[]) => Promise<unknown>;
+      }).submit(
+        "user-1",
+        { id: "conn-1", provider: "OKX_FUTURES", environment: "DEMO" },
+        {
+          symbol: "OKB-USDT",
+          side: "BUY",
+          quantity: "1",
+          leverage: 2,
+          clientOrderId: "okb-demo",
+        },
+        "OPEN",
+        null,
+        null,
+        {},
+      ),
+    ).rejects.toBe(unavailable);
+    expect(prisma.liveOrder.create).not.toHaveBeenCalled();
+    expect(connections.placeOrder).not.toHaveBeenCalled();
   });
 
   it("auto-reduces size to fit available balance when margin is insufficient", () => {

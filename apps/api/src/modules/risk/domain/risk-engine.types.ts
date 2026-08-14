@@ -21,6 +21,11 @@ export interface LastTradeRecord {
   createdAt: Date;
 }
 
+export interface RecentClosedTradeRecord {
+  netPnl: number;
+  closedAt: Date;
+}
+
 export interface RiskInput {
   symbol: string;
   decision: DecisionOutput;
@@ -33,6 +38,8 @@ export interface RiskInput {
   };
   lastTradeAt?: Date;
   lastTrades?: LastTradeRecord[];
+  /** Newest first; used to prevent immediate re-entry after net losses. */
+  recentClosedTrades?: RecentClosedTradeRecord[];
   now?: Date;
 }
 
@@ -43,6 +50,8 @@ export interface RiskLimits {
   maxDrawdown: number;
   maxExposure: number;
   cooldownMs: number;
+  /** Base pause after one net losing trade; consecutive losses escalate to 4x. */
+  lossReentryCooldownMs?: number;
   minimumConfidence: number;
   stopLossPct: number;
   riskRewardRatio: number;
@@ -51,6 +60,8 @@ export interface RiskLimits {
   highVolatilitySizeFactor: number;
   /** Estimated entry + exit fees/slippage as a fraction of notional. */
   estimatedRoundTripCostPct: number;
+  /** Reject entries whose estimated round-trip cost consumes too much stop distance. */
+  maxRoundTripCostToStopRatio?: number;
   /** Maximum planned stop loss as a fraction of the margin committed. */
   maxStopLossRoe: number;
   /** Extra stop-ROE budget for short-lived, boundary-confirmed range trades. */

@@ -204,6 +204,23 @@ export function evaluateRisk(
     cooldownWindow
   )
     return reject("TRADE_COOLDOWN_ACTIVE");
+  const consecutiveLosses = (input.recentClosedTrades ?? [])
+    .findIndex((trade) => trade.netPnl >= 0);
+  const lossCount = consecutiveLosses === -1
+    ? (input.recentClosedTrades?.length ?? 0)
+    : consecutiveLosses;
+  const latestLoss = input.recentClosedTrades?.[0];
+  const baseLossCooldownMs = limits.lossReentryCooldownMs ?? 15 * 60_000;
+  const lossCooldownMs = baseLossCooldownMs * Math.min(
+    4,
+    2 ** Math.max(0, lossCount - 1),
+  );
+  if (
+    lossCount > 0 &&
+    latestLoss &&
+    (input.now ?? new Date()).getTime() - latestLoss.closedAt.getTime() <
+      lossCooldownMs
+  ) return reject("LOSS_REENTRY_COOLDOWN_ACTIVE");
 
   const plan = buildAdaptiveTradePlan({
     side: decision.decision,
@@ -212,6 +229,7 @@ export function evaluateRisk(
     market: marketData.tradePlanContext ?? {},
     configuredStopLossPct: limits.stopLossPct,
     configuredRiskRewardRatio: limits.riskRewardRatio,
+    roundTripCostPct: limits.estimatedRoundTripCostPct,
   });
   if (!plan.approved || !plan.stopLoss || !plan.takeProfit)
     return {
@@ -219,7 +237,35 @@ export function evaluateRisk(
       tradePlan: plan,
     };
   const { stopLoss, takeProfit } = plan;
-  const rewardToRisk = Math.abs(takeProfit - marketData.price) / Math.abs(marketData.price - stopLoss);
+  const stopDistancePct = Math.abs(marketData.price - stopLoss) / marketData.price;
+  const costToStopRatio =
+    limits.estimatedRoundTripCostPct /
+    Math.max(stopDistancePct, Number.EPSILON);
+  if (
+    costToStopRatio >
+    (limits.maxRoundTripCostToStopRatio ?? 0.35) +
+      RISK_ENGINE_CONSTANTS.EXPOSURE_TOLERANCE_EPSILON
+  ) return reject("TRADING_COST_TOO_HIGH");
+  const grossRewardPct = Math.abs(takeProfit - marketData.price) / marketData.price;
+  const expectedNetRewardPct =
+    grossRewardPct - limits.estimatedRoundTripCostPct;
+  const netRewardToRisk = expectedNetRewardPct /
+    Math.max(
+      stopDistancePct + limits.estimatedRoundTripCostPct,
+      Number.EPSILON,
+    );
+  plan.estimatedRoundTripCostPct = rounded(
+    limits.estimatedRoundTripCostPct,
+    8,
+  );
+  plan.grossRewardPct = rounded(grossRewardPct, 8);
+  plan.expectedNetRewardPct = rounded(expectedNetRewardPct, 8);
+  plan.netRewardToRisk = rounded(netRewardToRisk, 8);
+  if (expectedNetRewardPct <= RISK_ENGINE_CONSTANTS.EXPOSURE_TOLERANCE_EPSILON)
+    return {
+      ...reject("EXPECTED_NET_PROFIT_NOT_POSITIVE"),
+      tradePlan: plan,
+    };
   const requiredRiskReward = plan.strategy === "RANGE_REVERSAL"
     ? Math.min(limits.riskRewardRatio, 1.25)
     : plan.strategy === "MOMENTUM_SCALP"
@@ -227,8 +273,11 @@ export function evaluateRisk(
     : plan.strategy === "BREAKOUT_RETEST"
       ? 1.5
       : limits.riskRewardRatio;
-  if (rewardToRisk < requiredRiskReward - 1e-6)
-    return reject("RISK_REWARD_NOT_MET");
+  if (netRewardToRisk < requiredRiskReward - 1e-6)
+    return {
+      ...reject("NET_RISK_REWARD_NOT_MET"),
+      tradePlan: plan,
+    };
   let positionSize = calculatePositionSize(
     account.balance,
     limits.riskPerTrade,
@@ -236,6 +285,13 @@ export function evaluateRisk(
     stopLoss,
     limits.estimatedRoundTripCostPct,
   );
+  const lossStreakSizeFactor = lossCount <= 0
+    ? 1
+    : lossCount === 1
+      ? 0.75
+      : lossCount === 2
+        ? 0.5
+        : 0.35;
   const highVolatility = marketData.volatility >= limits.highVolatility;
   if (highVolatility)
     positionSize = rounded(
@@ -257,10 +313,16 @@ export function evaluateRisk(
       RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
     ),
   );
+  if (lossStreakSizeFactor < 1) {
+    positionSize = rounded(
+      positionSize * lossStreakSizeFactor,
+      RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
+    );
+    plan.lossStreakSizeFactor = lossStreakSizeFactor;
+  }
   if (!finitePositive(positionSize))
     return reject("MAX_PORTFOLIO_EXPOSURE_EXCEEDED");
 
-  const stopDistancePct = Math.abs(marketData.price - stopLoss) / marketData.price;
   const lossPctOfNotional = stopDistancePct + limits.estimatedRoundTripCostPct;
   const effectiveMaxStopLossRoe = maxStopLossRoeForStrategy(
     limits,

@@ -87,7 +87,13 @@ describe("risk engine", () => {
     expect(result.positionSize).toBe(0.08); // $4,000 = 40% of equity
     expect(result.leverage).toBe(1);
     expect(result.stopLoss).toBe(49_000);
-    expect(result.takeProfit).toBe(52_500);
+    expect(result.takeProfit).toBe(52_640);
+    expect(result.tradePlan).toMatchObject({
+      estimatedRoundTripCostPct: 0.0008,
+      grossRewardPct: 0.0528,
+      expectedNetRewardPct: 0.052,
+      netRewardToRisk: 2.5,
+    });
     expect(result.plannedEquityRiskPct).toBeLessThanOrEqual(0.02);
     expect(result.plannedMarginRoe).toBeLessThanOrEqual(0.03);
   });
@@ -98,6 +104,19 @@ describe("risk engine", () => {
     expect(result.positionSize).toBeCloseTo(200 / 1040, 8);
     expect(result.plannedLoss).toBeCloseTo(200, 5);
     expect(result.plannedEquityRiskPct).toBeCloseTo(0.02, 8);
+  });
+
+  it("rejects a setup when round-trip cost consumes too much stop distance", () => {
+    const result = evaluateRisk(input(), {
+      ...limits,
+      estimatedRoundTripCostPct: 0.01,
+      maxRoundTripCostToStopRatio: 0.35,
+    });
+
+    expect(result).toMatchObject({
+      approved: false,
+      reason: "TRADING_COST_TOO_HIGH",
+    });
   });
 
   it("caps leverage from stop-loss margin ROE after final position sizing", () => {
@@ -283,6 +302,35 @@ describe("risk engine", () => {
 
     expect(result.approved).toBe(false);
     expect(result.reason).toBe("TRADE_COOLDOWN_ACTIVE");
+  });
+
+  it("escalates the re-entry pause after consecutive net losing trades", () => {
+    const recentClosedTrades = [
+      { netPnl: -10, closedAt: new Date("2026-08-02T00:00:00Z") },
+      { netPnl: -5, closedAt: new Date("2026-08-01T23:30:00Z") },
+    ];
+    const blocked = evaluateRisk(
+      input({
+        now: new Date("2026-08-02T00:20:00Z"),
+        recentClosedTrades,
+      }),
+      { ...limits, maxExposure: 1, cooldownMs: 0, lossReentryCooldownMs: 15 * 60_000 },
+    );
+    const released = evaluateRisk(
+      input({
+        now: new Date("2026-08-02T00:31:00Z"),
+        recentClosedTrades,
+      }),
+      { ...limits, maxExposure: 1, cooldownMs: 0, lossReentryCooldownMs: 15 * 60_000 },
+    );
+
+    expect(blocked).toMatchObject({
+      approved: false,
+      reason: "LOSS_REENTRY_COOLDOWN_ACTIVE",
+    });
+    expect(released.approved).toBe(true);
+    expect(released.tradePlan).toMatchObject({ lossStreakSizeFactor: 0.5 });
+    expect(released.positionSize).toBeCloseTo((200 / 1040) * 0.5, 8);
   });
 
   it("rejects pyramiding when the existing position is not yet profitable", () => {

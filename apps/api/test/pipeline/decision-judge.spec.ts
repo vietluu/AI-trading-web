@@ -48,7 +48,7 @@ describe('DecisionJudgeService', () => {
     expect(result).toEqual({ approved: true, verdict: 'APPROVE', reasons: [] });
   });
 
-  it('does not let a global fallback calibration veto a symbol signal', () => {
+  it('lets an unreliable global fallback calibration veto automatic execution', () => {
     const generatedAt = new Date().toISOString();
     const good = { dataQuality: 'GOOD', generatedAt };
     const result = judge.evaluate({
@@ -63,7 +63,28 @@ describe('DecisionJudgeService', () => {
       market: good, technical: good, news: good, sentiment: good, macro: good, onchain: good,
     } as never, { symbol: 'ETH-USDT', requireCalibratedConfidence: true });
 
-    expect(result).toEqual({ approved: true, verdict: 'APPROVE', reasons: [] });
+    expect(result.approved).toBe(false);
+    expect(result.verdict).toBe('REQUEST_MORE_DATA');
+    expect(result.reasons).toEqual(expect.arrayContaining([
+      'CALIBRATED_PROBABILITY_TOO_LOW',
+      'CALIBRATION_UNRELIABLE',
+    ]));
+  });
+
+  it('requires stronger raw confidence for uncalibrated automatic execution', () => {
+    const generatedAt = new Date().toISOString();
+    const good = { dataQuality: 'GOOD', generatedAt };
+    const result = judge.evaluate({
+      decision: 'LONG', dataQuality: 'GOOD', conflictLevel: 'LOW', confidence: 71,
+      expectedValue: 0.8, profitFactorEstimate: 1.8, riskScore: 30,
+      confidenceCalibration: { status: 'INSUFFICIENT_HISTORY', sampleSize: 0 },
+    } as never, {
+      market: good, technical: good, news: good, sentiment: good, macro: good, onchain: good,
+    } as never, { symbol: 'ETH-USDT', requireCalibratedConfidence: true });
+
+    expect(result.approved).toBe(false);
+    expect(result.verdict).toBe('REQUEST_MORE_DATA');
+    expect(result.reasons).toContain('UNCALIBRATED_CONFIDENCE_TOO_LOW');
   });
 
   it('keeps an unreliable exact-context calibration as a hard gate', () => {
