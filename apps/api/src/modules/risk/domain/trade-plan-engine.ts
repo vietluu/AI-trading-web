@@ -11,6 +11,7 @@ export type TradePlanStrategy =
   | "TREND_PULLBACK"
   | "RANGE_REVERSAL"
   | "BREAKOUT_RETEST"
+  | "MOMENTUM_SCALP"
   | "VOLATILITY_CONTROL"
   | "LEGACY_FALLBACK";
 
@@ -125,6 +126,33 @@ export function buildAdaptiveTradePlan(input: {
       rewardToRisk: input.configuredRiskRewardRatio,
       maxHoldingCandles: 16,
       breakEvenAtR: 1,
+    };
+  }
+
+  if (/\[momentum-scalp\]/i.test(decision.reasoning)) {
+    const risk = atr * 0.8;
+    const stopLoss = side === "LONG" ? entryPrice - risk : entryPrice + risk;
+    const targetMultiple = Math.max(1.25, Math.min(1.5, input.configuredRiskRewardRatio));
+    const cost = entryPrice * costPct;
+    const targetDistance = risk * targetMultiple + cost * (1 + targetMultiple);
+    const takeProfit = side === "LONG"
+      ? entryPrice + targetDistance
+      : entryPrice - targetDistance;
+    const rr = rewardToRisk(side, entryPrice, stopLoss, takeProfit, costPct);
+    return {
+      approved: rr >= 1.25 - 1e-6,
+      ...(rr < 1.25 - 1e-6 ? { reason: "STRUCTURAL_RISK_REWARD_NOT_MET" } : {}),
+      regime,
+      strategy: "MOMENTUM_SCALP",
+      stopLoss: rounded(stopLoss),
+      takeProfit: rounded(takeProfit),
+      rewardToRisk: rounded(rr),
+      maxHoldingCandles: 6,
+      breakEvenAtR: 0.7,
+      trailingAtrMultiple: 1.5,
+      atr,
+      timeframeMs: market.timeframeMs,
+      structuralRiskAtr: 0.8,
     };
   }
 

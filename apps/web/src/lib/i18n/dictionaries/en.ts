@@ -419,6 +419,8 @@ export const en: Dictionary = {
     prices: 'Prices',
     outcome: 'Outcome',
     virtualReturn: 'Virtual return',
+    leverage: 'Leverage',
+    netRoe: 'Net ROE',
     evaluated: 'Evaluated',
     noCompletedEvaluations: 'No completed horizon evaluations yet.',
     reflectionTitle: 'Reflection',

@@ -419,6 +419,8 @@ export interface Dictionary {
     prices: string;
     outcome: string;
     virtualReturn: string;
+    leverage: string;
+    netRoe: string;
     evaluated: string;
     noCompletedEvaluations: string;
     reflectionTitle: string;

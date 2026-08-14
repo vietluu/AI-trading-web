@@ -31,6 +31,7 @@ export const PortfolioStrategyKeySchema = z.enum([
   "trend",
   "mean-reversion",
   "breakout",
+  "momentum-scalp",
   "news",
 ]);
 
@@ -51,8 +52,8 @@ export const PipelineScheduleInputSchema = z
     strategyIds: z
       .array(PortfolioStrategyKeySchema)
       .min(1)
-      .max(5)
-      .default(["ai-core", "trend", "mean-reversion", "breakout", "news"]),
+      .max(6)
+      .default(["ai-core", "trend", "mean-reversion", "breakout", "momentum-scalp", "news"]),
     provider: PipelineProviderSchema,
     mode: z.enum(["CRON", "INTERVAL"]),
     cron: z.string().max(100).optional(),

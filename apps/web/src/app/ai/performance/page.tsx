@@ -95,6 +95,8 @@ export default function PerformancePage() {
                 t.ai.prices,
                 t.ai.outcome,
                 t.ai.virtualReturn,
+                t.ai.leverage,
+                t.ai.netRoe,
                 t.ai.evaluated,
               ].map((h) => (
                 <th className="p-3" key={h}>
@@ -113,7 +115,12 @@ export default function PerformancePage() {
                   </div>
                 </td>
                 <td className="p-3 font-medium">{record.symbol}</td>
-                <td className="p-3">{record.horizon}</td>
+                <td className="p-3">
+                  {record.horizon}
+                  {record.strategyKey && (
+                    <div className="text-xs text-muted-foreground">{record.strategyKey}</div>
+                  )}
+                </td>
                 <td className="p-3 font-mono text-xs">
                   {record.priceAtDecision} → {record.priceAfter}
                 </td>
@@ -122,6 +129,17 @@ export default function PerformancePage() {
                   className={`p-3 ${record.returnPct >= 0 ? "text-emerald-400" : "text-red-400"}`}
                 >
                   {record.returnPct}%
+                </td>
+                <td className="p-3">
+                  {record.leverage}x
+                  <div className="text-xs text-muted-foreground">
+                    {record.leverageSource}
+                  </div>
+                </td>
+                <td
+                  className={`p-3 ${record.netRoePct >= 0 ? "text-emerald-400" : "text-red-400"}`}
+                >
+                  {record.netRoePct}%
                 </td>
                 <td className="p-3 text-muted-foreground">
                   {new Date(record.evaluatedAt).toLocaleString()}

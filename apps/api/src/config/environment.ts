@@ -446,6 +446,7 @@ const environmentSchema = z
       .min(1_000)
       .max(86_400_000)
       .default(600_000),
+    EVALUATION_SHADOW_LEVERAGE: z.coerce.number().int().min(1).max(10).default(5),
     MIN_RECORDS_FOR_REFLECTION: z.coerce
       .number()
       .int()

@@ -7,7 +7,11 @@ import { ReflectionRepository } from '../infrastructure/reflection.repository';
 import { buildReliabilityCurve } from '../domain/confidence-calibration';
 
 const FIXED_HORIZONS: Array<{ horizon: EvaluationHorizon; ms: number }> = [
+  { horizon: 'M15', ms: 15 * 60_000 },
+  { horizon: 'M30', ms: 30 * 60_000 },
   { horizon: 'MID', ms: 60 * 60_000 },
+  { horizon: 'H2', ms: 2 * 60 * 60_000 },
+  { horizon: 'H4', ms: 4 * 60 * 60_000 },
   { horizon: 'LONG', ms: 24 * 60 * 60_000 },
 ];
 
@@ -28,6 +32,7 @@ export class PerformanceService {
       const candidate = evaluationCandidate(run.storedContext);
       const evaluatedDecision = candidate?.decision ?? run.decision;
       const evaluatedConfidence = candidate?.confidence ?? run.confidence;
+      const leverage = evaluationLeverage(run.result, Boolean(candidate), this.config);
       const existing = new Set(run.performanceRecords.map((record) => record.horizon));
       const start = await this.repository.candleAtOrBefore(run.provider, run.symbol, run.completedAt);
       if (!start) { skippedForMissingMarketData++; continue; }
@@ -48,8 +53,14 @@ export class PerformanceService {
         const context = flags(run.storedContext);
         await this.repository.createRecord({
           userId: run.userId, runId: run.id, symbol: run.symbol, horizon: item.horizon,
+          strategyKey: candidate?.strategyKey,
           decision: evaluatedDecision, confidence: evaluatedConfidence, priceAtDecision, priceAfter,
-          ...result, ...context, marketRegime: run.marketRegime,
+          ...result,
+          leverage: leverage.value,
+          netRoePct: round(result.returnPct * leverage.value),
+          leverageSource: leverage.source,
+          ...context,
+          marketRegime: run.marketRegime,
         });
         evaluated++;
         evaluatedUserIds.add(run.userId);
@@ -83,14 +94,20 @@ export class PerformanceService {
 function evaluationCandidate(value: Prisma.JsonValue | null): {
   decision: 'LONG' | 'SHORT';
   confidence: number;
+  strategyKey?: string;
 } | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const candidate = value.candidateDecision;
   if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return undefined;
   const decision = candidate.decision;
   const confidence = candidate.confidence;
+  const strategyKey = candidate.strategyKey;
   if ((decision !== 'LONG' && decision !== 'SHORT') || typeof confidence !== 'number') return undefined;
-  return { decision, confidence };
+  return {
+    decision,
+    confidence,
+    ...(typeof strategyKey === 'string' ? { strategyKey } : {}),
+  };
 }
 
 function flags(value: Prisma.JsonValue | null): { highVolatility: boolean; majorNews: boolean } {
@@ -98,6 +115,32 @@ function flags(value: Prisma.JsonValue | null): { highVolatility: boolean; major
   return { highVolatility: /high_volatility|"level":"high"|volatility spike/.test(text), majorNews: /"impact":\{"level":"high"|major news|high-impact/.test(text) };
 }
 
-export function toDto(row: { id: string; runId: string; symbol: string; horizon: EvaluationHorizon; decision: string; confidence: number; priceAtDecision: { toString(): string }; priceAfter: { toString(): string }; outcome: 'CORRECT' | 'WRONG' | 'NEUTRAL'; returnPct: number; evaluatedAt: Date }): PerformanceRecord {
-  return { id: row.id, runId: row.runId, symbol: row.symbol, horizon: row.horizon, decision: row.decision as Decision, confidence: row.confidence, priceAtDecision: Number(row.priceAtDecision), priceAfter: Number(row.priceAfter), outcome: row.outcome, returnPct: row.returnPct, evaluatedAt: row.evaluatedAt.toISOString() };
+export function toDto(row: { id: string; runId: string; symbol: string; strategyKey: string | null; horizon: EvaluationHorizon; decision: string; confidence: number; priceAtDecision: { toString(): string }; priceAfter: { toString(): string }; outcome: 'CORRECT' | 'WRONG' | 'NEUTRAL'; returnPct: number; leverage: number; netRoePct: number; leverageSource: string; evaluatedAt: Date }): PerformanceRecord {
+  return { id: row.id, runId: row.runId, symbol: row.symbol, ...(row.strategyKey ? { strategyKey: row.strategyKey } : {}), horizon: row.horizon, decision: row.decision as Decision, confidence: row.confidence, priceAtDecision: Number(row.priceAtDecision), priceAfter: Number(row.priceAfter), outcome: row.outcome, returnPct: row.returnPct, leverage: row.leverage, netRoePct: row.netRoePct, leverageSource: row.leverageSource as PerformanceRecord['leverageSource'], evaluatedAt: row.evaluatedAt.toISOString() };
 }
+
+function evaluationLeverage(
+  value: Prisma.JsonValue | null,
+  shadowCandidate: boolean,
+  config: ConfigService,
+): { value: number; source: 'RISK_ASSESSMENT' | 'SHADOW_CONFIG' | 'UNLEVERAGED' } {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const assessment = value.riskAssessment;
+    if (assessment && typeof assessment === 'object' && !Array.isArray(assessment)) {
+      const risk = assessment.risk;
+      if (risk && typeof risk === 'object' && !Array.isArray(risk)) {
+        const assessed = Number(risk.leverage);
+        if (Number.isFinite(assessed) && assessed >= 1) {
+          return { value: Math.min(125, Math.floor(assessed)), source: 'RISK_ASSESSMENT' };
+        }
+      }
+    }
+  }
+  if (shadowCandidate) {
+    const configured = config.get<number>('EVALUATION_SHADOW_LEVERAGE', 5);
+    return { value: Math.max(1, Math.min(10, Math.floor(configured))), source: 'SHADOW_CONFIG' };
+  }
+  return { value: 1, source: 'UNLEVERAGED' };
+}
+
+function round(value: number): number { return Math.round(value * 10_000) / 10_000; }

@@ -310,10 +310,26 @@ export class PipelineRunnerService {
         : typeof job.params?.strategyId === "string"
           ? [job.params.strategyId]
           : ["ai-core"];
+      // Existing short-timeframe schedules that already opted into breakout
+      // automatically participate in the bounded momentum scalp candidate.
+      if (
+        timeframeMilliseconds(String(interval)) <= 15 * 60_000 &&
+        requestedStrategyKeys.includes("breakout") &&
+        !requestedStrategyKeys.includes("momentum-scalp")
+      ) requestedStrategyKeys.push("momentum-scalp");
       const strategySelection = selectStrategyDecision(
         requestedStrategyKeys,
         synthesizedOutput,
         analyses,
+        {
+          timeframe: String(interval),
+          priceChangePercent: Number(indicatorSnapshot?.values.priceChangePercent),
+          volumeChangePercent: Number(indicatorSnapshot?.values.volumeChangePercent),
+          adx: Number(indicatorSnapshot?.values.adx14),
+          efficiencyRatio: Number(indicatorSnapshot?.values.efficiencyRatio20),
+          ema20: Number(indicatorSnapshot?.values.ema20),
+          ema50: Number(indicatorSnapshot?.values.ema50),
+        },
       );
       const strategyKey = strategySelection.selectedStrategyKey;
       const output = await this.decision.calibrateForExecution(
@@ -358,12 +374,13 @@ export class PipelineRunnerService {
         : { allowed: false as const, reason: "QUANT_VALIDATION_MISSING" as const };
       const multiTimeframeFilter = evaluateMultiTimeframeDecision(output.decision, multiTimeframe);
       const actionable = thresholdFilter.actionable && filter.actionable && judge.approved && quant.allowed && multiTimeframeFilter.allowed;
-      const reason = thresholdFilter.reason ?? filter.reason ?? judge.reasons[0] ?? quant.reason ?? multiTimeframeFilter.reason;
+      const quantBlockReason = quant.allowed ? undefined : quant.reason;
+      const reason = thresholdFilter.reason ?? filter.reason ?? judge.reasons[0] ?? quantBlockReason ?? multiTimeframeFilter.reason;
       const blockedReasons = [
         thresholdFilter.reason,
         filter.reason,
         ...judge.reasons,
-        quant.allowed ? undefined : quant.reason,
+        quantBlockReason,
         multiTimeframeFilter.allowed ? undefined : multiTimeframeFilter.reason,
       ].filter((item): item is string => Boolean(item));
       const candidateDecision = {
@@ -375,6 +392,7 @@ export class PipelineRunnerService {
         marketRegime: output.regime.type,
         actionable,
         blockedReasons: [...new Set(blockedReasons)],
+        advisoryReasons: 'advisory' in quant && quant.advisory && quant.reason ? [quant.reason] : [],
       };
       await this.finishStep(runId, "decision", output, decisionCompletedAt);
       this.analytics.recordStageTelemetry({
@@ -450,7 +468,9 @@ export class PipelineRunnerService {
             symbol,
             provider: job.provider as unknown as ExchangeProvider,
             decision: executionDecision,
-            strategyKey,
+            // Momentum scalp currently shares the governed breakout portfolio
+            // bucket while retaining its own decision/quant identity.
+            strategyKey: strategyKey === "momentum-scalp" ? "breakout" : strategyKey,
             ...(volatilityAtr !== undefined
               ? { volatilityAtr }
               : {}),

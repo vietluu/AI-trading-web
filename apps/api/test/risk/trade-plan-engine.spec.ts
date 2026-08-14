@@ -186,6 +186,29 @@ describe("adaptive trade plan engine", () => {
     expect(plan.strategy).toBe("BREAKOUT_RETEST");
   });
 
+  it("builds a short-lived cost-aware plan for momentum scalp", () => {
+    const scalpDecision = {
+      ...decision("LONG", "TRENDING"),
+      reasoning: "[momentum-scalp] Confirmed liquid impulse.",
+    };
+    const plan = buildAdaptiveTradePlan({
+      side: "LONG",
+      entryPrice: 100,
+      decision: scalpDecision,
+      market: { atr: 0.5, timeframeMs: 5 * 60_000 },
+      configuredStopLossPct: 0.02,
+      configuredRiskRewardRatio: 1.5,
+    });
+    expect(plan).toMatchObject({
+      approved: true,
+      strategy: "MOMENTUM_SCALP",
+      maxHoldingCandles: 6,
+      breakEvenAtR: 0.7,
+      trailingAtrMultiple: 1.5,
+    });
+    expect(plan.rewardToRisk).toBeGreaterThanOrEqual(1.25);
+  });
+
   it("uses quantitative trend evidence even when the AI regime says ranging", () => {
     const plan = buildAdaptiveTradePlan({
       side: "LONG",
