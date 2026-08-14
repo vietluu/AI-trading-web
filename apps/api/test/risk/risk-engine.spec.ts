@@ -112,7 +112,44 @@ describe("risk engine", () => {
     expect(result.plannedMarginRoe).toBeCloseTo(0.0208, 8);
   });
 
-  it("allows higher dynamic leverage for a boundary-confirmed range scalp", () => {
+  it("selects the minimum safe leverage required by available funds", () => {
+    const result = evaluateRisk(input({
+      account: {
+        balance: 10_000,
+        equity: 10_000,
+        peakEquity: 10_000,
+        availableBalance: 2_100,
+      },
+    }), {
+      ...limits,
+      maxExposure: 0.4,
+      maxLeverage: 10,
+      maxStopLossRoe: 0.25,
+    });
+
+    expect(result.approved).toBe(true);
+    expect(result.leverage).toBe(2);
+    expect((result.positionSize ?? 0) * 50_000 / (result.leverage ?? 1))
+      .toBeLessThanOrEqual(2_100 * 0.98);
+  });
+
+  it("shrinks size when available funds would require unsafe leverage", () => {
+    const result = evaluateRisk(input({
+      account: {
+        balance: 10_000,
+        equity: 10_000,
+        peakEquity: 10_000,
+        availableBalance: 1_000,
+      },
+    }), limits);
+
+    expect(result.approved).toBe(true);
+    expect(result.leverage).toBe(1);
+    expect(result.positionSize).toBe(0.0196);
+    expect((result.positionSize ?? 0) * 50_000).toBeLessThanOrEqual(980);
+  });
+
+  it("uses only the funding-required leverage for a range scalp", () => {
     const rangeInput = input({
       marketData: {
         price: 100,
@@ -135,13 +172,19 @@ describe("risk engine", () => {
 
     expect(result.approved).toBe(true);
     expect(result.tradePlan?.strategy).toBe("RANGE_REVERSAL");
-    expect(result.leverage).toBeGreaterThan(5);
+    expect(result.leverage).toBe(2);
     expect(result.leverage).toBeLessThanOrEqual(50);
     expect(result.plannedMarginRoe).toBeLessThanOrEqual(0.06);
   });
 
   it("reduces leverage budget for longer timeframe range positions", () => {
     const make = (timeframeMs: number) => evaluateRisk(input({
+      account: {
+        balance: 10_000,
+        equity: 10_000,
+        peakEquity: 10_000,
+        availableBalance: 500,
+      },
       marketData: {
         price: 100,
         volatility: 0.01,

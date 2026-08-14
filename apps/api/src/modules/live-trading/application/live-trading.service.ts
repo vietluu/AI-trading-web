@@ -32,6 +32,7 @@ import {
   estimatedLiquidationLeverageLimit,
   maxStopLossRoeForStrategy,
 } from "../../risk/domain/risk-engine";
+import { RISK_ENGINE_CONSTANTS } from "../../risk/domain/risk-engine.constants";
 import { RiskManagementService } from "../../risk/application/risk-management.service";
 import { PortfolioService } from "../../portfolio/application/portfolio.service";
 import { LiveTradingGateway } from "../presentation/live-trading.gateway";
@@ -356,6 +357,7 @@ export class LiveTradingService {
             balance: snapshot.totalEquity,
             equity: snapshot.totalEquity,
             peakEquity: peak._max.totalEquity ?? snapshot.totalEquity,
+            availableBalance: snapshot.availableBalance,
           },
           positions: positions.map((position) => ({
             symbol: position.symbol,
@@ -421,6 +423,65 @@ export class LiveTradingService {
               where: { pipelineRunId: input.pipelineRunId },
               data: { positionSize },
             });
+          }
+        }
+        if (
+          risk.approved &&
+          risk.positionSize &&
+          risk.leverage &&
+          input.decision.decision !== "WAIT"
+        ) {
+          const availableBalance = Number(snapshot.availableBalance);
+          if (!Number.isFinite(availableBalance) || availableBalance <= 0) {
+            risk = {
+              approved: false,
+              reason: "INSUFFICIENT_AVAILABLE_MARGIN",
+              riskScore: risk.riskScore,
+            };
+            await tx.riskAssessment.update({
+              where: { pipelineRunId: input.pipelineRunId },
+              data: {
+                approved: false,
+                reason: risk.reason,
+                positionSize: null,
+                leverage: null,
+                stopLoss: null,
+                takeProfit: null,
+              },
+            });
+          } else {
+            const maximumPositionSize =
+              (availableBalance * risk.leverage *
+                RISK_ENGINE_CONSTANTS.AVAILABLE_MARGIN_SAFETY_FACTOR) /
+              price;
+            if (maximumPositionSize < risk.positionSize) {
+              const positionSize =
+                Math.floor(maximumPositionSize * 1e12) / 1e12;
+              if (positionSize <= 0) {
+                risk = {
+                  approved: false,
+                  reason: "INSUFFICIENT_AVAILABLE_MARGIN",
+                  riskScore: risk.riskScore,
+                };
+                await tx.riskAssessment.update({
+                  where: { pipelineRunId: input.pipelineRunId },
+                  data: {
+                    approved: false,
+                    reason: risk.reason,
+                    positionSize: null,
+                    leverage: null,
+                    stopLoss: null,
+                    takeProfit: null,
+                  },
+                });
+              } else {
+                risk = { ...risk, positionSize };
+                await tx.riskAssessment.update({
+                  where: { pipelineRunId: input.pipelineRunId },
+                  data: { positionSize },
+                });
+              }
+            }
           }
         }
         return risk;
@@ -1779,16 +1840,6 @@ export class LiveTradingService {
     const requestedPositionSize = Number(assessment.positionSize);
     const requestedLeverage = assessment.leverage;
     const requestedNotional = requestedPositionSize * Number(assessment.referencePrice);
-    const sizing = {
-      positionSize: requestedPositionSize,
-      leverage: requestedLeverage,
-      referencePrice: Number(assessment.referencePrice),
-    };
-    if (requestedNotional / requestedLeverage > availableBalance + 1e-8) {
-      throw new ForbiddenException(
-        "Exchange preflight failed: insufficient available margin",
-      );
-    }
     const drawdown =
       peakEquity > 0 ? Math.max(0, (peakEquity - equity) / peakEquity) : 1;
     if (drawdown >= limits.maxDrawdown) {
@@ -1865,16 +1916,26 @@ export class LiveTradingService {
       );
       return sum + (explicit > 0 ? explicit : calculated);
     }, 0);
-    const orderNotional = sizing.positionSize * sizing.referencePrice;
-    const projectedExposure = retainedExposure + orderNotional;
-    if (
-      !Number.isFinite(projectedExposure) ||
-      projectedExposure > equity * limits.maxExposure + 1e-8
-    ) {
+    const sizing = this.deriveExecutionSizing(
+      {
+        positionSize: requestedPositionSize,
+        leverage: requestedLeverage,
+        referencePrice: Number(assessment.referencePrice),
+      },
+      availableBalance,
+      limits.maxLeverage,
+      equity,
+      limits.maxExposure,
+      retainedExposure,
+    );
+    if (sizing.positionSize <= 0) {
       throw new ForbiddenException(
-        "Exchange preflight failed: maximum portfolio exposure exceeded",
+        requestedNotional / requestedLeverage > availableBalance + 1e-8
+          ? "Exchange preflight failed: insufficient available margin"
+          : "Exchange preflight failed: maximum portfolio exposure exceeded",
       );
     }
+    const orderNotional = sizing.positionSize * sizing.referencePrice;
     const requiredMargin = orderNotional / sizing.leverage;
     if (requiredMargin > availableBalance + 1e-8) {
       throw new ForbiddenException(
@@ -1892,6 +1953,9 @@ export class LiveTradingService {
     },
     availableBalance: number,
     maxLeverage: number,
+    equity?: number,
+    maxExposure?: number,
+    currentExposure = 0,
   ): { positionSize: number; leverage: number; referencePrice: number } {
     const requestedNotional = assessment.positionSize * assessment.referencePrice;
     const minLeverage = 1;
@@ -1900,11 +1964,22 @@ export class LiveTradingService {
     if (!Number.isFinite(availableBalance) || availableBalance <= 0) {
       return { ...assessment, positionSize: 0, leverage };
     }
-    if (requestedNotional / leverage > availableBalance + 1e-8) {
-      return { ...assessment, positionSize: 0, leverage };
-    }
+    const marginNotionalLimit =
+      availableBalance * leverage *
+      RISK_ENGINE_CONSTANTS.AVAILABLE_MARGIN_SAFETY_FACTOR;
+    const exposureNotionalLimit =
+      equity !== undefined && maxExposure !== undefined
+        ? Math.max(0, equity * maxExposure - currentExposure)
+        : Number.POSITIVE_INFINITY;
+    const approvedNotional = Math.min(
+      requestedNotional,
+      marginNotionalLimit,
+      exposureNotionalLimit,
+    );
     return {
-      positionSize: Number(assessment.positionSize.toFixed(12)),
+      positionSize: Math.floor(
+        (approvedNotional / assessment.referencePrice) * 1e12,
+      ) / 1e12,
       leverage,
       referencePrice: assessment.referencePrice,
     };
