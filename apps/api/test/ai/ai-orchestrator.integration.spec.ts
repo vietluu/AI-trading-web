@@ -290,6 +290,51 @@ describe("AI Orchestrator & Fallback Integration", () => {
     expect(historyLog).toHaveBeenCalledTimes(1);
   });
 
+  it("opens a short availability circuit after a provider 503", async () => {
+    const chatMock = vi.fn().mockRejectedValue(
+      Object.assign(new Error("Provider unavailable"), {
+        status: 503,
+        providerRequestSent: true,
+      }),
+    );
+    const provider = {
+      providerType: "OPENAI",
+      chat: chatMock as LLMProvider["chat"],
+    } as unknown as LLMProvider;
+    const factoryWithStub = {
+      getProvider: () => provider,
+    } as unknown as LLMProviderFactory;
+    const baseConfig = await mockConfigService.getOrCreateConfig("user-123");
+    const noFallbackConfig = {
+      getOrCreateConfig: () => Promise.resolve({
+        ...baseConfig,
+        preferredProvider: "OPENAI" as const,
+        fallbackEnabled: false,
+        fallbackProviders: [],
+      }),
+    } as unknown as AIConfigService;
+    const unavailableOrchestrator = new AIOrchestratorService(
+      noFallbackConfig,
+      mockBudgetManager,
+      contextBuilder,
+      promptEngine,
+      factoryWithStub,
+      mockHistoryService,
+      new CostEstimatorService(modelRegistry),
+    );
+
+    await expect(unavailableOrchestrator.execute({
+      userId: "user-123",
+      userPrompt: "first unavailable request",
+    })).rejects.toMatchObject({ status: 503, code: "ALL_MODELS_UNAVAILABLE" });
+    await expect(unavailableOrchestrator.execute({
+      userId: "user-123",
+      userPrompt: "second request during outage",
+    })).rejects.toMatchObject({ status: 503, code: "ALL_MODELS_UNAVAILABLE" });
+
+    expect(chatMock).toHaveBeenCalledTimes(1);
+  });
+
   it("should reuse a cached response for the same prompt", async () => {
     const chatMock = vi.fn().mockResolvedValue({
       text: "cached analysis",

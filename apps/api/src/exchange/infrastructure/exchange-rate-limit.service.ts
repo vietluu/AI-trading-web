@@ -13,6 +13,7 @@ export class ExchangeRateLimitService {
   private readonly privateEnabled: boolean;
   private readonly publicLimit: number;
   private readonly privateLimit: number;
+  private readonly publicMinIntervalMs: number;
 
   constructor(
     private readonly redis: RedisService,
@@ -26,17 +27,27 @@ export class ExchangeRateLimitService {
       config.get<number>("EXCHANGE_PUBLIC_RATE_LIMIT_PER_MINUTE") ?? 1200;
     this.privateLimit =
       config.get<number>("EXCHANGE_PRIVATE_RATE_LIMIT_PER_MINUTE") ?? 1200;
+    this.publicMinIntervalMs =
+      config.get<number>("EXCHANGE_PUBLIC_MIN_INTERVAL_MS") ?? 100;
   }
 
   async public(
     provider: ExchangeProvider,
     environment: ExchangeEnvironment,
   ): Promise<void> {
-    if (this.publicEnabled)
+    if (this.publicEnabled) {
       await this.consume(
         this.publicKey(provider, environment),
         this.publicLimit,
       );
+      const waitMs = await this.redis.reserveInterval(
+        `exchange:pace:public:${provider}:${environment}`,
+        this.publicMinIntervalMs,
+      );
+      if (waitMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+      }
+    }
   }
 
   async private(

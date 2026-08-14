@@ -93,11 +93,13 @@ export class PublicExchangeService {
     provider: ExchangeProvider,
     status?: string,
   ): Promise<ExchangeInstrument[]> {
-    await this.limit(provider);
     const instruments = await this.cache.remember(
       this.cache.instrumentsKey(provider),
       this.cache.instrumentTtl,
-      () => this.factory.get(provider).getInstruments(),
+      async () => {
+        await this.limit(provider);
+        return this.factory.get(provider).getInstruments();
+      },
     );
     return status
       ? instruments.filter((instrument) => instrument.status === status)
@@ -126,25 +128,27 @@ export class PublicExchangeService {
     if (realtimeTicker) {
       return realtimeTicker;
     }
-    await this.limit(provider);
     return this.cache.remember(
       this.cache.tickerKey(provider, normalized),
       this.cache.tickerTtl,
-      () =>
-        this.factory
+      async () => {
+        await this.limit(provider);
+        return this.factory
           .get(provider)
           .getTicker(normalized)
-          .catch((caught: unknown) => {
+          .catch(async (caught: unknown) => {
             if (
               provider === ExchangeProvider.BINANCE_FUTURES &&
               this.isGeoBlockedError(caught)
             ) {
+              await this.limit(ExchangeProvider.OKX_FUTURES);
               return this.factory
                 .get(ExchangeProvider.OKX_FUTURES)
                 .getTicker(normalized);
             }
             throw caught;
-          }),
+          });
+      },
     );
   }
 
@@ -166,11 +170,12 @@ export class PublicExchangeService {
     return this.factory
       .get(provider)
       .getOrderBook(normalized, depth)
-      .catch((caught: unknown) => {
+      .catch(async (caught: unknown) => {
         if (
           provider === ExchangeProvider.BINANCE_FUTURES &&
           this.isGeoBlockedError(caught)
         ) {
+          await this.limit(ExchangeProvider.OKX_FUTURES);
           return this.factory
             .get(ExchangeProvider.OKX_FUTURES)
             .getOrderBook(normalized, depth);
@@ -193,11 +198,12 @@ export class PublicExchangeService {
     return this.factory
       .get(provider)
       .getRecentTrades(normalized, limit)
-      .catch((caught: unknown) => {
+      .catch(async (caught: unknown) => {
         if (
           provider === ExchangeProvider.BINANCE_FUTURES &&
           this.isGeoBlockedError(caught)
         ) {
+          await this.limit(ExchangeProvider.OKX_FUTURES);
           return this.factory
             .get(ExchangeProvider.OKX_FUTURES)
             .getRecentTrades(normalized, limit);
@@ -215,11 +221,12 @@ export class PublicExchangeService {
     return this.factory
       .get(provider)
       .getKlines({ ...query, symbol: normalized })
-      .catch((caught: unknown) => {
+      .catch(async (caught: unknown) => {
         if (
           provider === ExchangeProvider.BINANCE_FUTURES &&
           this.isGeoBlockedError(caught)
         ) {
+          await this.limit(ExchangeProvider.OKX_FUTURES);
           return this.factory
             .get(ExchangeProvider.OKX_FUTURES)
             .getKlines({ ...query, symbol: normalized });
@@ -233,25 +240,27 @@ export class PublicExchangeService {
     symbol: string,
   ): Promise<ExchangeFundingRate> {
     const normalized = normalizeSymbol(symbol);
-    await this.limit(provider);
     return this.cache.remember(
       this.cache.fundingKey(provider, normalized),
       this.cache.tickerTtl,
-      () =>
-        this.factory
+      async () => {
+        await this.limit(provider);
+        return this.factory
           .get(provider)
           .getFundingRate(normalized)
-          .catch((caught: unknown) => {
+          .catch(async (caught: unknown) => {
             if (
               provider === ExchangeProvider.BINANCE_FUTURES &&
               this.isGeoBlockedError(caught)
             ) {
+              await this.limit(ExchangeProvider.OKX_FUTURES);
               return this.factory
                 .get(ExchangeProvider.OKX_FUTURES)
                 .getFundingRate(normalized);
             }
             throw caught;
-          }),
+          });
+      },
     );
   }
 
@@ -260,25 +269,27 @@ export class PublicExchangeService {
     symbol: string,
   ): Promise<ExchangeOpenInterest> {
     const normalized = normalizeSymbol(symbol);
-    await this.limit(provider);
     return this.cache.remember(
       this.cache.openInterestKey(provider, normalized),
       this.cache.tickerTtl,
-      () =>
-        this.factory
+      async () => {
+        await this.limit(provider);
+        return this.factory
           .get(provider)
           .getOpenInterest(normalized)
-          .catch((caught: unknown) => {
+          .catch(async (caught: unknown) => {
             if (
               provider === ExchangeProvider.BINANCE_FUTURES &&
               this.isGeoBlockedError(caught)
             ) {
+              await this.limit(ExchangeProvider.OKX_FUTURES);
               return this.factory
                 .get(ExchangeProvider.OKX_FUTURES)
                 .getOpenInterest(normalized);
             }
             throw caught;
-          }),
+          });
+      },
     );
   }
 
@@ -408,16 +419,27 @@ export class PublicExchangeService {
     }
 
     // Evaluate tickers in parallel batches for candidates
-    const tickers = await Promise.allSettled(
-      candidates.slice(0, 50).map(async (inst) => {
-        try {
-          const ticker = await this.ticker(activeProvider, inst.symbol);
-          return { symbol: inst.symbol, ticker };
-        } catch {
-          return null;
-        }
-      }),
-    );
+    const tickerCandidates = candidates.slice(0, 50);
+    const tickers: PromiseSettledResult<{
+      symbol: string;
+      ticker: ExchangeTicker;
+    } | null>[] = [];
+    const batchSize = 5;
+    for (let offset = 0; offset < tickerCandidates.length; offset += batchSize) {
+      const batch = tickerCandidates.slice(offset, offset + batchSize);
+      tickers.push(
+        ...(await Promise.allSettled(
+          batch.map(async (inst) => {
+            try {
+              const ticker = await this.ticker(activeProvider, inst.symbol);
+              return { symbol: inst.symbol, ticker };
+            } catch {
+              return null;
+            }
+          }),
+        )),
+      );
+    }
 
     const scored: Array<{
       symbol: string;
