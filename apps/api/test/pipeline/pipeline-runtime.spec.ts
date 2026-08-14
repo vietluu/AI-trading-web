@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { cronMatches, validateCron } from '../../src/modules/pipeline/domain/cron';
 import { pipelineSkipReason } from '../../src/modules/pipeline/domain/rate-limit';
 import { FULL_ANALYSIS_DECISION } from '../../src/modules/pipeline/domain/pipeline.definition';
-import { PipelineThresholdService } from '../../src/modules/pipeline/application/pipeline-threshold.service';
+import { DecisionRiskPolicyService } from '../../src/modules/risk/application/decision-risk-policy.service';
 import { PipelineSchedulerService } from '../../src/modules/pipeline/application/pipeline-scheduler.service';
 import { PipelineRunnerService } from '../../src/modules/pipeline/application/pipeline-runner.service';
 import { PIPELINE_DEAD_LETTER_QUEUE_NAME, PIPELINE_RETRY_QUEUE_NAME, PIPELINE_RUN_QUEUE_NAME } from '../../src/modules/pipeline/infrastructure/pipeline-queue.constants';
@@ -23,24 +23,27 @@ describe('Phase 6.6 pipeline runtime policies', () => {
   });
 
   it('gates decisions on adaptive thresholds, EV and opportunity quality', () => {
-    const service = new PipelineThresholdService({ minConfidence: 70 } as never);
+    const service = new DecisionRiskPolicyService();
     const output = {
       decision: 'LONG',
-      confidence: 60,
+      confidence: 62,
       dataQuality: 'GOOD',
       conflictLevel: 'LOW',
       opportunityScore: 74,
       expectedValue: 0.2,
       riskScore: 45,
       adaptiveThreshold: 62,
+      volatilityAdjustment: 0,
+      agreementScore: 70,
+      regime: { type: 'RANGING' },
     };
     const context = { symbol: 'ALGO-USDT' };
-    expect(service.evaluate(output as never, context)).toEqual({ actionable: true });
-    expect(service.evaluate({ ...output, confidence: 55 } as never, context)).toEqual({ actionable: false, reason: 'CONFIDENCE_BELOW_THRESHOLD' });
-    expect(service.evaluate({ ...output, expectedValue: -0.05 } as never, context)).toEqual({ actionable: false, reason: 'EXPECTED_VALUE_NEGATIVE' });
-    expect(service.evaluate({ ...output, opportunityScore: 58 } as never, context)).toEqual({ actionable: false, reason: 'OPPORTUNITY_BELOW_THRESHOLD' });
-    expect(service.evaluate({ ...output, dataQuality: 'INSUFFICIENT' } as never, context)).toEqual({ actionable: false, reason: 'DATA_QUALITY_INSUFFICIENT' });
-    expect(service.evaluate({ ...output, conflictLevel: 'HIGH' } as never, context)).toEqual({ actionable: false, reason: 'HIGH_CONFLICT' });
+    expect(service.evaluate(output as never, context)).toEqual({ actionable: true, decision: 'LONG' });
+    expect(service.evaluate({ ...output, confidence: 55 } as never, context)).toEqual({ actionable: false, decision: 'WAIT', reason: 'CONFIDENCE_BELOW_THRESHOLD' });
+    expect(service.evaluate({ ...output, expectedValue: -0.05 } as never, context)).toEqual({ actionable: false, decision: 'WAIT', reason: 'EXPECTED_VALUE_NEGATIVE' });
+    expect(service.evaluate({ ...output, opportunityScore: 56 } as never, context)).toEqual({ actionable: false, decision: 'WAIT', reason: 'OPPORTUNITY_BELOW_THRESHOLD' });
+    expect(service.evaluate({ ...output, dataQuality: 'INSUFFICIENT' } as never, context)).toEqual({ actionable: false, decision: 'WAIT', reason: 'DATA_QUALITY_INSUFFICIENT' });
+    expect(service.evaluate({ ...output, conflictLevel: 'HIGH' } as never, context)).toEqual({ actionable: false, decision: 'WAIT', reason: 'HIGH_CONFLICT' });
   });
 
   it('uses bounded exponential retry settings for safe research jobs', () => {
@@ -97,8 +100,7 @@ describe('Phase 6.6 pipeline runtime policies', () => {
       }),
       calibrateForExecution: vi.fn().mockImplementation((value: unknown) => Promise.resolve(value)),
     };
-    const threshold = { evaluate: vi.fn().mockReturnValue({ actionable: false, reason: 'CONFIDENCE_BELOW_THRESHOLD' }) };
-    const riskPolicy = { evaluate: vi.fn().mockReturnValue({ actionable: true, decision: 'LONG' }) };
+    const riskPolicy = { evaluate: vi.fn().mockReturnValue({ actionable: false, decision: 'WAIT', reason: 'CONFIDENCE_BELOW_THRESHOLD' }) };
     const signalFilter = { evaluate: vi.fn().mockReturnValue({ allowed: true, preliminaryRegime: 'TRENDING' }) };
     const freshCloseTime = new Date();
     const marketData = {
@@ -111,19 +113,22 @@ describe('Phase 6.6 pipeline runtime policies', () => {
       assessPipelineDecision: vi.fn().mockResolvedValue({ risk: { approved: true, reason: 'ok', riskScore: 20 } }),
       executePipeline: vi.fn().mockResolvedValue({ outcome: 'EXECUTED' }),
     };
+    const redis = {
+      setNx: vi.fn().mockResolvedValue(true),
+      compareAndDelete: vi.fn().mockResolvedValue(true),
+    };
     const service = new PipelineRunnerService(
       fusion as never,
       decision as never,
       repository as never,
       { isCancelled: vi.fn().mockResolvedValue(false) } as never,
-      threshold as never,
       riskPolicy,
       signalFilter,
       marketData as never,
       alerts as never,
       analytics as never,
       liveTrading as never,
-      { setNx: vi.fn().mockResolvedValue(true), delete: vi.fn().mockResolvedValue(undefined) } as never,
+      redis as never,
     );
 
     await service.run({
@@ -144,6 +149,42 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     }));
     expect(JSON.stringify(repository.updateRun.mock.calls)).toContain('"selectedStrategyKey":"trend"');
     expect(JSON.stringify(repository.updateRun.mock.calls)).toContain('"candidateDecision"');
+
+    riskPolicy.evaluate.mockReturnValue({ actionable: true, decision: 'LONG' });
+    liveTrading.executePipeline.mockResolvedValue({ outcome: 'ORDER_SUBMITTED' });
+    const approvedService = new PipelineRunnerService(
+      fusion as never,
+      decision as never,
+      repository as never,
+      { isCancelled: vi.fn().mockResolvedValue(false) } as never,
+      riskPolicy,
+      signalFilter,
+      marketData as never,
+      alerts as never,
+      analytics as never,
+      liveTrading as never,
+      redis as never,
+      undefined,
+      undefined,
+      { evaluate: vi.fn().mockResolvedValue({ allowed: true, evaluated: true }) } as never,
+    );
+
+    await approvedService.run({
+      pipelineId: 'FULL_ANALYSIS_DECISION',
+      runId: 'run-2',
+      userId: 'user-1',
+      provider: 'BINANCE_FUTURES',
+      symbol: 'ETH-USDT',
+      params: { interval: '1h', strategyIds: ['ai-core', 'trend'] },
+      trigger: 'EVENT',
+    } as never);
+
+    expect(liveTrading.assessPipelineDecision).toHaveBeenCalledTimes(1);
+    expect(liveTrading.executePipeline).toHaveBeenCalledWith('user-1', 'run-2');
+    expect(redis.compareAndDelete).toHaveBeenCalled();
+    expect(repository.updateRun).toHaveBeenCalledWith('run-2', expect.objectContaining({
+      status: 'COMPLETED', decision: 'LONG', skippedReason: undefined,
+    }));
   });
 
   it('uses BullMQ-safe pipeline queue names', () => {

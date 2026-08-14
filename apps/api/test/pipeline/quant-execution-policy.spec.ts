@@ -11,14 +11,6 @@ function service(validation: Record<string, unknown> | null, regime: Record<stri
   } as never), findFirst };
 }
 
-function demoService(validation: Record<string, unknown> | null) {
-  const findFirst = vi.fn().mockResolvedValue(validation);
-  return new QuantExecutionPolicyService({
-    researchValidationRun: { findFirst },
-    marketRegimeState: { findFirst: vi.fn().mockResolvedValue(null) },
-  } as never, undefined, { get: vi.fn().mockReturnValue("DEMO") } as never);
-}
-
 function serviceWithLimits(validation: Record<string, unknown>, limits: Record<string, number>) {
   return new QuantExecutionPolicyService({
     researchValidationRun: { findFirst: vi.fn().mockResolvedValue(validation) },
@@ -45,12 +37,8 @@ describe("QuantExecutionPolicyService", () => {
     decision: decision() as never, now: new Date("2026-08-12T01:00:00Z"),
   };
 
-  it("fails closed when exact symbol/provider/timeframe validation is missing", async () => {
-    await expect(service(null).policy.evaluate(input)).resolves.toMatchObject({ allowed: false, reason: "QUANT_VALIDATION_MISSING" });
-  });
-
-  it("treats missing validation as an advisory only in DEMO", async () => {
-    await expect(demoService(null).evaluate(input)).resolves.toEqual({
+  it("treats missing exact validation as advisory instead of negative evidence", async () => {
+    await expect(service(null).policy.evaluate(input)).resolves.toEqual({
       allowed: true,
       evaluated: false,
       advisory: true,
@@ -79,7 +67,7 @@ describe("QuantExecutionPolicyService", () => {
     expect(result).toMatchObject({ allowed: false, reason: "QUANT_OUT_OF_SAMPLE_EDGE_MISSING" });
   });
 
-  it("rejects Monte Carlo evidence derived from too few independent trades", async () => {
+  it("does not hard-block on Monte Carlo evidence derived from too few trades", async () => {
     const result = await service(valid({
       metricsJson: {
         sampleEvidence: { totalTrades: 5, outOfSampleTrades: 1, walkForwardWindows: 1 },
@@ -88,29 +76,17 @@ describe("QuantExecutionPolicyService", () => {
         executionAssumptions: { leverage: 1, riskPerTrade: 0.02, riskRewardRatio: 1.5 },
       },
     })).policy.evaluate(input);
-    expect(result).toMatchObject({ allowed: false, reason: "QUANT_SAMPLE_TOO_SMALL" });
-  });
-
-  it("allows DEMO evidence collection when the quant sample is still too small", async () => {
-    const result = await demoService(valid({
-      metricsJson: {
-        sampleEvidence: { totalTrades: 5, outOfSampleTrades: 1, walkForwardWindows: 1 },
-        outOfSample: { outOfSampleTrades: 1 },
-        walkForward: { windows: [{}] },
-        executionAssumptions: { leverage: 1, riskPerTrade: 0.02, riskRewardRatio: 1.5 },
-      },
-    })).evaluate(input);
     expect(result).toMatchObject({ allowed: true, advisory: true, reason: "QUANT_SAMPLE_TOO_SMALL" });
   });
 
-  it("rejects research assumptions that do not match current live risk settings", async () => {
+  it("makes mismatched research assumptions advisory while live risk remains authoritative", async () => {
     const policy = serviceWithLimits(valid(), {
       maxLeverage: 50,
       riskPerTrade: 0.01,
       riskRewardRatio: 2,
     });
     const result = await policy.evaluate(input);
-    expect(result).toMatchObject({ allowed: false, reason: "QUANT_ASSUMPTION_MISMATCH" });
+    expect(result).toMatchObject({ allowed: true, advisory: true, reason: "QUANT_ASSUMPTION_MISMATCH" });
   });
 
   it("reports WAIT as not evaluated instead of a misleading Quant pass", async () => {

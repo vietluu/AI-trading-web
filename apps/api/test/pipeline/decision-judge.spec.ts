@@ -48,6 +48,47 @@ describe('DecisionJudgeService', () => {
     expect(result).toEqual({ approved: true, verdict: 'APPROVE', reasons: [] });
   });
 
+  it('does not let a global fallback calibration veto a symbol signal', () => {
+    const generatedAt = new Date().toISOString();
+    const good = { dataQuality: 'GOOD', generatedAt };
+    const result = judge.evaluate({
+      decision: 'SHORT', dataQuality: 'GOOD', conflictLevel: 'LOW', confidence: 75,
+      expectedValue: 0.8, profitFactorEstimate: 1.8, riskScore: 30,
+      confidenceCalibration: {
+        status: 'CALIBRATED', rawScore: 75, empiricalProbability: 0.4,
+        sampleSize: 479, bucketSampleSize: 321, brierScore: 0.35,
+        scope: 'USER_GLOBAL', fallbackUsed: true,
+      },
+    } as never, {
+      market: good, technical: good, news: good, sentiment: good, macro: good, onchain: good,
+    } as never, { symbol: 'ETH-USDT', requireCalibratedConfidence: true });
+
+    expect(result).toEqual({ approved: true, verdict: 'APPROVE', reasons: [] });
+  });
+
+  it('keeps an unreliable exact-context calibration as a hard gate', () => {
+    const generatedAt = new Date().toISOString();
+    const good = { dataQuality: 'GOOD', generatedAt };
+    const result = judge.evaluate({
+      decision: 'SHORT', dataQuality: 'GOOD', conflictLevel: 'LOW', confidence: 75,
+      expectedValue: 0.8, profitFactorEstimate: 1.8, riskScore: 30,
+      confidenceCalibration: {
+        status: 'CALIBRATED', rawScore: 75, empiricalProbability: 0.4,
+        sampleSize: 80, bucketSampleSize: 25, brierScore: 0.35,
+        scope: 'EXACT', fallbackUsed: false,
+      },
+    } as never, {
+      market: good, technical: good, news: good, sentiment: good, macro: good, onchain: good,
+    } as never, { symbol: 'ETH-USDT', requireCalibratedConfidence: true });
+
+    expect(result.approved).toBe(false);
+    expect(result.verdict).toBe('REQUEST_MORE_DATA');
+    expect(result.reasons).toEqual(expect.arrayContaining([
+      'CALIBRATED_PROBABILITY_TOO_LOW',
+      'CALIBRATION_UNRELIABLE',
+    ]));
+  });
+
   it('requests fresh source data when the underlying candle is stale for its timeframe', () => {
     const now = Date.parse('2026-08-08T12:00:00.000Z');
     const good = { dataQuality: 'GOOD', generatedAt: new Date(now).toISOString() };
@@ -104,5 +145,36 @@ describe('DecisionJudgeService', () => {
 
     expect(result.reasons).not.toContain('INSUFFICIENT_USABLE_ANALYSTS');
     expect(result.approved).toBe(true);
+  });
+
+  it('ignores a stale optional analyst when a fresh short-term quorum remains', () => {
+    const now = Date.parse('2026-08-14T10:00:00.000Z');
+    const fresh = { dataQuality: 'GOOD', generatedAt: new Date(now).toISOString() };
+    const stale = { dataQuality: 'GOOD', generatedAt: new Date(now - 60 * 60_000).toISOString() };
+    const result = judge.evaluate({
+      decision: 'LONG', dataQuality: 'GOOD', conflictLevel: 'LOW', confidence: 78,
+      expectedValue: 0.8, profitFactorEstimate: 1.8, riskScore: 30,
+    } as never, {
+      market: fresh, technical: fresh, news: fresh,
+      sentiment: stale, macro: fresh, onchain: stale,
+    } as never, { symbol: 'ETH-USDT', timeframe: '15m' }, now);
+
+    expect(result).toEqual({ approved: true, verdict: 'APPROVE', reasons: [] });
+  });
+
+  it('still blocks stale core Market evidence', () => {
+    const now = Date.parse('2026-08-14T10:00:00.000Z');
+    const fresh = { dataQuality: 'GOOD', generatedAt: new Date(now).toISOString() };
+    const stale = { dataQuality: 'GOOD', generatedAt: new Date(now - 60 * 60_000).toISOString() };
+    const result = judge.evaluate({
+      decision: 'LONG', dataQuality: 'GOOD', conflictLevel: 'LOW', confidence: 78,
+      expectedValue: 0.8, profitFactorEstimate: 1.8, riskScore: 30,
+    } as never, {
+      market: stale, technical: fresh, news: fresh,
+      sentiment: fresh, macro: fresh, onchain: fresh,
+    } as never, { symbol: 'ETH-USDT', timeframe: '15m' }, now);
+
+    expect(result.approved).toBe(false);
+    expect(result.reasons).toContain('STALE_ANALYSIS');
   });
 });

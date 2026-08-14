@@ -178,12 +178,10 @@ export function evaluateRisk(
   if (sameSymbolPosition) {
     const existingDirection = sameSymbolPosition.size >= 0 ? "LONG" : "SHORT";
     const isSameDirection = existingDirection === decision.decision;
-    if (isSameDirection) {
-      const hasProfit =
-        (decision.decision === "LONG" && marketData.price > sameSymbolPosition.markPrice) ||
-        (decision.decision === "SHORT" && marketData.price < sameSymbolPosition.markPrice);
-      if (!hasProfit) return reject("PYRAMIDING_NOT_ALLOWED");
-    }
+    // Execution intentionally does not pyramid. Reject at the authoritative
+    // risk stage as well, so a candidate cannot be recorded as risk-approved
+    // and then encounter the same-direction guard only during submission.
+    if (isSameDirection) return reject("PYRAMIDING_NOT_ALLOWED");
   }
 
   // A reversal replaces the position in the same symbol, so it must not consume an

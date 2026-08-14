@@ -11,7 +11,6 @@ import { FusionService } from "../../agents/application/services/fusion.service"
 import { DecisionService } from "../../agents/application/services/decision.service";
 import { PipelineRepository } from "../infrastructure/pipeline.repository";
 import { PipelineCancellationService } from "../infrastructure/pipeline-cancellation.service";
-import { PipelineThresholdService } from "./pipeline-threshold.service";
 import { SignalFilterService } from "./signal-filter.service";
 import { PipelineAlertService } from "./pipeline-alert.service";
 import { DecisionRiskPolicyService } from "../../risk/application/decision-risk-policy.service";
@@ -36,6 +35,8 @@ import {
 } from "../domain/multi-timeframe-analysis";
 
 class PipelineCancelledError extends Error {}
+class PipelineExecutionLockBusyError extends Error {}
+class PipelineExecutionRetryableError extends Error {}
 
 @Injectable()
 export class PipelineRunnerService {
@@ -46,7 +47,6 @@ export class PipelineRunnerService {
     private readonly decision: DecisionService,
     private readonly repository: PipelineRepository,
     private readonly cancellation: PipelineCancellationService,
-    private readonly threshold: PipelineThresholdService,
     private readonly riskPolicy: DecisionRiskPolicyService,
     private readonly signalFilter: SignalFilterService,
     private readonly marketData: MarketDataService,
@@ -68,6 +68,9 @@ export class PipelineRunnerService {
     await this.repository.updateRun(runId, {
       status: "RUNNING",
       startedAt,
+      completedAt: null,
+      errorCode: null,
+      safeErrorMessage: null,
     });
     await this.assertNotCancelled(runId);
     try {
@@ -120,17 +123,6 @@ export class PipelineRunnerService {
       const indicatorSnapshot = primaryMarketData.snapshot;
       const recentCandles = primaryMarketData.candles;
       const lastPrice = recentCandles[0] ? Number(recentCandles[0].close) : undefined;
-      const multiTimeframe = analyzeMultiTimeframe(
-        interval,
-        timeframeMarketData.map((item) => ({
-          timeframe: item.timeframe,
-          close: item.candles[0] ? Number(item.candles[0].close) : undefined,
-          ema20: Number(item.snapshot?.values.ema20),
-          ema50: Number(item.snapshot?.values.ema50),
-          rsi: Number(item.snapshot?.values.rsi14),
-        })),
-      );
-
       const nowMs = Date.now();
       const staleTimeframes = timeframeMarketData
         .filter((item) => {
@@ -146,8 +138,21 @@ export class PipelineRunnerService {
           );
         })
         .map((item) => item.timeframe);
+      const staleTimeframeSet = new Set(staleTimeframes);
+      const multiTimeframe = analyzeMultiTimeframe(
+        interval,
+        timeframeMarketData
+          .filter((item) => !staleTimeframeSet.has(item.timeframe))
+          .map((item) => ({
+            timeframe: item.timeframe,
+            close: item.candles[0] ? Number(item.candles[0].close) : undefined,
+            ema20: Number(item.snapshot?.values.ema20),
+            ema50: Number(item.snapshot?.values.ema50),
+            rsi: Number(item.snapshot?.values.rsi14),
+          })),
+      );
 
-      if (staleTimeframes.length > 0) {
+      if (staleTimeframeSet.has(interval)) {
         const completedAt = new Date();
         const reason = `STALE_MARKET_DATA:${staleTimeframes.join(',')}`;
         this.logger.warn({
@@ -174,6 +179,14 @@ export class PipelineRunnerService {
           },
         });
         return;
+      }
+      if (staleTimeframes.length > 0) {
+        this.logger.warn({
+          event: 'pipeline_optional_timeframe_data_ignored',
+          runId,
+          symbol,
+          staleTimeframes,
+        });
       }
 
       const signalFilter = this.signalFilter.evaluate({
@@ -344,7 +357,6 @@ export class PipelineRunnerService {
       );
       const decisionCompletedAt = new Date();
       const policyContext = { symbol, provider: job.provider, timeframe: String(interval), regime: output.regime.type };
-      const thresholdFilter = this.threshold.evaluate(output, policyContext);
       const filter = this.riskPolicy.evaluate(output, policyContext);
       const judge = this.judge?.evaluate(output, analyses, {
         symbol,
@@ -373,11 +385,10 @@ export class PipelineRunnerService {
           })
         : { allowed: false as const, reason: "QUANT_VALIDATION_MISSING" as const };
       const multiTimeframeFilter = evaluateMultiTimeframeDecision(output.decision, multiTimeframe);
-      const actionable = thresholdFilter.actionable && filter.actionable && judge.approved && quant.allowed && multiTimeframeFilter.allowed;
+      const actionable = filter.actionable && judge.approved && quant.allowed && multiTimeframeFilter.allowed;
       const quantBlockReason = quant.allowed ? undefined : quant.reason;
-      const reason = thresholdFilter.reason ?? filter.reason ?? judge.reasons[0] ?? quantBlockReason ?? multiTimeframeFilter.reason;
+      const reason = filter.reason ?? judge.reasons[0] ?? quantBlockReason ?? multiTimeframeFilter.reason;
       const blockedReasons = [
-        thresholdFilter.reason,
         filter.reason,
         ...judge.reasons,
         quantBlockReason,
@@ -435,30 +446,16 @@ export class PipelineRunnerService {
         const acquired = await this.redis.setNx(lockKey, runId, lockTtl);
 
         if (!acquired) {
-          // Another pipeline is currently inside the execution gate for this user.
-          // Treat as WAIT — BullMQ retry will re-queue after backoffMs.
+          // Preserve the approved candidate and let BullMQ retry after its
+          // configured backoff. Completing the run here would silently discard
+          // a valid signal merely because another symbol acquired the mutex first.
           this.logger.warn({
             event: 'pipeline_execution_lock_busy',
             userId: job.userId,
             runId,
             symbol,
           });
-          await this.repository.updateRun(runId, {
-            status: 'COMPLETED',
-            completedAt: new Date(),
-            durationMs: new Date().getTime() - startedAt.getTime(),
-            decision: 'WAIT',
-            confidence: output.confidence,
-            dataQuality: output.dataQuality,
-            marketRegime: output.regime.type,
-            configurationVersion: output.learningConfiguration?.version,
-            learningStage: output.learningConfiguration?.stage,
-            timeframe: String(interval),
-            skippedReason: 'EXECUTION_LOCK_BUSY',
-            storedContext: { analyses, fusionOutput, candidateDecision, strategySelection: strategySelection as unknown as Prisma.InputJsonValue, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue },
-            result: { ...output, decision: 'WAIT' as const, candidateDecision, actionable: false, selectedStrategyKey: strategyKey, strategySelection: strategySelection as unknown as Prisma.InputJsonValue, skippedReason: 'EXECUTION_LOCK_BUSY', multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue },
-          });
-          return;
+          throw new PipelineExecutionLockBusyError('EXECUTION_LOCK_BUSY');
         }
 
         try {
@@ -509,6 +506,11 @@ export class PipelineRunnerService {
             job.userId,
             runId,
           );
+          if (liveExecution.outcome === "EXECUTION_FAILED" && liveExecution.retryable === true) {
+            throw new PipelineExecutionRetryableError(
+              liveExecution.errorCode ?? "RETRYABLE_EXCHANGE_FAILURE",
+            );
+          }
         } finally {
           // Always release the lock — even if assessment or execution throws
           await this.redis.compareAndDelete(lockKey, runId);
@@ -587,28 +589,34 @@ export class PipelineRunnerService {
     } catch (error) {
       const completedAt = new Date();
       const cancelled = error instanceof PipelineCancelledError;
+      const executionLockBusy = error instanceof PipelineExecutionLockBusyError;
+      const executionRetryable = error instanceof PipelineExecutionRetryableError;
       const timedOut =
         error instanceof Error && error.message === "PIPELINE_TIMEOUT";
       const isNoConnection =
         error instanceof Error && error.message.includes("NO_ELIGIBLE_EXCHANGE_CONNECTION");
       await this.repository.updateRun(runId, {
-        status: cancelled ? "CANCELLED" : timedOut ? "TIMEOUT" : "FAILED",
-        completedAt,
+        status: cancelled ? "CANCELLED" : executionLockBusy ? "QUEUED" : timedOut ? "TIMEOUT" : "FAILED",
+        completedAt: executionLockBusy ? null : completedAt,
         durationMs: completedAt.getTime() - startedAt.getTime(),
         errorCode: cancelled
           ? "CANCELLED_BY_USER"
+          : executionLockBusy
+            ? "EXECUTION_LOCK_BUSY"
           : timedOut
             ? "PIPELINE_TIMEOUT"
             : isNoConnection
               ? "NO_ELIGIBLE_EXCHANGE_CONNECTION"
-              : "PIPELINE_EXECUTION_FAILED",
+              : executionRetryable
+                ? "RETRYABLE_EXCHANGE_FAILURE"
+                : "PIPELINE_EXECUTION_FAILED",
         safeErrorMessage:
           error instanceof Error
             ? error.message.slice(0, 300)
             : "Pipeline execution failed",
       });
       if (cancelled) return;
-      await this.alerts.repeatedFailure(runId, symbol);
+      if (!executionLockBusy && !executionRetryable) await this.alerts.repeatedFailure(runId, symbol);
       throw error;
     }
   }

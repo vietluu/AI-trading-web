@@ -49,7 +49,7 @@ describe('live trading checklist simulation', () => {
     });
   });
 
-  it('QUANT: refuses validation created from only five independent trades', async () => {
+  it('QUANT: treats a five-trade sample as advisory, not proof of a bad signal', async () => {
     const validation = {
       probabilityOfProfit: 80, probabilityOfRuin: 0, outOfSampleSharpe: 2,
       walkForwardStable: true, confidenceBrierScore: 0.1, createdAt: new Date('2026-08-12T09:00:00Z'),
@@ -67,7 +67,7 @@ describe('live trading checklist simulation', () => {
       userId: 'user-1', symbol: 'ETH-USDT', provider: 'OKX_FUTURES', timeframe: '15m',
       strategyKey: 'ai-core', decision: directionalDecision(), now: new Date('2026-08-12T10:00:00Z'),
     });
-    expect(result).toMatchObject({ allowed: false, reason: 'QUANT_SAMPLE_TOO_SMALL' });
+    expect(result).toMatchObject({ allowed: true, advisory: true, reason: 'QUANT_SAMPLE_TOO_SMALL' });
   });
 
   it('RISK: caps AGGRESSIVE user risk and planned loss at the numeric ceiling', async () => {

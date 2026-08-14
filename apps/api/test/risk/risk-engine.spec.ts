@@ -297,6 +297,20 @@ describe("risk engine", () => {
     expect(result.reason).toBe("PYRAMIDING_NOT_ALLOWED");
   });
 
+  it("rejects same-direction pyramiding consistently even when price moved favorably", () => {
+    const result = evaluateRisk({
+      symbol: "BTC-USDT",
+      decision: decision({ decision: "LONG", confidence: 90 }),
+      account: { balance: 10_000, equity: 10_000, peakEquity: 10_000 },
+      currentPositions: [{ symbol: "BTC-USDT", size: 0.01, markPrice: 50_000 }],
+      marketData: { price: 55_000, volatility: 0.02 },
+      now: new Date("2026-08-12T10:00:00Z"),
+    }, limits);
+
+    expect(result.approved).toBe(false);
+    expect(result.reason).toBe("PYRAMIDING_NOT_ALLOWED");
+  });
+
   it.each([
     [
       "low confidence",

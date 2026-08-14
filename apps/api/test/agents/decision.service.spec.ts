@@ -73,6 +73,35 @@ function decisionInput(): DecisionInput {
 }
 
 describe('DecisionService', () => {
+  it('keeps fallback calibration as telemetry without changing execution economics', async () => {
+    const service = new DecisionService({} as never);
+    const base = service.decide(decisionInput());
+    const calibrationService = service as unknown as {
+      confidenceCalibration: (...args: unknown[]) => Promise<{
+        status: 'CALIBRATED' | 'INSUFFICIENT_HISTORY';
+        rawScore: number;
+        empiricalProbability: number | null;
+        sampleSize: number;
+        bucketSampleSize: number;
+        brierScore: number | null;
+        scope: 'EXACT' | 'STRATEGY_CONTEXT' | 'STRATEGY_TIMEFRAME' | 'USER_GLOBAL' | 'NONE';
+        fallbackUsed: boolean;
+      }>;
+    };
+    vi.spyOn(calibrationService, 'confidenceCalibration').mockResolvedValue({
+      status: 'CALIBRATED', rawScore: base.confidence,
+      empiricalProbability: 0.2, sampleSize: 500, bucketSampleSize: 100,
+      brierScore: 0.4, scope: 'USER_GLOBAL', fallbackUsed: true,
+    } as never);
+
+    const output = await service.calibrateForExecution(base, 'user-1', {
+      symbol: 'BTC-USDT', strategyKey: 'trend', provider: 'OKX_FUTURES', timeframe: '15m',
+    });
+
+    expect(output.confidenceCalibration?.scope).toBe('USER_GLOBAL');
+    expect(output.expectedWinProbability).toBe(0.5);
+  });
+
   it('detects a trending regime and increases technical weight', () => {
     const output = new DecisionService({} as never).decide(decisionInput());
 
