@@ -76,6 +76,49 @@ describe("exchange adapter normalization contract", () => {
     expect(instruments[0]?.contractSize).toBe("0.1");
   });
 
+  it("requests OKX instrument metadata from the account environment", async () => {
+    const publicGet = vi.fn().mockResolvedValue([]);
+    const adapter = new OkxFuturesAdapter({
+      publicGet,
+    } as unknown as OkxFuturesClient);
+
+    await adapter.getInstruments({
+      symbol: "OKB-USDT",
+      environment: ExchangeEnvironment.DEMO,
+    });
+
+    expect(publicGet).toHaveBeenCalledWith(
+      "/api/v5/public/instruments",
+      expect.objectContaining({ instId: "OKB-USDT-SWAP" }),
+      ExchangeEnvironment.DEMO,
+    );
+  });
+
+  it("adds the simulated-trading header to OKX Demo public requests", async () => {
+    const request = vi.fn().mockResolvedValue({
+      data: { code: "0", data: [] },
+      correlationId: "corr-demo",
+    });
+    const client = new OkxFuturesClient(
+      { request } as never,
+      { sign: vi.fn() },
+      { offset: vi.fn() } as never,
+      { getOrThrow: vi.fn().mockReturnValue("https://example.test") } as never,
+    );
+
+    await client.publicGet(
+      "/api/v5/public/instruments",
+      { instType: "SWAP", instId: "OKB-USDT-SWAP" },
+      ExchangeEnvironment.DEMO,
+    );
+
+    expect(request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        init: { headers: { "x-simulated-trading": "1" } },
+      }),
+    );
+  });
+
   it("surfaces the specific OKX order rejection from envelope details", async () => {
     const client = new OkxFuturesClient(
       {
@@ -788,6 +831,169 @@ describe("exchange adapter normalization contract", () => {
     const fallbackBody = signedPost.mock.calls[2]?.[2] as Record<string, unknown>;
     expect(fallbackBody.ordType).toBe("market");
     expect(fallbackBody.px).toBeUndefined();
+  });
+
+  it("uses post-only for an OKX entry and falls back only after cancellation is confirmed", async () => {
+    let canceled = false;
+    const signedPost = vi.fn().mockImplementation(
+      (path: string, _credentials: unknown, body: Record<string, unknown>) => {
+        if (path === "/api/v5/account/set-leverage") return [{ lever: "3" }];
+        if (path === "/api/v5/trade/cancel-order") {
+          canceled = true;
+          return [{ ordId: "maker-1", clOrdId: "maker-entry", sCode: "0", sMsg: "" }];
+        }
+        if (body.ordType === "post_only") {
+          return [{ ordId: "maker-1", clOrdId: "maker-entry", sCode: "0", sMsg: "" }];
+        }
+        return [{ ordId: "market-2", clOrdId: body.clOrdId, sCode: "0", sMsg: "" }];
+      },
+    );
+    const signedGet = vi.fn().mockImplementation(() => [{
+      instId: "BTC-USDT-SWAP",
+      ordId: "maker-1",
+      clOrdId: "maker-entry",
+      side: "buy",
+      ordType: "post_only",
+      state: canceled ? "canceled" : "live",
+      px: "67233.1",
+      avgPx: "",
+      sz: "3",
+      accFillSz: "0",
+    }]);
+    const publicGet = vi
+      .fn()
+      .mockResolvedValueOnce([{
+        instId: "BTC-USDT-SWAP", instType: "SWAP", state: "live",
+        settleCcy: "USDT", ctVal: "0.01", tickSz: "0.1", lotSz: "1", minSz: "1",
+      }])
+      .mockResolvedValueOnce([{
+        instId: "BTC-USDT-SWAP", last: "67233.15", bidPx: "67233.1", askPx: "67233.2",
+        high24h: "68000", low24h: "65000", vol24h: "100", volCcy24h: "1000",
+        open24h: "67100", ts: "1700000000000",
+      }]);
+    const config = {
+      get: (key: string) => key === "OKX_MAKER_FIRST_ENABLED"
+        ? true
+        : key === "OKX_MAKER_FIRST_TIMEOUT_MS"
+          ? 5
+          : 1,
+    };
+    const adapter = new OkxFuturesAdapter(
+      { publicGet, signedGet, signedPost } as unknown as OkxFuturesClient,
+      config as never,
+    );
+
+    const order = await adapter.placeOrder(
+      {
+        apiKey: "demo-key", apiSecret: "demo-secret", passphrase: "demo-passphrase",
+        environment: ExchangeEnvironment.DEMO,
+      },
+      {
+        symbol: "BTC-USDT", side: "BUY", quantity: "0.03", leverage: 3,
+        clientOrderId: "maker-entry", stopLoss: "65000", takeProfit: "68000",
+      },
+    );
+
+    const orderBodies = signedPost.mock.calls
+      .filter(([path]) => path === "/api/v5/trade/order")
+      .map((call) => call[2] as Record<string, unknown>);
+    expect(orderBodies[0]).toMatchObject({ ordType: "post_only", px: "67233.1" });
+    expect(signedPost).toHaveBeenCalledWith(
+      "/api/v5/trade/cancel-order",
+      expect.anything(),
+      expect.objectContaining({ ordId: "maker-1" }),
+    );
+    expect(orderBodies[1]).toMatchObject({ ordType: "market", clOrdId: "makerentryfb" });
+    expect(orderBodies[1]?.px).toBeUndefined();
+    expect(order).toMatchObject({ exchangeOrderId: "market-2", type: "MARKET", status: "NEW" });
+  });
+
+  it("keeps a partially-filled maker entry without submitting excess market quantity", async () => {
+    let canceled = false;
+    const signedPost = vi.fn().mockImplementation(
+      (path: string, _credentials: unknown, body: Record<string, unknown>) => {
+        if (path === "/api/v5/account/set-leverage") return [{ lever: "3" }];
+        if (path === "/api/v5/trade/cancel-order") {
+          canceled = true;
+          return [{ ordId: "maker-1", clOrdId: "maker-entry", sCode: "0", sMsg: "" }];
+        }
+        return [{ ordId: "maker-1", clOrdId: body.clOrdId, sCode: "0", sMsg: "" }];
+      },
+    );
+    const signedGet = vi.fn().mockImplementation(() => [{
+      instId: "BTC-USDT-SWAP", ordId: "maker-1", clOrdId: "maker-entry",
+      side: "buy", ordType: "post_only", state: canceled ? "canceled" : "partially_filled",
+      px: "67233.1", avgPx: "67233.1", sz: "3", accFillSz: "1",
+    }]);
+    const publicGet = vi
+      .fn()
+      .mockResolvedValueOnce([{
+        instId: "BTC-USDT-SWAP", instType: "SWAP", state: "live",
+        settleCcy: "USDT", ctVal: "0.01", tickSz: "0.1", lotSz: "1", minSz: "1",
+      }])
+      .mockResolvedValueOnce([{
+        instId: "BTC-USDT-SWAP", last: "67233.15", bidPx: "67233.1", askPx: "67233.2",
+        high24h: "68000", low24h: "65000", vol24h: "100", volCcy24h: "1000",
+        open24h: "67100", ts: "1700000000000",
+      }]);
+    const adapter = new OkxFuturesAdapter(
+      { publicGet, signedGet, signedPost } as unknown as OkxFuturesClient,
+      { get: (key: string) => key === "OKX_MAKER_FIRST_ENABLED" ? true : key.includes("TIMEOUT") ? 5 : 1 } as never,
+    );
+
+    const order = await adapter.placeOrder(
+      {
+        apiKey: "demo-key", apiSecret: "demo-secret", passphrase: "demo-passphrase",
+        environment: ExchangeEnvironment.DEMO,
+      },
+      {
+        symbol: "BTC-USDT", side: "BUY", quantity: "0.03", leverage: 3,
+        clientOrderId: "maker-entry", stopLoss: "65000", takeProfit: "68000",
+      },
+    );
+
+    const placedOrders = signedPost.mock.calls.filter(([path]) => path === "/api/v5/trade/order");
+    expect(placedOrders).toHaveLength(1);
+    expect(order).toMatchObject({
+      exchangeOrderId: "maker-1", type: "LIMIT", timeInForce: "POST_ONLY",
+      status: "PARTIALLY_FILLED", executedQuantity: "0.01",
+    });
+  });
+
+  it("keeps OKX reduce-only exits as market orders when maker-first is enabled", async () => {
+    const signedPost = vi
+      .fn()
+      .mockResolvedValueOnce([{ lever: "3" }])
+      .mockResolvedValueOnce([
+        { ordId: "exit-1", clOrdId: "stop-exit", sCode: "0", sMsg: "" },
+      ]);
+    const publicGet = vi.fn().mockResolvedValueOnce([{
+      instId: "BTC-USDT-SWAP", instType: "SWAP", state: "live",
+      settleCcy: "USDT", ctVal: "0.01", tickSz: "0.1", lotSz: "1", minSz: "1",
+    }]);
+    const adapter = new OkxFuturesAdapter(
+      { publicGet, signedPost } as unknown as OkxFuturesClient,
+      { get: () => true } as never,
+    );
+
+    await adapter.placeOrder(
+      {
+        apiKey: "demo-key", apiSecret: "demo-secret", passphrase: "demo-passphrase",
+        environment: ExchangeEnvironment.DEMO,
+      },
+      {
+        symbol: "BTC-USDT", side: "SELL", quantity: "0.03", leverage: 3,
+        clientOrderId: "stop-exit", reduceOnly: true,
+      },
+    );
+
+    expect(signedPost).toHaveBeenNthCalledWith(
+      2,
+      "/api/v5/trade/order",
+      expect.anything(),
+      expect.objectContaining({ ordType: "market", reduceOnly: true }),
+    );
+    expect(publicGet).toHaveBeenCalledTimes(1);
   });
 
   it("retries an OKX order as a market order when the exchange envelope rejects the limit order", async () => {

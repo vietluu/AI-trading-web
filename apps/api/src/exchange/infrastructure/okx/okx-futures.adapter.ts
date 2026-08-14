@@ -1,4 +1,5 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { z } from "zod";
 
 import type { ExchangeAdapter } from "../../domain/exchange.adapter";
@@ -185,7 +186,10 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
   readonly provider = ExchangeProvider.OKX_FUTURES;
   private readonly logger = new Logger(OkxFuturesAdapter.name);
 
-  constructor(private readonly client: OkxFuturesClient) {}
+  constructor(
+    private readonly client: OkxFuturesClient,
+    @Optional() private readonly config?: ConfigService,
+  ) {}
 
   async testPublicConnection(): Promise<ExchangeConnectionTest> {
     const started = Date.now();
@@ -276,7 +280,13 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       params.instId = toOkxSymbol(query.symbol);
     }
     const values = z.array(instrumentSchema).parse(
-      await this.client.publicGet("/api/v5/public/instruments", params),
+      query?.environment
+        ? await this.client.publicGet(
+            "/api/v5/public/instruments",
+            params,
+            query.environment,
+          )
+        : await this.client.publicGet("/api/v5/public/instruments", params),
     );
     return values
       .map((item) => this.instrument(item))
@@ -483,7 +493,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       this.client.signedGet("/api/v5/account/positions", credentials, {
         instType: "SWAP",
       }),
-      this.getInstruments(),
+      this.getInstruments({ environment: credentials.environment }),
     ]);
     const values = z.array(positionSchema).parse(rawPositions);
     return values
@@ -598,7 +608,9 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         }),
       );
     }
-    const instruments = await this.getInstruments();
+    const instruments = await this.getInstruments({
+      environment: credentials.environment,
+    });
     const normalizedSymbols = symbols?.length ? new Set(symbols.map((symbol) => symbol.toUpperCase())) : null;
     return values.map((item) => {
       const symbol = fromOkxSymbol(item.instId);
@@ -671,7 +683,10 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     const normalizedSymbol = mapSymbol(command.symbol, this.provider);
     const instId = normalizedSymbol;
     const searchSymbol = command.symbol.toUpperCase().replace("/", "-");
-    const instruments = await this.getInstruments({ symbol: command.symbol });
+    const instruments = await this.getInstruments({
+      symbol: command.symbol,
+      environment: credentials.environment,
+    });
     const instrument = instruments.find(
       (candidate) =>
         candidate.symbol === searchSymbol ||
@@ -708,39 +723,51 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         error: error instanceof Error ? error.message : String(error),
       });
     }
-    const clOrdId = normalizeClientOrderId(command.clientOrderId) ?? "";
-    const protectiveClientOrderId = (command.stopLoss || command.takeProfit)
+    let clOrdId = normalizeClientOrderId(command.clientOrderId) ?? "";
+    let protectiveClientOrderId = (command.stopLoss || command.takeProfit)
       ? normalizeClientOrderId(`${clOrdId.slice(0, 28)}pm`)
       : undefined;
     let marketPrice: string | undefined = undefined;
-    let ordType: "limit" | "market" = "limit";
-    try {
-      const ticker = await this.getTicker(command.symbol);
-      const selectedPrice =
-        command.side.toUpperCase() === "BUY"
-          ? ticker.askPrice
-          : ticker.bidPrice;
-      const numericPrice = Number(selectedPrice);
-      if (Number.isFinite(numericPrice) && numericPrice > 0) {
-        marketPrice = selectedPrice;
-        ordType = "limit";
+    const makerFirst =
+      !command.reduceOnly &&
+      (this.config?.get<boolean>("OKX_MAKER_FIRST_ENABLED") ?? false);
+    let ordType: "limit" | "market" | "post_only" = command.reduceOnly
+      ? "market"
+      : "limit";
+    if (!command.reduceOnly) {
+      try {
+        const ticker = await this.bestBidAsk(command.symbol);
+        const selectedPrice = makerFirst
+          ? command.side.toUpperCase() === "BUY"
+            ? ticker.bidPrice
+            : ticker.askPrice
+          : command.side.toUpperCase() === "BUY"
+            ? ticker.askPrice
+            : ticker.bidPrice;
+        const numericPrice = Number(selectedPrice);
+        if (Number.isFinite(numericPrice) && numericPrice > 0) {
+          marketPrice = selectedPrice;
+          ordType = makerFirst ? "post_only" : "limit";
+        }
+      } catch (error) {
+        this.logger.warn({
+          event: "okx_order_price_lookup_failed",
+          exchange: this.provider,
+          symbol: command.symbol,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        if (makerFirst) ordType = "market";
       }
-    } catch (error) {
-      this.logger.warn({
-        event: "okx_order_price_lookup_failed",
-        exchange: this.provider,
-        symbol: command.symbol,
-        error: error instanceof Error ? error.message : String(error),
-      });
     }
     const body: Record<string, unknown> = {
       instId,
       tdMode: "cross",
       side: command.side.toLowerCase(),
       ordType,
-      ...(ordType === "limit" && marketPrice ? { px: marketPrice } : {}),
+      ...(ordType !== "market" && marketPrice ? { px: marketPrice } : {}),
       sz: contractQuantity,
       ...(clOrdId ? { clOrdId } : {}),
+      ...(command.reduceOnly ? { reduceOnly: true } : {}),
       ...(command.positionSide
         ? { posSide: command.positionSide.toLowerCase() }
         : {}),
@@ -816,6 +843,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       }
     };
 
+    let submittedOrderType = body.ordType as "limit" | "market" | "post_only";
     let ackPayload: unknown;
     try {
       ackPayload = await placeOrderAttempt(body);
@@ -842,6 +870,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
           fallbackBody,
         });
         ackPayload = await placeOrderAttempt(fallbackBody);
+        submittedOrderType = "market";
       } else {
         throw error;
       }
@@ -868,6 +897,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         });
         ackPayload = await placeOrderAttempt(fallbackBody);
         ack = z.array(orderAckSchema).min(1).parse(ackPayload)[0]!;
+        submittedOrderType = "market";
       }
       if (ack.sCode !== "0") {
         this.logger.warn({
@@ -889,13 +919,90 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         );
       }
     }
+
+    if (submittedOrderType === "post_only") {
+      const makerOrder = await this.awaitMakerFirstResult(
+        credentials,
+        command.symbol,
+        ack.ordId,
+      );
+      const executedContracts = Number(makerOrder.executedQuantity);
+      if (makerOrder.status === "FILLED" || executedContracts > 0) {
+        const executedQuantity = this.decimalString(
+          executedContracts * Number(instrument.contractSize),
+          12,
+        );
+        const status = makerOrder.status === "FILLED"
+          ? "FILLED"
+          : "PARTIALLY_FILLED";
+        this.logger.log({
+          event: status === "FILLED"
+            ? "okx_maker_entry_filled"
+            : "okx_maker_entry_partially_filled",
+          exchange: this.provider,
+          symbol: command.symbol,
+          exchangeOrderId: ack.ordId,
+          executedQuantity,
+        });
+        return {
+          ...makerOrder,
+          symbol: command.symbol,
+          clientOrderId: ack.clOrdId ?? command.clientOrderId,
+          type: "LIMIT",
+          timeInForce: "POST_ONLY",
+          status,
+          originalQuantity: command.quantity,
+          executedQuantity,
+          ...(protectiveClientOrderId ? { protectiveClientOrderId } : {}),
+        };
+      }
+
+      clOrdId = normalizeClientOrderId(`${clOrdId.slice(0, 28)}fb`) ?? clOrdId;
+      protectiveClientOrderId = (command.stopLoss || command.takeProfit)
+        ? normalizeClientOrderId(`${clOrdId.slice(0, 28)}pm`)
+        : undefined;
+      const fallbackBody = {
+        ...body,
+        ordType: "market",
+        ...(clOrdId ? { clOrdId } : {}),
+      } as Record<string, unknown>;
+      delete fallbackBody.px;
+      if (Array.isArray(fallbackBody.attachAlgoOrds)) {
+        fallbackBody.attachAlgoOrds = fallbackBody.attachAlgoOrds.map((algo) => ({
+          ...(algo as Record<string, unknown>),
+          ...(protectiveClientOrderId
+            ? { attachAlgoClOrdId: protectiveClientOrderId }
+            : {}),
+        }));
+      }
+      this.logger.warn({
+        event: "okx_maker_entry_fallback_to_market",
+        exchange: this.provider,
+        symbol: command.symbol,
+        makerOrderId: ack.ordId,
+        fallbackClientOrderId: clOrdId,
+      });
+      ackPayload = await placeOrderAttempt(fallbackBody);
+      ack = z.array(orderAckSchema).min(1).parse(ackPayload)[0]!;
+      if (ack.sCode !== "0") {
+        throw new ExchangeError(
+          ExchangeErrorCode.INVALID_REQUEST,
+          this.provider,
+          false,
+          400,
+          ack.sMsg || "OKX rejected the maker fallback order",
+          ack.sCode,
+        );
+      }
+      submittedOrderType = "market";
+    }
     return {
       provider: this.provider,
       symbol: command.symbol,
       exchangeOrderId: ack.ordId,
-      clientOrderId: ack.clOrdId ?? command.clientOrderId,
+      clientOrderId: ack.clOrdId ?? clOrdId ?? command.clientOrderId,
       side: command.side,
-      type: "MARKET",
+      type: submittedOrderType === "market" ? "MARKET" : "LIMIT",
       status: "NEW",
       originalQuantity: command.quantity,
       executedQuantity: "0",
@@ -1002,6 +1109,95 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       executedQuantity: "0",
       updatedAt: new Date(),
     };
+  }
+
+  private async awaitMakerFirstResult(
+    credentials: ExchangeCredentials,
+    symbol: string,
+    orderId: string,
+  ): Promise<ExchangeOrder> {
+    const timeoutMs =
+      this.config?.get<number>("OKX_MAKER_FIRST_TIMEOUT_MS") ?? 2_500;
+    const pollIntervalMs =
+      this.config?.get<number>("OKX_MAKER_FIRST_POLL_INTERVAL_MS") ?? 250;
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+      try {
+        const order = await this.getOrder(credentials, { symbol, orderId });
+        if (order.status === "FILLED" || order.status === "CANCELED") {
+          return order;
+        }
+      } catch (error) {
+        this.logger.warn({
+          event: "okx_maker_entry_status_check_failed",
+          exchange: this.provider,
+          symbol,
+          exchangeOrderId: orderId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      await this.delay(pollIntervalMs);
+    }
+
+    try {
+      await this.cancelOrder(credentials, { symbol, orderId });
+    } catch (error) {
+      // A fill can win the race with cancellation. The final GET below is the
+      // source of truth and prevents a second order from being submitted while
+      // the maker order may still be active.
+      this.logger.warn({
+        event: "okx_maker_entry_cancel_ack_failed",
+        exchange: this.provider,
+        symbol,
+        exchangeOrderId: orderId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    const confirmationDeadline = Date.now() + Math.max(1_000, pollIntervalMs * 4);
+    let lastOrder: ExchangeOrder | undefined;
+    while (Date.now() < confirmationDeadline) {
+      try {
+        lastOrder = await this.getOrder(credentials, { symbol, orderId });
+        if (lastOrder.status === "FILLED" || lastOrder.status === "CANCELED") {
+          return lastOrder;
+        }
+      } catch (error) {
+        this.logger.warn({
+          event: "okx_maker_entry_cancel_confirmation_failed",
+          exchange: this.provider,
+          symbol,
+          exchangeOrderId: orderId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      await this.delay(pollIntervalMs);
+    }
+
+    throw new ExchangeError(
+      ExchangeErrorCode.UNKNOWN,
+      this.provider,
+      true,
+      503,
+      `OKX maker order cancellation was not confirmed (last status: ${lastOrder?.status ?? "unavailable"})`,
+    );
+  }
+
+  private delay(milliseconds: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, milliseconds));
+  }
+
+  private async bestBidAsk(symbol: string): Promise<{
+    bidPrice: string;
+    askPrice: string;
+  }> {
+    const ticker = z.array(tickerSchema).min(1).parse(
+      await this.client.publicGet("/api/v5/market/ticker", {
+        instId: toOkxSymbol(symbol),
+      }),
+    )[0]!;
+    return { bidPrice: ticker.bidPx, askPrice: ticker.askPx };
   }
 
   private instrument(

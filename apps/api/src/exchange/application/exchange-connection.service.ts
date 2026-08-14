@@ -18,7 +18,7 @@ import { RecentAuthService } from "../../auth/recent-auth.service";
 import type { RequestMetadata } from "../../common/request-context";
 import { EncryptionService } from "../../credentials/encryption.service";
 import type { ExchangeAdapter } from "../domain/exchange.adapter";
-import { ExchangeError } from "../domain/exchange.error";
+import { ExchangeError, ExchangeErrorCode } from "../domain/exchange.error";
 import {
   ExchangeEnvironment,
   ExchangeProvider,
@@ -28,6 +28,7 @@ import {
   type ExchangeConnectionTest,
   type ExchangeCredentials,
   type ExchangeOrder,
+  type ExchangeInstrument,
   type ExchangePosition,
   type PlaceOrderCommand,
   type CancelOrderCommand,
@@ -496,6 +497,42 @@ export class ExchangeConnectionService {
       "CONFIGURATION",
       context,
       (adapter, credentials) => adapter.getAccountConfiguration(credentials),
+    );
+  }
+
+  instrument(
+    userId: string,
+    id: string,
+    symbol: string,
+    context: RequestMetadata,
+  ): Promise<ExchangeInstrument> {
+    const normalized = normalizeSymbol(symbol);
+    return this.privateCall(
+      userId,
+      id,
+      "INSTRUMENT_CHECK",
+      context,
+      async (adapter, credentials) => {
+        const instrument = (
+          await adapter.getInstruments({
+            symbol: normalized,
+            environment: credentials.environment,
+          })
+        ).find(
+          (candidate) =>
+            candidate.symbol === normalized && candidate.status === "TRADING",
+        );
+        if (!instrument) {
+          throw new ExchangeError(
+            ExchangeErrorCode.INVALID_SYMBOL,
+            adapter.provider,
+            false,
+            400,
+            `Exchange symbol ${normalized} is unavailable in ${credentials.environment}`,
+          );
+        }
+        return instrument;
+      },
     );
   }
 

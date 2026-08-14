@@ -10,6 +10,13 @@ describe('performance evaluation', () => {
     expect(evaluateDecision('WAIT', 100, 200)).toEqual({ outcome: 'NEUTRAL', returnPct: 0 });
   });
 
+  it('counts a gross price win as WRONG when exchange costs make net return negative', () => {
+    expect(evaluateDecision('LONG', 100, 100.05, 0.1)).toEqual({
+      outcome: 'WRONG',
+      returnPct: -0.05,
+    });
+  });
+
   it('calculates virtual performance, distribution and drawdown', () => {
     const base = { id: crypto.randomUUID(), runId: crypto.randomUUID(), symbol: 'BTC-USDT', horizon: 'SHORT' as const, confidence: 70, priceAtDecision: 100, priceAfter: 110, leverage: 1, netRoePct: 10, leverageSource: 'UNLEVERAGED' as const, evaluatedAt: new Date().toISOString() };
     const records: PerformanceRecord[] = [

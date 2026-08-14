@@ -92,9 +92,9 @@ export class DecisionJudgeService {
     if (decision.decision !== 'WAIT' && decision.profitFactorEstimate < policy.minProfitFactor) reasons.push('PROFIT_FACTOR_TOO_LOW');
     if (decision.riskScore >= policy.maxRiskScore) reasons.push('DECISION_RISK_TOO_HIGH');
     if (spreadBps !== undefined && spreadBps > policy.maxSpreadBps) reasons.push('SPREAD_TOO_WIDE');
-    // A fallback calibration is portfolio-level evidence, not proof that this
-    // exact symbol/strategy/context is unreliable. Keep it as telemetry and
-    // only grant calibration veto power to a sufficiently sampled EXACT scope.
+    // Automatic exchange execution must respect reliable negative evidence
+    // even when the calibration falls back to the user's global history. Exact
+    // calibration remains the only hard gate for non-execution callers.
     const calibration = decision.confidenceCalibration;
     const exactCalibration =
       calibration?.status === 'CALIBRATED' &&
@@ -102,14 +102,24 @@ export class DecisionJudgeService {
       calibration.fallbackUsed !== true
         ? calibration
         : undefined;
+    const executionCalibration =
+      context?.requireCalibratedConfidence && calibration?.status === 'CALIBRATED'
+        ? calibration
+        : exactCalibration;
+    if (
+      context?.requireCalibratedConfidence &&
+      decision.decision !== 'WAIT' &&
+      calibration?.status !== 'CALIBRATED' &&
+      decision.confidence < 75
+    ) reasons.push('UNCALIBRATED_CONFIDENCE_TOO_LOW');
     if (
       decision.decision !== 'WAIT' &&
-      exactCalibration &&
-      (exactCalibration.empiricalProbability ?? 0) < policy.minCalibratedProbability
+      executionCalibration &&
+      (executionCalibration.empiricalProbability ?? 0) < policy.minCalibratedProbability
     ) reasons.push('CALIBRATED_PROBABILITY_TOO_LOW');
     if (
-      exactCalibration &&
-      (exactCalibration.brierScore ?? 0) > 0.3
+      executionCalibration &&
+      (executionCalibration.brierScore ?? 0) > 0.3
     ) reasons.push('CALIBRATION_UNRELIABLE');
 
     if (reasons.some((reason) => reason.includes('DATA') || reason.includes('STALE') || reason.includes('USABLE') || reason.includes('CALIBRAT'))) {

@@ -13,6 +13,7 @@ const plan: TradePlan = {
   trailingAtrMultiple: 2,
   atr: 1,
   timeframeMs: 15 * 60_000,
+  estimatedRoundTripCostPct: 0.001,
 };
 
 describe("position manager", () => {
@@ -28,7 +29,7 @@ describe("position manager", () => {
       partialTaken: false,
       plan,
     });
-    expect(action.tightenedStopLoss).toBe(100.08);
+    expect(action.tightenedStopLoss).toBe(100.125);
     expect(action.takePartial).toBe(true);
 
     const ratcheted = evaluatePositionManagement({
@@ -72,7 +73,7 @@ describe("position manager", () => {
       partialTaken: false,
       plan: { ...plan, regime: "TREND_DOWN" },
     });
-    expect(action.tightenedStopLoss).toBe(99.92);
+    expect(action.tightenedStopLoss).toBe(99.875);
     expect(action.takePartial).toBe(true);
   });
 });

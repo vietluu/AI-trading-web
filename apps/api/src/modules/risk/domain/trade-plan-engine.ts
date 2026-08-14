@@ -44,6 +44,12 @@ export interface TradePlan {
   entryLocation?: number;
   boundaryThreshold?: number;
   structuralRiskAtr?: number;
+  /** Conservative entry + exit fees/slippage used by execution risk. */
+  estimatedRoundTripCostPct?: number;
+  grossRewardPct?: number;
+  expectedNetRewardPct?: number;
+  netRewardToRisk?: number;
+  lossStreakSizeFactor?: number;
 }
 
 const finitePositive = (value: number | undefined): value is number =>
@@ -113,17 +119,23 @@ export function buildAdaptiveTradePlan(input: {
   // market snapshot yet. Automated pipeline calls supply ATR and range levels.
   if (!finitePositive(atr)) {
     const risk = entryPrice * input.configuredStopLossPct;
+    const cost = entryPrice * costPct;
     const stopLoss = side === "LONG" ? entryPrice - risk : entryPrice + risk;
+    const targetDistance =
+      risk * input.configuredRiskRewardRatio +
+      cost * (1 + input.configuredRiskRewardRatio);
     const takeProfit = side === "LONG"
-      ? entryPrice + risk * input.configuredRiskRewardRatio
-      : entryPrice - risk * input.configuredRiskRewardRatio;
+      ? entryPrice + targetDistance
+      : entryPrice - targetDistance;
     return {
       approved: true,
       regime,
       strategy: "LEGACY_FALLBACK",
       stopLoss: rounded(stopLoss),
       takeProfit: rounded(takeProfit),
-      rewardToRisk: input.configuredRiskRewardRatio,
+      rewardToRisk: rounded(
+        rewardToRisk(side, entryPrice, stopLoss, takeProfit, costPct),
+      ),
       maxHoldingCandles: 16,
       breakEvenAtR: 1,
     };

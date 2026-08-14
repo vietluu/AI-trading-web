@@ -273,6 +273,7 @@ export interface ExchangeAccountConfiguration {
 export interface InstrumentQuery {
   status?: ExchangeInstrumentStatus;
   symbol?: string;
+  environment?: ExchangeEnvironment;
 }
 export interface KlineQuery {
   symbol: string;
