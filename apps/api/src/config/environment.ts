@@ -106,6 +106,12 @@ const environmentSchema = z
       .min(1)
       .max(10_000)
       .default(1200),
+    EXCHANGE_PUBLIC_MIN_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(5_000)
+      .default(100),
     EXCHANGE_INSTRUMENT_CACHE_TTL_SECONDS: z.coerce
       .number()
       .int()

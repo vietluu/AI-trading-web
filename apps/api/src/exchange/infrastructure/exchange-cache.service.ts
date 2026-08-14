@@ -8,6 +8,7 @@ import type { ExchangeProvider } from "../domain/exchange.types";
 export class ExchangeCacheService {
   readonly instrumentTtl: number;
   readonly tickerTtl: number;
+  private readonly inFlight = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly redis: RedisService,
@@ -26,9 +27,25 @@ export class ExchangeCacheService {
   ): Promise<T> {
     const cached = await this.redis.get(key);
     if (cached) return JSON.parse(cached) as T;
-    const value = await loader();
-    await this.redis.setWithTtl(key, JSON.stringify(value), ttlSeconds);
-    return value;
+
+    const pending = this.inFlight.get(key);
+    if (pending) return pending as Promise<T>;
+
+    const loadPromise = (async () => {
+      // Recheck after joining the local single-flight boundary. Another API
+      // request may have populated Redis while the first lookup was running.
+      const refreshed = await this.redis.get(key);
+      if (refreshed) return JSON.parse(refreshed) as T;
+      const value = await loader();
+      await this.redis.setWithTtl(key, JSON.stringify(value), ttlSeconds);
+      return value;
+    })();
+    this.inFlight.set(key, loadPromise);
+    try {
+      return await loadPromise;
+    } finally {
+      if (this.inFlight.get(key) === loadPromise) this.inFlight.delete(key);
+    }
   }
 
   instrumentsKey(provider: ExchangeProvider): string {

@@ -56,7 +56,10 @@ export class AIOrchestratorService {
     GEMINI: "gemini-3.1-flash-lite",
     OLLAMA: "llama3",
   };
-  private readonly inMemoryModelCooldowns = new Map<string, number>();
+  private readonly inMemoryModelCooldowns = new Map<
+    string,
+    { until: number; status: number }
+  >();
 
   constructor(
     private readonly configService: AIConfigService,
@@ -155,15 +158,19 @@ export class AIOrchestratorService {
     const executionPromise = (async (): Promise<AIResponseDto> => {
       for (const candidate of candidates) {
         const { provider: pType, model } = candidate;
-        const cooldownSeconds = await this.getModelCooldownSeconds(pType, model);
-        if (cooldownSeconds > 0) {
+        const cooldown = await this.getModelCooldown(pType, model);
+        if (cooldown.seconds > 0) {
+          const isQuotaCooldown = cooldown.status === 429;
+          const cooldownCode = isQuotaCooldown
+            ? 'AI_PROVIDER_COOLDOWN'
+            : 'AI_PROVIDER_UNAVAILABLE_COOLDOWN';
           const cooldownErr = Object.assign(
-            new Error(`${pType}/${model} quota cooldown is active (${cooldownSeconds}s remaining)`),
-            { status: 429, providerRequestSent: false, code: 'AI_PROVIDER_COOLDOWN' },
+            new Error(`${pType}/${model} ${isQuotaCooldown ? 'quota' : 'availability'} cooldown is active (${cooldown.seconds}s remaining)`),
+            { status: cooldown.status, providerRequestSent: false, code: cooldownCode },
           );
           lastError = cooldownErr;
-          attemptedCandidates.push({ provider: pType, model, outcome: "skipped", reason: `${cooldownSeconds}s remaining`, status: 429, code: 'AI_PROVIDER_COOLDOWN' });
-          this.logger.warn(`AI fallback skipped ${pType}/${model} because it is still in quota cooldown (${cooldownSeconds}s remaining).`);
+          attemptedCandidates.push({ provider: pType, model, outcome: "skipped", reason: `${cooldown.seconds}s remaining`, status: cooldown.status, code: cooldownCode });
+          this.logger.warn(`AI fallback skipped ${pType}/${model} because its ${isQuotaCooldown ? 'quota' : 'availability'} cooldown is active (${cooldown.seconds}s remaining).`);
           continue;
         }
         try {
@@ -189,12 +196,13 @@ export class AIOrchestratorService {
           const code = errorRecord?.code as string | undefined;
           attemptedCandidates.push({ provider: pType, model, outcome: "tried", status, code, reason: lastError.message });
 
-          if (status === 429) {
+          if (status === 429 || (status != null && status >= 500)) {
             const retryAfterMs = errorRecord?.retryAfterMs as number | undefined;
             await this.openModelCooldown(
               pType,
               model,
               retryAfterMs,
+              status,
             );
           }
 
@@ -253,6 +261,20 @@ export class AIOrchestratorService {
           );
           Object.assign(quotaErr, { status: 429, code: 'ALL_MODELS_QUOTA_EXCEEDED', providerRequestSent: false });
           throw quotaErr;
+        }
+        const unavailableCandidates = attemptedCandidates.filter(
+          (candidate) => (candidate.status != null && candidate.status >= 500) || candidate.code === 'AI_PROVIDER_UNAVAILABLE_COOLDOWN',
+        );
+        if (unavailableCandidates.length > 0) {
+          const unavailableErr = new Error(
+            `AI Request failed: all candidate models are temporarily unavailable`,
+          );
+          Object.assign(unavailableErr, {
+            status: 503,
+            code: 'ALL_MODELS_UNAVAILABLE',
+            providerRequestSent: false,
+          });
+          throw unavailableErr;
         }
         throw new Error(`AI Request failed: ${lastError?.message || "All providers unavailable"}`);
       }
@@ -466,25 +488,37 @@ export class AIOrchestratorService {
     return `ai:model:${provider}:${model}:quota-cooldown`;
   }
 
-  private async getModelCooldownSeconds(provider: AIProviderType, model: string): Promise<number> {
+  private async getModelCooldown(
+    provider: AIProviderType,
+    model: string,
+  ): Promise<{ seconds: number; status: number }> {
     const key = `${provider}:${model}`;
-    const memUntil = this.inMemoryModelCooldowns.get(key);
-    if (memUntil && memUntil > Date.now()) {
-      return Math.max(1, Math.ceil((memUntil - Date.now()) / 1_000));
+    const memory = this.inMemoryModelCooldowns.get(key);
+    if (memory && memory.until > Date.now()) {
+      return {
+        seconds: Math.max(1, Math.ceil((memory.until - Date.now()) / 1_000)),
+        status: memory.status,
+      };
     }
-    if (memUntil && memUntil <= Date.now()) {
+    if (memory && memory.until <= Date.now()) {
       this.inMemoryModelCooldowns.delete(key);
     }
-    if (!this.redisService) return 0;
+    if (!this.redisService) return { seconds: 0, status: 0 };
     try {
       const raw = await this.redisService.get(this.modelCooldownKey(provider, model));
-      if (!raw) return 0;
-      const until = Number(raw);
+      if (!raw) return { seconds: 0, status: 0 };
+      const parsed = raw.startsWith('{')
+        ? JSON.parse(raw) as { until?: number; status?: number }
+        : { until: Number(raw), status: 429 };
+      const until = Number(parsed.until);
       return Number.isFinite(until) && until > Date.now()
-        ? Math.max(1, Math.ceil((until - Date.now()) / 1_000))
-        : 0;
+        ? {
+            seconds: Math.max(1, Math.ceil((until - Date.now()) / 1_000)),
+            status: parsed.status === 503 ? 503 : 429,
+          }
+        : { seconds: 0, status: 0 };
     } catch {
-      return 0;
+      return { seconds: 0, status: 0 };
     }
   }
 
@@ -492,25 +526,28 @@ export class AIOrchestratorService {
     provider: AIProviderType,
     model: string,
     retryAfterMs?: number,
+    status = 429,
   ): Promise<void> {
     // Default cooldown is 5 minutes (300s) for rate limit recovery,
     // allowing automatic resumption on subsequent scheduler cycles.
-    const cooldownMs = retryAfterMs && retryAfterMs > 0 ? retryAfterMs : 300_000;
+    const cooldownMs = retryAfterMs && retryAfterMs > 0
+      ? retryAfterMs
+      : status === 429 ? 300_000 : 30_000;
     const resetAt = Date.now() + cooldownMs;
     const key = `${provider}:${model}`;
-    this.inMemoryModelCooldowns.set(key, resetAt);
+    this.inMemoryModelCooldowns.set(key, { until: resetAt, status });
 
     if (!this.redisService) return;
     const ttlSeconds = Math.max(60, Math.ceil(cooldownMs / 1_000));
     try {
       await this.redisService.setWithTtl(
         this.modelCooldownKey(provider, model),
-        String(resetAt),
+        JSON.stringify({ until: resetAt, status }),
         ttlSeconds,
       );
     } catch (error) {
       this.logger.warn(
-        `Unable to open ${provider}/${model} quota cooldown: ${error instanceof Error ? error.message : String(error)}`,
+        `Unable to open ${provider}/${model} cooldown: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }

@@ -130,6 +130,20 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Reserves the next globally spaced execution slot for a key. Redis TIME and
+   * the Lua script keep the schedule consistent across API replicas.
+   */
+  async reserveInterval(key: string, intervalMs: number): Promise<number> {
+    const result = await this.client.eval(
+      "local t = redis.call('time'); local now = (tonumber(t[1]) * 1000) + math.floor(tonumber(t[2]) / 1000); local nextAt = tonumber(redis.call('get', KEYS[1])) or now; local slot = math.max(now, nextAt); local following = slot + tonumber(ARGV[1]); local ttl = math.max((following - now) + tonumber(ARGV[1]), 1000); redis.call('set', KEYS[1], following, 'PX', ttl); return slot - now",
+      1,
+      key,
+      intervalMs,
+    );
+    return Math.max(0, Number(result));
+  }
+
+  /**
    * Atomically decrements a counter. If the resulting value is <= 0 the key
    * is deleted so it does not stay at a negative value after a crash.
    */

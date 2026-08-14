@@ -181,6 +181,52 @@ describe("exchange infrastructure", () => {
     );
   });
 
+  it("coalesces concurrent cache misses into one upstream request", async () => {
+    const redisValues = new Map<string, string>();
+    const redis = {
+      get: vi.fn((key: string) => Promise.resolve(redisValues.get(key) ?? null)),
+      setWithTtl: vi.fn((key: string, value: string) => {
+        redisValues.set(key, value);
+        return Promise.resolve();
+      }),
+    } as unknown as RedisService;
+    const cache = new ExchangeCacheService(redis, new ConfigService({}));
+    const loader = vi.fn().mockResolvedValue({ price: "100" });
+
+    const [first, second, third] = await Promise.all([
+      cache.remember("ticker:BTC", 3, loader),
+      cache.remember("ticker:BTC", 3, loader),
+      cache.remember("ticker:BTC", 3, loader),
+    ]);
+
+    expect(first).toEqual({ price: "100" });
+    expect(second).toEqual(first);
+    expect(third).toEqual(first);
+    expect(loader).toHaveBeenCalledTimes(1);
+  });
+
+  it("spaces public exchange requests instead of bursting", async () => {
+    const reserveInterval = vi.fn().mockResolvedValue(0);
+    const redis = {
+      incrementWithTtl: vi.fn().mockResolvedValue(1),
+      reserveInterval,
+    } as unknown as RedisService;
+    const limiter = new ExchangeRateLimitService(
+      redis,
+      new ConfigService({ EXCHANGE_PUBLIC_MIN_INTERVAL_MS: 125 }),
+    );
+
+    await limiter.public(
+      ExchangeProvider.OKX_FUTURES,
+      ExchangeEnvironment.PRODUCTION,
+    );
+
+    expect(reserveInterval).toHaveBeenCalledWith(
+      "exchange:pace:public:OKX_FUTURES:PRODUCTION",
+      125,
+    );
+  });
+
   it("scopes private rate-limit keys by user and connection", () => {
     const redis = { incrementWithTtl: vi.fn() } as unknown as RedisService;
     const limiter = new ExchangeRateLimitService(redis, new ConfigService({}));
