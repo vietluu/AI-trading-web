@@ -586,8 +586,12 @@ model PipelineRun {
 }
 
 enum EvaluationHorizon {
+  M15
+  M30
   SHORT
   MID
+  H2
+  H4
   LONG
 }
 
@@ -621,6 +625,7 @@ model PerformanceRecord {
   userId          String             @db.Uuid
   runId           String             @db.Uuid
   symbol          String
+  strategyKey     String?
   horizon         EvaluationHorizon
   decision        String
   confidence      Float
@@ -628,6 +633,9 @@ model PerformanceRecord {
   priceAfter      Decimal            @db.Decimal(24, 8)
   outcome         PerformanceOutcome
   returnPct       Float
+  leverage        Int                @default(1)
+  netRoePct       Float              @default(0)
+  leverageSource  String             @default("UNLEVERAGED")
   highVolatility  Boolean            @default(false)
   marketRegime    String?
   majorNews       Boolean            @default(false)

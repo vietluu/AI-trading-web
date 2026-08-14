@@ -49,8 +49,12 @@ export function calculatePerformanceMetrics(records: PerformanceRecord[]): Perfo
       WAIT: records.filter((r) => r.decision === 'WAIT').length,
     },
     horizonDistribution: {
+      M15: records.filter((r) => r.horizon === 'M15').length,
+      M30: records.filter((r) => r.horizon === 'M30').length,
       SHORT: records.filter((r) => r.horizon === 'SHORT').length,
       MID: records.filter((r) => r.horizon === 'MID').length,
+      H2: records.filter((r) => r.horizon === 'H2').length,
+      H4: records.filter((r) => r.horizon === 'H4').length,
       LONG: records.filter((r) => r.horizon === 'LONG').length,
     },
   };

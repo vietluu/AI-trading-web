@@ -158,6 +158,7 @@ export interface PerformanceRecord {
   id: string;
   runId: string;
   symbol: string;
+  strategyKey?: string;
   horizon: string;
   decision: string;
   confidence: number;
@@ -165,6 +166,9 @@ export interface PerformanceRecord {
   priceAfter: number;
   outcome: string;
   returnPct: number;
+  leverage: number;
+  netRoePct: number;
+  leverageSource: "RISK_ASSESSMENT" | "SHADOW_CONFIG" | "UNLEVERAGED";
   evaluatedAt: string;
 }
 

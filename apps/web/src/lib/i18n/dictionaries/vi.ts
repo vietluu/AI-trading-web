@@ -419,6 +419,8 @@ export const vi: Dictionary = {
     prices: 'Giá',
     outcome: 'Kết quả',
     virtualReturn: 'Lợi nhuận ảo',
+    leverage: 'Đòn bẩy',
+    netRoe: 'ROE ròng',
     evaluated: 'Đã đánh giá',
     noCompletedEvaluations: 'Chưa có đánh giá horizon hoàn tất nào.',
     reflectionTitle: 'Phản chiếu',

@@ -37,7 +37,7 @@ export function maxStopLossRoeForStrategy(
     : timeframeMs !== undefined && timeframeMs >= 3_600_000
       ? 0.75
       : 1;
-  const rangeFactor = strategy === "RANGE_REVERSAL"
+  const rangeFactor = strategy === "RANGE_REVERSAL" || strategy === "MOMENTUM_SCALP"
     ? timeframeMs !== undefined && timeframeMs > 15 * 60_000
       ? 1
       : timeframeMs !== undefined && timeframeMs > 5 * 60_000
@@ -224,6 +224,8 @@ export function evaluateRisk(
   const rewardToRisk = Math.abs(takeProfit - marketData.price) / Math.abs(marketData.price - stopLoss);
   const requiredRiskReward = plan.strategy === "RANGE_REVERSAL"
     ? Math.min(limits.riskRewardRatio, 1.25)
+    : plan.strategy === "MOMENTUM_SCALP"
+      ? Math.min(limits.riskRewardRatio, 1.25)
     : plan.strategy === "BREAKOUT_RETEST"
       ? 1.5
       : limits.riskRewardRatio;

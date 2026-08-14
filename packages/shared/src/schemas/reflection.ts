@@ -1,12 +1,13 @@
 import { z } from 'zod';
 
-export const EvaluationHorizonSchema = z.enum(['SHORT', 'MID', 'LONG']);
+export const EvaluationHorizonSchema = z.enum(['M15', 'M30', 'SHORT', 'MID', 'H2', 'H4', 'LONG']);
 export const PerformanceOutcomeSchema = z.enum(['CORRECT', 'WRONG', 'NEUTRAL']);
 
 export const PerformanceRecordSchema = z.object({
   id: z.string().uuid(),
   runId: z.string().uuid(),
   symbol: z.string(),
+  strategyKey: z.string().optional(),
   horizon: EvaluationHorizonSchema,
   decision: z.enum(['LONG', 'SHORT', 'WAIT']),
   confidence: z.number().min(0).max(100),
@@ -14,6 +15,9 @@ export const PerformanceRecordSchema = z.object({
   priceAfter: z.number().positive(),
   outcome: PerformanceOutcomeSchema,
   returnPct: z.number(),
+  leverage: z.number().int().min(1),
+  netRoePct: z.number(),
+  leverageSource: z.enum(['RISK_ASSESSMENT', 'SHADOW_CONFIG', 'UNLEVERAGED']),
   evaluatedAt: z.string().datetime(),
 });
 export type PerformanceRecord = z.infer<typeof PerformanceRecordSchema>;
@@ -74,5 +78,5 @@ export interface PerformanceMetrics {
   maxDrawdown: number;
   confidenceAccuracyCorrelation: number | null;
   decisionDistribution: { LONG: number; SHORT: number; WAIT: number };
-  horizonDistribution: { SHORT: number; MID: number; LONG: number };
+  horizonDistribution: { M15: number; M30: number; SHORT: number; MID: number; H2: number; H4: number; LONG: number };
 }

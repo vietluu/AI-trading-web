@@ -5,9 +5,20 @@ export const STRATEGY_KEYS = [
   "trend",
   "mean-reversion",
   "breakout",
+  "momentum-scalp",
   "news",
 ] as const;
 export type StrategyKey = (typeof STRATEGY_KEYS)[number];
+
+export interface StrategyMarketSnapshot {
+  timeframe?: string;
+  priceChangePercent?: number;
+  volumeChangePercent?: number;
+  adx?: number;
+  efficiencyRatio?: number;
+  ema20?: number;
+  ema50?: number;
+}
 
 /** Portfolio routing parameters must not leak into strict analyst input schemas. */
 export function analysisParams(
@@ -42,10 +53,11 @@ export function selectStrategyDecision(
   requestedKeys: readonly string[],
   base: DecisionOutput,
   analyses: FusionInput,
+  market?: StrategyMarketSnapshot,
 ): StrategySelection {
   const keys = normalizeStrategyKeys(requestedKeys);
   const candidates = keys.map((strategyKey) => {
-    const decision = decisionForStrategy(strategyKey, base, analyses);
+    const decision = decisionForStrategy(strategyKey, base, analyses, market);
     return {
       strategyKey,
       decision,
@@ -92,9 +104,9 @@ function compareCandidates(
 
 function strategyCandidateScore(key: StrategyKey, decision: DecisionOutput): number {
   const affinity: Record<DecisionOutput["regime"]["type"], Partial<Record<StrategyKey, number>>> = {
-    TRENDING: { "ai-core": 4, trend: 18, breakout: 12, "mean-reversion": -20 },
-    RANGING: { "ai-core": 0, trend: -18, breakout: -14, "mean-reversion": 22 },
-    HIGH_VOLATILITY: { "ai-core": 0, trend: 2, breakout: 12, news: 8, "mean-reversion": -12 },
+    TRENDING: { "ai-core": 4, trend: 18, breakout: 12, "momentum-scalp": 16, "mean-reversion": -20 },
+    RANGING: { "ai-core": 0, trend: -18, breakout: -14, "momentum-scalp": -8, "mean-reversion": 22 },
+    HIGH_VOLATILITY: { "ai-core": 0, trend: 2, breakout: 12, "momentum-scalp": 8, news: 8, "mean-reversion": -12 },
   };
   const boundedEv = Math.max(-1, Math.min(1, decision.expectedValue));
   return Number((
@@ -110,6 +122,7 @@ export function decisionForStrategy(
   key: string,
   base: DecisionOutput,
   analyses: FusionInput,
+  market?: StrategyMarketSnapshot,
 ): DecisionOutput {
   if (key === "ai-core") return base;
   let decision: DecisionOutput["decision"] = "WAIT";
@@ -159,6 +172,40 @@ export function decisionForStrategy(
       explanation =
         "Confirmed structure breakout aligns with the technical trend.";
     }
+  } else if (key === "momentum-scalp") {
+    const timeframeMinutes = parseTimeframeMinutes(market?.timeframe);
+    const priceChange = market?.priceChangePercent;
+    const volumeChange = market?.volumeChangePercent;
+    const direction = Number.isFinite(priceChange) && (priceChange ?? 0) !== 0
+      ? (priceChange ?? 0) > 0 ? "LONG" : "SHORT"
+      : undefined;
+    const trendDirection = analyses.technical.trend.direction;
+    const macdDirection = analyses.technical.momentum.macd?.trend;
+    const emaAligned = direction === "LONG"
+      ? Number.isFinite(market?.ema20) && Number.isFinite(market?.ema50) && market!.ema20! >= market!.ema50!
+      : direction === "SHORT"
+        ? Number.isFinite(market?.ema20) && Number.isFinite(market?.ema50) && market!.ema20! <= market!.ema50!
+        : false;
+    const trendAligned = direction === "LONG"
+      ? trendDirection === "UP" || macdDirection === "BULLISH" || emaAligned
+      : direction === "SHORT"
+        ? trendDirection === "DOWN" || macdDirection === "BEARISH" || emaAligned
+        : false;
+    const impulse = Math.abs(priceChange ?? 0);
+    const liquidImpulse = Number.isFinite(volumeChange) && (volumeChange ?? 0) >= 0.35;
+    const efficientMove = (market?.adx ?? 0) >= 18 || (market?.efficiencyRatio ?? 0) >= 0.25;
+    if (
+      timeframeMinutes <= 15 &&
+      direction &&
+      impulse >= 0.15 && impulse <= 2.5 &&
+      liquidImpulse && efficientMove && trendAligned
+    ) {
+      decision = direction;
+      confidence = 66 + Math.min(8, Math.floor(impulse * 4)) +
+        ((market?.adx ?? 0) >= 22 ? 3 : 0) +
+        ((market?.efficiencyRatio ?? 0) >= 0.3 ? 3 : 0);
+      explanation = `Short-horizon ${impulse.toFixed(2)}% price impulse with ${Number(volumeChange).toFixed(2)}% volume expansion and directional confirmation activated momentum scalp.`;
+    }
   } else if (key === "news") {
     const impact = analyses.news.impact;
     if (impact.level !== "LOW" && impact.direction !== "NEUTRAL") {
@@ -183,9 +230,15 @@ export function decisionForStrategy(
   }
   const adaptiveThreshold = key === "mean-reversion"
     ? Math.min(base.adaptiveThreshold, 62)
-    : base.adaptiveThreshold;
+    : key === "momentum-scalp"
+      ? Math.min(base.adaptiveThreshold, 65)
+      : base.adaptiveThreshold;
   const strategyEconomics = decision !== "WAIT"
-    ? strategyAdjustedEconomics(base, confidence, key === "mean-reversion" ? 68 : undefined)
+    ? strategyAdjustedEconomics(
+        base,
+        confidence,
+        key === "mean-reversion" ? 68 : key === "momentum-scalp" ? 70 : undefined,
+      )
     : {};
   return {
     ...base,
@@ -199,6 +252,13 @@ export function decisionForStrategy(
     reasoning: `[${key}] ${explanation} ${base.reasoning}`,
     overrides: [...base.overrides, `Applied ${key} strategy policy.`],
   };
+}
+
+function parseTimeframeMinutes(timeframe?: string): number {
+  const match = /^(\d+)([mhd])$/i.exec(timeframe ?? "");
+  if (!match) return Number.POSITIVE_INFINITY;
+  const value = Number(match[1]);
+  return value * (match[2]!.toLowerCase() === "d" ? 1440 : match[2]!.toLowerCase() === "h" ? 60 : 1);
 }
 
 function strategyAdjustedEconomics(

@@ -89,6 +89,36 @@ describe("independent strategy decisions", () => {
     );
   });
 
+  it("activates momentum scalp only for a liquid confirmed short-horizon impulse", () => {
+    const result = decisionForStrategy("momentum-scalp", base, analyses, {
+      timeframe: "5m",
+      priceChangePercent: 0.45,
+      volumeChangePercent: 1.2,
+      adx: 24,
+      efficiencyRatio: 0.36,
+      ema20: 101,
+      ema50: 100,
+    });
+    expect(result).toMatchObject({
+      decision: "LONG",
+      adaptiveThreshold: 60,
+      opportunityScore: 70,
+    });
+    expect(result.reasoning).toContain("[momentum-scalp]");
+  });
+
+  it("does not chase an overextended momentum move", () => {
+    expect(decisionForStrategy("momentum-scalp", base, analyses, {
+      timeframe: "5m",
+      priceChangePercent: 3.2,
+      volumeChangePercent: 5,
+      adx: 35,
+      efficiencyRatio: 0.6,
+      ema20: 101,
+      ema50: 100,
+    }).decision).toBe("WAIT");
+  });
+
   it("uses a bounded range threshold for an active mean-reversion setup", () => {
     const strictRangeBase = {
       ...base,

@@ -11,7 +11,7 @@ describe('performance evaluation', () => {
   });
 
   it('calculates virtual performance, distribution and drawdown', () => {
-    const base = { id: crypto.randomUUID(), runId: crypto.randomUUID(), symbol: 'BTC-USDT', horizon: 'SHORT' as const, confidence: 70, priceAtDecision: 100, priceAfter: 110, evaluatedAt: new Date().toISOString() };
+    const base = { id: crypto.randomUUID(), runId: crypto.randomUUID(), symbol: 'BTC-USDT', horizon: 'SHORT' as const, confidence: 70, priceAtDecision: 100, priceAfter: 110, leverage: 1, netRoePct: 10, leverageSource: 'UNLEVERAGED' as const, evaluatedAt: new Date().toISOString() };
     const records: PerformanceRecord[] = [
       { ...base, decision: 'LONG', outcome: 'CORRECT', returnPct: 10 },
       { ...base, id: crypto.randomUUID(), runId: crypto.randomUUID(), decision: 'LONG', outcome: 'WRONG', returnPct: -15, confidence: 50 },

@@ -20,8 +20,11 @@ describe('pipeline evaluation and reflection flow', () => {
     } as unknown as ReflectionRepository;
     const config = { get: <T>(_key: string, fallback: T) => fallback } as ConfigService;
     const result = await new PerformanceService(repository, config).evaluateDue();
-    expect(result.evaluated).toBe(3);
-    expect(createRecord).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'CORRECT', returnPct: 9.9, highVolatility: true }));
+    expect(result.evaluated).toBe(7);
+    expect(createRecord).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: 'CORRECT', returnPct: 9.9, leverage: 1, netRoePct: 9.9,
+      leverageSource: 'UNLEVERAGED', highVolatility: true,
+    }));
   });
 
   it('evaluates a blocked directional candidate in shadow instead of learning WAIT', async () => {
@@ -47,7 +50,8 @@ describe('pipeline evaluation and reflection flow', () => {
     await new PerformanceService(repository, config).evaluateDue();
 
     expect(createRecord).toHaveBeenCalledWith(expect.objectContaining({
-      decision: 'SHORT', confidence: 75, outcome: 'CORRECT',
+      decision: 'SHORT', confidence: 75, strategyKey: 'ai-core', outcome: 'CORRECT', leverage: 5,
+      netRoePct: 49.5, leverageSource: 'SHADOW_CONFIG',
     }));
   });
 

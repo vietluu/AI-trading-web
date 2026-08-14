@@ -1,4 +1,5 @@
 import { Injectable, Optional } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import type { DecisionOutput } from "@platform/shared";
 import { PrismaService } from "../../../database/prisma.service";
 import { timeframeMilliseconds } from "../domain/adaptive-trading-policy";
@@ -7,6 +8,7 @@ import { RiskConfigService } from "../../risk/application/risk-config.service";
 export interface QuantExecutionPolicyResult {
   allowed: boolean;
   evaluated?: boolean;
+  advisory?: boolean;
   reason?: "QUANT_VALIDATION_MISSING" | "QUANT_VALIDATION_STALE" |
     "QUANT_WALK_FORWARD_UNSTABLE" | "QUANT_PROBABILITY_TOO_LOW" |
     "QUANT_RUIN_RISK_TOO_HIGH" | "QUANT_OUT_OF_SAMPLE_EDGE_MISSING" |
@@ -30,6 +32,7 @@ export class QuantExecutionPolicyService {
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly riskConfig?: RiskConfigService,
+    @Optional() private readonly config?: ConfigService,
   ) {}
 
   async evaluate(input: {
@@ -65,7 +68,7 @@ export class QuantExecutionPolicyService {
         orderBy: { detectedAt: "desc" },
       }),
     ]);
-    if (!validation) return { allowed: false, reason: "QUANT_VALIDATION_MISSING" };
+    if (!validation) return this.insufficientEvidence("QUANT_VALIDATION_MISSING");
     const metrics = validation.metricsJson && typeof validation.metricsJson === "object" && !Array.isArray(validation.metricsJson)
       ? validation.metricsJson as Record<string, unknown>
       : {};
@@ -83,7 +86,7 @@ export class QuantExecutionPolicyService {
       Number(sampleEvidence.totalTrades ?? 0) < 30 ||
       Number(sampleEvidence.outOfSampleTrades ?? outOfSample.outOfSampleTrades ?? 0) < 10 ||
       Number(sampleEvidence.walkForwardWindows ?? windows) < 5
-    ) return { allowed: false, reason: "QUANT_SAMPLE_TOO_SMALL" };
+    ) return this.insufficientEvidence("QUANT_SAMPLE_TOO_SMALL");
     const assumptions = metrics.executionAssumptions && typeof metrics.executionAssumptions === "object" && !Array.isArray(metrics.executionAssumptions)
       ? metrics.executionAssumptions as Record<string, unknown>
       : undefined;
@@ -138,5 +141,20 @@ export class QuantExecutionPolicyService {
       validation: evidence,
       ...(regimeEvidence ? { regime: regimeEvidence } : {}),
     };
+  }
+
+  /**
+   * DEMO execution is also the evidence collection path. Missing or immature
+   * research must remain visible as an advisory there, otherwise a new scope
+   * can never accumulate the trades required to become validated. LIVE keeps
+   * the original fail-closed behaviour.
+   */
+  private insufficientEvidence(
+    reason: "QUANT_VALIDATION_MISSING" | "QUANT_SAMPLE_TOO_SMALL",
+  ): QuantExecutionPolicyResult {
+    const mode = this.config?.get<string>("TRADING_MODE") ?? process.env.TRADING_MODE;
+    return mode === "DEMO"
+      ? { allowed: true, evaluated: false, advisory: true, reason }
+      : { allowed: false, evaluated: false, reason };
   }
 }
