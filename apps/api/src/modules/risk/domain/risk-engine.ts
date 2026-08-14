@@ -280,7 +280,7 @@ export function evaluateRisk(
   const volatilityLeverageLimit = highVolatility
     ? Math.max(1, Math.floor(limits.maxLeverage / 2))
     : limits.maxLeverage;
-  const leverage = Math.max(
+  const maximumSafeLeverage = Math.max(
     1,
     Math.min(
       limits.maxLeverage,
@@ -289,6 +289,26 @@ export function evaluateRisk(
       liquidationLeverageLimit,
     ),
   );
+
+  const availableBalance = account.availableBalance ?? account.balance;
+  if (!finitePositive(availableBalance))
+    return reject("INSUFFICIENT_AVAILABLE_MARGIN", maximumSafeLeverage);
+  const usableMargin =
+    availableBalance * RISK_ENGINE_CONSTANTS.AVAILABLE_MARGIN_SAFETY_FACTOR;
+  const requestedNotional = positionSize * marketData.price;
+  const requiredLeverage = Math.max(
+    1,
+    Math.ceil(requestedNotional / usableMargin),
+  );
+  const leverage = Math.min(requiredLeverage, maximumSafeLeverage);
+  if (requiredLeverage > maximumSafeLeverage) {
+    positionSize = Math.floor(
+      ((usableMargin * maximumSafeLeverage) / marketData.price) *
+        10 ** RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
+    ) / 10 ** RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS;
+    if (!finitePositive(positionSize))
+      return reject("INSUFFICIENT_AVAILABLE_MARGIN", maximumSafeLeverage);
+  }
 
   const projectedExposure = retainedExposure + positionSize * marketData.price;
   const exposurePct = projectedExposure / account.equity;

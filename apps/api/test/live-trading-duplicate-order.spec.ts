@@ -369,5 +369,11 @@ vi.spyOn(service as unknown as { sync: (...args: unknown[]) => Promise<void> }, 
     });
 
     expect(prisma.riskAssessment.updateMany).toHaveBeenCalled();
+    expect(JSON.stringify(prisma.riskAssessment.update.mock.calls)).toContain(
+      '"pipelineRunId":"new-run"',
+    );
+    expect(JSON.stringify(prisma.riskAssessment.update.mock.calls)).toContain(
+      '"positionSize":0.048196721311',
+    );
   });
 });

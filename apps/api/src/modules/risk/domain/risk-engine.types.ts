@@ -5,6 +5,8 @@ export interface RiskAccount {
   balance: number;
   equity: number;
   peakEquity: number;
+  /** Free collateral reported by the exchange; omitted for paper accounts. */
+  availableBalance?: number;
 }
 
 export interface RiskPosition {

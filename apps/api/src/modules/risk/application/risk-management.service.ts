@@ -20,6 +20,7 @@ export interface AssessRiskInput {
     balance: Prisma.Decimal;
     equity: Prisma.Decimal;
     peakEquity: Prisma.Decimal;
+    availableBalance?: Prisma.Decimal;
   };
   positions: Array<{
     symbol: string;
@@ -58,6 +59,9 @@ export class RiskManagementService {
           balance: Number(input.account.balance),
           equity: Number(input.account.equity),
           peakEquity: Number(input.account.peakEquity),
+          ...(input.account.availableBalance !== undefined
+            ? { availableBalance: Number(input.account.availableBalance) }
+            : {}),
         },
         currentPositions: input.positions.map((position): RiskPosition => ({
           symbol: position.symbol,
