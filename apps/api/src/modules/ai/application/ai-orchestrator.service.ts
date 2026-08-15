@@ -44,6 +44,7 @@ export class AIOrchestratorService {
   private readonly geminiFallbackModels = [
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
+    "gemini-3.7-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
     "gemini-3-flash",
@@ -155,9 +156,21 @@ export class AIOrchestratorService {
     let response: LLMResponse | null = null;
     const executionStartedAt = Date.now();
     const attemptedCandidates: Array<{ provider: AIProviderType; model: string; outcome: "tried" | "skipped"; reason?: string; status?: number; code?: string }> = [];
+    const authBlockedProviders = new Set<AIProviderType>();
     const executionPromise = (async (): Promise<AIResponseDto> => {
       for (const candidate of candidates) {
         const { provider: pType, model } = candidate;
+        if (authBlockedProviders.has(pType)) {
+          attemptedCandidates.push({
+            provider: pType,
+            model,
+            outcome: "skipped",
+            reason: "provider authentication previously failed",
+            status: 401,
+            code: "AI_PROVIDER_AUTH_BLOCKED",
+          });
+          continue;
+        }
         const cooldown = await this.getModelCooldown(pType, model);
         if (cooldown.seconds > 0) {
           const isQuotaCooldown = cooldown.status === 429;
@@ -197,7 +210,14 @@ export class AIOrchestratorService {
           attemptedCandidates.push({ provider: pType, model, outcome: "tried", status, code, reason: lastError.message });
 
           if (status === 429 || (status != null && status >= 500)) {
-            const retryAfterMs = errorRecord?.retryAfterMs as number | undefined;
+            const providerRetryAfterMs = errorRecord?.retryAfterMs as number | undefined;
+            const retryAfterMs = this.isGeminiDailyQuotaError(
+              pType,
+              status,
+              lastError.message,
+            )
+              ? Math.max(60_000, this.nextPacificMidnight() - Date.now())
+              : providerRetryAfterMs;
             await this.openModelCooldown(
               pType,
               model,
@@ -225,10 +245,13 @@ export class AIOrchestratorService {
             });
           }
 
-          // Never retry auth errors (401, 403)
+          // Authentication failures are provider-scoped. Do not retry sibling
+          // models on that provider, but continue the independent fallback
+          // chain instead of aborting every remaining candidate.
           if (status === 401 || status === 403) {
             this.logger.error(`Non-retryable auth error (${status}) from provider ${pType}: ${lastError.message}`);
-            break;
+            authBlockedProviders.add(pType);
+            continue;
           }
           if (code === "AI_REQUEST_BUDGET_EXCEEDED") break;
 
@@ -469,19 +492,36 @@ export class AIOrchestratorService {
     const normalizedPrimaryModel = primaryModel || this.defaultModelsByProvider[primaryProvider];
     push(primaryProvider, normalizedPrimaryModel);
 
-    if (primaryProvider === "GEMINI") {
-      for (const model of this.geminiFallbackModels) {
-        if (model !== normalizedPrimaryModel) push(primaryProvider, model);
-      }
-    }
-
+    // Provider quota is commonly shared by sibling models. Prefer an
+    // independent provider before spending requests on alternate models.
     for (const provider of fallbackProviders) {
       if (provider === primaryProvider) continue;
       const fallbackModel = this.defaultModelsByProvider[provider] || normalizedPrimaryModel;
       push(provider, fallbackModel);
     }
 
+    if (primaryProvider === "GEMINI") {
+      for (const model of this.geminiFallbackModels) {
+        if (model !== normalizedPrimaryModel) push(primaryProvider, model);
+      }
+    }
+
     return candidates;
+  }
+
+  private isGeminiDailyQuotaError(
+    provider: AIProviderType,
+    status: number | undefined,
+    message: string,
+  ): boolean {
+    if (provider !== "GEMINI" || status !== 429) return false;
+    const normalized = message.toLowerCase();
+    return (
+      normalized.includes("exceeded your current quota") ||
+      normalized.includes("requests per day") ||
+      normalized.includes("request_per_day") ||
+      normalized.includes("perday")
+    );
   }
 
   private modelCooldownKey(provider: AIProviderType, model: string): string {

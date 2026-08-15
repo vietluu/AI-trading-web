@@ -174,6 +174,11 @@ const orderAckSchema = z.object({
   sCode: z.string(),
   sMsg: z.string().optional(),
 });
+const maximumOrderSizeSchema = z.object({
+  instId: z.string(),
+  maxBuy: decimal,
+  maxSell: decimal,
+});
 const algoAckSchema = z.object({
   algoId: z.string().optional(),
   algoClOrdId: z.string().optional(),
@@ -699,13 +704,6 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         "OKX contract metadata is unavailable for this symbol",
       );
     }
-    const contractQuantity = this.contractQuantity(
-      command.quantity,
-      instrument.contractSize,
-      instrument.stepSize,
-      instrument.quantityPrecision,
-      instrument.maxQuantity,
-    );
     try {
       await this.client.signedPost("/api/v5/account/set-leverage", credentials, {
         instId,
@@ -723,6 +721,41 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+    const accountMaximumContracts = command.reduceOnly
+      ? undefined
+      : await this.maximumOrderContracts(
+        credentials,
+        instId,
+        command.side,
+      );
+    const requestedContracts = Number(command.quantity) / Number(instrument.contractSize);
+    const contractQuantity = this.contractQuantity(
+      command.quantity,
+      instrument.contractSize,
+      instrument.stepSize,
+      instrument.quantityPrecision,
+      instrument.minQuantity,
+      instrument.maxQuantity,
+      accountMaximumContracts,
+    );
+    const submittedContracts = Number(contractQuantity);
+    if (submittedContracts < requestedContracts) {
+      this.logger.warn({
+        event: "okx_order_size_capped",
+        exchange: this.provider,
+        symbol: command.symbol,
+        requestedContracts,
+        instrumentMaximumContracts: instrument.maxQuantity,
+        accountMaximumContracts,
+        submittedContracts,
+        contractLot: instrument.stepSize,
+        leverage: command.leverage,
+      });
+    }
+    const submittedBaseQuantity = this.decimalString(
+      Number(contractQuantity) * Number(instrument.contractSize),
+      12,
+    );
     let clOrdId = normalizeClientOrderId(command.clientOrderId) ?? "";
     let protectiveClientOrderId = (command.stopLoss || command.takeProfit)
       ? normalizeClientOrderId(`${clOrdId.slice(0, 28)}pm`)
@@ -951,7 +984,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
           type: "LIMIT",
           timeInForce: "POST_ONLY",
           status,
-          originalQuantity: command.quantity,
+          originalQuantity: submittedBaseQuantity,
           executedQuantity,
           ...(protectiveClientOrderId ? { protectiveClientOrderId } : {}),
         };
@@ -1004,7 +1037,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       side: command.side,
       type: submittedOrderType === "market" ? "MARKET" : "LIMIT",
       status: "NEW",
-      originalQuantity: command.quantity,
+      originalQuantity: submittedBaseQuantity,
       executedQuantity: "0",
       reduceOnly: command.reduceOnly ?? false,
       ...(command.positionSide ? { positionSide: command.positionSide } : {}),
@@ -1012,6 +1045,42 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       createdAt: new Date(),
       updatedAt: new Date(),
     };
+  }
+
+  private async maximumOrderContracts(
+    credentials: ExchangeCredentials,
+    instId: string,
+    side: "BUY" | "SELL",
+  ): Promise<number> {
+    try {
+      const values = z.array(maximumOrderSizeSchema).parse(
+        await this.client.signedGet(
+          "/api/v5/account/max-size",
+          credentials,
+          { instId, tdMode: "cross" },
+        ),
+      );
+      const value = side === "BUY" ? values[0]?.maxBuy : values[0]?.maxSell;
+      const maximum = Number(value);
+      if (!Number.isFinite(maximum) || maximum < 0) {
+        throw new Error(`Invalid maximum order size: ${String(value)}`);
+      }
+      return maximum;
+    } catch (error) {
+      this.logger.error({
+        event: "okx_max_order_size_lookup_failed",
+        exchange: this.provider,
+        instId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw new ExchangeError(
+        ExchangeErrorCode.UNAVAILABLE,
+        this.provider,
+        true,
+        503,
+        `OKX maximum order size preflight is unavailable for ${instId}`,
+      );
+    }
   }
 
   async amendProtectiveOrder(
@@ -1253,7 +1322,9 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     contractSize: string,
     lotSize: string,
     precision: number,
+    minQuantity?: string,
     maxQuantity?: string,
+    accountMaximumQuantity?: number,
   ): string {
     const raw = Number(baseQuantity) / Number(contractSize);
     const lot = Number(lotSize);
@@ -1268,18 +1339,33 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         "Invalid OKX order quantity",
       );
     }
-    const cappedRaw =
-      maxQuantity !== undefined && maxQuantity !== ""
-        ? Math.min(raw, Number(maxQuantity))
-        : raw;
-    const contractCount = Math.max(1, Math.round(cappedRaw + Number.EPSILON));
-    if (contractCount <= 0) {
+    const caps = [raw];
+    const instrumentMaximum = Number(maxQuantity);
+    if (Number.isFinite(instrumentMaximum) && instrumentMaximum >= 0) {
+      caps.push(instrumentMaximum);
+    }
+    if (
+      accountMaximumQuantity !== undefined &&
+      Number.isFinite(accountMaximumQuantity) &&
+      accountMaximumQuantity >= 0
+    ) {
+      caps.push(accountMaximumQuantity);
+    }
+    const cappedRaw = Math.min(...caps);
+    const lotCount = Math.floor((cappedRaw + Number.EPSILON) / lot);
+    const contractCount = lotCount * lot;
+    const minimum = Number(minQuantity);
+    if (
+      !Number.isFinite(contractCount) ||
+      contractCount <= 0 ||
+      (Number.isFinite(minimum) && contractCount < minimum)
+    ) {
       throw ExchangeError.invalidRequest(
         this.provider,
-        `Order size is below the OKX minimum contract lot (${lotSize})`,
+        `Order size is below the OKX minimum (${minQuantity ?? lotSize} contracts)`,
       );
     }
-    return this.decimalString(contractCount, 0);
+    return this.decimalString(contractCount, precision);
   }
 
   private decimalString(value: number, precision: number): string {
