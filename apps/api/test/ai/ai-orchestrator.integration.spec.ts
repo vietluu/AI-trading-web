@@ -178,20 +178,82 @@ describe("AI Orchestrator & Fallback Integration", () => {
     ]);
   });
 
-  it("should fail fast and NOT retry on a non-retryable 401 Unauthorized error", async () => {
+  it("should skip an auth-broken provider and continue the fallback chain", async () => {
     openAIProvider.chat = () => {
       const err = new Error("Invalid API key (401)");
       Object.assign(err, { status: 401 });
       return Promise.reject(err);
     };
 
-    await expect(
-      orchestrator.execute({
-        userId: "user-123",
-        userPrompt: "Test 401 fail fast",
-        provider: "OPENAI",
-      })
-    ).rejects.toThrow("Invalid API key (401)");
+    const response = await orchestrator.execute({
+      userId: "user-123",
+      userPrompt: "Test provider-scoped 401 fallback",
+      provider: "OPENAI",
+    });
+
+    expect(response.provider).toBe("ANTHROPIC");
+  });
+
+  it("continues to later Gemini models when the second provider has invalid auth", async () => {
+    const calls: string[] = [];
+    const provider = (providerType: "GEMINI" | "OPENAI") => ({
+      providerType,
+      chat: vi.fn((options: { model: string }) => {
+        calls.push(`${providerType}:${options.model}`);
+        if (providerType === "OPENAI") {
+          return Promise.reject(Object.assign(new Error("Invalid API key"), { status: 401 }));
+        }
+        if (options.model === "gemini-primary") {
+          return Promise.reject(Object.assign(new Error("Primary unavailable"), { status: 503 }));
+        }
+        return Promise.resolve({
+          text: "fallback analysis",
+          json: null,
+          finishReason: "stop",
+          usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, estimatedCost: 0 },
+          latencyMs: 1,
+          provider: "GEMINI",
+          model: options.model,
+        });
+      }),
+    }) as unknown as LLMProvider;
+    const fallbackFactory = {
+      getProvider: (providerType: "GEMINI" | "OPENAI") => provider(providerType),
+    } as unknown as LLMProviderFactory;
+    const baseConfig = await mockConfigService.getOrCreateConfig("user-123");
+    const geminiConfig = {
+      getOrCreateConfig: () => Promise.resolve({
+        ...baseConfig,
+        preferredProvider: "GEMINI" as const,
+        preferredModel: "gemini-primary",
+        fallbackEnabled: true,
+        fallbackProviders: ["OPENAI"],
+      }),
+    } as unknown as AIConfigService;
+    const fallbackOrchestrator = new AIOrchestratorService(
+      geminiConfig,
+      mockBudgetManager,
+      contextBuilder,
+      promptEngine,
+      fallbackFactory,
+      mockHistoryService,
+      new CostEstimatorService(modelRegistry),
+    );
+
+    const response = await fallbackOrchestrator.execute({
+      userId: "user-123",
+      userPrompt: "Exercise the complete fallback chain",
+    });
+
+    expect(calls.slice(0, 3)).toEqual([
+      "GEMINI:gemini-primary",
+      "OPENAI:gpt-5-mini",
+      "GEMINI:gemini-3.5-flash-lite",
+    ]);
+    expect(response).toMatchObject({
+      provider: "GEMINI",
+      model: "gemini-3.5-flash-lite",
+    });
   });
 
   it("should not retry the same provider request multiple times", async () => {
