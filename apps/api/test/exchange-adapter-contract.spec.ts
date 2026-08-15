@@ -13,6 +13,25 @@ import type { BinanceFuturesClient } from "../src/exchange/infrastructure/binanc
 import { OkxFuturesAdapter } from "../src/exchange/infrastructure/okx/okx-futures.adapter";
 import { OkxFuturesClient } from "../src/exchange/infrastructure/okx/okx-futures.client";
 
+function okxAdapter(
+  client: Partial<OkxFuturesClient>,
+  config?: ConstructorParameters<typeof OkxFuturesAdapter>[1],
+): OkxFuturesAdapter {
+  return new OkxFuturesAdapter(
+    {
+      signedGet: vi.fn().mockResolvedValue([
+        {
+          instId: "BTC-USDT-SWAP",
+          maxBuy: "1000000000",
+          maxSell: "1000000000",
+        },
+      ]),
+      ...client,
+    } as unknown as OkxFuturesClient,
+    config,
+  );
+}
+
 describe("exchange adapter normalization contract", () => {
   it("does not silently backfill hard-coded Binance symbols", async () => {
     const signedGet = vi.fn();
@@ -63,9 +82,9 @@ describe("exchange adapter normalization contract", () => {
         minSz: "1",
       },
     ]);
-    const adapter = new OkxFuturesAdapter({
+    const adapter = okxAdapter({
       publicGet,
-    } as unknown as OkxFuturesClient);
+    });
 
     const instruments = await adapter.getInstruments({ symbol: "ETH-USDT" });
 
@@ -78,9 +97,9 @@ describe("exchange adapter normalization contract", () => {
 
   it("requests OKX instrument metadata from the account environment", async () => {
     const publicGet = vi.fn().mockResolvedValue([]);
-    const adapter = new OkxFuturesAdapter({
+    const adapter = okxAdapter({
       publicGet,
-    } as unknown as OkxFuturesClient);
+    });
 
     await adapter.getInstruments({
       symbol: "OKB-USDT",
@@ -223,9 +242,9 @@ describe("exchange adapter normalization contract", () => {
             ],
       ),
     );
-    const adapter = new OkxFuturesAdapter({
+    const adapter = okxAdapter({
       publicGet,
-    } as unknown as OkxFuturesClient);
+    });
     const ticker = await adapter.getTicker("BTC-USDT");
     expect(ticker.symbol).toBe("BTC-USDT");
     expect(ticker.lastPrice).toBe("67233.12345678");
@@ -254,7 +273,7 @@ describe("exchange adapter normalization contract", () => {
           ],
         ]),
     } as unknown as BinanceFuturesClient);
-    const okx = new OkxFuturesAdapter({
+    const okx = okxAdapter({
       publicGet: vi
         .fn()
         .mockResolvedValue([
@@ -270,7 +289,7 @@ describe("exchange adapter normalization contract", () => {
             "1",
           ],
         ]),
-    } as unknown as OkxFuturesClient);
+    });
     const query = { symbol: "BTC-USDT", interval: ExchangeInterval.ONE_MINUTE };
     const [binanceKline] = await binance.getKlines(query);
     const [okxKline] = await okx.getKlines(query);
@@ -281,7 +300,7 @@ describe("exchange adapter normalization contract", () => {
   });
 
   it("normalizes blank OKX account totals before persistence", async () => {
-    const adapter = new OkxFuturesAdapter({
+    const adapter = okxAdapter({
       signedGet: vi.fn().mockResolvedValue([
         {
           totalEq: "76228.69",
@@ -304,7 +323,7 @@ describe("exchange adapter normalization contract", () => {
           ],
         },
       ]),
-    } as unknown as OkxFuturesClient);
+    });
 
     const account = await adapter.getAccountSummary({
       apiKey: "demo-key",
@@ -352,10 +371,10 @@ describe("exchange adapter normalization contract", () => {
           ts: "1700000000000",
         },
       ]);
-    const adapter = new OkxFuturesAdapter({
+    const adapter = okxAdapter({
       publicGet,
       signedPost,
-    } as unknown as OkxFuturesClient);
+    });
     const warnSpy = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
 
     await adapter.placeOrder(
@@ -421,11 +440,11 @@ describe("exchange adapter normalization contract", () => {
           ts: "1700000000000",
         },
       ]);
-    const adapter = new OkxFuturesAdapter({
+    const adapter = okxAdapter({
       publicGet,
       signedGet,
       signedPost,
-    } as unknown as OkxFuturesClient);
+    });
 
     const order = await adapter.placeOrder(
       {
@@ -455,6 +474,113 @@ describe("exchange adapter normalization contract", () => {
       expect.objectContaining({ sz: "280" }),
     );
     expect(order.originalQuantity).toBe("280");
+  });
+
+  it.each([
+    { symbol: "ETH-USDT", contractSize: "0.1", requested: "50", maximum: "120", expectedBase: "12" },
+    { symbol: "SOL-USDT", contractSize: "1", requested: "900", maximum: "75", expectedBase: "75" },
+  ])("applies the account cap generically to $symbol", async ({
+    symbol,
+    contractSize,
+    requested,
+    maximum,
+    expectedBase,
+  }) => {
+    const instId = `${symbol}-SWAP`;
+    const signedGet = vi.fn().mockResolvedValue([
+      { instId, maxBuy: maximum, maxSell: maximum },
+    ]);
+    const signedPost = vi
+      .fn()
+      .mockResolvedValueOnce([{ lever: "5" }])
+      .mockResolvedValueOnce([
+        { ordId: `${symbol}-1`, clOrdId: `${symbol}-entry`, sCode: "0", sMsg: "" },
+      ]);
+    const publicGet = vi
+      .fn()
+      .mockResolvedValueOnce([{
+        instId,
+        instType: "SWAP",
+        state: "live",
+        settleCcy: "USDT",
+        ctVal: contractSize,
+        tickSz: "0.01",
+        lotSz: "1",
+        minSz: "1",
+      }])
+      .mockResolvedValueOnce([{
+        instId,
+        last: "100",
+        bidPx: "99.9",
+        askPx: "100.1",
+        high24h: "105",
+        low24h: "95",
+        vol24h: "1000",
+        volCcy24h: "100000",
+        open24h: "100",
+        ts: "1700000000000",
+      }]);
+    const adapter = okxAdapter({ publicGet, signedGet, signedPost });
+
+    const order = await adapter.placeOrder(
+      {
+        apiKey: "demo-key",
+        apiSecret: "demo-secret",
+        passphrase: "demo-passphrase",
+        environment: ExchangeEnvironment.DEMO,
+      },
+      {
+        symbol,
+        side: "BUY",
+        quantity: requested,
+        leverage: 5,
+        clientOrderId: `${symbol}-entry`,
+      },
+    );
+
+    expect(signedPost).toHaveBeenNthCalledWith(
+      2,
+      "/api/v5/trade/order",
+      expect.anything(),
+      expect.objectContaining({ sz: maximum }),
+    );
+    expect(order.originalQuantity).toBe(expectedBase);
+  });
+
+  it("fails an opening order closed when OKX max-size preflight is unavailable", async () => {
+    const signedGet = vi.fn().mockRejectedValue(new Error("max-size unavailable"));
+    const signedPost = vi.fn().mockResolvedValueOnce([{ lever: "3" }]);
+    const publicGet = vi.fn().mockResolvedValueOnce([{
+      instId: "ETH-USDT-SWAP",
+      instType: "SWAP",
+      state: "live",
+      settleCcy: "USDT",
+      ctVal: "0.1",
+      tickSz: "0.1",
+      lotSz: "1",
+      minSz: "1",
+    }]);
+    const adapter = okxAdapter({ publicGet, signedGet, signedPost });
+
+    await expect(adapter.placeOrder(
+      {
+        apiKey: "demo-key",
+        apiSecret: "demo-secret",
+        passphrase: "demo-passphrase",
+        environment: ExchangeEnvironment.DEMO,
+      },
+      {
+        symbol: "ETH-USDT",
+        side: "BUY",
+        quantity: "1",
+        leverage: 3,
+        clientOrderId: "eth-entry",
+      },
+    )).rejects.toMatchObject({
+      code: ExchangeErrorCode.UNAVAILABLE,
+      retryable: true,
+    });
+    expect(signedPost).toHaveBeenCalledTimes(1);
   });
 
   it("forwards stop-loss and take-profit values to OKX as trigger fields", async () => {
@@ -492,10 +618,10 @@ describe("exchange adapter normalization contract", () => {
           ts: "1700000000000",
         },
       ]);
-    const adapter = new OkxFuturesAdapter({
+    const adapter = okxAdapter({
       publicGet,
       signedPost,
-    } as unknown as OkxFuturesClient);
+    });
 
     await adapter.placeOrder(
       {
@@ -536,7 +662,7 @@ describe("exchange adapter normalization contract", () => {
     const signedPost = vi.fn().mockResolvedValue([
       { algoId: "algo-1", algoClOrdId: "protect-1", sCode: "0", sMsg: "" },
     ]);
-    const adapter = new OkxFuturesAdapter({ signedPost } as unknown as OkxFuturesClient);
+    const adapter = okxAdapter({ signedPost });
     const credentials = {
       apiKey: "demo-key",
       apiSecret: "demo-secret",
@@ -601,10 +727,10 @@ describe("exchange adapter normalization contract", () => {
           ts: "1700000000000",
         },
       ]);
-    const adapter = new OkxFuturesAdapter({
+    const adapter = okxAdapter({
       publicGet,
       signedPost,
-    } as unknown as OkxFuturesClient);
+    });
 
     await adapter.placeOrder(
       {
@@ -627,7 +753,7 @@ describe("exchange adapter normalization contract", () => {
     expect(String(body.clOrdId)).toBe("550e8400e29b41d4a716446655440000");
   });
 
-  it("uses whole-contract sizes for OKX futures orders", async () => {
+  it("floors OKX futures sizes to the advertised contract lot", async () => {
     const signedPost = vi
       .fn()
       .mockResolvedValueOnce([{ lever: "3" }])
@@ -669,10 +795,10 @@ describe("exchange adapter normalization contract", () => {
           ts: "1700000000000",
         },
       ]);
-    const adapter = new OkxFuturesAdapter({
+    const adapter = okxAdapter({
       publicGet,
       signedPost,
-    } as unknown as OkxFuturesClient);
+    });
 
     await adapter.placeOrder(
       {
@@ -693,7 +819,7 @@ describe("exchange adapter normalization contract", () => {
     expect(signedPost).toHaveBeenCalledWith(
       "/api/v5/trade/order",
       expect.anything(),
-      expect.objectContaining({ sz: "5" }),
+      expect.objectContaining({ sz: "4.83" }),
     );
   });
 
@@ -739,10 +865,10 @@ describe("exchange adapter normalization contract", () => {
           ts: "1700000000000",
         },
       ]);
-    const adapter = new OkxFuturesAdapter({
+    const adapter = okxAdapter({
       publicGet,
       signedPost,
-    } as unknown as OkxFuturesClient);
+    });
 
     await adapter.placeOrder(
       {
@@ -771,7 +897,7 @@ describe("exchange adapter normalization contract", () => {
       .mockResolvedValueOnce([
         { ordId: "123", clOrdId: "phase9-order", sCode: "0", sMsg: "" },
       ]);
-    const adapter = new OkxFuturesAdapter({
+    const adapter = okxAdapter({
       publicGet: vi.fn().mockResolvedValue([
         {
           instId: "BTC-USDT-SWAP",
@@ -785,7 +911,7 @@ describe("exchange adapter normalization contract", () => {
         },
       ]),
       signedPost,
-    } as unknown as OkxFuturesClient);
+    });
 
     await adapter.placeOrder(
       {
@@ -818,7 +944,7 @@ describe("exchange adapter normalization contract", () => {
       .mockResolvedValueOnce([
         { ordId: "123", clOrdId: "phase9-order", sCode: "0", sMsg: "" },
       ]);
-    const adapter = new OkxFuturesAdapter({
+    const adapter = okxAdapter({
       publicGet: vi.fn().mockResolvedValue([
         {
           instId: "BTC-USDT-SWAP",
@@ -833,7 +959,7 @@ describe("exchange adapter normalization contract", () => {
         },
       ]),
       signedPost,
-    } as unknown as OkxFuturesClient);
+    });
 
     await adapter.placeOrder(
       {
@@ -869,7 +995,7 @@ describe("exchange adapter normalization contract", () => {
       .mockResolvedValueOnce([
         { ordId: "456", clOrdId: "phase9-order", sCode: "0", sMsg: "" },
       ]);
-    const adapter = new OkxFuturesAdapter({
+    const adapter = okxAdapter({
       publicGet: vi.fn().mockResolvedValue([
         {
           instId: "BTC-USDT-SWAP",
@@ -883,7 +1009,7 @@ describe("exchange adapter normalization contract", () => {
         },
       ]),
       signedPost,
-    } as unknown as OkxFuturesClient);
+    });
 
     const order = await adapter.placeOrder(
       {
@@ -922,7 +1048,9 @@ describe("exchange adapter normalization contract", () => {
         return [{ ordId: "market-2", clOrdId: body.clOrdId, sCode: "0", sMsg: "" }];
       },
     );
-    const signedGet = vi.fn().mockImplementation(() => [{
+    const signedGet = vi.fn().mockImplementation((path: string) => path === "/api/v5/account/max-size" ? [{
+      instId: "BTC-USDT-SWAP", maxBuy: "1000000", maxSell: "1000000",
+    }] : [{
       instId: "BTC-USDT-SWAP",
       ordId: "maker-1",
       clOrdId: "maker-entry",
@@ -952,8 +1080,8 @@ describe("exchange adapter normalization contract", () => {
           ? 5
           : 1,
     };
-    const adapter = new OkxFuturesAdapter(
-      { publicGet, signedGet, signedPost } as unknown as OkxFuturesClient,
+    const adapter = okxAdapter(
+      { publicGet, signedGet, signedPost },
       config as never,
     );
 
@@ -994,7 +1122,9 @@ describe("exchange adapter normalization contract", () => {
         return [{ ordId: "maker-1", clOrdId: body.clOrdId, sCode: "0", sMsg: "" }];
       },
     );
-    const signedGet = vi.fn().mockImplementation(() => [{
+    const signedGet = vi.fn().mockImplementation((path: string) => path === "/api/v5/account/max-size" ? [{
+      instId: "BTC-USDT-SWAP", maxBuy: "1000000", maxSell: "1000000",
+    }] : [{
       instId: "BTC-USDT-SWAP", ordId: "maker-1", clOrdId: "maker-entry",
       side: "buy", ordType: "post_only", state: canceled ? "canceled" : "partially_filled",
       px: "67233.1", avgPx: "67233.1", sz: "3", accFillSz: "1",
@@ -1010,8 +1140,8 @@ describe("exchange adapter normalization contract", () => {
         high24h: "68000", low24h: "65000", vol24h: "100", volCcy24h: "1000",
         open24h: "67100", ts: "1700000000000",
       }]);
-    const adapter = new OkxFuturesAdapter(
-      { publicGet, signedGet, signedPost } as unknown as OkxFuturesClient,
+    const adapter = okxAdapter(
+      { publicGet, signedGet, signedPost },
       { get: (key: string) => key === "OKX_MAKER_FIRST_ENABLED" ? true : key.includes("TIMEOUT") ? 5 : 1 } as never,
     );
 
@@ -1045,8 +1175,8 @@ describe("exchange adapter normalization contract", () => {
       instId: "BTC-USDT-SWAP", instType: "SWAP", state: "live",
       settleCcy: "USDT", ctVal: "0.01", tickSz: "0.1", lotSz: "1", minSz: "1",
     }]);
-    const adapter = new OkxFuturesAdapter(
-      { publicGet, signedPost } as unknown as OkxFuturesClient,
+    const adapter = okxAdapter(
+      { publicGet, signedPost },
       { get: () => true } as never,
     );
 
@@ -1087,7 +1217,7 @@ describe("exchange adapter normalization contract", () => {
       .mockResolvedValueOnce([
         { ordId: "456", clOrdId: "phase9-order", sCode: "0", sMsg: "" },
       ]);
-    const adapter = new OkxFuturesAdapter({
+    const adapter = okxAdapter({
       publicGet: vi.fn().mockResolvedValue([
         {
           instId: "BTC-USDT-SWAP",
@@ -1101,7 +1231,7 @@ describe("exchange adapter normalization contract", () => {
         },
       ]),
       signedPost,
-    } as unknown as OkxFuturesClient);
+    });
 
     const order = await adapter.placeOrder(
       {
@@ -1131,7 +1261,7 @@ describe("exchange adapter normalization contract", () => {
       .mockResolvedValueOnce([
         { ordId: "123", clOrdId: "phase9-order", sCode: "0", sMsg: "" },
       ]);
-    const adapter = new OkxFuturesAdapter({
+    const adapter = okxAdapter({
       publicGet: vi.fn().mockResolvedValue([
         {
           instId: "BTC-USDT-SWAP",
@@ -1145,7 +1275,7 @@ describe("exchange adapter normalization contract", () => {
         },
       ]),
       signedPost,
-    } as unknown as OkxFuturesClient);
+    });
 
     await expect(
       adapter.placeOrder(
@@ -1173,7 +1303,7 @@ describe("exchange adapter normalization contract", () => {
       .mockResolvedValueOnce([
         { ordId: "123", clOrdId: "phase9-order", sCode: "0", sMsg: "" },
       ]);
-    const adapter = new OkxFuturesAdapter({
+    const adapter = okxAdapter({
       publicGet: vi.fn().mockResolvedValue([
         {
           instId: "BTC-USDT-SWAP",
@@ -1187,7 +1317,7 @@ describe("exchange adapter normalization contract", () => {
         },
       ]),
       signedPost,
-    } as unknown as OkxFuturesClient);
+    });
 
     await adapter.placeOrder(
       {

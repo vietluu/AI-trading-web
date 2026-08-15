@@ -704,13 +704,6 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         "OKX contract metadata is unavailable for this symbol",
       );
     }
-    let contractQuantity = this.contractQuantity(
-      command.quantity,
-      instrument.contractSize,
-      instrument.stepSize,
-      instrument.quantityPrecision,
-      instrument.maxQuantity,
-    );
     try {
       await this.client.signedPost("/api/v5/account/set-leverage", credentials, {
         instId,
@@ -728,36 +721,36 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         error: error instanceof Error ? error.message : String(error),
       });
     }
-    if (!command.reduceOnly) {
-      const maximumContracts = await this.maximumOrderContracts(
+    const accountMaximumContracts = command.reduceOnly
+      ? undefined
+      : await this.maximumOrderContracts(
         credentials,
         instId,
         command.side,
       );
-      if (maximumContracts !== undefined) {
-        const requestedContracts = Number(contractQuantity);
-        const cappedContracts = Math.floor(
-          Math.min(requestedContracts, maximumContracts),
-        );
-        if (!Number.isFinite(cappedContracts) || cappedContracts < 1) {
-          throw ExchangeError.invalidRequest(
-            this.provider,
-            `OKX reports no available ${command.side.toLowerCase()} capacity for ${instId}`,
-          );
-        }
-        if (cappedContracts < requestedContracts) {
-          this.logger.warn({
-            event: "okx_order_size_capped_by_account_limit",
-            exchange: this.provider,
-            symbol: command.symbol,
-            requestedContracts,
-            maximumContracts,
-            submittedContracts: cappedContracts,
-            leverage: command.leverage,
-          });
-        }
-        contractQuantity = this.decimalString(cappedContracts, 0);
-      }
+    const requestedContracts = Number(command.quantity) / Number(instrument.contractSize);
+    const contractQuantity = this.contractQuantity(
+      command.quantity,
+      instrument.contractSize,
+      instrument.stepSize,
+      instrument.quantityPrecision,
+      instrument.minQuantity,
+      instrument.maxQuantity,
+      accountMaximumContracts,
+    );
+    const submittedContracts = Number(contractQuantity);
+    if (submittedContracts < requestedContracts) {
+      this.logger.warn({
+        event: "okx_order_size_capped",
+        exchange: this.provider,
+        symbol: command.symbol,
+        requestedContracts,
+        instrumentMaximumContracts: instrument.maxQuantity,
+        accountMaximumContracts,
+        submittedContracts,
+        contractLot: instrument.stepSize,
+        leverage: command.leverage,
+      });
     }
     const submittedBaseQuantity = this.decimalString(
       Number(contractQuantity) * Number(instrument.contractSize),
@@ -1058,7 +1051,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     credentials: ExchangeCredentials,
     instId: string,
     side: "BUY" | "SELL",
-  ): Promise<number | undefined> {
+  ): Promise<number> {
     try {
       const values = z.array(maximumOrderSizeSchema).parse(
         await this.client.signedGet(
@@ -1069,17 +1062,24 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       );
       const value = side === "BUY" ? values[0]?.maxBuy : values[0]?.maxSell;
       const maximum = Number(value);
-      return Number.isFinite(maximum) && maximum >= 0 ? maximum : undefined;
+      if (!Number.isFinite(maximum) || maximum < 0) {
+        throw new Error(`Invalid maximum order size: ${String(value)}`);
+      }
+      return maximum;
     } catch (error) {
-      // Keep compatibility with older/demo environments that may not expose
-      // max-size. The exchange remains the final validator in that case.
-      this.logger.warn({
+      this.logger.error({
         event: "okx_max_order_size_lookup_failed",
         exchange: this.provider,
         instId,
         error: error instanceof Error ? error.message : String(error),
       });
-      return undefined;
+      throw new ExchangeError(
+        ExchangeErrorCode.UNAVAILABLE,
+        this.provider,
+        true,
+        503,
+        `OKX maximum order size preflight is unavailable for ${instId}`,
+      );
     }
   }
 
@@ -1322,7 +1322,9 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     contractSize: string,
     lotSize: string,
     precision: number,
+    minQuantity?: string,
     maxQuantity?: string,
+    accountMaximumQuantity?: number,
   ): string {
     const raw = Number(baseQuantity) / Number(contractSize);
     const lot = Number(lotSize);
@@ -1337,18 +1339,33 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         "Invalid OKX order quantity",
       );
     }
-    const cappedRaw =
-      maxQuantity !== undefined && maxQuantity !== ""
-        ? Math.min(raw, Number(maxQuantity))
-        : raw;
-    const contractCount = Math.max(1, Math.round(cappedRaw + Number.EPSILON));
-    if (contractCount <= 0) {
+    const caps = [raw];
+    const instrumentMaximum = Number(maxQuantity);
+    if (Number.isFinite(instrumentMaximum) && instrumentMaximum >= 0) {
+      caps.push(instrumentMaximum);
+    }
+    if (
+      accountMaximumQuantity !== undefined &&
+      Number.isFinite(accountMaximumQuantity) &&
+      accountMaximumQuantity >= 0
+    ) {
+      caps.push(accountMaximumQuantity);
+    }
+    const cappedRaw = Math.min(...caps);
+    const lotCount = Math.floor((cappedRaw + Number.EPSILON) / lot);
+    const contractCount = lotCount * lot;
+    const minimum = Number(minQuantity);
+    if (
+      !Number.isFinite(contractCount) ||
+      contractCount <= 0 ||
+      (Number.isFinite(minimum) && contractCount < minimum)
+    ) {
       throw ExchangeError.invalidRequest(
         this.provider,
-        `Order size is below the OKX minimum contract lot (${lotSize})`,
+        `Order size is below the OKX minimum (${minQuantity ?? lotSize} contracts)`,
       );
     }
-    return this.decimalString(contractCount, 0);
+    return this.decimalString(contractCount, precision);
   }
 
   private decimalString(value: number, precision: number): string {
