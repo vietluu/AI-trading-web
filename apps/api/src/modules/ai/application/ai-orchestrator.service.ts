@@ -197,7 +197,14 @@ export class AIOrchestratorService {
           attemptedCandidates.push({ provider: pType, model, outcome: "tried", status, code, reason: lastError.message });
 
           if (status === 429 || (status != null && status >= 500)) {
-            const retryAfterMs = errorRecord?.retryAfterMs as number | undefined;
+            const providerRetryAfterMs = errorRecord?.retryAfterMs as number | undefined;
+            const retryAfterMs = this.isGeminiDailyQuotaError(
+              pType,
+              status,
+              lastError.message,
+            )
+              ? Math.max(60_000, this.nextPacificMidnight() - Date.now())
+              : providerRetryAfterMs;
             await this.openModelCooldown(
               pType,
               model,
@@ -469,19 +476,36 @@ export class AIOrchestratorService {
     const normalizedPrimaryModel = primaryModel || this.defaultModelsByProvider[primaryProvider];
     push(primaryProvider, normalizedPrimaryModel);
 
-    if (primaryProvider === "GEMINI") {
-      for (const model of this.geminiFallbackModels) {
-        if (model !== normalizedPrimaryModel) push(primaryProvider, model);
-      }
-    }
-
+    // Provider quota is commonly shared by sibling models. Prefer an
+    // independent provider before spending requests on alternate models.
     for (const provider of fallbackProviders) {
       if (provider === primaryProvider) continue;
       const fallbackModel = this.defaultModelsByProvider[provider] || normalizedPrimaryModel;
       push(provider, fallbackModel);
     }
 
+    if (primaryProvider === "GEMINI") {
+      for (const model of this.geminiFallbackModels) {
+        if (model !== normalizedPrimaryModel) push(primaryProvider, model);
+      }
+    }
+
     return candidates;
+  }
+
+  private isGeminiDailyQuotaError(
+    provider: AIProviderType,
+    status: number | undefined,
+    message: string,
+  ): boolean {
+    if (provider !== "GEMINI" || status !== 429) return false;
+    const normalized = message.toLowerCase();
+    return (
+      normalized.includes("exceeded your current quota") ||
+      normalized.includes("requests per day") ||
+      normalized.includes("request_per_day") ||
+      normalized.includes("perday")
+    );
   }
 
   private modelCooldownKey(provider: AIProviderType, model: string): string {

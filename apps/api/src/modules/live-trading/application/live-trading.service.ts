@@ -1466,6 +1466,7 @@ export class LiveTradingService {
         where: { id: row.id },
         data: {
           exchangeOrderId: order.exchangeOrderId,
+          quantity: order.originalQuantity,
           averagePrice: order.averagePrice,
           status: order.status,
           protectiveClientOrderId: order.protectiveClientOrderId,

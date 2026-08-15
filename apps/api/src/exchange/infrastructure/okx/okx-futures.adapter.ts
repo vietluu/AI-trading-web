@@ -174,6 +174,11 @@ const orderAckSchema = z.object({
   sCode: z.string(),
   sMsg: z.string().optional(),
 });
+const maximumOrderSizeSchema = z.object({
+  instId: z.string(),
+  maxBuy: decimal,
+  maxSell: decimal,
+});
 const algoAckSchema = z.object({
   algoId: z.string().optional(),
   algoClOrdId: z.string().optional(),
@@ -699,7 +704,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         "OKX contract metadata is unavailable for this symbol",
       );
     }
-    const contractQuantity = this.contractQuantity(
+    let contractQuantity = this.contractQuantity(
       command.quantity,
       instrument.contractSize,
       instrument.stepSize,
@@ -723,6 +728,41 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+    if (!command.reduceOnly) {
+      const maximumContracts = await this.maximumOrderContracts(
+        credentials,
+        instId,
+        command.side,
+      );
+      if (maximumContracts !== undefined) {
+        const requestedContracts = Number(contractQuantity);
+        const cappedContracts = Math.floor(
+          Math.min(requestedContracts, maximumContracts),
+        );
+        if (!Number.isFinite(cappedContracts) || cappedContracts < 1) {
+          throw ExchangeError.invalidRequest(
+            this.provider,
+            `OKX reports no available ${command.side.toLowerCase()} capacity for ${instId}`,
+          );
+        }
+        if (cappedContracts < requestedContracts) {
+          this.logger.warn({
+            event: "okx_order_size_capped_by_account_limit",
+            exchange: this.provider,
+            symbol: command.symbol,
+            requestedContracts,
+            maximumContracts,
+            submittedContracts: cappedContracts,
+            leverage: command.leverage,
+          });
+        }
+        contractQuantity = this.decimalString(cappedContracts, 0);
+      }
+    }
+    const submittedBaseQuantity = this.decimalString(
+      Number(contractQuantity) * Number(instrument.contractSize),
+      12,
+    );
     let clOrdId = normalizeClientOrderId(command.clientOrderId) ?? "";
     let protectiveClientOrderId = (command.stopLoss || command.takeProfit)
       ? normalizeClientOrderId(`${clOrdId.slice(0, 28)}pm`)
@@ -951,7 +991,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
           type: "LIMIT",
           timeInForce: "POST_ONLY",
           status,
-          originalQuantity: command.quantity,
+          originalQuantity: submittedBaseQuantity,
           executedQuantity,
           ...(protectiveClientOrderId ? { protectiveClientOrderId } : {}),
         };
@@ -1004,7 +1044,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       side: command.side,
       type: submittedOrderType === "market" ? "MARKET" : "LIMIT",
       status: "NEW",
-      originalQuantity: command.quantity,
+      originalQuantity: submittedBaseQuantity,
       executedQuantity: "0",
       reduceOnly: command.reduceOnly ?? false,
       ...(command.positionSide ? { positionSide: command.positionSide } : {}),
@@ -1012,6 +1052,35 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       createdAt: new Date(),
       updatedAt: new Date(),
     };
+  }
+
+  private async maximumOrderContracts(
+    credentials: ExchangeCredentials,
+    instId: string,
+    side: "BUY" | "SELL",
+  ): Promise<number | undefined> {
+    try {
+      const values = z.array(maximumOrderSizeSchema).parse(
+        await this.client.signedGet(
+          "/api/v5/account/max-size",
+          credentials,
+          { instId, tdMode: "cross" },
+        ),
+      );
+      const value = side === "BUY" ? values[0]?.maxBuy : values[0]?.maxSell;
+      const maximum = Number(value);
+      return Number.isFinite(maximum) && maximum >= 0 ? maximum : undefined;
+    } catch (error) {
+      // Keep compatibility with older/demo environments that may not expose
+      // max-size. The exchange remains the final validator in that case.
+      this.logger.warn({
+        event: "okx_max_order_size_lookup_failed",
+        exchange: this.provider,
+        instId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
   }
 
   async amendProtectiveOrder(

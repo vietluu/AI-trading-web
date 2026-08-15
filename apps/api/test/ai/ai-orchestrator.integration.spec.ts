@@ -108,6 +108,23 @@ describe("AI Orchestrator & Fallback Integration", () => {
     );
   });
 
+  it("tries an independent fallback provider before alternate Gemini models", () => {
+    const candidates = (
+      orchestrator as unknown as {
+        buildCandidates: (
+          provider: "GEMINI",
+          model: string,
+          fallbacks: Array<"OPENAI">,
+        ) => Array<{ provider: string; model: string }>;
+      }
+    ).buildCandidates("GEMINI", "gemini-3.1-flash-lite", ["OPENAI"]);
+
+    expect(candidates.slice(0, 2)).toEqual([
+      { provider: "GEMINI", model: "gemini-3.1-flash-lite" },
+      { provider: "OPENAI", model: "gpt-5-mini" },
+    ]);
+  });
+
   it("should execute AI Request successfully using default preferred provider", async () => {
     const res = await orchestrator.execute({
       userId: "user-123",

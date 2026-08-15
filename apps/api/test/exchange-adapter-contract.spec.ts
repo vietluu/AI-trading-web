@@ -383,6 +383,80 @@ describe("exchange adapter normalization contract", () => {
     );
   });
 
+  it("caps an OKX entry at the account maximum size for the selected leverage", async () => {
+    const signedGet = vi.fn().mockResolvedValue([
+      { instId: "ZRO-USDT-SWAP", maxBuy: "300", maxSell: "280" },
+    ]);
+    const signedPost = vi
+      .fn()
+      .mockResolvedValueOnce([{ lever: "9" }])
+      .mockResolvedValueOnce([
+        { ordId: "zro-1", clOrdId: "zro-entry", sCode: "0", sMsg: "" },
+      ]);
+    const publicGet = vi
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          instId: "ZRO-USDT-SWAP",
+          instType: "SWAP",
+          state: "live",
+          settleCcy: "USDT",
+          ctVal: "1",
+          tickSz: "0.0001",
+          lotSz: "1",
+          minSz: "1",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          instId: "ZRO-USDT-SWAP",
+          last: "0.79",
+          bidPx: "0.7899",
+          askPx: "0.7901",
+          high24h: "0.82",
+          low24h: "0.77",
+          vol24h: "100000",
+          volCcy24h: "79000",
+          open24h: "0.80",
+          ts: "1700000000000",
+        },
+      ]);
+    const adapter = new OkxFuturesAdapter({
+      publicGet,
+      signedGet,
+      signedPost,
+    } as unknown as OkxFuturesClient);
+
+    const order = await adapter.placeOrder(
+      {
+        apiKey: "demo-key",
+        apiSecret: "demo-secret",
+        passphrase: "demo-passphrase",
+        environment: ExchangeEnvironment.DEMO,
+      },
+      {
+        symbol: "ZRO-USDT",
+        side: "SELL",
+        quantity: "9595.297780946372",
+        leverage: 9,
+        clientOrderId: "zro-entry",
+      },
+    );
+
+    expect(signedGet).toHaveBeenCalledWith(
+      "/api/v5/account/max-size",
+      expect.anything(),
+      { instId: "ZRO-USDT-SWAP", tdMode: "cross" },
+    );
+    expect(signedPost).toHaveBeenNthCalledWith(
+      2,
+      "/api/v5/trade/order",
+      expect.anything(),
+      expect.objectContaining({ sz: "280" }),
+    );
+    expect(order.originalQuantity).toBe("280");
+  });
+
   it("forwards stop-loss and take-profit values to OKX as trigger fields", async () => {
     const signedPost = vi
       .fn()
