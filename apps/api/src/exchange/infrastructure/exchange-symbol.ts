@@ -101,7 +101,7 @@ export function fromOkxSymbol(symbol: string): string {
   if (!/^[A-Z0-9]+-[A-Z0-9]+-SWAP$/.test(symbol)) {
     throw ExchangeError.invalidRequest(
       ExchangeProvider.OKX_FUTURES,
-      "Unexpected OKX swap symbol",
+      `Unexpected OKX swap symbol: ${symbol || "<empty>"}`,
     );
   }
   return symbol.slice(0, -5);

@@ -20,7 +20,10 @@ import {
   type ExchangePosition,
   type OrderSide,
 } from "../../../exchange/domain/exchange.types";
-import { ExchangeError } from "../../../exchange/domain/exchange.error";
+import {
+  ExchangeError,
+  ExchangeErrorCode,
+} from "../../../exchange/domain/exchange.error";
 import { LiveTradingConfigService } from "./live-trading-config.service";
 import type {
   CloseApprovedPositionDto,
@@ -305,6 +308,31 @@ export class LiveTradingService {
     }
     if (!connection)
       return { outcome: "NO_ELIGIBLE_EXCHANGE_CONNECTION", price: 0 };
+
+    try {
+      await this.connections.instrument(
+        input.userId,
+        connection.id,
+        input.symbol,
+        {},
+      );
+    } catch (error) {
+      if (
+        error instanceof ExchangeError &&
+        error.code === ExchangeErrorCode.INVALID_SYMBOL
+      ) {
+        this.logger.warn({
+          event: "pipeline_instrument_unavailable",
+          connectionId: connection.id,
+          provider: connection.provider,
+          environment: connection.environment,
+          symbol: input.symbol,
+          error: error.message,
+        });
+        return { outcome: "INSTRUMENT_UNAVAILABLE", price: 0 };
+      }
+      throw error;
+    }
 
     await this.sync(input.userId, connection.id, {});
     const ticker = await this.publicExchanges.ticker(

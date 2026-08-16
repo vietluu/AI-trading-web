@@ -384,6 +384,60 @@ describe("live trading duplicate order protection", () => {
     expect(connections.placeOrder).not.toHaveBeenCalled();
   });
 
+  it("rejects an unavailable Demo instrument before sync and risk approval", async () => {
+    const unavailable = new ExchangeError(
+      ExchangeErrorCode.INVALID_SYMBOL,
+      ExchangeProvider.OKX_FUTURES,
+      false,
+      400,
+      "Exchange symbol OKB-USDT is unavailable in DEMO",
+    );
+    const connections = {
+      list: vi.fn().mockResolvedValue([
+        {
+          id: "conn-1",
+          provider: ExchangeProvider.OKX_FUTURES,
+          environment: "DEMO",
+          isEnabled: true,
+          isVerified: true,
+        },
+      ]),
+      instrument: vi.fn().mockRejectedValue(unavailable),
+    };
+    const risk = { assess: vi.fn() };
+    const publicExchanges = { ticker: vi.fn() };
+    const service = new LiveTradingService(
+      createPrisma() as never,
+      connections as never,
+      { values: { mode: "DEMO" } } as never,
+      { record: vi.fn() } as never,
+      {} as never,
+      risk as never,
+      { prepareStrategy: vi.fn() } as never,
+      publicExchanges as never,
+    );
+    const sync = vi
+      .spyOn(
+        service as unknown as { sync: (...args: unknown[]) => Promise<void> },
+        "sync",
+      )
+      .mockResolvedValue(undefined);
+
+    await expect(
+      service.assessPipelineDecision({
+        userId: "user-1",
+        pipelineRunId: "run-okb",
+        symbol: "OKB-USDT",
+        provider: ExchangeProvider.OKX_FUTURES,
+        decision: { decision: "LONG", confidence: 80 } as never,
+      }),
+    ).resolves.toEqual({ outcome: "INSTRUMENT_UNAVAILABLE", price: 0 });
+
+    expect(sync).not.toHaveBeenCalled();
+    expect(risk.assess).not.toHaveBeenCalled();
+    expect(publicExchanges.ticker).not.toHaveBeenCalled();
+  });
+
   it("auto-reduces size to fit available balance when margin is insufficient", () => {
     const service = new LiveTradingService(
       createPrisma() as never,
@@ -493,6 +547,7 @@ describe("live trading duplicate order protection", () => {
           isVerified: true,
         },
       ]),
+      instrument: vi.fn().mockResolvedValue({ symbol: "BTC-USDT" }),
     };
     const publicExchanges = { ticker: vi.fn().mockResolvedValue({ markPrice: 61000 }) };
     const portfolio = {

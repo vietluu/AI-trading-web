@@ -113,6 +113,97 @@ describe("exchange adapter normalization contract", () => {
     );
   });
 
+  it("ignores non-swap position records without failing OKX account sync", async () => {
+    const warning = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    const signedGet = vi.fn().mockResolvedValue([
+      {
+        instId: "BTC-USDT-SWAP",
+        pos: "2",
+        posSide: "net",
+        avgPx: "65000",
+        upl: "1.5",
+        uTime: "1700000000000",
+      },
+      {
+        instId: "LINK-USDT",
+        pos: "1",
+        posSide: "net",
+        avgPx: "9.5",
+        upl: "0",
+        uTime: "1700000000000",
+      },
+    ]);
+    const publicGet = vi.fn().mockResolvedValue([
+      {
+        instId: "BTC-USDT-SWAP",
+        instType: "SWAP",
+        state: "live",
+        settleCcy: "USDT",
+        ctVal: "0.01",
+        tickSz: "0.1",
+        lotSz: "1",
+        minSz: "1",
+      },
+    ]);
+    const adapter = okxAdapter({ signedGet, publicGet });
+
+    const positions = await adapter.getPositions({
+      apiKey: "demo-key",
+      apiSecret: "demo-secret",
+      environment: ExchangeEnvironment.DEMO,
+    });
+
+    expect(positions).toHaveLength(1);
+    expect(positions[0]).toMatchObject({
+      symbol: "BTC-USDT",
+      quantity: "0.02",
+    });
+    expect(warning).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "okx_non_swap_record_ignored",
+        source: "positions",
+        instId: "LINK-USDT",
+      }),
+    );
+    warning.mockRestore();
+  });
+
+  it("ignores non-swap pending orders without failing the connection test path", async () => {
+    const signedGet = vi.fn().mockResolvedValue([
+      {
+        instId: "BTC-USDT-SWAP",
+        ordId: "swap-order",
+        side: "buy",
+        ordType: "limit",
+        state: "live",
+        sz: "1",
+        accFillSz: "0",
+      },
+      {
+        instId: "LINK-USDT",
+        ordId: "unexpected-order",
+        side: "buy",
+        ordType: "limit",
+        state: "live",
+        sz: "1",
+        accFillSz: "0",
+      },
+    ]);
+    const adapter = okxAdapter({ signedGet });
+
+    const orders = await adapter.getOpenOrders({
+      apiKey: "demo-key",
+      apiSecret: "demo-secret",
+      environment: ExchangeEnvironment.DEMO,
+    });
+
+    expect(orders).toHaveLength(1);
+    expect(orders[0]).toMatchObject({
+      symbol: "BTC-USDT",
+      exchangeOrderId: "swap-order",
+    });
+  });
+
   it("adds the simulated-trading header to OKX Demo public requests", async () => {
     const request = vi.fn().mockResolvedValue({
       data: { code: "0", data: [] },
@@ -1167,7 +1258,6 @@ describe("exchange adapter normalization contract", () => {
   it("keeps OKX reduce-only exits as market orders when maker-first is enabled", async () => {
     const signedPost = vi
       .fn()
-      .mockResolvedValueOnce([{ lever: "3" }])
       .mockResolvedValueOnce([
         { ordId: "exit-1", clOrdId: "stop-exit", sCode: "0", sMsg: "" },
       ]);
@@ -1192,7 +1282,7 @@ describe("exchange adapter normalization contract", () => {
     );
 
     expect(signedPost).toHaveBeenNthCalledWith(
-      2,
+      1,
       "/api/v5/trade/order",
       expect.anything(),
       expect.objectContaining({ ordType: "market", reduceOnly: true }),
@@ -1254,13 +1344,10 @@ describe("exchange adapter normalization contract", () => {
     expect(fallbackBody.ordType).toBe("market");
   });
 
-  it("continues placing an OKX order if leverage setup fails", async () => {
+  it("fails an opening order closed if leverage setup fails", async () => {
     const signedPost = vi
       .fn()
-      .mockRejectedValueOnce(new Error("leverage setup failed"))
-      .mockResolvedValueOnce([
-        { ordId: "123", clOrdId: "phase9-order", sCode: "0", sMsg: "" },
-      ]);
+      .mockRejectedValueOnce(new Error("leverage setup failed"));
     const adapter = okxAdapter({
       publicGet: vi.fn().mockResolvedValue([
         {
@@ -1293,7 +1380,12 @@ describe("exchange adapter normalization contract", () => {
           clientOrderId: "phase9-order",
         },
       ),
-    ).resolves.toMatchObject({ exchangeOrderId: "123" });
+    ).rejects.toMatchObject({
+      code: ExchangeErrorCode.UNKNOWN,
+      retryable: true,
+      message: "OKX leverage setup failed for BTC-USDT-SWAP",
+    });
+    expect(signedPost).toHaveBeenCalledTimes(1);
   });
 
   it("caps OKX client order ids to the supported length", async () => {

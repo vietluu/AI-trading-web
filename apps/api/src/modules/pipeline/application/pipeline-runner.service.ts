@@ -502,14 +502,16 @@ export class PipelineRunnerService {
           if (riskAssessment.outcome === "NO_ELIGIBLE_EXCHANGE_CONNECTION") {
             throw new Error("NO_ELIGIBLE_EXCHANGE_CONNECTION: Active verified exchange connection is required to run live risk assessment.");
           }
-          liveExecution = await this.liveTrading.executePipeline(
-            job.userId,
-            runId,
-          );
-          if (liveExecution.outcome === "EXECUTION_FAILED" && liveExecution.retryable === true) {
-            throw new PipelineExecutionRetryableError(
-              liveExecution.errorCode ?? "RETRYABLE_EXCHANGE_FAILURE",
+          if (riskAssessment.outcome === "RISK_APPROVED") {
+            liveExecution = await this.liveTrading.executePipeline(
+              job.userId,
+              runId,
             );
+            if (liveExecution.outcome === "EXECUTION_FAILED" && liveExecution.retryable === true) {
+              throw new PipelineExecutionRetryableError(
+                liveExecution.errorCode ?? "RETRYABLE_EXCHANGE_FAILURE",
+              );
+            }
           }
         } finally {
           // Always release the lock — even if assessment or execution throws

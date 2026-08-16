@@ -110,7 +110,7 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     const alerts = { contextual: vi.fn().mockResolvedValue(undefined), decision: vi.fn().mockResolvedValue(undefined), repeatedFailure: vi.fn().mockResolvedValue(undefined) };
     const analytics = { recordStageTelemetry: vi.fn() };
     const liveTrading = {
-      assessPipelineDecision: vi.fn().mockResolvedValue({ risk: { approved: true, reason: 'ok', riskScore: 20 } }),
+      assessPipelineDecision: vi.fn().mockResolvedValue({ outcome: 'RISK_APPROVED', risk: { approved: true, reason: 'ok', riskScore: 20 } }),
       executePipeline: vi.fn().mockResolvedValue({ outcome: 'EXECUTED' }),
     };
     const redis = {

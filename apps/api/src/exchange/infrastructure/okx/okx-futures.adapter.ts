@@ -294,7 +294,10 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         : await this.client.publicGet("/api/v5/public/instruments", params),
     );
     return values
-      .map((item) => this.instrument(item))
+      .flatMap((item) => {
+        const symbol = this.tryOkxSwapSymbol(item.instId, "instruments");
+        return symbol ? [this.instrument(item, symbol)] : [];
+      })
       .filter((item) => !query?.status || item.status === query.status);
   }
 
@@ -503,8 +506,12 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     const values = z.array(positionSchema).parse(rawPositions);
     return values
       .filter((item) => item.pos !== "0" && item.pos !== "0.0")
-      .map((item) => {
-        const normalizedSymbol = fromOkxSymbol(item.instId);
+      .flatMap((item) => {
+        const normalizedSymbol = this.tryOkxSwapSymbol(
+          item.instId,
+          "positions",
+        );
+        if (!normalizedSymbol) return [];
         const instrument = instruments.find(
           (candidate) => candidate.symbol === normalizedSymbol,
         );
@@ -520,7 +527,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
               : item.pos.startsWith("-")
                 ? "SHORT"
                 : "LONG";
-        return {
+        return [{
           provider: this.provider,
           symbol: normalizedSymbol,
           side,
@@ -538,7 +545,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
           ...(item.realizedPnl ? { realizedPnl: item.realizedPnl } : {}),
           ...(item.notionalUsd ? { notional: item.notionalUsd } : {}),
           updatedAt: new Date(Number(item.uTime)),
-        };
+        }];
       });
   }
 
@@ -552,7 +559,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         instId: query?.symbol ? toOkxSymbol(query.symbol) : undefined,
       }),
     );
-    return values.map((item) => this.order(item));
+    return values.flatMap((item) => this.safeOrder(item, "open_orders"));
   }
 
   async getOrderHistory(
@@ -567,7 +574,9 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         limit: historyLimit,
       }),
     );
-    return values.map((item) => this.order(item)).slice(0, historyLimit);
+    return values
+      .flatMap((item) => this.safeOrder(item, "order_history"))
+      .slice(0, historyLimit);
   }
 
   async getTradeFills(
@@ -617,8 +626,9 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       environment: credentials.environment,
     });
     const normalizedSymbols = symbols?.length ? new Set(symbols.map((symbol) => symbol.toUpperCase())) : null;
-    return values.map((item) => {
-      const symbol = fromOkxSymbol(item.instId);
+    return values.flatMap((item) => {
+      const symbol = this.tryOkxSwapSymbol(item.instId, "trade_fills");
+      if (!symbol) return [];
       const instrument = instruments.find((candidate) => candidate.symbol === symbol);
       const quantity = this.baseQuantity(item.fillSz, instrument?.contractSize);
       const realizedPnl = Number(item.fillPnl);
@@ -627,7 +637,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         realizedPnl !== 0 ||
         (positionSide === "LONG" && item.side === "sell") ||
         (positionSide === "SHORT" && item.side === "buy");
-      return {
+      return [{
         provider: this.provider,
         symbol,
         exchangeTradeId: item.tradeId,
@@ -644,7 +654,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         ...(item.execType ? { isMaker: item.execType === "M" } : {}),
         isClosing,
         executedAt: new Date(Number(item.fillTime ?? item.ts)),
-      };
+      }];
     }).filter((fill) => !normalizedSymbols || normalizedSymbols.has(fill.symbol));
   }
 
@@ -704,22 +714,33 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         "OKX contract metadata is unavailable for this symbol",
       );
     }
-    try {
-      await this.client.signedPost("/api/v5/account/set-leverage", credentials, {
-        instId,
-        lever: String(command.leverage),
-        mgnMode: "cross",
-        ...(command.positionSide
-          ? { posSide: command.positionSide.toLowerCase() }
-          : {}),
-      });
-    } catch (error) {
-      this.logger.warn({
-        event: "okx_leverage_setup_failed",
-        exchange: this.provider,
-        symbol: command.symbol,
-        error: error instanceof Error ? error.message : String(error),
-      });
+    if (!command.reduceOnly) {
+      try {
+        await this.client.signedPost("/api/v5/account/set-leverage", credentials, {
+          instId,
+          lever: String(command.leverage),
+          mgnMode: "cross",
+          ...(command.positionSide
+            ? { posSide: command.positionSide.toLowerCase() }
+            : {}),
+        });
+      } catch (error) {
+        this.logger.error({
+          event: "okx_leverage_setup_failed",
+          exchange: this.provider,
+          symbol: command.symbol,
+          requestedLeverage: command.leverage,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        if (error instanceof ExchangeError) throw error;
+        throw new ExchangeError(
+          ExchangeErrorCode.UNKNOWN,
+          this.provider,
+          true,
+          503,
+          `OKX leverage setup failed for ${instId}`,
+        );
+      }
     }
     const accountMaximumContracts = command.reduceOnly
       ? undefined
@@ -1271,6 +1292,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
 
   private instrument(
     item: z.infer<typeof instrumentSchema>,
+    normalizedSymbol = fromOkxSymbol(item.instId),
   ): ExchangeInstrument {
     const [base = "", quote = ""] = item.instId.split("-");
     const precision = (value: string): number =>
@@ -1280,7 +1302,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     const maxQuantity = item.maxMktSz ?? item.maxLmtSz;
     return {
       provider: this.provider,
-      symbol: fromOkxSymbol(item.instId),
+      symbol: normalizedSymbol,
       baseAsset: base,
       quoteAsset: quote,
       settlementAsset: item.settleCcy,
@@ -1414,10 +1436,13 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     return values[interval] ?? 60_000;
   }
 
-  private order(item: z.infer<typeof orderSchema>): ExchangeOrder {
+  private order(
+    item: z.infer<typeof orderSchema>,
+    normalizedSymbol = fromOkxSymbol(item.instId),
+  ): ExchangeOrder {
     return {
       provider: this.provider,
-      symbol: fromOkxSymbol(item.instId),
+      symbol: normalizedSymbol,
       exchangeOrderId: item.ordId,
       ...(item.clOrdId ? { clientOrderId: item.clOrdId } : {}),
       side: item.side === "sell" ? "SELL" : "BUY",
@@ -1440,6 +1465,29 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       ...(item.cTime ? { createdAt: new Date(Number(item.cTime)) } : {}),
       ...(item.uTime ? { updatedAt: new Date(Number(item.uTime)) } : {}),
     };
+  }
+
+  private safeOrder(
+    item: z.infer<typeof orderSchema>,
+    source: string,
+  ): ExchangeOrder[] {
+    const symbol = this.tryOkxSwapSymbol(item.instId, source);
+    return symbol ? [this.order(item, symbol)] : [];
+  }
+
+  private tryOkxSwapSymbol(instId: string, source: string): string | undefined {
+    try {
+      return fromOkxSymbol(instId);
+    } catch (error) {
+      this.logger.warn({
+        event: "okx_non_swap_record_ignored",
+        exchange: this.provider,
+        source,
+        instId: instId || "<empty>",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
   }
 
   private orderType(value: string): OrderType {
