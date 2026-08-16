@@ -543,6 +543,7 @@ export const vi: Dictionary = {
     equity: 'Vốn',
     available: 'Khả dụng',
     unrealizedPnl: 'Lãi/lỗ chưa thực hiện',
+    realizedPnl: 'PnL đã thực hiện',
     openOrders: 'Lệnh mở',
     connections: 'Kết nối',
     verified: 'đã xác minh',

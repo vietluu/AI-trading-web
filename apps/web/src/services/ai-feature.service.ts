@@ -139,6 +139,11 @@ export interface LiveTradingDashboard {
     status: string;
     purpose: string;
     errorCode: string | null;
+    grossPnl: number | null;
+    fee: number | null;
+    netPnl: number | null;
+    returnPct: number | null;
+    closeReason: string | null;
     createdAt: string;
   }>;
 }

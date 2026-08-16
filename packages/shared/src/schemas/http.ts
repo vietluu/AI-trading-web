@@ -8,6 +8,7 @@ export const serviceHealthSchema = z.object({
 export const healthResponseSchema = z.object({
   status: z.enum(["ok", "degraded"]),
   timestamp: z.string().datetime(),
+  release: z.string().min(1).optional(),
   services: z.object({
     database: serviceHealthSchema,
     redis: serviceHealthSchema,

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service';
+import { aggregateClosedTradeCycles } from '../../live-trading/domain/closed-trade-cycle';
 
 type ReportType = 'DAILY' | 'WEEKLY' | 'MONTHLY';
 
@@ -27,11 +28,12 @@ export class QuantReportService {
       this.prisma.factorEvaluation.findMany({ where: { userId }, orderBy: { predictivePower: 'desc' }, take: 1 }),
       this.prisma.researchValidationRun.findFirst({ where: { userId }, orderBy: { createdAt: 'desc' } }),
     ]);
-    const returns = trades.flatMap((trade) => trade.returnPct === null ? [] : [trade.returnPct]);
+    const tradeCycles = aggregateClosedTradeCycles(trades);
+    const returns = tradeCycles.flatMap((trade) => trade.returnPct === null ? [] : [trade.returnPct]);
     const mean = returns.length ? returns.reduce((sum, value) => sum + value, 0) / returns.length : null;
     const variance = mean !== null && returns.length > 1 ? returns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (returns.length - 1) : null;
-    const grossProfit = trades.filter((trade) => Number(trade.netPnl) > 0).reduce((sum, trade) => sum + Number(trade.netPnl), 0);
-    const grossLoss = Math.abs(trades.filter((trade) => Number(trade.netPnl) < 0).reduce((sum, trade) => sum + Number(trade.netPnl), 0));
+    const grossProfit = tradeCycles.filter((trade) => trade.netPnl > 0).reduce((sum, trade) => sum + trade.netPnl, 0);
+    const grossLoss = Math.abs(tradeCycles.filter((trade) => trade.netPnl < 0).reduce((sum, trade) => sum + trade.netPnl, 0));
     let equity = 1;
     let peak = 1;
     let maxDrawdown = 0;
@@ -46,20 +48,21 @@ export class QuantReportService {
       profitFactor: grossLoss > 0 ? Number((grossProfit / grossLoss).toFixed(4)) : grossProfit > 0 ? null : 0,
       sharpeRatio: mean !== null && variance !== null && variance > 0 ? Number((mean / Math.sqrt(variance) * Math.sqrt(returns.length)).toFixed(4)) : null,
       maxDrawdownPct: returns.length ? Number((maxDrawdown * 100).toFixed(4)) : null,
-      winRatePct: trades.length ? Number((trades.filter((trade) => Number(trade.netPnl) > 0).length / trades.length * 100).toFixed(2)) : null,
-      netPnl: Number(trades.reduce((sum, trade) => sum + Number(trade.netPnl), 0).toFixed(8)),
-      closedTrades: trades.length,
+      winRatePct: tradeCycles.length ? Number((tradeCycles.filter((trade) => trade.netPnl > 0).length / tradeCycles.length * 100).toFixed(2)) : null,
+      netPnl: Number(tradeCycles.reduce((sum, trade) => sum + trade.netPnl, 0).toFixed(8)),
+      closedTrades: tradeCycles.length,
+      closingOrders: trades.length,
       pipelineEvaluations: evaluations.length,
       hypothesesTested: hypotheses,
       topFactor: factors[0]?.factorName ?? null,
       latestValidationRunId: validation?.id ?? null,
     };
     const recommendations: string[] = [];
-    if (!trades.length) recommendations.push('Collect verified closed trades before changing live allocation.');
+    if (!tradeCycles.length) recommendations.push('Collect verified closed trades before changing live allocation.');
     if (metrics.profitFactor !== null && metrics.profitFactor < 1) recommendations.push('Do not increase risk: verified profit factor is below 1.');
     if (validation === null) recommendations.push('Run walk-forward and out-of-sample validation before deploying research changes.');
     if (!recommendations.length) recommendations.push('Keep the current governed configuration and continue collecting verified evidence.');
-    const summary = `${trades.length} verified closed trades and ${evaluations.length} evaluated pipeline decisions are available for this ${reportType.toLowerCase()} window.`;
+    const summary = `${tradeCycles.length} verified trade cycles and ${evaluations.length} evaluated pipeline decisions are available for this ${reportType.toLowerCase()} window.`;
 
     const generatedAt = new Date().toISOString();
     const record = await this.prisma.quantReportRecord.create({

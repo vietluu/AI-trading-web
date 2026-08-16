@@ -31,6 +31,7 @@ export class HealthService {
       status:
         database.status === "up" && redis.status === "up" ? "ok" : "degraded",
       timestamp: new Date().toISOString(),
+      release: process.env.APP_RELEASE?.trim() || "unknown",
       services: { database, redis },
     });
 

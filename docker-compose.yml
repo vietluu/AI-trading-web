@@ -63,6 +63,7 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      APP_RELEASE: ${APP_RELEASE:-production}
       API_PORT: 3001
       DATABASE_URL: postgresql://${POSTGRES_USER:-platform}:${POSTGRES_PASSWORD:-platform_dev}@postgres:5432/${POSTGRES_DB:-crypto_platform}?schema=public
       REDIS_URL: redis://redis:6379

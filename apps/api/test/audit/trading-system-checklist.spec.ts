@@ -49,7 +49,7 @@ describe('live trading checklist simulation', () => {
     });
   });
 
-  it('QUANT: treats a five-trade sample as advisory, not proof of a bad signal', async () => {
+  it('QUANT: fails closed when a validation sample is too small', async () => {
     const validation = {
       probabilityOfProfit: 80, probabilityOfRuin: 0, outOfSampleSharpe: 2,
       walkForwardStable: true, confidenceBrierScore: 0.1, createdAt: new Date('2026-08-12T09:00:00Z'),
@@ -67,7 +67,7 @@ describe('live trading checklist simulation', () => {
       userId: 'user-1', symbol: 'ETH-USDT', provider: 'OKX_FUTURES', timeframe: '15m',
       strategyKey: 'ai-core', decision: directionalDecision(), now: new Date('2026-08-12T10:00:00Z'),
     });
-    expect(result).toMatchObject({ allowed: true, advisory: true, reason: 'QUANT_SAMPLE_TOO_SMALL' });
+    expect(result).toMatchObject({ allowed: false, evaluated: false, reason: 'QUANT_SAMPLE_TOO_SMALL' });
   });
 
   it('RISK: caps AGGRESSIVE user risk and planned loss at the numeric ceiling', async () => {
@@ -77,6 +77,7 @@ describe('live trading checklist simulation', () => {
     const config = new RiskConfigService(new ConfigService({
       MAX_LEVERAGE: 50,
       MAX_STOP_LOSS_ROE: 0.05,
+      RISK_PER_TRADE: 0.0125,
     }), prisma as never);
     const limits = await config.getUserLimits('user-1');
     const result = evaluateRisk({

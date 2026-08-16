@@ -543,6 +543,7 @@ export interface Dictionary {
     equity: string;
     available: string;
     unrealizedPnl: string;
+    realizedPnl: string;
     openOrders: string;
     connections: string;
     verified: string;

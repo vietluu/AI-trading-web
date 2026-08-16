@@ -16,8 +16,8 @@ export class RiskConfigService {
 
   private defaultLimits(): RiskLimits {
     return {
-      riskPerTrade: Math.min(this.config.get<number>("RISK_PER_TRADE") ?? 0.02, 0.02),
-      maxPositions: this.config.get<number>("MAX_POSITIONS") ?? 10,
+      riskPerTrade: Math.min(this.config.get<number>("RISK_PER_TRADE") ?? 0.005, 0.02),
+      maxPositions: this.config.get<number>("MAX_POSITIONS") ?? 3,
       maxLeverage: this.config.get<number>("MAX_LEVERAGE") ?? 50,
       maxDrawdown: this.config.get<number>("MAX_DRAWDOWN") ?? 0.15,
       maxExposure: this.config.get<number>("MAX_EXPOSURE") ?? 0.6,
@@ -68,20 +68,20 @@ export class RiskConfigService {
       });
       if (!setting) return safeUserDefaults;
 
-      let riskPerTrade = defaults.riskPerTrade;
+      let preferredRiskPerTrade = defaults.riskPerTrade;
       let maxExposure = defaults.maxExposure;
       let stopLossPct = defaults.stopLossPct;
 
       if (setting.riskPreference === "CONSERVATIVE") {
-        riskPerTrade = 0.01;
+        preferredRiskPerTrade = 0.01;
         maxExposure = 0.4;
         stopLossPct = 0.015;
       } else if (setting.riskPreference === "MODERATE") {
-        riskPerTrade = 0.02;
+        preferredRiskPerTrade = 0.02;
         maxExposure = 0.6;
         stopLossPct = 0.02;
       } else if (setting.riskPreference === "AGGRESSIVE") {
-        riskPerTrade = 0.02;
+        preferredRiskPerTrade = 0.02;
         maxExposure = 0.8;
         stopLossPct = 0.03;
       }
@@ -99,7 +99,13 @@ export class RiskConfigService {
 
       return {
         ...defaults,
-        riskPerTrade: Math.min(riskPerTrade, hardRiskCeiling),
+        // The deployment-wide value is a hard ceiling. A user preference can
+        // make execution safer, but cannot silently raise live risk above it.
+        riskPerTrade: Math.min(
+          preferredRiskPerTrade,
+          defaults.riskPerTrade,
+          hardRiskCeiling,
+        ),
         maxExposure,
         stopLossPct,
         maxLeverage: userLeverage,

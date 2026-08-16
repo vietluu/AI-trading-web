@@ -25,6 +25,7 @@ import {
 } from "../domain/portfolio-engine";
 import { PortfolioConfigService } from "./portfolio-config.service";
 import { resolveDefaultSymbols } from "../../../exchange/infrastructure/exchange-symbol";
+import { aggregateClosedTradeCycles } from "../../live-trading/domain/closed-trade-cycle";
 
 type Tx = Prisma.TransactionClient;
 
@@ -628,9 +629,10 @@ export class PortfolioService {
       (sum, item) => sum + Math.abs(item.quantity * item.markPrice),
       0,
     );
+    const tradeCycles = aggregateClosedTradeCycles(closedTrades);
     const hasTradeLedger = Boolean(this.prisma.closedTrade);
-    const realizedPnl = closedTrades.reduce(
-      (sum, trade) => sum + Number(trade.netPnl),
+    const realizedPnl = tradeCycles.reduce(
+      (sum, trade) => sum + trade.netPnl,
       0,
     ) + (!hasTradeLedger
       ? live.positions.reduce(
@@ -638,7 +640,7 @@ export class PortfolioService {
           0,
         )
       : 0);
-    const incompleteClosedTrades = closedTrades.filter(
+    const incompleteClosedTrades = tradeCycles.filter(
       (trade) => !trade.sourceDataComplete,
     ).length;
     return {
@@ -659,7 +661,8 @@ export class PortfolioService {
         realizedPnl,
         unrealizedPnl: live.unrealizedPnl,
         pnlKind: "EXCHANGE_FILL_NET_PLUS_MARK_TO_MARKET",
-        closedTrades: closedTrades.length,
+        closedTrades: tradeCycles.length,
+        closingOrders: closedTrades.length,
         incompleteClosedTrades,
         grossExposure,
         exposurePct: equity > 0 ? grossExposure / equity : 0,
@@ -680,15 +683,15 @@ export class PortfolioService {
             sum + Number(position.unrealizedPnl) + Number(position.realizedPnl ?? 0),
           0,
         );
-        const strategyTrades = closedTrades.filter(
+        const strategyTrades = tradeCycles.filter(
           (trade) => trade.strategyId === item.id,
         );
         const strategyRealizedPnl = strategyTrades.reduce(
-          (sum, trade) => sum + Number(trade.netPnl),
+          (sum, trade) => sum + trade.netPnl,
           0,
         );
         const winningTrades = strategyTrades.filter(
-          (trade) => Number(trade.netPnl) > 0,
+          (trade) => trade.netPnl > 0,
         ).length;
         return {
           id: item.id,
@@ -726,10 +729,10 @@ export class PortfolioService {
       unassignedExposure: this.exchangeExposure(
         live.positions.filter((position) => !position.strategyId),
       ),
-      unassignedClosedTrades: closedTrades.filter((trade) => !trade.strategyId).length,
-      unassignedRealizedPnl: closedTrades
+      unassignedClosedTrades: tradeCycles.filter((trade) => !trade.strategyId).length,
+      unassignedRealizedPnl: tradeCycles
         .filter((trade) => !trade.strategyId)
-        .reduce((sum, trade) => sum + Number(trade.netPnl), 0),
+        .reduce((sum, trade) => sum + trade.netPnl, 0),
       aggregation: aggregatePositions(positions),
       riskEvents: riskEvents.map((item) => ({
         ...item,

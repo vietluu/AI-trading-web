@@ -543,6 +543,7 @@ export const en: Dictionary = {
     equity: 'Equity',
     available: 'Available',
     unrealizedPnl: 'Unrealized PnL',
+    realizedPnl: 'Realized PnL',
     openOrders: 'Open orders',
     connections: 'Connections',
     verified: 'verified',

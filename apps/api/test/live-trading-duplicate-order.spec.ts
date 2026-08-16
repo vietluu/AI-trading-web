@@ -122,6 +122,45 @@ describe("live trading duplicate order protection", () => {
     expect(prisma.livePosition.findMany).not.toHaveBeenCalled();
   });
 
+  it("serializes net realized PnL and its fee breakdown for trade history", () => {
+    const service = new LiveTradingService(
+      createPrisma() as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+
+    const result = (
+      service as unknown as {
+        closedTradePnlView(trade?: {
+          grossPnl: number;
+          fee: number;
+          netPnl: number;
+          returnPct: number | null;
+          closeReason: string;
+        }): Record<string, unknown>;
+      }
+    ).closedTradePnlView({
+      grossPnl: 12.5,
+      fee: -2.5,
+      netPnl: 10,
+      returnPct: 0.01,
+      closeReason: "TAKE_PROFIT",
+    });
+
+    expect(result).toEqual({
+      grossPnl: 12.5,
+      fee: -2.5,
+      netPnl: 10,
+      returnPct: 0.01,
+      closeReason: "TAKE_PROFIT",
+    });
+  });
+
   it("preserves the original blocker message for non-exchange execution failures", () => {
     const service = new LiveTradingService(
       createPrisma() as never,

@@ -1116,11 +1116,21 @@ export class LiveTradingService {
     const ledgerSummary = this.tradeLedger
       ? await this.tradeLedger.ingest(userId, connection, tradeFills)
       : { fills: 0, closedTrades: 0 };
-    const persistedOrders = await this.prisma.liveOrder.findMany({
-      where: { userId, connectionId },
-      orderBy: { createdAt: "desc" },
-      take: RECENT_TRADE_HISTORY_LIMIT,
-    });
+    const [persistedOrders, persistedClosedTrades] = await Promise.all([
+      this.prisma.liveOrder.findMany({
+        where: { userId, connectionId },
+        orderBy: { createdAt: "desc" },
+        take: RECENT_TRADE_HISTORY_LIMIT,
+      }),
+      this.prisma.closedTrade.findMany({
+        where: { userId, connectionId },
+        orderBy: { closedAt: "desc" },
+        take: ORDER_RECONCILIATION_LIMIT,
+      }),
+    ]);
+    const closedTradeByOrderId = new Map(
+      persistedClosedTrades.map((trade) => [trade.exchangeOrderId, trade]),
+    );
     await this.monitorProtection(userId, connection, positions, context);
     await this.cleanupOrphanProtection(userId, connection, positions, context);
     this.logger.log({
@@ -1180,8 +1190,12 @@ export class LiveTradingService {
         notional: position.notional ? Number(position.notional) : null,
         syncedAt: syncedAt.toISOString(),
       })),
-      orders: persistedOrders.map((row) =>
-        this.orderView({
+      orders: persistedOrders.map((row) => {
+        const trade = row.exchangeOrderId
+          ? closedTradeByOrderId.get(row.exchangeOrderId)
+          : undefined;
+        return {
+          ...this.orderView({
           id: row.id,
           exchangeOrderId: row.exchangeOrderId,
           clientOrderId: row.clientOrderId,
@@ -1196,8 +1210,10 @@ export class LiveTradingService {
           errorCode: row.errorCode,
           createdAt: row.createdAt,
           updatedAt: row.updatedAt,
-        }),
-      ),
+          }),
+          ...this.closedTradePnlView(trade),
+        };
+      }),
     };
     this.realtimeSnapshots.set(this.realtimeCacheKey(userId, connectionId), snapshot);
     this.realtimeSnapshots.delete(this.realtimeCacheKey(userId, undefined));
@@ -1265,7 +1281,7 @@ export class LiveTradingService {
         ),
       ),
     );
-    const [positions, orders, snapshots] = await Promise.all([
+    const [positions, orders, snapshots, closedTrades] = await Promise.all([
       this.prisma.livePosition.findMany({
         where,
         orderBy: { updatedAt: "desc" },
@@ -1280,7 +1296,15 @@ export class LiveTradingService {
         orderBy: { syncedAt: "desc" },
         take: 100,
       }),
+      this.prisma.closedTrade.findMany({
+        where,
+        orderBy: { closedAt: "desc" },
+        take: ORDER_RECONCILIATION_LIMIT,
+      }),
     ]);
+    const closedTradeByOrderId = new Map(
+      closedTrades.map((trade) => [trade.exchangeOrderId, trade]),
+    );
     const latestMap = new Map<string, (typeof snapshots)[number]>();
     for (const item of snapshots) {
       if (!latestMap.has(item.connectionId)) {
@@ -1314,7 +1338,30 @@ export class LiveTradingService {
         notional: row.notional ? Number(row.notional) : null,
         syncedAt: row.syncedAt.toISOString(),
       })),
-      orders: orders.map((row) => this.orderView(row)),
+      orders: orders.map((row) => ({
+        ...this.orderView(row),
+        ...this.closedTradePnlView(
+          row.exchangeOrderId
+            ? closedTradeByOrderId.get(row.exchangeOrderId)
+            : undefined,
+        ),
+      })),
+    };
+  }
+
+  private closedTradePnlView(trade?: {
+    grossPnl: Prisma.Decimal;
+    fee: Prisma.Decimal;
+    netPnl: Prisma.Decimal;
+    returnPct: number | null;
+    closeReason: string;
+  }) {
+    return {
+      grossPnl: trade ? Number(trade.grossPnl) : null,
+      fee: trade ? Number(trade.fee) : null,
+      netPnl: trade ? Number(trade.netPnl) : null,
+      returnPct: trade?.returnPct ?? null,
+      closeReason: trade?.closeReason ?? null,
     };
   }
 

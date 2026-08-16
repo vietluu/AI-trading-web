@@ -22,6 +22,7 @@ export class HealthController {
       example: {
         status: "ok",
         timestamp: "2026-07-31T00:00:00.000Z",
+        release: "6ddef69",
         services: {
           database: { status: "up", latencyMs: 2 },
           redis: { status: "up", latencyMs: 1 },

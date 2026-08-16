@@ -37,11 +37,10 @@ describe("QuantExecutionPolicyService", () => {
     decision: decision() as never, now: new Date("2026-08-12T01:00:00Z"),
   };
 
-  it("treats missing exact validation as advisory instead of negative evidence", async () => {
+  it("fails closed when exact validation is missing", async () => {
     await expect(service(null).policy.evaluate(input)).resolves.toEqual({
-      allowed: true,
+      allowed: false,
       evaluated: false,
-      advisory: true,
       reason: "QUANT_VALIDATION_MISSING",
     });
   });
@@ -67,7 +66,7 @@ describe("QuantExecutionPolicyService", () => {
     expect(result).toMatchObject({ allowed: false, reason: "QUANT_OUT_OF_SAMPLE_EDGE_MISSING" });
   });
 
-  it("does not hard-block on Monte Carlo evidence derived from too few trades", async () => {
+  it("fails closed when Monte Carlo evidence is derived from too few trades", async () => {
     const result = await service(valid({
       metricsJson: {
         sampleEvidence: { totalTrades: 5, outOfSampleTrades: 1, walkForwardWindows: 1 },
@@ -76,17 +75,37 @@ describe("QuantExecutionPolicyService", () => {
         executionAssumptions: { leverage: 1, riskPerTrade: 0.02, riskRewardRatio: 1.5 },
       },
     })).policy.evaluate(input);
-    expect(result).toMatchObject({ allowed: true, advisory: true, reason: "QUANT_SAMPLE_TOO_SMALL" });
+    expect(result).toMatchObject({ allowed: false, evaluated: false, reason: "QUANT_SAMPLE_TOO_SMALL" });
   });
 
-  it("makes mismatched research assumptions advisory while live risk remains authoritative", async () => {
+  it("fails closed when research assumptions do not match execution", async () => {
     const policy = serviceWithLimits(valid(), {
       maxLeverage: 50,
       riskPerTrade: 0.01,
       riskRewardRatio: 2,
     });
     const result = await policy.evaluate(input);
-    expect(result).toMatchObject({ allowed: true, advisory: true, reason: "QUANT_ASSUMPTION_MISMATCH" });
+    expect(result).toMatchObject({ allowed: false, evaluated: false, reason: "QUANT_ASSUMPTION_MISMATCH" });
+  });
+
+  it("does not let a small sample hide explicit negative validation evidence", async () => {
+    const result = await service(valid({
+      probabilityOfProfit: 3,
+      probabilityOfRuin: 100,
+      outOfSampleSharpe: -2,
+      walkForwardStable: false,
+      metricsJson: {
+        sampleEvidence: { totalTrades: 5, outOfSampleTrades: 1, walkForwardWindows: 1 },
+        outOfSample: { outOfSampleTrades: 1 },
+        walkForward: { windows: [{}] },
+        executionAssumptions: { leverage: 1, riskPerTrade: 0.02, riskRewardRatio: 1.5 },
+      },
+    })).policy.evaluate(input);
+
+    expect(result).toMatchObject({
+      allowed: false,
+      reason: "QUANT_WALK_FORWARD_UNSTABLE",
+    });
   });
 
   it("reports WAIT as not evaluated instead of a misleading Quant pass", async () => {

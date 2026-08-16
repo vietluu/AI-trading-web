@@ -66,7 +66,7 @@ export class QuantExecutionPolicyService {
         orderBy: { detectedAt: "desc" },
       }),
     ]);
-    if (!validation) return this.advisoryEvidence("QUANT_VALIDATION_MISSING");
+    if (!validation) return this.insufficientEvidence("QUANT_VALIDATION_MISSING");
     const metrics = validation.metricsJson && typeof validation.metricsJson === "object" && !Array.isArray(validation.metricsJson)
       ? validation.metricsJson as Record<string, unknown>
       : {};
@@ -80,23 +80,12 @@ export class QuantExecutionPolicyService {
       ? metrics.walkForward as Record<string, unknown>
       : {};
     const windows = Array.isArray(walkForward.windows) ? walkForward.windows.length : 0;
-    if (
-      Number(sampleEvidence.totalTrades ?? 0) < 30 ||
-      Number(sampleEvidence.outOfSampleTrades ?? outOfSample.outOfSampleTrades ?? 0) < 10 ||
-      Number(sampleEvidence.walkForwardWindows ?? windows) < 5
-    ) return this.advisoryEvidence("QUANT_SAMPLE_TOO_SMALL");
     const assumptions = metrics.executionAssumptions && typeof metrics.executionAssumptions === "object" && !Array.isArray(metrics.executionAssumptions)
       ? metrics.executionAssumptions as Record<string, unknown>
       : undefined;
     const calibration = metrics.calibration && typeof metrics.calibration === "object" && !Array.isArray(metrics.calibration)
       ? metrics.calibration as Record<string, unknown>
       : undefined;
-    const liveLimits = await this.riskConfig?.getUserLimits(input.userId);
-    if (!assumptions || (liveLimits && (
-      Number(assumptions.leverage) !== liveLimits.maxLeverage ||
-      Math.abs(Number(assumptions.riskPerTrade) - liveLimits.riskPerTrade) > 1e-9 ||
-      Math.abs(Number(assumptions.riskRewardRatio) - liveLimits.riskRewardRatio) > 1e-9
-    ))) return this.advisoryEvidence("QUANT_ASSUMPTION_MISMATCH");
     const evidence = {
       probabilityOfProfit: validation.probabilityOfProfit,
       probabilityOfRuin: validation.probabilityOfRuin,
@@ -107,7 +96,10 @@ export class QuantExecutionPolicyService {
     };
     const maxAge = Math.max(36 * 3_600_000, timeframeMilliseconds(input.timeframe) * 12);
     if (now.getTime() - validation.createdAt.getTime() > maxAge)
-      return { ...this.advisoryEvidence("QUANT_VALIDATION_STALE"), validation: evidence };
+      return { ...this.insufficientEvidence("QUANT_VALIDATION_STALE"), validation: evidence };
+    // Negative evidence is actionable even when the sample is immature. In
+    // particular, a small sample must never hide an unstable walk-forward run,
+    // high ruin probability, or negative out-of-sample edge.
     if (!validation.walkForwardStable)
       return { allowed: false, reason: "QUANT_WALK_FORWARD_UNSTABLE", validation: evidence };
     if (validation.probabilityOfProfit < 52)
@@ -118,6 +110,17 @@ export class QuantExecutionPolicyService {
       return { allowed: false, reason: "QUANT_OUT_OF_SAMPLE_EDGE_MISSING", validation: evidence };
     if (calibration?.evidenceSufficient === true && validation.confidenceBrierScore > 0.3)
       return { allowed: false, reason: "QUANT_CALIBRATION_UNRELIABLE", validation: evidence };
+    const liveLimits = await this.riskConfig?.getUserLimits(input.userId);
+    if (!assumptions || (liveLimits && (
+      Number(assumptions.leverage) !== liveLimits.maxLeverage ||
+      Math.abs(Number(assumptions.riskPerTrade) - liveLimits.riskPerTrade) > 1e-9 ||
+      Math.abs(Number(assumptions.riskRewardRatio) - liveLimits.riskRewardRatio) > 1e-9
+    ))) return { ...this.insufficientEvidence("QUANT_ASSUMPTION_MISMATCH"), validation: evidence };
+    if (
+      Number(sampleEvidence.totalTrades ?? 0) < 30 ||
+      Number(sampleEvidence.outOfSampleTrades ?? outOfSample.outOfSampleTrades ?? 0) < 10 ||
+      Number(sampleEvidence.walkForwardWindows ?? windows) < 5
+    ) return { ...this.insufficientEvidence("QUANT_SAMPLE_TOO_SMALL"), validation: evidence };
 
     const regimeEvidence = regime
       ? { value: regime.regime, confidence: regime.confidence, detectedAt: regime.detectedAt.toISOString() }
@@ -141,11 +144,11 @@ export class QuantExecutionPolicyService {
     };
   }
 
-  /** Absence of applicable research is not negative evidence about this trade. */
-  private advisoryEvidence(
+  /** Automatic exchange execution fails closed until applicable evidence exists. */
+  private insufficientEvidence(
     reason: "QUANT_VALIDATION_MISSING" | "QUANT_SAMPLE_TOO_SMALL" |
       "QUANT_ASSUMPTION_MISMATCH" | "QUANT_VALIDATION_STALE",
   ): QuantExecutionPolicyResult {
-    return { allowed: true, evaluated: false, advisory: true, reason };
+    return { allowed: false, evaluated: false, reason };
   }
 }

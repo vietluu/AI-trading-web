@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { ExchangeConnection, ExchangeFill, Prisma } from "@prisma/client";
 import type { ExchangeFill as ExchangeFillInput } from "../../../exchange/domain/exchange.types";
 import { PrismaService } from "../../../database/prisma.service";
+import { aggregateClosedTradeCycles } from "../domain/closed-trade-cycle";
 
 const CLOSE_PURPOSES = ["CLOSE", "REVERSE", "STOP_LOSS", "TAKE_PROFIT"];
 
@@ -162,20 +163,25 @@ export class ExchangeTradeLedgerService {
           where: { id: fills.find((fill) => fill.liveOrderId)!.liveOrderId! },
         })
       : null;
-    const openingOrder = sourceOrder?.strategyId
-      ? await this.prisma.liveOrder.findFirst({
-          where: {
-            userId,
-            connectionId: connection.id,
-            strategyId: sourceOrder.strategyId,
-            symbol: fills[0]!.symbol,
-            purpose: { in: ["OPEN", "REVERSE"] },
-            status: "FILLED",
-            createdAt: { lte: fills[0]!.executedAt },
-          },
-          orderBy: { createdAt: "desc" },
-        })
-      : null;
+    // Exchange-native protective orders can be imported without a client order
+    // id, so their synthetic local row has no strategy. Attribute the close to
+    // the most recent opening order for the non-pyramided symbol regardless of
+    // whether the closing row itself carries strategy metadata.
+    const openingOrder = await this.prisma.liveOrder.findFirst({
+      where: {
+        userId,
+        connectionId: connection.id,
+        symbol: fills[0]!.symbol,
+        purpose: { in: ["OPEN", "REVERSE"] },
+        status: "FILLED",
+        createdAt: { lte: fills[0]!.executedAt },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    const strategyId =
+      sourceOrder?.strategyId ??
+      openingOrder?.strategyId ??
+      fills.find((fill) => fill.strategyId)?.strategyId;
     const closedAt = fills.at(-1)!.executedAt;
     const sourceDataComplete = allocation.complete && feesConvertible;
     const returnPct = entryPrice && entryPrice > 0
@@ -185,7 +191,7 @@ export class ExchangeTradeLedgerService {
     const trade = await this.prisma.closedTrade.upsert({
       where: { connectionId_exchangeOrderId: { connectionId: connection.id, exchangeOrderId } },
       update: {
-        strategyId: sourceOrder?.strategyId ?? fills.find((fill) => fill.strategyId)?.strategyId,
+        strategyId,
         side: fills[0]!.side,
         positionSide: fills[0]!.positionSide,
         quantity,
@@ -197,13 +203,13 @@ export class ExchangeTradeLedgerService {
         returnPct,
         closeReason: sourceOrder?.purpose ?? "EXCHANGE_FILL",
         sourceDataComplete,
-        openedAt: allocation.openedAt ?? openingOrder?.createdAt,
+        openedAt: openingOrder?.createdAt ?? allocation.openedAt,
         closedAt,
       },
       create: {
         userId,
         connectionId: connection.id,
-        strategyId: sourceOrder?.strategyId ?? fills.find((fill) => fill.strategyId)?.strategyId,
+        strategyId,
         provider: connection.provider,
         environment: connection.environment,
         symbol: fills[0]!.symbol,
@@ -219,7 +225,7 @@ export class ExchangeTradeLedgerService {
         returnPct,
         closeReason: sourceOrder?.purpose ?? "EXCHANGE_FILL",
         sourceDataComplete,
-        openedAt: allocation.openedAt ?? openingOrder?.createdAt,
+        openedAt: openingOrder?.createdAt ?? allocation.openedAt,
         closedAt,
       },
     });
@@ -303,10 +309,11 @@ export class ExchangeTradeLedgerService {
         where: { strategyId: strategy.id },
         orderBy: { closedAt: "asc" },
       });
-      const total = trades.length;
-      const wins = trades.filter((trade) => Number(trade.netPnl) > 0).length;
-      const returns = trades.flatMap((trade) => trade.returnPct === null ? [] : [trade.returnPct]);
-      const realizedPnl = trades.reduce((sumValue, trade) => sumValue + Number(trade.netPnl), 0);
+      const cycles = aggregateClosedTradeCycles(trades);
+      const total = cycles.length;
+      const wins = cycles.filter((trade) => trade.netPnl > 0).length;
+      const returns = cycles.flatMap((trade) => trade.returnPct === null ? [] : [trade.returnPct]);
+      const realizedPnl = cycles.reduce((sumValue, trade) => sumValue + trade.netPnl, 0);
       let equity = 1;
       let peak = 1;
       let maxDrawdown = 0;
@@ -342,8 +349,9 @@ export class ExchangeTradeLedgerService {
       where: { userId },
       orderBy: { closedAt: "asc" },
     });
-    const bySymbol = new Map<string, typeof trades>();
-    for (const trade of trades) {
+    const cycles = aggregateClosedTradeCycles(trades);
+    const bySymbol = new Map<string, typeof cycles>();
+    for (const trade of cycles) {
       const rows = bySymbol.get(trade.symbol) ?? [];
       rows.push(trade);
       bySymbol.set(trade.symbol, rows);
@@ -351,8 +359,8 @@ export class ExchangeTradeLedgerService {
     const insights = [...bySymbol.entries()]
       .filter(([, rows]) => rows.length >= 2)
       .map(([symbol, rows]) => {
-        const wins = rows.filter((trade) => Number(trade.netPnl) > 0).length;
-        const netPnl = rows.reduce((sumValue, trade) => sumValue + Number(trade.netPnl), 0);
+        const wins = rows.filter((trade) => trade.netPnl > 0).length;
+        const netPnl = rows.reduce((sumValue, trade) => sumValue + trade.netPnl, 0);
         const winRate = wins / rows.length;
         const winning = netPnl > 0 && winRate >= 0.5;
         return {
@@ -362,7 +370,7 @@ export class ExchangeTradeLedgerService {
           summary: `${symbol} has ${rows.length} verified exchange trades, ${(winRate * 100).toFixed(1)}% win rate and ${netPnl.toFixed(4)} net PnL.`,
           evidenceJson: {
             source: "EXCHANGE_CLOSED_TRADE_LEDGER",
-            tradeIds: rows.map((trade) => trade.id),
+            tradeIds: rows.flatMap((trade) => trade.tradeIds),
             totalTrades: rows.length,
             completeTrades: rows.filter((trade) => trade.sourceDataComplete).length,
             wins,

@@ -3,6 +3,36 @@ import { describe, expect, it, vi } from "vitest";
 import { RiskConfigService } from "../../src/modules/risk/application/risk-config.service";
 
 describe("RiskConfigService user limits", () => {
+  it("defaults automated execution to 0.5% risk and three positions", () => {
+    const service = new RiskConfigService(new ConfigService({}));
+
+    expect(service.values).toMatchObject({
+      riskPerTrade: 0.005,
+      maxPositions: 3,
+    });
+  });
+
+  it("does not let a risk preference exceed the deployment risk ceiling", async () => {
+    const prisma = {
+      userSetting: {
+        findUnique: vi.fn().mockResolvedValue({
+          riskPreference: "AGGRESSIVE",
+          defaultLeverage: 50,
+          maxRiskPerTrade: 0.02,
+        }),
+      },
+    };
+    const service = new RiskConfigService(
+      new ConfigService({ MAX_LEVERAGE: 50, RISK_PER_TRADE: 0.005 }),
+      prisma as never,
+    );
+
+    await expect(service.getUserLimits("user-1")).resolves.toMatchObject({
+      riskPerTrade: 0.005,
+      maxLeverage: 50,
+    });
+  });
+
   it.each([
     ["CONSERVATIVE", 50, 50, 0.01],
     ["MODERATE", 50, 50, 0.02],

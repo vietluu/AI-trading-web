@@ -55,6 +55,11 @@ interface Dashboard {
     status: string;
     purpose: string;
     errorCode: string | null;
+    grossPnl: number | null;
+    fee: number | null;
+    netPnl: number | null;
+    returnPct: number | null;
+    closeReason: string | null;
     createdAt: string;
   }>;
 }
@@ -243,11 +248,11 @@ export default function LiveTradingPage(): React.JSX.Element {
       </Table>
       <Table
         title={t.ai.openOrdersTable}
-        headings={["Order", t.ai.symbol, "Side", "Size", "Price", "Status"]}
+        headings={["Order", t.ai.symbol, "Side", "Size", "Price", "Status", t.ai.realizedPnl]}
         empty={t.ai.noOpenOrders}
       >
         {openOrders.map((order) => (
-          <OrderRow order={order} key={order.id} />
+          <OrderRow order={order} key={order.id} showPnl />
         ))}
       </Table>
       <Table
@@ -311,8 +316,10 @@ function Table({
 
 function OrderRow({
   order,
+  showPnl = false,
 }: {
   order: Dashboard["orders"][number];
+  showPnl?: boolean;
 }): React.JSX.Element {
   return (
     <tr>
@@ -336,6 +343,24 @@ function OrderRow({
           <div className="text-xs text-red-400">{order.errorCode}</div>
         )}
       </td>
+      {showPnl && (
+        <td
+          className={`p-3 font-mono font-semibold ${
+            order.netPnl === null
+              ? "text-muted-foreground"
+              : order.netPnl >= 0
+                ? "text-emerald-400"
+                : "text-red-400"
+          }`}
+          title={
+            order.netPnl === null
+              ? undefined
+              : `Gross: ${money.format(order.grossPnl ?? 0)} · Fee: ${money.format(order.fee ?? 0)}`
+          }
+        >
+          {order.netPnl === null ? "—" : money.format(order.netPnl)}
+        </td>
+      )}
     </tr>
   );
 }

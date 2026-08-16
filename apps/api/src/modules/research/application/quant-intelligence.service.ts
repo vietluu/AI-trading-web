@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
 import { ExchangeInterval, ExchangeProvider } from '../../../exchange/domain/exchange.types';
 import { MarketDataService } from '../../../market-data/application/market-data.service';
+import { aggregateClosedTradeCycles } from '../../live-trading/domain/closed-trade-cycle';
 
 type QuantRecommendation = {
   id?: string;
@@ -46,10 +47,27 @@ interface QuantRecommendationRecord {
 }
 
 export function calculateLedgerPortfolioMetrics(
-  trades: Array<{ netPnl: Prisma.Decimal | number; returnPct: number | null }>,
+  trades: Array<{
+    id?: string;
+    connectionId?: string;
+    strategyId?: string | null;
+    symbol?: string;
+    side?: string;
+    positionSide?: string | null;
+    quantity?: unknown;
+    entryPrice?: unknown;
+    grossPnl?: unknown;
+    fee?: unknown;
+    netPnl: Prisma.Decimal | number;
+    returnPct: number | null;
+    sourceDataComplete?: boolean;
+    openedAt?: Date | null;
+    closedAt?: Date;
+  }>,
 ) {
-  const netPnls = trades.map((trade) => Number(trade.netPnl));
-  const returns = trades
+  const cycles = aggregateClosedTradeCycles(trades);
+  const netPnls = cycles.map((trade) => trade.netPnl);
+  const returns = cycles
     .flatMap((trade) => trade.returnPct === null ? [] : [Number(trade.returnPct)])
     .filter(Number.isFinite);
   const grossProfit = netPnls.filter((value) => value > 0).reduce((sum, value) => sum + value, 0);
@@ -154,6 +172,7 @@ export class QuantIntelligenceService {
       this.prisma.liveOrder.count({ where: { userId } }),
       this.multiSymbolValidationEvidence(userId, []),
     ]);
+    const tradeCycles = aggregateClosedTradeCycles(closedTrades);
     const ledger = calculateLedgerPortfolioMetrics(closedTrades);
     const clampPct = (value: number) => Math.max(0, Math.min(100, value));
     const researchValidationScore = validationEvidence.requiredPairs
@@ -162,14 +181,14 @@ export class QuantIntelligenceService {
         + clampPct((validationEvidence.averageOutOfSampleSharpe ?? 0) * 50) * 0.2
       : 0;
     const dimensions = {
-      dataEvidence: Math.min(100, closedTrades.length / 30 * 100),
+      dataEvidence: Math.min(100, tradeCycles.length / 30 * 100),
       pipelineReliability: pipelineTotal ? pipelineCompleted / pipelineTotal * 100 : 0,
       executionEvidence: riskApproved ? Math.min(100, liveOrders / riskApproved * 100) : 0,
       riskCoverage: liveOrders ? Math.min(100, riskTotal / liveOrders * 100) : 0,
       researchValidation: Number(researchValidationScore.toFixed(2)),
     };
     const overallScore = Number((Object.values(dimensions).reduce((sum, value) => sum + value, 0) / Object.keys(dimensions).length).toFixed(1));
-    const netPnl = closedTrades.reduce((sum, trade) => sum + Number(trade.netPnl), 0);
+    const netPnl = tradeCycles.reduce((sum, trade) => sum + trade.netPnl, 0);
     const calmar = ledger.maxDrawdownPct && ledger.maxDrawdownPct > 0
       ? Number(((ledger.expectedValuePct ?? 0) / ledger.maxDrawdownPct).toFixed(4))
       : null;
@@ -186,7 +205,8 @@ export class QuantIntelligenceService {
       monteCarloSurvivalRate: null,
       evidence: {
         source: 'EXCHANGE_LEDGER_PIPELINE_RUNTIME_AND_RESEARCH_DB',
-        closedTrades: closedTrades.length,
+        closedTrades: tradeCycles.length,
+        closingOrders: closedTrades.length,
         netPnl: Number(netPnl.toFixed(8)),
         pipelineTotal,
         pipelineCompleted,
@@ -540,6 +560,7 @@ export class QuantIntelligenceService {
     const analysis = analyzePortfolioIntelligence(
       strategies.map((strategy) => {
         const livePositions = strategy.livePositions ?? [];
+        const tradeCycles = aggregateClosedTradeCycles(strategy.closedTrades);
         const livePnl = livePositions.reduce((sum, item) => sum + Number(item.unrealizedPnl) + Number(item.realizedPnl ?? 0), 0);
         return {
           key: strategy.key,
@@ -564,9 +585,9 @@ export class QuantIntelligenceService {
             realizedPnl: livePositions.reduce((sum, item) => sum + Number(item.realizedPnl ?? 0), 0),
             positionCount: livePositions.length,
           },
-          returns: strategy.closedTrades
+          returns: tradeCycles
             .filter((trade) => trade.returnPct !== null)
-            .map((trade) => ({ at: trade.closedAt.toISOString(), returnPct: trade.returnPct! })),
+            .map((trade) => ({ at: trade.closedAt!.toISOString(), returnPct: trade.returnPct! })),
           marketRegime,
         };
       }),
@@ -579,7 +600,7 @@ export class QuantIntelligenceService {
           strategy.symbols,
           strategy.key,
         );
-        const verifiedAttributedTrades = strategy.closedTrades.filter(
+        const verifiedAttributedTrades = aggregateClosedTradeCycles(strategy.closedTrades).filter(
           (trade) => trade.sourceDataComplete,
         ).length;
         return {
@@ -604,6 +625,7 @@ export class QuantIntelligenceService {
     const validationByStrategy = new Map(
       allocationValidation.map((item) => [item.strategyKey, item]),
     );
+    const allTradeCycles = aggregateClosedTradeCycles(allClosedTrades);
     const ledgerMetrics = calculateLedgerPortfolioMetrics(allClosedTrades);
     return {
       ...analysis,
@@ -625,13 +647,14 @@ export class QuantIntelligenceService {
       maxPortfolioDrawdownPct: ledgerMetrics.maxDrawdownPct,
       actualTrading: {
         source: 'EXCHANGE_CLOSED_TRADE_LEDGER',
-        totalTrades: allClosedTrades.length,
-        completeTrades: allClosedTrades.filter((trade) => trade.sourceDataComplete).length,
-        assignedTrades: allClosedTrades.filter((trade) => trade.strategyId).length,
-        unassignedTrades: allClosedTrades.filter((trade) => !trade.strategyId).length,
-        netPnl: Number(allClosedTrades.reduce((sum, trade) => sum + Number(trade.netPnl), 0).toFixed(8)),
-        winRate: allClosedTrades.length
-          ? Number((allClosedTrades.filter((trade) => Number(trade.netPnl) > 0).length / allClosedTrades.length * 100).toFixed(2))
+        totalTrades: allTradeCycles.length,
+        closingOrders: allClosedTrades.length,
+        completeTrades: allTradeCycles.filter((trade) => trade.sourceDataComplete).length,
+        assignedTrades: allTradeCycles.filter((trade) => trade.strategyId).length,
+        unassignedTrades: allTradeCycles.filter((trade) => !trade.strategyId).length,
+        netPnl: Number(allTradeCycles.reduce((sum, trade) => sum + trade.netPnl, 0).toFixed(8)),
+        winRate: allTradeCycles.length
+          ? Number((allTradeCycles.filter((trade) => trade.netPnl > 0).length / allTradeCycles.length * 100).toFixed(2))
           : 0,
         profitFactor: ledgerMetrics.profitFactor,
         sharpeRatio: ledgerMetrics.sharpeRatio,

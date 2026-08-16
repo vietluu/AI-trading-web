@@ -28,6 +28,11 @@ export const LiveExecutionSchema = z.object({
   status: z.string(),
   purpose: z.enum(["OPEN", "CLOSE", "REVERSE", "STOP_LOSS", "TAKE_PROFIT"]),
   errorCode: z.string().nullable(),
+  grossPnl: z.number().nullable().optional(),
+  fee: z.number().nullable().optional(),
+  netPnl: z.number().nullable().optional(),
+  returnPct: z.number().nullable().optional(),
+  closeReason: z.string().nullable().optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });

@@ -26,6 +26,25 @@ describe('calculateLedgerPortfolioMetrics', () => {
     expect(result.sharpeRatio).toBeNull();
     expect(result.maxDrawdownPct).toBeNull();
   });
+
+  it('calculates win rate inputs by trade cycle instead of partial closing order', () => {
+    const openedAt = new Date('2026-08-16T03:57:42.000Z');
+    const result = calculateLedgerPortfolioMetrics([
+      {
+        id: 'tp', connectionId: 'connection-1', strategyId: 'strategy-1',
+        symbol: 'LINK-USDT', positionSide: 'SHORT', openedAt,
+        quantity: 200, entryPrice: 10, netPnl: 10, returnPct: 0.005,
+      },
+      {
+        id: 'residual', connectionId: 'connection-1', strategyId: 'strategy-1',
+        symbol: 'LINK-USDT', positionSide: 'SHORT', openedAt,
+        quantity: 300, entryPrice: 10, netPnl: -20, returnPct: -0.006666,
+      },
+      { id: 'separate', netPnl: 5, returnPct: 0.01 },
+    ]);
+
+    expect(result.profitFactor).toBe(0.5);
+  });
 });
 
 describe('resolveStrategyAllocationTarget', () => {
