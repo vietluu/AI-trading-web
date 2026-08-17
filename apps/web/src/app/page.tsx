@@ -445,10 +445,21 @@ function AuthenticatedDashboard(): React.JSX.Element {
                     {new Date(order.createdAt).toLocaleString()}
                   </p>
                 </div>
-                <StatusBadge
-                  label={order.status}
-                  tone={order.status === "FILLED" ? "success" : "info"}
-                />
+                <div className="flex items-center gap-3">
+                  {order.netPnl !== null && order.netPnl !== undefined && (
+                    <span
+                      className={`font-mono text-xs font-semibold ${
+                        order.netPnl >= 0 ? "text-emerald-400" : "text-red-400"
+                      }`}
+                    >
+                      {money.format(order.netPnl)}
+                    </span>
+                  )}
+                  <StatusBadge
+                    label={order.status}
+                    tone={order.status === "FILLED" ? "success" : "info"}
+                  />
+                </div>
               </div>
             ))}
             {!recentOrders.length && (

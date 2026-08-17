@@ -75,8 +75,8 @@ export function resolveTradePlanRegime(
     directionAligned;
   if (quantitativeTrend)
     return decision.decision === "SHORT" ? "TREND_DOWN" : "TREND_UP";
-  const quantitativeRange =
-    (finitePositive(market.adx) && market.adx < 18) ||
+    const quantitativeRange =
+    (finitePositive(market.adx) && market.adx < 20) ||
     (market.efficiencyRatio !== undefined && market.efficiencyRatio < 0.25);
   if (
     (market.marketStructure === "RANGE" && !quantitativeTrend) ||
@@ -279,6 +279,31 @@ export function buildAdaptiveTradePlan(input: {
       atr,
       timeframeMs: market.timeframeMs,
     };
+  }
+
+  // Anti-chasing protection for trend pullbacks: prevent entering when price is overextended from EMA20
+  if (finitePositive(market.ema20) && finitePositive(atr)) {
+    const extensionLimit = atr * 2.5;
+    if (side === "LONG" && entryPrice > market.ema20 + extensionLimit) {
+      return {
+        approved: false,
+        reason: "PRICE_EXTENDED_FROM_EMA20",
+        regime,
+        strategy: "TREND_PULLBACK",
+        maxHoldingCandles: 20,
+        breakEvenAtR: 1,
+      };
+    }
+    if (side === "SHORT" && entryPrice < market.ema20 - extensionLimit) {
+      return {
+        approved: false,
+        reason: "PRICE_EXTENDED_FROM_EMA20",
+        regime,
+        strategy: "TREND_PULLBACK",
+        maxHoldingCandles: 20,
+        breakEvenAtR: 1,
+      };
+    }
   }
 
   const structuralCandidates = side === "LONG"

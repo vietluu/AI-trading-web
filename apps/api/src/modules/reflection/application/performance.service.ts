@@ -35,14 +35,18 @@ export class PerformanceService {
       const leverage = evaluationLeverage(run.result, Boolean(candidate), this.config);
       const existing = new Set(run.performanceRecords.map((record) => record.horizon));
       const start = await this.repository.candleAtOrBefore(run.provider, run.symbol, run.completedAt);
-      if (!start) { skippedForMissingMarketData++; continue; }
+      const fallbackStartPrice = priceFromRun(run);
+      const priceAtDecision = start ? Number(start.close) : fallbackStartPrice;
+      if (!priceAtDecision || !Number.isFinite(priceAtDecision) || priceAtDecision <= 0) {
+        skippedForMissingMarketData++;
+        continue;
+      }
       for (const item of horizons) {
         if (existing.has(item.horizon)) continue;
         const target = new Date(run.completedAt.getTime() + item.ms);
         if (target.getTime() > Date.now()) continue;
         const after = await this.repository.candleAtOrAfter(run.provider, run.symbol, target);
         if (!after) { skippedForMissingMarketData++; continue; }
-        const priceAtDecision = Number(start.close);
         const priceAfter = Number(after.close);
         const result = evaluateDecision(
           evaluatedDecision as Decision,
@@ -144,3 +148,29 @@ function evaluationLeverage(
 }
 
 function round(value: number): number { return Math.round(value * 10_000) / 10_000; }
+
+function priceFromRun(run: { storedContext?: unknown; result?: unknown }): number | undefined {
+  if (run.storedContext && typeof run.storedContext === 'object') {
+    const ctx = run.storedContext as Record<string, unknown>;
+    const dec = ctx.decision as Record<string, unknown> | undefined;
+    if (dec && typeof dec.entryPrice === 'number' && dec.entryPrice > 0) {
+      return dec.entryPrice;
+    }
+    const market = ctx.market as Record<string, unknown> | undefined;
+    if (market && typeof market.price === 'number' && market.price > 0) {
+      return market.price;
+    }
+    const anal = ctx.analyses as Record<string, unknown> | undefined;
+    const tech = anal?.technical as Record<string, unknown> | undefined;
+    if (tech && typeof tech.price === 'number' && tech.price > 0) {
+      return tech.price;
+    }
+  }
+  if (run.result && typeof run.result === 'object') {
+    const res = run.result as Record<string, unknown>;
+    if (typeof res.entryPrice === 'number' && res.entryPrice > 0) {
+      return res.entryPrice;
+    }
+  }
+  return undefined;
+}

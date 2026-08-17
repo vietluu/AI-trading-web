@@ -266,4 +266,26 @@ describe("adaptive trade plan engine", () => {
       takeProfit: 103.2,
     });
   });
+
+  it("rejects overextended trend entries when price is too far from EMA20", () => {
+    const plan = buildAdaptiveTradePlan({
+      side: "LONG",
+      entryPrice: 110,
+      decision: decision("LONG", "TRENDING"),
+      market: {
+        atr: 1.5,
+        ema20: 100,
+        ema50: 95,
+        adx: 30,
+        efficiencyRatio: 0.6,
+      },
+      configuredStopLossPct: 0.02,
+      configuredRiskRewardRatio: 1.5,
+    });
+
+    expect(plan).toMatchObject({
+      approved: false,
+      reason: "PRICE_EXTENDED_FROM_EMA20",
+    });
+  });
 });

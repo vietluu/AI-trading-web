@@ -33,8 +33,14 @@ export class ReflectionRepository {
   candleAtOrBefore(provider: 'BINANCE_FUTURES' | 'OKX_FUTURES', symbol: string, at: Date) {
     return this.prisma.marketCandle.findFirst({ where: { provider, symbol, isClosed: true, closeTime: { lte: at } }, orderBy: { closeTime: 'desc' }, select: { close: true } });
   }
-  candleAtOrAfter(provider: 'BINANCE_FUTURES' | 'OKX_FUTURES', symbol: string, at: Date) {
-    return this.prisma.marketCandle.findFirst({ where: { provider, symbol, isClosed: true, closeTime: { gte: at } }, orderBy: { closeTime: 'asc' }, select: { close: true } });
+  async candleAtOrAfter(provider: 'BINANCE_FUTURES' | 'OKX_FUTURES', symbol: string, at: Date) {
+    const direct = await this.prisma.marketCandle.findFirst({ where: { provider, symbol, isClosed: true, closeTime: { gte: at } }, orderBy: { closeTime: 'asc' }, select: { close: true } });
+    if (direct) return direct;
+    return this.prisma.marketCandle.findFirst({
+      where: { provider, symbol, isClosed: true, closeTime: { gte: new Date(at.getTime() - 600_000) } },
+      orderBy: { closeTime: 'desc' },
+      select: { close: true },
+    });
   }
   createRecord(data: Prisma.PerformanceRecordUncheckedCreateInput) {
     return this.prisma.performanceRecord.upsert({ where: { runId_horizon: { runId: data.runId, horizon: data.horizon } }, create: data, update: {} });

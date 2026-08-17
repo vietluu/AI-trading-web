@@ -257,11 +257,11 @@ export default function LiveTradingPage(): React.JSX.Element {
       </Table>
       <Table
         title={t.ai.tradeHistory}
-        headings={["Order", t.ai.symbol, "Side", "Size", "Price", "Status"]}
+        headings={["Order", t.ai.symbol, "Side", "Size", "Price", "Status", t.ai.realizedPnl]}
         empty={t.ai.noTradeHistory}
       >
         {data.orders.slice(0, RECENT_TRADE_HISTORY_LIMIT).map((order) => (
-          <OrderRow order={order} key={order.id} />
+          <OrderRow order={order} key={order.id} showPnl />
         ))}
       </Table>
       {(killMutation.error || enableMutation.error) && (
