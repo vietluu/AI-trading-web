@@ -538,8 +538,12 @@ export class DecisionService {
     ) return { type: 'HIGH_VOLATILITY' };
     if (input.market?.volatility.level === 'LOW') return { type: 'RANGING' };
     if (
-      input.market?.trend.strength === 'STRONG' ||
-      input.technical?.trend.strength === 'STRONG'
+      input.market?.trend.direction === 'SIDEWAYS' ||
+      input.technical?.trend.direction === 'SIDEWAYS'
+    ) return { type: 'RANGING' };
+    if (
+      (input.market?.trend.strength === 'STRONG' && input.market?.trend.direction !== 'SIDEWAYS') ||
+      (input.technical?.trend.strength === 'STRONG' && input.technical?.trend.direction !== 'SIDEWAYS')
     ) return { type: 'TRENDING' };
     return { type: 'RANGING' };
   }
