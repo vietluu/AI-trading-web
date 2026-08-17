@@ -6,6 +6,7 @@ import { PrismaService } from "../../../database/prisma.service";
 import { aggregateClosedTradeCycles } from "../domain/closed-trade-cycle";
 
 const CLOSE_PURPOSES = ["CLOSE", "REVERSE", "STOP_LOSS", "TAKE_PROFIT"];
+const FILL_PERSISTENCE_BATCH_SIZE = 25;
 
 @Injectable()
 export class ExchangeTradeLedgerService {
@@ -22,75 +23,97 @@ export class ExchangeTradeLedgerService {
     if (!fills.length) return { fills: 0, closedTrades: 0 };
 
     const affectedOrderIds = new Set<string>();
-    await this.prisma.$transaction(async (tx) => {
-      for (const fill of fills) {
-        const liveOrder = await tx.liveOrder.findFirst({
-          where: {
-            connectionId: connection.id,
-            OR: [
-              { exchangeOrderId: fill.exchangeOrderId },
-              ...(fill.clientOrderId ? [{ clientOrderId: fill.clientOrderId }] : []),
-            ],
-          },
-          orderBy: { createdAt: "desc" },
-        });
-        const isClosing = Boolean(
-          fill.isClosing ||
-          liveOrder?.reduceOnly ||
-          (liveOrder && CLOSE_PURPOSES.includes(liveOrder.purpose)),
-        );
-        await tx.exchangeFill.upsert({
-          where: {
-            connectionId_symbol_exchangeTradeId: {
+    const exchangeOrderIds = [...new Set(fills.map((fill) => fill.exchangeOrderId))];
+    const clientOrderIds = [
+      ...new Set(
+        fills.flatMap((fill) =>
+          fill.clientOrderId ? [fill.clientOrderId] : [],
+        ),
+      ),
+    ];
+    const liveOrders = await this.prisma.liveOrder.findMany({
+      where: {
+        connectionId: connection.id,
+        OR: [
+          { exchangeOrderId: { in: exchangeOrderIds } },
+          ...(clientOrderIds.length
+            ? [{ clientOrderId: { in: clientOrderIds } }]
+            : []),
+        ],
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    for (let index = 0; index < fills.length; index += FILL_PERSISTENCE_BATCH_SIZE) {
+      const batch = fills.slice(index, index + FILL_PERSISTENCE_BATCH_SIZE);
+      await Promise.all(
+        batch.map(async (fill) => {
+          const liveOrder = liveOrders.find(
+            (order) =>
+              order.exchangeOrderId === fill.exchangeOrderId ||
+              Boolean(
+                fill.clientOrderId &&
+                  order.clientOrderId === fill.clientOrderId,
+              ),
+          );
+          const isClosing = Boolean(
+            fill.isClosing ||
+            liveOrder?.reduceOnly ||
+            (liveOrder && CLOSE_PURPOSES.includes(liveOrder.purpose)),
+          );
+          await this.prisma.exchangeFill.upsert({
+            where: {
+              connectionId_symbol_exchangeTradeId: {
+                connectionId: connection.id,
+                symbol: fill.symbol,
+                exchangeTradeId: fill.exchangeTradeId,
+              },
+            },
+            update: {
+              strategyId: liveOrder?.strategyId,
+              liveOrderId: liveOrder?.id,
+              exchangeOrderId: fill.exchangeOrderId,
+              clientOrderId: fill.clientOrderId,
+              side: fill.side,
+              positionSide: fill.positionSide,
+              price: fill.price,
+              quantity: fill.quantity,
+              quoteQuantity: fill.quoteQuantity,
+              realizedPnl: fill.realizedPnl,
+              fee: fill.fee,
+              feeAsset: fill.feeAsset,
+              isMaker: fill.isMaker,
+              isClosing,
+              executedAt: fill.executedAt,
+            },
+            create: {
+              userId,
               connectionId: connection.id,
+              strategyId: liveOrder?.strategyId,
+              liveOrderId: liveOrder?.id,
+              provider: connection.provider,
+              environment: connection.environment,
               symbol: fill.symbol,
               exchangeTradeId: fill.exchangeTradeId,
+              exchangeOrderId: fill.exchangeOrderId,
+              clientOrderId: fill.clientOrderId,
+              side: fill.side,
+              positionSide: fill.positionSide,
+              price: fill.price,
+              quantity: fill.quantity,
+              quoteQuantity: fill.quoteQuantity,
+              realizedPnl: fill.realizedPnl,
+              fee: fill.fee,
+              feeAsset: fill.feeAsset,
+              isMaker: fill.isMaker,
+              isClosing,
+              executedAt: fill.executedAt,
             },
-          },
-          update: {
-            strategyId: liveOrder?.strategyId,
-            liveOrderId: liveOrder?.id,
-            exchangeOrderId: fill.exchangeOrderId,
-            clientOrderId: fill.clientOrderId,
-            side: fill.side,
-            positionSide: fill.positionSide,
-            price: fill.price,
-            quantity: fill.quantity,
-            quoteQuantity: fill.quoteQuantity,
-            realizedPnl: fill.realizedPnl,
-            fee: fill.fee,
-            feeAsset: fill.feeAsset,
-            isMaker: fill.isMaker,
-            isClosing,
-            executedAt: fill.executedAt,
-          },
-          create: {
-            userId,
-            connectionId: connection.id,
-            strategyId: liveOrder?.strategyId,
-            liveOrderId: liveOrder?.id,
-            provider: connection.provider,
-            environment: connection.environment,
-            symbol: fill.symbol,
-            exchangeTradeId: fill.exchangeTradeId,
-            exchangeOrderId: fill.exchangeOrderId,
-            clientOrderId: fill.clientOrderId,
-            side: fill.side,
-            positionSide: fill.positionSide,
-            price: fill.price,
-            quantity: fill.quantity,
-            quoteQuantity: fill.quoteQuantity,
-            realizedPnl: fill.realizedPnl,
-            fee: fill.fee,
-            feeAsset: fill.feeAsset,
-            isMaker: fill.isMaker,
-            isClosing,
-            executedAt: fill.executedAt,
-          },
-        });
-        if (isClosing) affectedOrderIds.add(fill.exchangeOrderId);
-      }
-    });
+          });
+          if (isClosing) affectedOrderIds.add(fill.exchangeOrderId);
+        }),
+      );
+    }
 
     let closedTrades = 0;
     for (const exchangeOrderId of affectedOrderIds) {

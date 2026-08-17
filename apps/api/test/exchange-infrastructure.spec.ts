@@ -65,6 +65,10 @@ describe("exchange infrastructure", () => {
     expect(toBinanceSymbol("BTC-USDT")).toBe("BTCUSDT");
     expect(toOkxSymbol("BTC-USDT")).toBe("BTC-USDT-SWAP");
     expect(fromOkxSymbol("BTC-USDT-SWAP")).toBe("BTC-USDT");
+    expect(fromOkxSymbol("EWJ-USD_UM-SWAP")).toBe("EWJ-USD_UM");
+    expect(fromOkxSymbol("SLX-USD_UM-SWAP")).toBe("SLX-USD_UM");
+    expect(normalizeSymbol("EWJ-USD_UM")).toBe("EWJ-USD_UM");
+    expect(toOkxSymbol("EWJ-USD_UM")).toBe("EWJ-USD_UM-SWAP");
   });
 
   it("maps execution symbols for OKX and Binance safely", () => {

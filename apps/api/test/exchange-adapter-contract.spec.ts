@@ -113,6 +113,45 @@ describe("exchange adapter normalization contract", () => {
     );
   });
 
+  it("correctly parses OKX USD_UM swap instruments without ignoring or warning", async () => {
+    const warning = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    const publicGet = vi.fn().mockResolvedValue([
+      {
+        instId: "EWJ-USD_UM-SWAP",
+        instType: "SWAP",
+        state: "live",
+        settleCcy: "USD",
+        ctVal: "1",
+        tickSz: "0.01",
+        lotSz: "1",
+        minSz: "1",
+      },
+      {
+        instId: "SLX-USD_UM-SWAP",
+        instType: "SWAP",
+        state: "live",
+        settleCcy: "USD",
+        ctVal: "1",
+        tickSz: "0.01",
+        lotSz: "1",
+        minSz: "1",
+      },
+    ]);
+    const adapter = okxAdapter({ publicGet });
+
+    const instruments = await adapter.getInstruments();
+
+    expect(instruments).toHaveLength(2);
+    expect(instruments[0]?.symbol).toBe("EWJ-USD_UM");
+    expect(instruments[1]?.symbol).toBe("SLX-USD_UM");
+    expect(warning).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "okx_non_swap_record_ignored",
+      }),
+    );
+    warning.mockRestore();
+  });
+
   it("ignores non-swap position records without failing OKX account sync", async () => {
     const warning = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
     const signedGet = vi.fn().mockResolvedValue([

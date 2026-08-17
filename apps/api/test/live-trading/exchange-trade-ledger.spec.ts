@@ -3,6 +3,59 @@ import { describe, expect, it, vi } from "vitest";
 import { ExchangeTradeLedgerService } from "../../src/modules/live-trading/application/exchange-trade-ledger.service";
 
 describe("ExchangeTradeLedgerService", () => {
+  it("persists fill pages in bounded idempotent batches without an interactive transaction", async () => {
+    let activeUpserts = 0;
+    let peakUpserts = 0;
+    const upsert = vi.fn().mockImplementation(async () => {
+      activeUpserts++;
+      peakUpserts = Math.max(peakUpserts, activeUpserts);
+      await Promise.resolve();
+      activeUpserts--;
+      return {};
+    });
+    const prisma = {
+      $transaction: vi.fn(() => {
+        throw new Error("interactive transaction must not be used");
+      }),
+      liveOrder: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      exchangeFill: {
+        upsert,
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+    };
+    const service = new ExchangeTradeLedgerService(prisma as never);
+    const fills = Array.from({ length: 60 }, (_, index) => ({
+      symbol: "LINK-USDT",
+      exchangeTradeId: `trade-${index}`,
+      exchangeOrderId: `order-${index}`,
+      side: "BUY",
+      price: "9.5",
+      quantity: "1",
+      realizedPnl: "0",
+      fee: "-0.001",
+      isClosing: false,
+      executedAt: new Date(1_700_000_000_000 + index),
+    }));
+
+    const result = await service.ingest(
+      "user-1",
+      {
+        id: "connection-1",
+        provider: "OKX_FUTURES",
+        environment: "DEMO",
+      } as never,
+      fills as never,
+      { refreshDerived: false },
+    );
+
+    expect(result).toEqual({ fills: 60, closedTrades: 0 });
+    expect(upsert).toHaveBeenCalledTimes(60);
+    expect(peakUpserts).toBeLessThanOrEqual(25);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
   it("attributes an imported close to its opening strategy and stable trade cycle", async () => {
     const openedAt = new Date("2026-08-16T03:57:42.000Z");
     const closedAt = new Date("2026-08-16T04:35:01.000Z");
