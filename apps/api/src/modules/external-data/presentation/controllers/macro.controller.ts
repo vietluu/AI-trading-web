@@ -56,8 +56,27 @@ export class MacroController {
 
     if (startDateStr || endDateStr) {
       where.scheduledAt = {};
-      if (startDateStr) where.scheduledAt.gte = new Date(startDateStr);
-      if (endDateStr) where.scheduledAt.lte = new Date(endDateStr);
+      if (startDateStr) {
+        const startDate = new Date(startDateStr);
+        if (Number.isNaN(startDate.getTime())) {
+          throw new BadRequestException('startDate must be a valid date');
+        }
+        where.scheduledAt.gte = startDate;
+      }
+      if (endDateStr) {
+        const endDate = new Date(endDateStr);
+        if (Number.isNaN(endDate.getTime())) {
+          throw new BadRequestException('endDate must be a valid date');
+        }
+        where.scheduledAt.lte = endDate;
+      }
+    } else {
+      // The default calendar view is operational, not archival. Without this
+      // bound, ascending pagination starts at the oldest imported year and
+      // hides the current/upcoming releases on later pages.
+      where.scheduledAt = {
+        gte: new Date(Date.now() - 24 * 60 * 60_000),
+      };
     }
 
     const total = await this.prisma.macroEconomicEvent.count({ where });
