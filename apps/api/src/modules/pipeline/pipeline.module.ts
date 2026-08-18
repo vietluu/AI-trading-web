@@ -17,6 +17,7 @@ import { PipelineService } from "./application/pipeline.service";
 import { PipelineSchedulerService } from "./application/pipeline-scheduler.service";
 import { PipelineHealthService } from "./application/pipeline-health.service";
 import { PipelineAnalyticsService } from "./application/pipeline-analytics.service";
+import { PipelineRecoveryService } from "./application/pipeline-recovery.service";
 import { PipelineRepository } from "./infrastructure/pipeline.repository";
 import { PipelineQueueService } from "./infrastructure/pipeline-queue.service";
 import { PipelineCancellationService } from "./infrastructure/pipeline-cancellation.service";
@@ -60,6 +61,7 @@ import { SettingsModule } from "../../settings/settings.module";
     PipelineSchedulerService,
     PipelineHealthService,
     PipelineAnalyticsService,
+    PipelineRecoveryService,
     PipelineRepository,
     PipelineQueueService,
     PipelineCancellationService,

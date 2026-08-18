@@ -42,6 +42,10 @@ import type { TradePlanMarketContext } from "../../risk/domain/trade-plan-engine
 import type { TradePlan } from "../../risk/domain/trade-plan-engine";
 import { evaluatePositionManagement } from "../domain/position-manager";
 import { ExchangeTradeLedgerService } from "./exchange-trade-ledger.service";
+import {
+  DEFAULT_SYMBOL_EXECUTION_POLICY,
+  evaluateSymbolExecutionPolicy,
+} from "../domain/symbol-execution-policy";
 
 const RECENT_TRADE_HISTORY_LIMIT = 20;
 const ORDER_RECONCILIATION_LIMIT = 100;
@@ -144,7 +148,10 @@ export class LiveTradingService {
     ].sort();
     // OKX returns account-wide fill history, so an empty filter is useful for
     // discovering traded instruments. Binance requires an explicit symbol.
-    if (connection.provider === ExchangeProvider.BINANCE_FUTURES && !symbols.length) {
+    if (
+      connection.provider === ExchangeProvider.BINANCE_FUTURES &&
+      !symbols.length
+    ) {
       return {
         status: "NO_SYMBOLS_SELECTED",
         symbols,
@@ -154,7 +161,9 @@ export class LiveTradingService {
         reachedHistoryEnd: false,
       };
     }
-    const configuredMaxPages = Number(process.env.TRADE_LEDGER_BACKFILL_MAX_PAGES);
+    const configuredMaxPages = Number(
+      process.env.TRADE_LEDGER_BACKFILL_MAX_PAGES,
+    );
     const maxPages = Number.isFinite(configuredMaxPages)
       ? Math.min(1000, Math.max(1, Math.trunc(configuredMaxPages)))
       : DEFAULT_TRADE_BACKFILL_MAX_PAGES;
@@ -170,9 +179,10 @@ export class LiveTradingService {
 
     for (const symbolBatch of symbolBatches) {
       const symbolKey = symbolBatch?.[0] ?? "*";
-      const checkpoint = await this.prisma.tradeLedgerBackfillCheckpoint.findUnique({
-        where: { connectionId_symbolKey: { connectionId, symbolKey } },
-      });
+      const checkpoint =
+        await this.prisma.tradeLedgerBackfillCheckpoint.findUnique({
+          where: { connectionId_symbolKey: { connectionId, symbolKey } },
+        });
       if (checkpoint?.status === "COMPLETED") continue;
       let before = checkpoint?.cursorBefore ?? undefined;
       let previousOldest = before?.getTime() ?? Number.POSITIVE_INFINITY;
@@ -192,16 +202,33 @@ export class LiveTradingService {
             batchReachedEnd = true;
             await this.prisma.tradeLedgerBackfillCheckpoint.upsert({
               where: { connectionId_symbolKey: { connectionId, symbolKey } },
-              create: { userId, connectionId, symbolKey, status: "COMPLETED", completedAt: new Date() },
-              update: { status: "COMPLETED", completedAt: new Date(), lastError: null },
+              create: {
+                userId,
+                connectionId,
+                symbolKey,
+                status: "COMPLETED",
+                completedAt: new Date(),
+              },
+              update: {
+                status: "COMPLETED",
+                completedAt: new Date(),
+                lastError: null,
+              },
             });
             break;
           }
           fills.forEach((fill) => discoveredSymbols.add(fill.symbol));
-          const ingested = await this.tradeLedger.ingest(userId, connection, fills, { refreshDerived: false });
+          const ingested = await this.tradeLedger.ingest(
+            userId,
+            connection,
+            fills,
+            { refreshDerived: false },
+          );
           processedFills += ingested.fills;
           rebuiltClosedTrades += ingested.closedTrades;
-          const oldest = Math.min(...fills.map((fill) => fill.executedAt.getTime()));
+          const oldest = Math.min(
+            ...fills.map((fill) => fill.executedAt.getTime()),
+          );
           if (!Number.isFinite(oldest) || oldest >= previousOldest) {
             this.logger.warn({
               event: "trade_ledger_backfill_cursor_stalled",
@@ -250,7 +277,11 @@ export class LiveTradingService {
             status: "FAILED",
             lastError: `${safeError.code}: ${safeError.message}`,
           },
-          update: { cursorBefore: before, status: "FAILED", lastError: `${safeError.code}: ${safeError.message}` },
+          update: {
+            cursorBefore: before,
+            status: "FAILED",
+            lastError: `${safeError.code}: ${safeError.message}`,
+          },
         });
         throw error;
       }
@@ -349,40 +380,41 @@ export class LiveTradingService {
 
     const result = await this.prisma.$transaction(
       async (tx) => {
-        const [snapshot, peak, positions, latestOrder, recentClosedTrades] = await Promise.all([
-          tx.liveAccountSnapshot.findFirst({
-            where: { userId: input.userId, connectionId: connection.id },
-            orderBy: { syncedAt: "desc" },
-          }),
-          tx.liveAccountSnapshot.aggregate({
-            where: { userId: input.userId, connectionId: connection.id },
-            _max: { totalEquity: true },
-          }),
-          tx.livePosition.findMany({
-            where: { userId: input.userId, connectionId: connection.id },
-          }),
-          tx.liveOrder.findFirst({
-            where: {
-              userId: input.userId,
-              connectionId: connection.id,
-              symbol: input.symbol,
-              side: input.decision.decision === "LONG" ? "BUY" : "SELL",
-              purpose: { in: ["OPEN", "REVERSE"] },
-              status: { not: "FAILED" },
-            },
-            orderBy: { createdAt: "desc" },
-          }),
-          tx.closedTrade.findMany({
-            where: {
-              userId: input.userId,
-              connectionId: connection.id,
-              symbol: input.symbol,
-            },
-            select: { netPnl: true, closedAt: true },
-            orderBy: { closedAt: "desc" },
-            take: 3,
-          }),
-        ]);
+        const [snapshot, peak, positions, latestOrder, recentClosedTrades] =
+          await Promise.all([
+            tx.liveAccountSnapshot.findFirst({
+              where: { userId: input.userId, connectionId: connection.id },
+              orderBy: { syncedAt: "desc" },
+            }),
+            tx.liveAccountSnapshot.aggregate({
+              where: { userId: input.userId, connectionId: connection.id },
+              _max: { totalEquity: true },
+            }),
+            tx.livePosition.findMany({
+              where: { userId: input.userId, connectionId: connection.id },
+            }),
+            tx.liveOrder.findFirst({
+              where: {
+                userId: input.userId,
+                connectionId: connection.id,
+                symbol: input.symbol,
+                side: input.decision.decision === "LONG" ? "BUY" : "SELL",
+                purpose: { in: ["OPEN", "REVERSE"] },
+                status: { not: "FAILED" },
+              },
+              orderBy: { createdAt: "desc" },
+            }),
+            tx.closedTrade.findMany({
+              where: {
+                userId: input.userId,
+                connectionId: connection.id,
+                symbol: input.symbol,
+              },
+              select: { netPnl: true, closedAt: true },
+              orderBy: { closedAt: "desc" },
+              take: 50,
+            }),
+          ]);
         if (!snapshot) throw new Error("EXCHANGE_ACCOUNT_SNAPSHOT_UNAVAILABLE");
         await this.supersedeEarlierEntry(tx, input, price);
         let risk = await this.risk.assess(tx, {
@@ -412,13 +444,80 @@ export class LiveTradingService {
           ),
           tradePlanContext: {
             ...input.tradePlanContext,
-            ...(Number.isFinite(input.volatilityAtr) && (input.volatilityAtr ?? 0) > 0
+            ...(Number.isFinite(input.volatilityAtr) &&
+            (input.volatilityAtr ?? 0) > 0
               ? { atr: input.volatilityAtr }
               : {}),
           },
           lastTradeAt: latestOrder?.createdAt,
           recentClosedTrades,
         });
+        if (
+          risk.approved &&
+          risk.positionSize &&
+          input.decision.decision !== "WAIT"
+        ) {
+          const symbolPolicy = evaluateSymbolExecutionPolicy({
+            symbol: input.symbol,
+            decision: input.decision,
+            closedTrades: recentClosedTrades,
+            config:
+              settings.symbolExecutionPolicy ?? DEFAULT_SYMBOL_EXECUTION_POLICY,
+          });
+          if (!symbolPolicy.allowed) {
+            risk = {
+              approved: false,
+              reason: symbolPolicy.reason,
+              riskScore: risk.riskScore,
+            };
+            await tx.riskAssessment.update({
+              where: { pipelineRunId: input.pipelineRunId },
+              data: {
+                approved: false,
+                reason: symbolPolicy.reason,
+                positionSize: null,
+                leverage: null,
+                stopLoss: null,
+                takeProfit: null,
+              },
+            });
+          } else if (symbolPolicy.sizeFactor < 1) {
+            const positionSize =
+              Math.floor(risk.positionSize * symbolPolicy.sizeFactor * 1e12) /
+              1e12;
+            if (positionSize <= 0) {
+              risk = {
+                approved: false,
+                reason: "SYMBOL_CAUTION_QUALITY_GATE",
+                riskScore: risk.riskScore,
+              };
+              await tx.riskAssessment.update({
+                where: { pipelineRunId: input.pipelineRunId },
+                data: {
+                  approved: false,
+                  reason: risk.reason,
+                  positionSize: null,
+                  leverage: null,
+                  stopLoss: null,
+                  takeProfit: null,
+                },
+              });
+            } else {
+              risk = { ...risk, positionSize };
+              await tx.riskAssessment.update({
+                where: { pipelineRunId: input.pipelineRunId },
+                data: { positionSize },
+              });
+              this.logger.warn({
+                event: "symbol_caution_size_reduced",
+                symbol: input.symbol,
+                pipelineRunId: input.pipelineRunId,
+                sizeFactor: symbolPolicy.sizeFactor,
+                evidence: symbolPolicy.evidence,
+              });
+            }
+          }
+        }
         if (
           risk.approved &&
           risk.positionSize &&
@@ -491,7 +590,8 @@ export class LiveTradingService {
             });
           } else {
             const maximumPositionSize =
-              (availableBalance * risk.leverage *
+              (availableBalance *
+                risk.leverage *
                 RISK_ENGINE_CONSTANTS.AVAILABLE_MARGIN_SAFETY_FACTOR) /
               price;
             if (maximumPositionSize < risk.positionSize) {
@@ -725,7 +825,9 @@ export class LiveTradingService {
     if (!settings.runtimeEnabled) return { outcome: "KILL_SWITCH_ACTIVE" };
     if (settings.mode !== "DEMO" && settings.mode !== "LIVE")
       return { outcome: "EXECUTION_MODE_INACTIVE" };
-    const assessment = await this.prisma.riskAssessment.findUnique({ where: { pipelineRunId } });
+    const assessment = await this.prisma.riskAssessment.findUnique({
+      where: { pipelineRunId },
+    });
     if (!assessment || assessment.userId !== userId)
       return { outcome: "RISK_ASSESSMENT_MISSING" };
     if (!assessment.approved)
@@ -745,7 +847,9 @@ export class LiveTradingService {
     if (!connection) {
       // Fallback: pick any eligible connection (preserves behaviour when
       // connectionId was not recorded on older assessments).
-      connection = connections.find((item) => item.isEnabled && item.isVerified);
+      connection = connections.find(
+        (item) => item.isEnabled && item.isVerified,
+      );
     }
     if (!connection) return { outcome: "NO_ELIGIBLE_EXCHANGE_CONNECTION" };
     // Keep the id stable across BullMQ retries. If an exchange accepted a
@@ -879,36 +983,37 @@ export class LiveTradingService {
   async sync(userId: string, connectionId: string, context: RequestMetadata) {
     const connection = await this.connections.get(userId, connectionId);
     // Fetch positions first so we can pass their symbols to orderHistory
-    const [account, positions, openOrders, trackedRows, localActiveOrders] = await Promise.all([
-      this.connections.account(userId, connectionId, context),
-      this.connections.positions(userId, connectionId, context),
-      this.connections.openOrders(userId, connectionId, context),
-      this.prisma.liveOrder.findMany({
-        where: { userId, connectionId },
-        select: { symbol: true },
-        distinct: ["symbol"],
-        orderBy: { createdAt: "desc" },
-        take: 100,
-      }),
-      this.prisma.liveOrder.findMany({
-        where: {
-          userId,
-          connectionId,
-          status: { in: ACTIVE_ORDER_STATUSES },
-          exchangeOrderId: { not: null },
-          // Give OKX a short eventual-consistency window after submission.
-          updatedAt: { lt: new Date(Date.now() - 15_000) },
-        },
-        select: {
-          id: true,
-          symbol: true,
-          exchangeOrderId: true,
-          clientOrderId: true,
-        },
-        orderBy: { updatedAt: "asc" },
-        take: ORDER_RECONCILIATION_LIMIT,
-      }),
-    ]);
+    const [account, positions, openOrders, trackedRows, localActiveOrders] =
+      await Promise.all([
+        this.connections.account(userId, connectionId, context),
+        this.connections.positions(userId, connectionId, context),
+        this.connections.openOrders(userId, connectionId, context),
+        this.prisma.liveOrder.findMany({
+          where: { userId, connectionId },
+          select: { symbol: true },
+          distinct: ["symbol"],
+          orderBy: { createdAt: "desc" },
+          take: 100,
+        }),
+        this.prisma.liveOrder.findMany({
+          where: {
+            userId,
+            connectionId,
+            status: { in: ACTIVE_ORDER_STATUSES },
+            exchangeOrderId: { not: null },
+            // Give OKX a short eventual-consistency window after submission.
+            updatedAt: { lt: new Date(Date.now() - 15_000) },
+          },
+          select: {
+            id: true,
+            symbol: true,
+            exchangeOrderId: true,
+            clientOrderId: true,
+          },
+          orderBy: { updatedAt: "asc" },
+          take: ORDER_RECONCILIATION_LIMIT,
+        }),
+      ]);
     // Build symbol list from active positions plus any symbols already tracked
     // in liveOrders. This ensures history is imported for all traded symbols.
     const trackedSymbols = trackedRows.map((row) => row.symbol);
@@ -960,7 +1065,8 @@ export class LiveTradingService {
         !localOrder.exchangeOrderId ||
         visibleOrderIds.has(localOrder.exchangeOrderId) ||
         visibleOrderIds.has(localOrder.clientOrderId)
-      ) continue;
+      )
+        continue;
       try {
         reconciledOrders.push(
           await this.connections.order(
@@ -1052,16 +1158,13 @@ export class LiveTradingService {
           },
         });
       }
-
     });
     // Order history can contain hundreds of rows. Keeping this work inside an
     // interactive Prisma transaction caused the transaction to expire midway
     // through reconciliation. Each write is idempotent, so bounded batches are
     // both safer and faster without holding a database transaction open.
-    await processInBatches(
-      openOrders,
-      RECONCILIATION_DB_BATCH_SIZE,
-      (order) => this.prisma.liveOrder.updateMany({
+    await processInBatches(openOrders, RECONCILIATION_DB_BATCH_SIZE, (order) =>
+      this.prisma.liveOrder.updateMany({
         where: {
           connectionId,
           OR: [
@@ -1124,22 +1227,23 @@ export class LiveTradingService {
     await processInBatches(
       reconciledOrders,
       RECONCILIATION_DB_BATCH_SIZE,
-      (order) => this.prisma.liveOrder.updateMany({
-        where: {
-          connectionId,
-          OR: [
-            { exchangeOrderId: order.exchangeOrderId },
-            ...(order.clientOrderId
-              ? [{ clientOrderId: order.clientOrderId }]
-              : []),
-          ],
-        },
-        data: {
-          status: order.status,
-          averagePrice: order.averagePrice,
-          updatedAt: order.updatedAt ?? syncedAt,
-        },
-      }),
+      (order) =>
+        this.prisma.liveOrder.updateMany({
+          where: {
+            connectionId,
+            OR: [
+              { exchangeOrderId: order.exchangeOrderId },
+              ...(order.clientOrderId
+                ? [{ clientOrderId: order.clientOrderId }]
+                : []),
+            ],
+          },
+          data: {
+            status: order.status,
+            averagePrice: order.averagePrice,
+            updatedAt: order.updatedAt ?? syncedAt,
+          },
+        }),
     );
     const ledgerSummary = this.tradeLedger
       ? await this.tradeLedger.ingest(userId, connection, tradeFills)
@@ -1186,7 +1290,10 @@ export class LiveTradingService {
       globalTradingEnabled: this.config.values.runtimeEnabled,
       liveTradingEnabled: this.config.values.liveEnabled,
       connections: connections.filter(
-        (item) => item.isEnabled && item.isVerified && (!connectionId || item.id === connectionId),
+        (item) =>
+          item.isEnabled &&
+          item.isVerified &&
+          (!connectionId || item.id === connectionId),
       ),
       accounts: [
         {
@@ -1224,26 +1331,29 @@ export class LiveTradingService {
           : undefined;
         return {
           ...this.orderView({
-          id: row.id,
-          exchangeOrderId: row.exchangeOrderId,
-          clientOrderId: row.clientOrderId,
-          provider: row.provider,
-          environment: row.environment,
-          symbol: row.symbol,
-          side: row.side,
-          quantity: row.quantity,
-          averagePrice: row.averagePrice,
-          status: row.status,
-          purpose: row.purpose,
-          errorCode: row.errorCode,
-          createdAt: row.createdAt,
-          updatedAt: row.updatedAt,
+            id: row.id,
+            exchangeOrderId: row.exchangeOrderId,
+            clientOrderId: row.clientOrderId,
+            provider: row.provider,
+            environment: row.environment,
+            symbol: row.symbol,
+            side: row.side,
+            quantity: row.quantity,
+            averagePrice: row.averagePrice,
+            status: row.status,
+            purpose: row.purpose,
+            errorCode: row.errorCode,
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt,
           }),
           ...this.closedTradePnlView(trade),
         };
       }),
     };
-    this.realtimeSnapshots.set(this.realtimeCacheKey(userId, connectionId), snapshot);
+    this.realtimeSnapshots.set(
+      this.realtimeCacheKey(userId, connectionId),
+      snapshot,
+    );
     this.realtimeSnapshots.delete(this.realtimeCacheKey(userId, undefined));
     if (this.gateway) {
       this.gateway.pushSnapshot(userId, snapshot);
@@ -1267,7 +1377,9 @@ export class LiveTradingService {
   }
 
   private async buildDashboardSnapshot(userId: string, connectionId?: string) {
-    const cached = this.realtimeSnapshots.get(this.realtimeCacheKey(userId, connectionId));
+    const cached = this.realtimeSnapshots.get(
+      this.realtimeCacheKey(userId, connectionId),
+    );
     if (cached) return cached;
     if (!this.isValidUserId(userId)) {
       this.logger.warn({
@@ -1395,15 +1507,26 @@ export class LiveTradingService {
 
   async kill(userId: string, context: RequestMetadata) {
     this.config.kill();
-    const persistedSnapshots = Array.from(this.realtimeSnapshots.entries()).filter(
-      ([key]) => key.startsWith(`${userId}:`),
-    );
+    const persistedSnapshots = Array.from(
+      this.realtimeSnapshots.entries(),
+    ).filter(([key]) => key.startsWith(`${userId}:`));
     // Fetch all connections once to resolve provider/environment from the key
     const allConnections = await this.connections.list(userId);
     const connectionMap = new Map(allConnections.map((c) => [c.id, c]));
     for (const [key, snapshot] of persistedSnapshots) {
       const connectionId = key.split(":").slice(1).join(":") ?? undefined;
-      const account = (snapshot as { accounts?: Array<{ connectionId?: string; totalEquity?: number; availableBalance?: number; unrealizedPnl?: number; marginBalance?: number; syncedAt?: string }> }).accounts?.[0];
+      const account = (
+        snapshot as {
+          accounts?: Array<{
+            connectionId?: string;
+            totalEquity?: number;
+            availableBalance?: number;
+            unrealizedPnl?: number;
+            marginBalance?: number;
+            syncedAt?: string;
+          }>;
+        }
+      ).accounts?.[0];
       if (!account || !connectionId) continue;
       const conn = connectionMap.get(connectionId);
       const provider = conn?.provider ?? "OKX_FUTURES";
@@ -1490,35 +1613,37 @@ export class LiveTradingService {
           })
         : null;
       const data = {
-          userId,
-          connectionId: connection.id,
-          riskAssessmentId: assessment?.id,
-          strategyId,
-          clientOrderId: command.clientOrderId,
-          provider: connection.provider,
-          environment: connection.environment,
-          symbol: command.symbol,
-          side: command.side,
-          quantity: command.quantity,
-          leverage: command.leverage,
-          status: "SUBMITTING",
-          purpose,
-          reduceOnly: command.reduceOnly ?? false,
-          stopLoss: assessment?.stopLoss,
-          takeProfit: assessment?.takeProfit,
-          initialStopLoss: assessment?.stopLoss,
-          tradePlan: assessment?.tradePlan === null || assessment?.tradePlan === undefined
+        userId,
+        connectionId: connection.id,
+        riskAssessmentId: assessment?.id,
+        strategyId,
+        clientOrderId: command.clientOrderId,
+        provider: connection.provider,
+        environment: connection.environment,
+        symbol: command.symbol,
+        side: command.side,
+        quantity: command.quantity,
+        leverage: command.leverage,
+        status: "SUBMITTING",
+        purpose,
+        reduceOnly: command.reduceOnly ?? false,
+        stopLoss: assessment?.stopLoss,
+        takeProfit: assessment?.takeProfit,
+        initialStopLoss: assessment?.stopLoss,
+        tradePlan:
+          assessment?.tradePlan === null || assessment?.tradePlan === undefined
             ? Prisma.JsonNull
             : (assessment.tradePlan as Prisma.InputJsonValue),
-          errorCode: null,
-          errorMessage: null,
-        };
-      row = failedAttempt?.status === "FAILED"
-        ? await this.prisma.liveOrder.update({
-            where: { id: failedAttempt.id },
-            data,
-          })
-        : await this.prisma.liveOrder.create({ data });
+        errorCode: null,
+        errorMessage: null,
+      };
+      row =
+        failedAttempt?.status === "FAILED"
+          ? await this.prisma.liveOrder.update({
+              where: { id: failedAttempt.id },
+              data,
+            })
+          : await this.prisma.liveOrder.create({ data });
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -1557,9 +1682,10 @@ export class LiveTradingService {
         protectiveClientOrderId: order.protectiveClientOrderId,
         stopLoss: command.stopLoss,
         takeProfit: command.takeProfit,
-        protectionMode: command.stopLoss || command.takeProfit
-          ? "NATIVE_WITH_LOCAL_REDUCE_ONLY_FALLBACK"
-          : undefined,
+        protectionMode:
+          command.stopLoss || command.takeProfit
+            ? "NATIVE_WITH_LOCAL_REDUCE_ONLY_FALLBACK"
+            : undefined,
       });
       this.logger.log({
         event: "order_executed",
@@ -1689,8 +1815,12 @@ export class LiveTradingService {
             markPrice: mark,
             initialStopLoss: initialStop,
             currentStopLoss: currentStop,
-            highestMark: source.highestMark ? Number(source.highestMark) : undefined,
-            lowestMark: source.lowestMark ? Number(source.lowestMark) : undefined,
+            highestMark: source.highestMark
+              ? Number(source.highestMark)
+              : undefined,
+            lowestMark: source.lowestMark
+              ? Number(source.lowestMark)
+              : undefined,
             openedAt: source.createdAt,
             partialTaken: source.partialTakenAt !== null,
             plan: rawPlan as TradePlan,
@@ -1709,7 +1839,9 @@ export class LiveTradingService {
                     symbol: position.symbol,
                     protectiveClientOrderId: source.protectiveClientOrderId,
                     stopLoss: String(action.tightenedStopLoss),
-                    ...(source.takeProfit ? { takeProfit: String(source.takeProfit) } : {}),
+                    ...(source.takeProfit
+                      ? { takeProfit: String(source.takeProfit) }
+                      : {}),
                     requestId: this.derivedId(
                       source.clientOrderId,
                       `a${Math.abs(Math.round(action.tightenedStopLoss * 100))}`,
@@ -1737,58 +1869,122 @@ export class LiveTradingService {
             },
           });
 
-          const configuration = await this.connections.configuration(userId, connection.id, context);
+          const configuration = await this.connections.configuration(
+            userId,
+            connection.id,
+            context,
+          );
           if (action.timeExit) {
             const clientOrderId = this.derivedId(source.clientOrderId, "time");
             const duplicate = await this.prisma.liveOrder.findUnique({
-              where: { connectionId_clientOrderId: { connectionId: connection.id, clientOrderId } },
+              where: {
+                connectionId_clientOrderId: {
+                  connectionId: connection.id,
+                  clientOrderId,
+                },
+              },
             });
             if (!duplicate) {
               try {
-                await this.submit(userId, connection, {
-                  symbol: position.symbol,
-                  side: position.side === "LONG" ? "SELL" : "BUY",
-                  quantity: position.quantity,
-                  leverage: Number(position.leverage ?? source.leverage),
-                  clientOrderId,
-                  reduceOnly: true,
-                  ...(configuration.positionMode === "HEDGE" ? { positionSide: position.side as "LONG" | "SHORT" } : {}),
-                }, "CLOSE", null, source.strategyId, context);
+                await this.submit(
+                  userId,
+                  connection,
+                  {
+                    symbol: position.symbol,
+                    side: position.side === "LONG" ? "SELL" : "BUY",
+                    quantity: position.quantity,
+                    leverage: Number(position.leverage ?? source.leverage),
+                    clientOrderId,
+                    reduceOnly: true,
+                    ...(configuration.positionMode === "HEDGE"
+                      ? { positionSide: position.side as "LONG" | "SHORT" }
+                      : {}),
+                  },
+                  "CLOSE",
+                  null,
+                  source.strategyId,
+                  context,
+                );
                 if (
                   position.provider === ExchangeProvider.OKX_FUTURES &&
                   source.protectiveClientOrderId
                 ) {
-                  await this.connections.cancelProtectiveOrder(userId, connection.id, {
-                    symbol: position.symbol,
-                    protectiveClientOrderId: source.protectiveClientOrderId,
-                  }, context).catch((error: unknown) =>
-                    this.logger.warn({ event: "protective_order_cancel_after_close_failed", symbol: position.symbol, error: this.safeError(error) }));
+                  await this.connections
+                    .cancelProtectiveOrder(
+                      userId,
+                      connection.id,
+                      {
+                        symbol: position.symbol,
+                        protectiveClientOrderId: source.protectiveClientOrderId,
+                      },
+                      context,
+                    )
+                    .catch((error: unknown) =>
+                      this.logger.warn({
+                        event: "protective_order_cancel_after_close_failed",
+                        symbol: position.symbol,
+                        error: this.safeError(error),
+                      }),
+                    );
                 }
               } catch (error) {
-                this.logger.error({ event: "position_time_exit_failed", symbol: position.symbol, error: this.safeError(error) });
+                this.logger.error({
+                  event: "position_time_exit_failed",
+                  symbol: position.symbol,
+                  error: this.safeError(error),
+                });
               }
             }
             continue;
           }
           if (action.takePartial) {
-            const clientOrderId = this.derivedId(source.clientOrderId, "partial1");
+            const clientOrderId = this.derivedId(
+              source.clientOrderId,
+              "partial1",
+            );
             const duplicate = await this.prisma.liveOrder.findUnique({
-              where: { connectionId_clientOrderId: { connectionId: connection.id, clientOrderId } },
+              where: {
+                connectionId_clientOrderId: {
+                  connectionId: connection.id,
+                  clientOrderId,
+                },
+              },
             });
             if (!duplicate) {
               const quantity = Number(position.quantity) * 0.4;
               if (Number.isFinite(quantity) && quantity > 0) {
-                await this.submit(userId, connection, {
-                  symbol: position.symbol,
-                  side: position.side === "LONG" ? "SELL" : "BUY",
-                  quantity: String(Number(quantity.toFixed(12))),
-                  leverage: Number(position.leverage ?? source.leverage),
-                  clientOrderId,
-                  reduceOnly: true,
-                  ...(configuration.positionMode === "HEDGE" ? { positionSide: position.side as "LONG" | "SHORT" } : {}),
-                }, "TAKE_PROFIT", null, source.strategyId, context).then(() =>
-                  this.prisma.liveOrder.update({ where: { id: source.id }, data: { partialTakenAt: new Date() } }))
-                  .catch((error: unknown) => this.logger.error({ event: "partial_take_profit_failed", symbol: position.symbol, error: this.safeError(error) }));
+                await this.submit(
+                  userId,
+                  connection,
+                  {
+                    symbol: position.symbol,
+                    side: position.side === "LONG" ? "SELL" : "BUY",
+                    quantity: String(Number(quantity.toFixed(12))),
+                    leverage: Number(position.leverage ?? source.leverage),
+                    clientOrderId,
+                    reduceOnly: true,
+                    ...(configuration.positionMode === "HEDGE"
+                      ? { positionSide: position.side as "LONG" | "SHORT" }
+                      : {}),
+                  },
+                  "TAKE_PROFIT",
+                  null,
+                  source.strategyId,
+                  context,
+                )
+                  .then(() =>
+                    this.prisma.liveOrder.update({
+                      where: { id: source.id },
+                      data: { partialTakenAt: new Date() },
+                    }),
+                  )
+                  .catch((error: unknown) =>
+                    this.logger.error({
+                      event: "partial_take_profit_failed",
+                      symbol: position.symbol,
+                      error: this.safeError(error),
+                    }),
+                  );
               }
             }
           }
@@ -1884,14 +2080,20 @@ export class LiveTradingService {
     for (const source of protectedEntries) {
       const expectedSide = source.side === "BUY" ? "LONG" : "SHORT";
       const stillOpen = positions.some(
-        (position) => position.symbol === source.symbol && position.side === expectedSide,
+        (position) =>
+          position.symbol === source.symbol && position.side === expectedSide,
       );
       if (stillOpen || !source.protectiveClientOrderId) continue;
       try {
-        await this.connections.cancelProtectiveOrder(userId, connection.id, {
-          symbol: source.symbol,
-          protectiveClientOrderId: source.protectiveClientOrderId,
-        }, context);
+        await this.connections.cancelProtectiveOrder(
+          userId,
+          connection.id,
+          {
+            symbol: source.symbol,
+            protectiveClientOrderId: source.protectiveClientOrderId,
+          },
+          context,
+        );
         await this.audit.record("PROTECTIVE_ORDER_CANCELLED", userId, context, {
           sourceOrderId: source.id,
           connectionId: connection.id,
@@ -1925,7 +2127,11 @@ export class LiveTradingService {
       stopLoss: Prisma.Decimal | null;
       tradePlan?: Prisma.JsonValue | null;
     },
-  ): Promise<{ positionSize: number; leverage: number; referencePrice: number }> {
+  ): Promise<{
+    positionSize: number;
+    leverage: number;
+    referencePrice: number;
+  }> {
     if (!assessment.positionSize || !assessment.leverage) {
       throw new ForbiddenException(
         "Exchange preflight failed: incomplete risk approval",
@@ -1958,7 +2164,8 @@ export class LiveTradingService {
     const availableBalance = Number(snapshot.availableBalance);
     const requestedPositionSize = Number(assessment.positionSize);
     const requestedLeverage = assessment.leverage;
-    const requestedNotional = requestedPositionSize * Number(assessment.referencePrice);
+    const requestedNotional =
+      requestedPositionSize * Number(assessment.referencePrice);
     const drawdown =
       peakEquity > 0 ? Math.max(0, (peakEquity - equity) / peakEquity) : 1;
     if (drawdown >= limits.maxDrawdown) {
@@ -1978,20 +2185,22 @@ export class LiveTradingService {
       );
     }
     const referencePrice = Number(assessment.referencePrice);
-    const plannedLoss = requestedPositionSize * (
-      Math.abs(referencePrice - stopLoss) +
-      referencePrice * limits.estimatedRoundTripCostPct
-    );
+    const plannedLoss =
+      requestedPositionSize *
+      (Math.abs(referencePrice - stopLoss) +
+        referencePrice * limits.estimatedRoundTripCostPct);
     const plannedEquityRiskPct = plannedLoss / equity;
     const requiredMarginForRisk = requestedNotional / requestedLeverage;
     const plannedMarginRoe = plannedLoss / requiredMarginForRisk;
-    const tradePlan = assessment.tradePlan as { strategy?: string; timeframeMs?: number } | null | undefined;
+    const tradePlan = assessment.tradePlan as
+      { strategy?: string; timeframeMs?: number } | null | undefined;
     const effectiveMaxStopLossRoe = maxStopLossRoeForStrategy(
       limits,
       tradePlan?.strategy,
       tradePlan?.timeframeMs,
     );
-    const stopDistancePct = Math.abs(referencePrice - stopLoss) / referencePrice;
+    const stopDistancePct =
+      Math.abs(referencePrice - stopLoss) / referencePrice;
     const liquidationLeverageLimit = estimatedLiquidationLeverageLimit(
       stopDistancePct,
       limits.minLiquidationBufferPct,
@@ -2076,7 +2285,8 @@ export class LiveTradingService {
     maxExposure?: number,
     currentExposure = 0,
   ): { positionSize: number; leverage: number; referencePrice: number } {
-    const requestedNotional = assessment.positionSize * assessment.referencePrice;
+    const requestedNotional =
+      assessment.positionSize * assessment.referencePrice;
     const minLeverage = 1;
     const maxAllowedLeverage = Math.min(assessment.leverage, maxLeverage);
     const leverage = Math.max(minLeverage, Math.floor(maxAllowedLeverage));
@@ -2084,7 +2294,8 @@ export class LiveTradingService {
       return { ...assessment, positionSize: 0, leverage };
     }
     const marginNotionalLimit =
-      availableBalance * leverage *
+      availableBalance *
+      leverage *
       RISK_ENGINE_CONSTANTS.AVAILABLE_MARGIN_SAFETY_FACTOR;
     const exposureNotionalLimit =
       equity !== undefined && maxExposure !== undefined
@@ -2096,9 +2307,9 @@ export class LiveTradingService {
       exposureNotionalLimit,
     );
     return {
-      positionSize: Math.floor(
-        (approvedNotional / assessment.referencePrice) * 1e12,
-      ) / 1e12,
+      positionSize:
+        Math.floor((approvedNotional / assessment.referencePrice) * 1e12) /
+        1e12,
       leverage,
       referencePrice: assessment.referencePrice,
     };
@@ -2213,7 +2424,11 @@ export class LiveTradingService {
     return value.replace(/-/g, "");
   }
 
-  private safeError(error: unknown): { code: string; message: string; retryable: boolean } {
+  private safeError(error: unknown): {
+    code: string;
+    message: string;
+    retryable: boolean;
+  } {
     if (error instanceof ExchangeError) {
       const detail = [
         error.message,
@@ -2221,7 +2436,11 @@ export class LiveTradingService {
       ]
         .filter(Boolean)
         .join(" | ");
-      return { code: error.code, message: detail.slice(0, 300), retryable: error.retryable };
+      return {
+        code: error.code,
+        message: detail.slice(0, 300),
+        retryable: error.retryable,
+      };
     }
     if (error instanceof Error) {
       return {

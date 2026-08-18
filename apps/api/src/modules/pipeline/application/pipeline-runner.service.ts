@@ -473,6 +473,9 @@ export class PipelineRunnerService {
               : {}),
             tradePlanContext: {
               timeframeMs: timeframeMilliseconds(String(interval)),
+              ...(Number.isFinite(Number(indicatorSnapshot?.values.rsi14))
+                ? { rsi: Number(indicatorSnapshot?.values.rsi14) }
+                : {}),
               ...(Number.isFinite(Number(indicatorSnapshot?.values.rollingLow))
                 ? { support: Number(indicatorSnapshot?.values.rollingLow) }
                 : {}),

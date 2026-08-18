@@ -17,6 +17,7 @@ export type TradePlanStrategy =
 
 export interface TradePlanMarketContext {
   atr?: number;
+  rsi?: number;
   support?: number;
   resistance?: number;
   adx?: number;
@@ -114,6 +115,7 @@ export function buildAdaptiveTradePlan(input: {
   const support = market.support;
   const resistance = market.resistance;
   const costPct = input.roundTripCostPct ?? 0.0008;
+  const momentumScalp = /\[momentum-scalp\]/i.test(decision.reasoning);
 
   // Preserve safe behaviour for manual/API callers that do not have a complete
   // market snapshot yet. Automated pipeline calls supply ATR and range levels.
@@ -141,8 +143,32 @@ export function buildAdaptiveTradePlan(input: {
     };
   }
 
-  if (/\[momentum-scalp\]/i.test(decision.reasoning)) {
-    const risk = atr * 0.8;
+  if (momentumScalp) {
+    const emaExtension = finitePositive(market.ema20)
+      ? side === "LONG"
+        ? entryPrice - market.ema20
+        : market.ema20 - entryPrice
+      : 0;
+    const exhaustedMomentum =
+      (side === "LONG" && (market.rsi ?? 0) >= 72) ||
+      (side === "SHORT" && (market.rsi ?? 100) <= 28);
+    if (
+      emaExtension > atr * 1.5 ||
+      (exhaustedMomentum && emaExtension > atr * 0.75)
+    ) {
+      return {
+        approved: false,
+        reason: "MOMENTUM_ENTRY_OVEREXTENDED",
+        regime,
+        strategy: "MOMENTUM_SCALP",
+        maxHoldingCandles: 6,
+        breakEvenAtR: 0.8,
+      };
+    }
+    // The old 0.8 ATR stop was inside ordinary short-horizon noise in
+    // production. A wider structural stop automatically reduces position size,
+    // so monetary risk remains bounded while avoiding noise-only stop-outs.
+    const risk = atr * 1.2;
     const stopLoss = side === "LONG" ? entryPrice - risk : entryPrice + risk;
     const targetMultiple = Math.max(1.25, Math.min(1.5, input.configuredRiskRewardRatio));
     const cost = entryPrice * costPct;
@@ -160,11 +186,11 @@ export function buildAdaptiveTradePlan(input: {
       takeProfit: rounded(takeProfit),
       rewardToRisk: rounded(rr),
       maxHoldingCandles: 6,
-      breakEvenAtR: 0.7,
-      trailingAtrMultiple: 1.5,
+      breakEvenAtR: 0.8,
+      trailingAtrMultiple: 1.8,
       atr,
       timeframeMs: market.timeframeMs,
-      structuralRiskAtr: 0.8,
+      structuralRiskAtr: 1.2,
     };
   }
 
@@ -241,6 +267,21 @@ export function buildAdaptiveTradePlan(input: {
 
   if (regime === "BREAKOUT") {
     const boundary = side === "LONG" ? resistance : support;
+    if (finitePositive(boundary)) {
+      const extension = side === "LONG"
+        ? entryPrice - boundary
+        : boundary - entryPrice;
+      if (extension > atr * 0.75) {
+        return {
+          approved: false,
+          reason: "BREAKOUT_ENTRY_OVEREXTENDED",
+          regime,
+          strategy: "BREAKOUT_RETEST",
+          maxHoldingCandles: 5,
+          breakEvenAtR: 0.8,
+        };
+      }
+    }
     const structuralStop = finitePositive(boundary)
       ? side === "LONG" ? boundary - atr * 0.3 : boundary + atr * 0.3
       : side === "LONG" ? entryPrice - atr : entryPrice + atr;

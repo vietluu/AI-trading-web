@@ -203,10 +203,50 @@ describe("adaptive trade plan engine", () => {
       approved: true,
       strategy: "MOMENTUM_SCALP",
       maxHoldingCandles: 6,
-      breakEvenAtR: 0.7,
-      trailingAtrMultiple: 1.5,
+      breakEvenAtR: 0.8,
+      trailingAtrMultiple: 1.8,
+      structuralRiskAtr: 1.2,
     });
+    expect(plan.stopLoss).toBe(99.4);
     expect(plan.rewardToRisk).toBeGreaterThanOrEqual(1.25);
+  });
+
+  it("rejects an exhausted momentum entry far above EMA20", () => {
+    const scalpDecision = {
+      ...decision("LONG", "TRENDING"),
+      reasoning: "[momentum-scalp] Confirmed liquid impulse.",
+    };
+    const plan = buildAdaptiveTradePlan({
+      side: "LONG",
+      entryPrice: 102,
+      decision: scalpDecision,
+      market: { atr: 1, ema20: 100, rsi: 76, timeframeMs: 5 * 60_000 },
+      configuredStopLossPct: 0.02,
+      configuredRiskRewardRatio: 1.5,
+    });
+
+    expect(plan).toMatchObject({
+      approved: false,
+      reason: "MOMENTUM_ENTRY_OVEREXTENDED",
+      strategy: "MOMENTUM_SCALP",
+    });
+  });
+
+  it("rejects a breakout entry that has already run too far past its level", () => {
+    const plan = buildAdaptiveTradePlan({
+      side: "LONG",
+      entryPrice: 103,
+      decision: decision("LONG", "TRENDING"),
+      market: { atr: 1, resistance: 102, breakout: true, marketStructure: "HH_HL" },
+      configuredStopLossPct: 0.02,
+      configuredRiskRewardRatio: 1.5,
+    });
+
+    expect(plan).toMatchObject({
+      approved: false,
+      reason: "BREAKOUT_ENTRY_OVEREXTENDED",
+      strategy: "BREAKOUT_RETEST",
+    });
   });
 
   it("uses quantitative trend evidence even when the AI regime says ranging", () => {
