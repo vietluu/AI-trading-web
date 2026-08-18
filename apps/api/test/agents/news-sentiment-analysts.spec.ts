@@ -149,4 +149,47 @@ describe("News and Sentiment Analyst Agents", () => {
       "Never output LONG, SHORT, BUY, or SELL",
     );
   });
+
+  it("builds useful news output without spending an AI provider call", () => {
+    const output = NEWS_ANALYST_DEFINITION.buildDeterministicOutput?.(
+      {
+        "news.articles.list": {
+          articles: [
+            {
+              id: "n1",
+              title: "ETF approval drives institutional inflow",
+              importance: 90,
+              topics: ["ETF"],
+            },
+          ],
+        },
+      },
+      ["news.articles.list"],
+    );
+
+    expect(NewsAgentOutputSchema.safeParse(output).success).toBe(true);
+    expect(output?.impact).toEqual({ level: "HIGH", direction: "POSITIVE" });
+    expect(output?.dataQuality).toBe("PARTIAL");
+  });
+
+  it("uses current Fear and Greed as partial context when social coverage is empty", () => {
+    const output = SENTIMENT_ANALYST_DEFINITION.buildDeterministicOutput?.(
+      {
+        "sentiment.market.get": {
+          dataAvailable: true,
+          score: 20,
+          classification: "Extreme Fear",
+        },
+        "social.posts.list": { posts: [] },
+      },
+      ["sentiment.market.get", "social.posts.list"],
+    );
+
+    expect(SentimentAgentOutputSchema.safeParse(output).success).toBe(true);
+    expect(output?.sentiment).toEqual({
+      overall: "BEARISH",
+      intensity: "HIGH",
+    });
+    expect(output?.dataQuality).toBe("PARTIAL");
+  });
 });

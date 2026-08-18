@@ -99,23 +99,20 @@ describe("News and Sentiment Agent runner integration", () => {
             }),
           ),
       };
+      const execute = vi.fn().mockResolvedValue({
+        text: JSON.stringify(output),
+        json: output,
+        usage: {
+          promptTokens: 100,
+          completionTokens: 50,
+          estimatedCost: 0,
+          totalTokens: 150,
+        },
+        provider: "OPENAI",
+        model: "test-model",
+      });
       const runner = new AgentRunnerService(
-        {
-          execute: vi
-            .fn()
-            .mockResolvedValue({
-              text: JSON.stringify(output),
-              json: output,
-              usage: {
-                promptTokens: 100,
-                completionTokens: 50,
-                estimatedCost: 0,
-                totalTokens: 150,
-              },
-              provider: "OPENAI",
-              model: "test-model",
-            }),
-        } as never,
+        { execute } as never,
         repository as never,
         {
           buildAndPersistSnapshot: vi
@@ -174,6 +171,7 @@ describe("News and Sentiment Agent runner integration", () => {
       expect(toolLoop.runStep.mock.calls[0]?.[0]).toHaveLength(2);
       expect(schema.safeParse(result.output).success).toBe(true);
       expect(repository.saveOutput).toHaveBeenCalledOnce();
+      expect(execute).not.toHaveBeenCalled();
     },
   );
 });

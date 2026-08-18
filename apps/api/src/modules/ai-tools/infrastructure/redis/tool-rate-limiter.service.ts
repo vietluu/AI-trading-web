@@ -7,9 +7,16 @@ export class ToolRateLimiterService {
 
   constructor(private readonly redisService: RedisService) {}
 
-  public async checkUserRateLimit(userId: string, limitPerMinute = 30): Promise<{ allowed: boolean; remaining: number }> {
+  public async checkUserRateLimit(
+    userId: string,
+    invocationSource?: string,
+    limitPerMinute = invocationSource === "INTERNAL_AGENT"
+      ? Number(process.env.INTERNAL_TOOL_RATE_LIMIT_PER_MINUTE ?? 180)
+      : Number(process.env.USER_TOOL_RATE_LIMIT_PER_MINUTE ?? 30),
+  ): Promise<{ allowed: boolean; remaining: number }> {
     const windowKey = new Date().toISOString().slice(0, 16); // Minute window YYYY-MM-DDTHH:mm
-    const key = `ai:tool:rate:user:${userId}:${windowKey}`;
+    const scope = invocationSource === "INTERNAL_AGENT" ? "internal" : "user";
+    const key = `ai:tool:rate:${scope}:${userId}:${windowKey}`;
 
     try {
       const current = await this.redisService.incrementWithTtl(key, 60);

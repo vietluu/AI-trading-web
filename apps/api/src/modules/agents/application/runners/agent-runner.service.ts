@@ -1,26 +1,30 @@
-import { Injectable, Logger, Inject, Optional } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { AIOrchestratorService } from '../../../ai/application/ai-orchestrator.service';
-import { AgentRunRepository } from '../../infrastructure/persistence/agent-run.repository';
-import { AgentContextBuilderService } from '../context/agent-context-builder.service';
-import { AgentPromptResolverService } from '../services/agent-prompt-resolver.service';
-import { AgentToolResolverService } from '../services/agent-tool-resolver.service';
-import { AgentMemoryResolverService } from '../services/agent-memory-resolver.service';
-import { AgentOutputValidatorService } from '../services/agent-output-validator.service';
-import { AgentCancellationService } from '../../infrastructure/redis/agent-cancellation.service';
-import { AgentConcurrencyService } from '../../infrastructure/redis/agent-concurrency.service';
-import { AgentIdempotencyService } from '../../infrastructure/redis/agent-idempotency.service';
-import { AgentQuotaService } from '../../infrastructure/redis/agent-quota.service';
-import { ToolLoopRunnerService } from '../../../ai-tools/application/tool-loop-runner.service';
-import type { AgentDefinition } from '../../domain/models/agent-definition.model';
-import { AgentInvocationSource, AgentRunState, AgentType } from '../../domain/enums';
-import { AgentStateMachine } from '../../domain/state-machine/agent-state-machine';
-import { AgentError, AgentErrorCode } from '../../domain/errors/agent-errors';
-import { AgentRun, Prisma } from '@prisma/client';
-import { PrismaService } from '../../../../database/prisma.service';
-import type { AIProviderType, ToolCapability } from '@platform/shared';
-import { createHash, randomUUID } from 'node:crypto';
-import { getAgentOutputContract } from '../../domain/agent-output-contracts';
+import { Injectable, Logger, Inject, Optional } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { AIOrchestratorService } from "../../../ai/application/ai-orchestrator.service";
+import { AgentRunRepository } from "../../infrastructure/persistence/agent-run.repository";
+import { AgentContextBuilderService } from "../context/agent-context-builder.service";
+import { AgentPromptResolverService } from "../services/agent-prompt-resolver.service";
+import { AgentToolResolverService } from "../services/agent-tool-resolver.service";
+import { AgentMemoryResolverService } from "../services/agent-memory-resolver.service";
+import { AgentOutputValidatorService } from "../services/agent-output-validator.service";
+import { AgentCancellationService } from "../../infrastructure/redis/agent-cancellation.service";
+import { AgentConcurrencyService } from "../../infrastructure/redis/agent-concurrency.service";
+import { AgentIdempotencyService } from "../../infrastructure/redis/agent-idempotency.service";
+import { AgentQuotaService } from "../../infrastructure/redis/agent-quota.service";
+import { ToolLoopRunnerService } from "../../../ai-tools/application/tool-loop-runner.service";
+import type { AgentDefinition } from "../../domain/models/agent-definition.model";
+import {
+  AgentInvocationSource,
+  AgentRunState,
+  AgentType,
+} from "../../domain/enums";
+import { AgentStateMachine } from "../../domain/state-machine/agent-state-machine";
+import { AgentError, AgentErrorCode } from "../../domain/errors/agent-errors";
+import { AgentRun, Prisma } from "@prisma/client";
+import { PrismaService } from "../../../../database/prisma.service";
+import type { AIProviderType, ToolCapability } from "@platform/shared";
+import { createHash, randomUUID } from "node:crypto";
+import { getAgentOutputContract } from "../../domain/agent-output-contracts";
 
 @Injectable()
 export class AgentRunnerService {
@@ -66,7 +70,7 @@ export class AgentRunnerService {
     }
 
     const inputString = JSON.stringify(input);
-    const inputHash = createHash('sha256').update(inputString).digest('hex');
+    const inputHash = createHash("sha256").update(inputString).digest("hex");
 
     // Scheduled and event-driven invocations must always run fresh —
     // returning a cached result from a previous cycle would give stale market
@@ -76,13 +80,13 @@ export class AgentRunnerService {
       params.invocationSource === AgentInvocationSource.FUTURE_SCHEDULED ||
       params.invocationSource === AgentInvocationSource.FUTURE_EVENT_DRIVEN;
 
-    const idempotencyFingerprint = createHash('sha256')
+    const idempotencyFingerprint = createHash("sha256")
       .update(
         isScheduledInvocation
-          ? `${userId ?? 'public'}:${definition.type}:${definition.version}:${inputHash}:${params.correlationId}`
-          : `${userId ?? 'public'}:${definition.type}:${definition.version}:${inputHash}`,
+          ? `${userId ?? "public"}:${definition.type}:${definition.version}:${inputHash}:${params.correlationId}`
+          : `${userId ?? "public"}:${definition.type}:${definition.version}:${inputHash}`,
       )
-      .digest('hex');
+      .digest("hex");
 
     const lockResult = await this.agentIdempotencyService.checkAndLock(
       idempotencyFingerprint,
@@ -110,7 +114,7 @@ export class AgentRunnerService {
       }
       throw new AgentError(
         AgentErrorCode.AGENT_DUPLICATE_RUN,
-        `A run with this input is already in progress (${lockResult.existingRunId || 'active'})`,
+        `A run with this input is already in progress (${lockResult.existingRunId || "active"})`,
         false,
       );
     }
@@ -147,7 +151,10 @@ export class AgentRunnerService {
         });
       }
     } catch (error) {
-      await this.agentIdempotencyService.unlock(idempotencyFingerprint, lockResult.lockToken);
+      await this.agentIdempotencyService.unlock(
+        idempotencyFingerprint,
+        lockResult.lockToken,
+      );
       throw error;
     }
 
@@ -158,45 +165,78 @@ export class AgentRunnerService {
     try {
       const gRes = await this.agentConcurrencyService.acquireGlobal();
       if (!gRes.acquired) {
-        throw new AgentError(AgentErrorCode.AGENT_CONCURRENCY_EXCEEDED, 'Global concurrency limit reached', false);
+        throw new AgentError(
+          AgentErrorCode.AGENT_CONCURRENCY_EXCEEDED,
+          "Global concurrency limit reached",
+          false,
+        );
       }
       globalLockToken = gRes.token;
 
       if (userId) {
         const uRes = await this.agentConcurrencyService.acquireUser(userId);
         if (!uRes.acquired) {
-          throw new AgentError(AgentErrorCode.AGENT_CONCURRENCY_EXCEEDED, 'User concurrency limit reached', false);
+          throw new AgentError(
+            AgentErrorCode.AGENT_CONCURRENCY_EXCEEDED,
+            "User concurrency limit reached",
+            false,
+          );
         }
         userLockToken = uRes.token;
       }
 
-      const tRes = await this.agentConcurrencyService.acquireType(definition.type);
+      const tRes = await this.agentConcurrencyService.acquireType(
+        definition.type,
+      );
       if (!tRes.acquired) {
-        throw new AgentError(AgentErrorCode.AGENT_CONCURRENCY_EXCEEDED, 'Agent type concurrency limit reached', false);
+        throw new AgentError(
+          AgentErrorCode.AGENT_CONCURRENCY_EXCEEDED,
+          "Agent type concurrency limit reached",
+          false,
+        );
       }
       typeLockToken = tRes.token;
 
-      runRecord = await this.transitionState(runRecord.id, runRecord.status, AgentRunState.PREPARING_CONTEXT, 'Context preparation started');
+      runRecord = await this.transitionState(
+        runRecord.id,
+        runRecord.status,
+        AgentRunState.PREPARING_CONTEXT,
+        "Context preparation started",
+      );
 
       const validatedInput = inputParseResult.data as Record<string, unknown>;
-      const { snapshotId, contextString } = await this.agentContextBuilderService.buildAndPersistSnapshot({
-        agentDefinition: definition,
-        userId,
-        symbol: typeof validatedInput.symbol === 'string' ? validatedInput.symbol : undefined,
-        timeframe: typeof validatedInput.interval === 'string' ? validatedInput.interval : undefined,
-        provider: typeof validatedInput.provider === 'string' ? validatedInput.provider : undefined,
+      const { snapshotId, contextString } =
+        await this.agentContextBuilderService.buildAndPersistSnapshot({
+          agentDefinition: definition,
+          userId,
+          symbol:
+            typeof validatedInput.symbol === "string"
+              ? validatedInput.symbol
+              : undefined,
+          timeframe:
+            typeof validatedInput.interval === "string"
+              ? validatedInput.interval
+              : undefined,
+          provider:
+            typeof validatedInput.provider === "string"
+              ? validatedInput.provider
+              : undefined,
+        });
+
+      runRecord = await this.agentRunRepository.updateRun(runRecord.id, {
+        contextSnapshotId: snapshotId,
       });
 
-      runRecord = await this.agentRunRepository.updateRun(runRecord.id, { contextSnapshotId: snapshotId });
-
-      const memories = (await this.agentMemoryResolverService.loadMemory({
-        userId,
-        memoryPolicy: definition.memoryPolicy,
-        agentType: definition.type,
-      })) ?? [];
-      const memoryContext = memories.length > 0
-        ? `\nRelevant governed memory:\n${JSON.stringify(memories)}`
-        : '';
+      const memories =
+        (await this.agentMemoryResolverService.loadMemory({
+          userId,
+          memoryPolicy: definition.memoryPolicy,
+          agentType: definition.type,
+        })) ?? [];
+      const memoryContext =
+        memories.length > 0
+          ? `\nRelevant governed memory:\n${JSON.stringify(memories)}`
+          : "";
       const { renderedPrompt } = this.agentPromptResolverService.resolve({
         promptId: definition.promptId,
         promptVersion: definition.promptVersion,
@@ -204,16 +244,20 @@ export class AgentRunnerService {
         contextString: `${contextString}${memoryContext}`,
       });
 
-      runRecord = await this.transitionState(runRecord.id, runRecord.status, AgentRunState.READY, 'Context and prompt prepared');
+      runRecord = await this.transitionState(
+        runRecord.id,
+        runRecord.status,
+        AgentRunState.READY,
+        "Context and prompt prepared",
+      );
 
       // Agent input `provider` identifies the market/exchange data source, not the LLM.
       const requestedProvider = definition.modelPolicy.preferredProvider as
-        | AIProviderType
-        | undefined;
+        AIProviderType | undefined;
       const toolProvider =
         requestedProvider ??
-        this.configService?.get<AIProviderType>('DEFAULT_PROVIDER') ??
-        'GEMINI';
+        this.configService?.get<AIProviderType>("DEFAULT_PROVIDER") ??
+        "GEMINI";
 
       const resolvedTools = this.agentToolResolverService.resolveTools({
         allowedToolNames: definition.allowedToolNames,
@@ -221,13 +265,19 @@ export class AgentRunnerService {
         provider: toolProvider,
       });
 
-      runRecord = await this.transitionState(runRecord.id, runRecord.status, AgentRunState.RUNNING, 'AI model execution started');
+      runRecord = await this.transitionState(
+        runRecord.id,
+        runRecord.status,
+        AgentRunState.RUNNING,
+        "AI model execution started",
+      );
 
       const startTime = Date.now();
       let toolCallCount = 0;
       let toolRoundCount = 0;
       let usedTools: string[] = [];
       let toolContext = contextString;
+      let toolData: Record<string, unknown> = {};
 
       if (definition.buildToolCalls) {
         const requestedCalls = definition.buildToolCalls(inputParseResult.data);
@@ -266,7 +316,7 @@ export class AgentRunnerService {
             runRecord.id,
             runRecord.status,
             AgentRunState.WAITING_FOR_TOOL,
-            'Waiting for allowlisted market data tools',
+            "Waiting for allowlisted market data tools",
           );
 
           const step = await this.toolLoopRunnerService.runStep(
@@ -285,7 +335,7 @@ export class AgentRunnerService {
               agentType: definition.type,
               requestedAt: new Date(),
               deadlineAt: new Date(Date.now() + definition.timeoutMs),
-              source: 'INTERNAL_AGENT',
+              source: "INTERNAL_AGENT",
               capabilities: definition.requiredCapabilities as ToolCapability[],
               safeMetadata: {},
             },
@@ -297,15 +347,28 @@ export class AgentRunnerService {
           toolCallCount = step.toolResults.length;
           toolRoundCount = 1;
           usedTools = step.toolResults
-            .filter(({ result }) => result.status === 'SUCCESS' || result.status === 'PARTIAL')
+            .filter(
+              ({ result }) =>
+                result.status === "SUCCESS" || result.status === "PARTIAL",
+            )
             .map(({ toolName }) => toolName);
+          toolData = Object.fromEntries(
+            step.toolResults
+              .filter(
+                ({ result }) =>
+                  result.status === "SUCCESS" || result.status === "PARTIAL",
+              )
+              .map(({ toolName, result }) => [toolName, result.data]),
+          );
           toolContext = JSON.stringify(
             {
               contextPolicy: {
                 candleMaxAgeSeconds:
-                  definition.contextPolicy.maximumAgeSecondsBySection.MARKET_CANDLES,
+                  definition.contextPolicy.maximumAgeSecondsBySection
+                    .MARKET_CANDLES,
                 tickerMaxAgeSeconds:
-                  definition.contextPolicy.maximumAgeSecondsBySection.MARKET_TICKER,
+                  definition.contextPolicy.maximumAgeSecondsBySection
+                    .MARKET_TICKER,
               },
               toolResults: step.toolResults.map(({ toolName, result }) => ({
                 toolName,
@@ -323,7 +386,7 @@ export class AgentRunnerService {
             runRecord.id,
             runRecord.status,
             AgentRunState.PROCESSING_TOOL_RESULT,
-            'Processing sanitized tool results',
+            "Processing sanitized tool results",
           );
           runRecord = await this.agentRunRepository.updateRun(runRecord.id, {
             toolCallCount,
@@ -333,17 +396,22 @@ export class AgentRunnerService {
             runRecord.id,
             runRecord.status,
             AgentRunState.RUNNING,
-            'Continuing model execution with tool results',
+            "Continuing model execution with tool results",
           );
         }
       }
 
-      if (toolCallCount > 0 && usedTools.length === 0 && definition.buildInsufficientOutput) {
+      if (
+        toolCallCount > 0 &&
+        usedTools.length === 0 &&
+        definition.buildInsufficientOutput
+      ) {
         return this.persistInsufficientResult({
           definition,
           runRecord,
           usedTools,
-          reason: 'All required market data tools failed or returned unavailable data',
+          reason:
+            "All required market data tools failed or returned unavailable data",
           durationMs: Date.now() - startTime,
           idempotencyFingerprint,
           toolCallCount,
@@ -352,7 +420,13 @@ export class AgentRunnerService {
       }
 
       let fewShotContext = "";
-      if (userId && this.prisma && (definition.type === AgentType.DECISION_SYNTHESIZER || definition.type === AgentType.MARKET_ANALYST || definition.type === AgentType.NEWS_ANALYST)) {
+      if (
+        userId &&
+        this.prisma &&
+        (definition.type === AgentType.DECISION_SYNTHESIZER ||
+          definition.type === AgentType.MARKET_ANALYST ||
+          definition.type === AgentType.NEWS_ANALYST)
+      ) {
         try {
           type FewShotPerformanceRecord = Prisma.PerformanceRecordGetPayload<{
             select: {
@@ -367,33 +441,39 @@ export class AgentRunnerService {
             };
           }>;
 
-          const successes: FewShotPerformanceRecord[] = await this.prisma.performanceRecord.findMany({
-            where: {
-              userId,
-              outcome: { in: ['CORRECT', 'WRONG'] },
-              horizon: { in: ['MID', 'LONG'] },
-              ...(typeof validatedInput.symbol === 'string' ? { symbol: validatedInput.symbol } : {}),
-            },
-            orderBy: { evaluatedAt: 'desc' },
-            take: 6,
-            select: {
-              symbol: true,
-              decision: true,
-              confidence: true,
-              priceAtDecision: true,
-              priceAfter: true,
-              returnPct: true,
-              outcome: true,
-              horizon: true,
-            },
-          });
+          const successes: FewShotPerformanceRecord[] =
+            await this.prisma.performanceRecord.findMany({
+              where: {
+                userId,
+                outcome: { in: ["CORRECT", "WRONG"] },
+                horizon: { in: ["MID", "LONG"] },
+                ...(typeof validatedInput.symbol === "string"
+                  ? { symbol: validatedInput.symbol }
+                  : {}),
+              },
+              orderBy: { evaluatedAt: "desc" },
+              take: 6,
+              select: {
+                symbol: true,
+                decision: true,
+                confidence: true,
+                priceAtDecision: true,
+                priceAfter: true,
+                returnPct: true,
+                outcome: true,
+                horizon: true,
+              },
+            });
           if (successes.length > 0) {
             fewShotContext = [
-              '',
-              '=== RECENT EVALUATED DECISIONS (BALANCED FEEDBACK) ===',
-              ...successes.map((success) => `- ${success.outcome} at ${success.horizon}: Symbol ${success.symbol}, decision ${success.decision}, confidence ${success.confidence}%, price ${success.priceAtDecision.toString()} -> ${success.priceAfter.toString()} (${success.returnPct.toFixed(2)}% net virtual return)`),
-              'Use both wins and losses to calibrate reasoning. Do not copy their direction without current evidence.',
-            ].join('\n');
+              "",
+              "=== RECENT EVALUATED DECISIONS (BALANCED FEEDBACK) ===",
+              ...successes.map(
+                (success) =>
+                  `- ${success.outcome} at ${success.horizon}: Symbol ${success.symbol}, decision ${success.decision}, confidence ${success.confidence}%, price ${success.priceAtDecision.toString()} -> ${success.priceAfter.toString()} (${success.returnPct.toFixed(2)}% net virtual return)`,
+              ),
+              "Use both wins and losses to calibrate reasoning. Do not copy their direction without current evidence.",
+            ].join("\n");
           }
         } catch {
           // ignore
@@ -401,41 +481,66 @@ export class AgentRunnerService {
       }
 
       let aiResponse;
-      try {
-        aiResponse = await this.aiOrchestratorService.execute({
-          userId: userId || '00000000-0000-0000-0000-000000000000',
-          sessionId: params.sessionId,
-          provider: requestedProvider,
-          model: definition.modelPolicy.preferredModel,
-          systemPrompt: `${renderedPrompt.systemPrompt}${fewShotContext}\n\n${getAgentOutputContract(definition.type)}`,
-          userPrompt: `${renderedPrompt.userPrompt}\n\nValidated tool results:\n${toolContext}`,
-          temperature: definition.modelPolicy.defaultTemperature,
-          maxTokens: definition.maxOutputTokens,
-          responseFormat: definition.modelPolicy.requiresStructuredOutput ? 'json' : 'text',
-        });
-      } catch (error) {
-        if (!definition.buildInsufficientOutput) throw error;
-        const reason = error instanceof Error ? error.message : 'AI provider unavailable';
-        return this.persistInsufficientResult({
-          definition,
-          runRecord,
-          usedTools,
-          reason,
-          durationMs: Date.now() - startTime,
-          idempotencyFingerprint,
-          toolCallCount,
-          toolRoundCount,
-        });
-      }
+      const deterministicOutput = definition.buildDeterministicOutput?.(
+        toolData,
+        usedTools,
+      );
+      if (deterministicOutput !== undefined) {
+        aiResponse = {
+          json: deterministicOutput,
+          text: JSON.stringify(deterministicOutput),
+          provider: "DETERMINISTIC",
+          model: `${definition.type.toLowerCase()}-rules-v1`,
+          usage: {
+            promptTokens: 0,
+            completionTokens: 0,
+            estimatedCost: 0,
+          },
+        };
+      } else
+        try {
+          aiResponse = await this.aiOrchestratorService.execute({
+            userId: userId || "00000000-0000-0000-0000-000000000000",
+            sessionId: params.sessionId,
+            provider: requestedProvider,
+            model: definition.modelPolicy.preferredModel,
+            systemPrompt: `${renderedPrompt.systemPrompt}${fewShotContext}\n\n${getAgentOutputContract(definition.type)}`,
+            userPrompt: `${renderedPrompt.userPrompt}\n\nValidated tool results:\n${toolContext}`,
+            temperature: definition.modelPolicy.defaultTemperature,
+            maxTokens: definition.maxOutputTokens,
+            responseFormat: definition.modelPolicy.requiresStructuredOutput
+              ? "json"
+              : "text",
+          });
+        } catch (error) {
+          if (!definition.buildInsufficientOutput) throw error;
+          const reason =
+            error instanceof Error ? error.message : "AI provider unavailable";
+          return this.persistInsufficientResult({
+            definition,
+            runRecord,
+            usedTools,
+            reason,
+            durationMs: Date.now() - startTime,
+            idempotencyFingerprint,
+            toolCallCount,
+            toolRoundCount,
+          });
+        }
 
-      runRecord = await this.transitionState(runRecord.id, runRecord.status, AgentRunState.VALIDATING_OUTPUT, 'Validating model response');
+      runRecord = await this.transitionState(
+        runRecord.id,
+        runRecord.status,
+        AgentRunState.VALIDATING_OUTPUT,
+        "Validating model response",
+      );
 
       const modelOutput =
         definition.modelPolicy.requiresStructuredOutput && aiResponse.json
           ? aiResponse.json
           : aiResponse.text || {};
-      const normalizedModelOutput =
-        typeof modelOutput === 'object' &&
+      const normalizedModelOutput: string | Record<string, unknown> =
+        typeof modelOutput === "object" &&
         modelOutput !== null &&
         !Array.isArray(modelOutput)
           ? {
@@ -443,7 +548,7 @@ export class AgentRunnerService {
               ...(definition.includeUsedToolsInOutput ? { usedTools } : {}),
               generatedAt: new Date().toISOString(),
             }
-          : modelOutput;
+          : (modelOutput as string);
 
       let validation = this.agentOutputValidatorService.validate({
         rawOutput: normalizedModelOutput,
@@ -457,12 +562,16 @@ export class AgentRunnerService {
         validation.validatedOutput &&
         definition.buildToolCalls
       ) {
-        const validatedRecord = validation.validatedOutput as Record<string, unknown>;
+        const validatedRecord = validation.validatedOutput as Record<
+          string,
+          unknown
+        >;
         const normalizedOutput = {
           ...validatedRecord,
           dataQuality:
-            usedTools.length < toolCallCount && validatedRecord.dataQuality === 'GOOD'
-              ? 'PARTIAL'
+            usedTools.length < toolCallCount &&
+            validatedRecord.dataQuality === "GOOD"
+              ? "PARTIAL"
               : validatedRecord.dataQuality,
           ...(definition.includeUsedToolsInOutput ? { usedTools } : {}),
           generatedAt: new Date().toISOString(),
@@ -478,7 +587,12 @@ export class AgentRunnerService {
       const durationMs = Date.now() - startTime;
 
       if (validation.valid && validation.validatedOutput) {
-        runRecord = await this.transitionState(runRecord.id, runRecord.status, AgentRunState.COMPLETED, 'Output successfully validated');
+        runRecord = await this.transitionState(
+          runRecord.id,
+          runRecord.status,
+          AgentRunState.COMPLETED,
+          "Output successfully validated",
+        );
 
         await this.agentRunRepository.saveOutput({
           runId: runRecord.id,
@@ -515,7 +629,7 @@ export class AgentRunnerService {
             definition,
             runRecord,
             usedTools,
-            reason: `Model output failed schema validation: ${(validation.errors || []).join('; ')}`,
+            reason: `Model output failed schema validation: ${(validation.errors || []).join("; ")}`,
             durationMs,
             idempotencyFingerprint,
             toolCallCount,
@@ -523,10 +637,15 @@ export class AgentRunnerService {
             alreadyValidating: true,
           });
         }
-        runRecord = await this.transitionState(runRecord.id, runRecord.status, AgentRunState.FAILED, 'Output validation failed');
+        runRecord = await this.transitionState(
+          runRecord.id,
+          runRecord.status,
+          AgentRunState.FAILED,
+          "Output validation failed",
+        );
         runRecord = await this.agentRunRepository.updateRun(runRecord.id, {
           failureCode: AgentErrorCode.AGENT_OUTPUT_INVALID,
-          safeFailureMessage: (validation.errors || []).join('; '),
+          safeFailureMessage: (validation.errors || []).join("; "),
           durationMs,
           completedAt: new Date(),
         });
@@ -543,22 +662,39 @@ export class AgentRunnerService {
       this.logger.error(`Run ${runRecord.id} failed: ${msg}`);
 
       try {
-        await this.transitionState(runRecord.id, runRecord.status, AgentRunState.FAILED, `Execution error: ${msg}`);
+        await this.transitionState(
+          runRecord.id,
+          runRecord.status,
+          AgentRunState.FAILED,
+          `Execution error: ${msg}`,
+        );
         await this.agentRunRepository.updateRun(runRecord.id, {
           failureCode: AgentErrorCode.AGENT_EXECUTION_FAILED,
           safeFailureMessage: msg,
           completedAt: new Date(),
         });
       } catch (subErr) {
-        this.logger.error(`Failed to record failure status for run ${runRecord.id}`, subErr);
+        this.logger.error(
+          `Failed to record failure status for run ${runRecord.id}`,
+          subErr,
+        );
       }
 
       throw err;
     } finally {
-      if (globalLockToken) await this.agentConcurrencyService.releaseGlobal(globalLockToken);
-      if (userLockToken && userId) await this.agentConcurrencyService.releaseUser(userId, userLockToken);
-      if (typeLockToken) await this.agentConcurrencyService.releaseType(definition.type, typeLockToken);
-      await this.agentIdempotencyService.unlock(idempotencyFingerprint, lockResult.lockToken);
+      if (globalLockToken)
+        await this.agentConcurrencyService.releaseGlobal(globalLockToken);
+      if (userLockToken && userId)
+        await this.agentConcurrencyService.releaseUser(userId, userLockToken);
+      if (typeLockToken)
+        await this.agentConcurrencyService.releaseType(
+          definition.type,
+          typeLockToken,
+        );
+      await this.agentIdempotencyService.unlock(
+        idempotencyFingerprint,
+        lockResult.lockToken,
+      );
     }
   }
 
@@ -579,7 +715,7 @@ export class AgentRunnerService {
         runRecord.id,
         runRecord.status,
         AgentRunState.VALIDATING_OUTPUT,
-        'Producing safe insufficient-data output',
+        "Producing safe insufficient-data output",
       );
     }
 
@@ -587,13 +723,15 @@ export class AgentRunnerService {
       params.usedTools,
       params.reason,
     );
-    const validation = params.definition.outputSchema.parse(output) as Prisma.InputJsonValue;
+    const validation = params.definition.outputSchema.parse(
+      output,
+    ) as Prisma.InputJsonValue;
 
     runRecord = await this.transitionState(
       runRecord.id,
       runRecord.status,
       AgentRunState.PARTIALLY_COMPLETED,
-      'Returned schema-valid insufficient-data output',
+      "Returned schema-valid insufficient-data output",
     );
     await this.agentRunRepository.saveOutput({
       runId: runRecord.id,
@@ -620,13 +758,13 @@ export class AgentRunnerService {
     to: AgentRunState,
     reason: string,
   ): Promise<AgentRun> {
-    AgentStateMachine.transition(runId, from, to, reason, 'AgentRunnerService');
+    AgentStateMachine.transition(runId, from, to, reason, "AgentRunnerService");
     await this.agentRunRepository.addTransition({
       runId,
       fromState: from,
       toState: to,
       reason,
-      actor: 'AgentRunnerService',
+      actor: "AgentRunnerService",
     });
     return this.agentRunRepository.updateRun(runId, { status: to });
   }

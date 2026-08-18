@@ -1,9 +1,12 @@
-import { InjectQueue } from '@nestjs/bullmq';
-import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
-import { Queue } from 'bullmq';
-import { ExternalDataProvider, NewsSourceType } from '@prisma/client';
-import { PrismaService } from '../../../../database/prisma.service';
-import { EXTERNAL_DATA_QUEUE_NAME, ExternalDataJobType } from '../../infrastructure/queues/external-data-queue.constants';
+import { InjectQueue } from "@nestjs/bullmq";
+import { Injectable, Logger, OnApplicationBootstrap } from "@nestjs/common";
+import { Queue } from "bullmq";
+import { ExternalDataProvider, NewsSourceType } from "@prisma/client";
+import { PrismaService } from "../../../../database/prisma.service";
+import {
+  EXTERNAL_DATA_QUEUE_NAME,
+  ExternalDataJobType,
+} from "../../infrastructure/queues/external-data-queue.constants";
 
 @Injectable()
 export class ExternalDataSchedulerService implements OnApplicationBootstrap {
@@ -15,8 +18,10 @@ export class ExternalDataSchedulerService implements OnApplicationBootstrap {
   ) {}
 
   async onApplicationBootstrap() {
-    if (process.env.CLI_DISABLE_SCHEDULERS === 'true') return;
-    this.logger.log('Initializing External Data Queue schedulers and default seed sources...');
+    if (process.env.CLI_DISABLE_SCHEDULERS === "true") return;
+    this.logger.log(
+      "Initializing External Data Queue schedulers and default seed sources...",
+    );
     await this.seedDefaultSources();
     await this.scheduleRepeatableJobs();
   }
@@ -24,53 +29,53 @@ export class ExternalDataSchedulerService implements OnApplicationBootstrap {
   private async seedDefaultSources() {
     const defaultSources = [
       {
-        sourceId: 'coindesk-rss',
-        displayName: 'CoinDesk Main Feed',
+        sourceId: "coindesk-rss",
+        displayName: "CoinDesk Main Feed",
         provider: ExternalDataProvider.GENERIC_RSS,
         sourceType: NewsSourceType.RSS,
-        baseDomain: 'coindesk.com',
-        feedUrl: 'https://www.coindesk.com/arc/outboundfeeds/rss/',
-        language: 'en',
-        categories: ['news', 'market'],
+        baseDomain: "coindesk.com",
+        feedUrl: "https://www.coindesk.com/arc/outboundfeeds/rss/",
+        language: "en",
+        categories: ["news", "market"],
         reliabilityScore: 85,
         pollIntervalSeconds: 300,
         isEnabled: true,
       },
       {
-        sourceId: 'cointelegraph-rss',
-        displayName: 'Cointelegraph Feed',
+        sourceId: "cointelegraph-rss",
+        displayName: "Cointelegraph Feed",
         provider: ExternalDataProvider.GENERIC_RSS,
         sourceType: NewsSourceType.RSS,
-        baseDomain: 'cointelegraph.com',
-        feedUrl: 'https://cointelegraph.com/rss',
-        language: 'en',
-        categories: ['news', 'analysis'],
+        baseDomain: "cointelegraph.com",
+        feedUrl: "https://cointelegraph.com/rss",
+        language: "en",
+        categories: ["news", "analysis"],
         reliabilityScore: 80,
         pollIntervalSeconds: 300,
         isEnabled: true,
       },
       {
-        sourceId: 'binance-announcements',
-        displayName: 'Binance Official Announcements',
+        sourceId: "binance-announcements",
+        displayName: "Binance Official Announcements",
         provider: ExternalDataProvider.BINANCE_ANNOUNCEMENTS,
         sourceType: NewsSourceType.EXCHANGE_ANNOUNCEMENT,
-        baseDomain: 'binance.com',
-        feedUrl: 'https://www.binance.com/en/support/announcement/rss',
-        language: 'en',
-        categories: ['announcement', 'exchange'],
+        baseDomain: "binance.com",
+        feedUrl: "https://www.binance.com/en/support/announcement/rss",
+        language: "en",
+        categories: ["announcement", "exchange"],
         reliabilityScore: 100,
         pollIntervalSeconds: 300,
         isEnabled: false,
       },
       {
-        sourceId: 'okx-announcements',
-        displayName: 'OKX Official Announcements',
+        sourceId: "okx-announcements",
+        displayName: "OKX Official Announcements",
         provider: ExternalDataProvider.OKX_ANNOUNCEMENTS,
         sourceType: NewsSourceType.EXCHANGE_ANNOUNCEMENT,
-        baseDomain: 'okx.com',
-        feedUrl: 'https://www.okx.com/support/hc/en-us/rss',
-        language: 'en',
-        categories: ['announcement', 'exchange'],
+        baseDomain: "okx.com",
+        feedUrl: "https://www.okx.com/support/hc/en-us/rss",
+        language: "en",
+        categories: ["announcement", "exchange"],
         reliabilityScore: 100,
         pollIntervalSeconds: 300,
         isEnabled: false,
@@ -95,34 +100,46 @@ export class ExternalDataSchedulerService implements OnApplicationBootstrap {
       });
     }
 
-    this.logger.log(`Seeded ${defaultSources.length} default external data sources`);
+    this.logger.log(
+      `Seeded ${defaultSources.length} default external data sources`,
+    );
   }
 
   private async scheduleRepeatableJobs() {
     try {
       await Promise.all([
         this.upsertScheduler(
-          'repeatable-poll-rss-sources',
+          "repeatable-poll-rss-sources",
           ExternalDataJobType.POLL_RSS_SOURCES,
           300_000,
         ),
         this.upsertScheduler(
-          'repeatable-poll-binance-announcements',
+          "repeatable-poll-binance-announcements",
           ExternalDataJobType.POLL_BINANCE_ANNOUNCEMENTS,
           300_000,
         ),
         this.upsertScheduler(
-          'repeatable-poll-okx-announcements',
+          "repeatable-poll-okx-announcements",
           ExternalDataJobType.POLL_OKX_ANNOUNCEMENTS,
           300_000,
         ),
         this.upsertScheduler(
-          'repeatable-poll-fear-greed',
+          "repeatable-poll-fear-greed",
           ExternalDataJobType.POLL_FEAR_GREED,
           3_600_000,
         ),
         this.upsertScheduler(
-          'repeatable-retention-cleanup',
+          "repeatable-poll-reddit",
+          ExternalDataJobType.POLL_REDDIT,
+          15 * 60_000,
+        ),
+        this.upsertScheduler(
+          "repeatable-poll-official-macro",
+          ExternalDataJobType.POLL_OFFICIAL_MACRO,
+          6 * 60 * 60_000,
+        ),
+        this.upsertScheduler(
+          "repeatable-retention-cleanup",
           ExternalDataJobType.RETENTION_CLEANUP,
           86_400_000,
         ),
@@ -141,17 +158,41 @@ export class ExternalDataSchedulerService implements OnApplicationBootstrap {
         this.queue.add(
           ExternalDataJobType.POLL_FEAR_GREED,
           {},
-          { jobId: `startup-fear-greed-${hourlyBucket}`, removeOnComplete: true },
+          {
+            jobId: `startup-fear-greed-${hourlyBucket}`,
+            removeOnComplete: true,
+          },
+        ),
+        this.queue.add(
+          ExternalDataJobType.POLL_REDDIT,
+          {},
+          {
+            jobId: `startup-reddit-${fiveMinuteBucket}`,
+            removeOnComplete: true,
+          },
+        ),
+        this.queue.add(
+          ExternalDataJobType.POLL_OFFICIAL_MACRO,
+          {},
+          { jobId: `startup-macro-${hourlyBucket}`, removeOnComplete: true },
         ),
       ]);
 
-      this.logger.log('Successfully registered repeatable BullMQ ingestion schedules');
+      this.logger.log(
+        "Successfully registered repeatable BullMQ ingestion schedules",
+      );
     } catch (err: any) {
-      this.logger.error(`Failed to register BullMQ repeatable jobs: ${err.message}`);
+      this.logger.error(
+        `Failed to register BullMQ repeatable jobs: ${err.message}`,
+      );
     }
   }
 
-  private upsertScheduler(id: string, name: ExternalDataJobType, every: number) {
+  private upsertScheduler(
+    id: string,
+    name: ExternalDataJobType,
+    every: number,
+  ) {
     return this.queue.upsertJobScheduler(
       id,
       { every },
@@ -166,14 +207,28 @@ export class ExternalDataSchedulerService implements OnApplicationBootstrap {
   async triggerManualRun(provider: string, sourceId?: string) {
     const jobId = `manual-trigger-${provider}-${Date.now()}`;
     if (provider === ExternalDataProvider.GENERIC_RSS) {
-      await this.queue.add(ExternalDataJobType.POLL_RSS_SOURCES, { sourceId }, { jobId });
+      await this.queue.add(
+        ExternalDataJobType.POLL_RSS_SOURCES,
+        { sourceId },
+        { jobId },
+      );
     } else if (provider === ExternalDataProvider.BINANCE_ANNOUNCEMENTS) {
-      await this.queue.add(ExternalDataJobType.POLL_BINANCE_ANNOUNCEMENTS, {}, { jobId });
+      await this.queue.add(
+        ExternalDataJobType.POLL_BINANCE_ANNOUNCEMENTS,
+        {},
+        { jobId },
+      );
     } else if (provider === ExternalDataProvider.OKX_ANNOUNCEMENTS) {
-      await this.queue.add(ExternalDataJobType.POLL_OKX_ANNOUNCEMENTS, {}, { jobId });
+      await this.queue.add(
+        ExternalDataJobType.POLL_OKX_ANNOUNCEMENTS,
+        {},
+        { jobId },
+      );
     } else if (provider === ExternalDataProvider.ALTERNATIVE_ME_FEAR_GREED) {
       await this.queue.add(ExternalDataJobType.POLL_FEAR_GREED, {}, { jobId });
+    } else if (provider === ExternalDataProvider.REDDIT) {
+      await this.queue.add(ExternalDataJobType.POLL_REDDIT, {}, { jobId });
     }
-    return { jobId, status: 'QUEUED' };
+    return { jobId, status: "QUEUED" };
   }
 }

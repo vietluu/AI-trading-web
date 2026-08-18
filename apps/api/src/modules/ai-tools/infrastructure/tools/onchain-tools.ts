@@ -9,6 +9,14 @@ interface CoinMetricsRow extends Record<string, unknown> {
   time?: string;
 }
 
+interface CoinMetricsCatalogAsset extends Record<string, unknown> {
+  asset?: string;
+  metrics?: Array<{
+    metric?: string;
+    frequencies?: Array<{ frequency?: string }>;
+  }>;
+}
+
 @Injectable()
 export class OnChainMetricsGetTool implements ToolDefinition<
   { symbol: string; lookbackHours?: number },
@@ -68,9 +76,53 @@ export class OnChainMetricsGetTool implements ToolDefinition<
     const baseUrl = apiKey
       ? "https://api.coinmetrics.io/v4/timeseries/asset-metrics"
       : "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics";
-    const metrics = ["AdrActCnt", "TxCnt"];
-    if (apiKey) {
-      metrics.push("TxTfrValAdjUSD", "FlowInExUSD", "FlowOutExUSD");
+    const desiredMetrics = ["AdrActCnt", "TxCnt"];
+    if (apiKey)
+      desiredMetrics.push("TxTfrValAdjUSD", "FlowInExUSD", "FlowOutExUSD");
+    const catalogUrl = `${apiKey ? "https://api.coinmetrics.io" : "https://community-api.coinmetrics.io"}/v4/catalog-v2/asset-metrics?${new URLSearchParams(
+      {
+        assets: asset,
+        ...(apiKey ? { api_key: apiKey } : {}),
+      },
+    ).toString()}`;
+    let metrics: string[] = [];
+    try {
+      const catalogResponse = await this.http.fetch({
+        url: catalogUrl,
+        timeoutMs: 10_000,
+        maxResponseBytes: 512 * 1024,
+      });
+      const catalogPayload = JSON.parse(catalogResponse.body) as {
+        data?: CoinMetricsCatalogAsset[];
+      };
+      const catalogAsset = catalogPayload.data?.find(
+        (item) => item.asset === asset,
+      );
+      const dailyMetrics = new Set(
+        (catalogAsset?.metrics ?? [])
+          .filter((item) =>
+            (item.frequencies ?? []).some(
+              (frequency) => frequency.frequency === "1d",
+            ),
+          )
+          .map((item) => item.metric)
+          .filter((item): item is string => Boolean(item)),
+      );
+      metrics = desiredMetrics.filter((metric) => dailyMetrics.has(metric));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/HTTP error (400|403|404)/i.test(message)) throw error;
+    }
+    if (metrics.length === 0) {
+      return {
+        provider: "COIN_METRICS",
+        asset,
+        sourceUrl: catalogUrl.replace(/([?&]api_key=)[^&]+/, "$1REDACTED"),
+        metrics: [],
+        coverage: "UNAVAILABLE",
+        warning: `Coin Metrics catalog has no supported daily network metrics for ${asset.toUpperCase()}.`,
+        observedAt: new Date().toISOString(),
+      };
     }
     const start = new Date(
       Date.now() - (input.lookbackHours ?? 168) * 60 * 60 * 1000,
@@ -96,7 +148,7 @@ export class OnChainMetricsGetTool implements ToolDefinition<
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (/HTTP error 400/i.test(message)) {
+      if (/HTTP error (400|403|404)/i.test(message)) {
         return {
           provider: "COIN_METRICS",
           asset,

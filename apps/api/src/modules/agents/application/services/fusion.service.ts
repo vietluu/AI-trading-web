@@ -1,4 +1,4 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import {
   FusionInputSchema,
   FusionOutputSchema,
@@ -13,14 +13,14 @@ import {
   type FusionInput,
   type FusionOutput,
   type FusionRunInput,
-} from '@platform/shared';
-import { randomUUID } from 'node:crypto';
-import { AgentInvocationSource, AgentType } from '../../domain/enums';
-import { canonicalSymbol } from '../../../../exchange/infrastructure/exchange-symbol';
-import { AgentExecutionService } from './agent-execution.service';
+} from "@platform/shared";
+import { randomUUID } from "node:crypto";
+import { AgentInvocationSource, AgentType } from "../../domain/enums";
+import { canonicalSymbol } from "../../../../exchange/infrastructure/exchange-symbol";
+import { AgentExecutionService } from "./agent-execution.service";
 
 type AnalysisName = keyof FusionInput;
-type AnalysisBias = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+type AnalysisBias = "BULLISH" | "BEARISH" | "NEUTRAL";
 
 export interface RunFusionOptions {
   input: FusionRunInput;
@@ -37,13 +37,16 @@ export interface FusionAnalysisResult {
 
 export function deriveAssetSymbol(symbol: string): string {
   const canonical = canonicalSymbol(symbol);
-  const [baseAsset] = canonical.split('-');
-  if (!baseAsset) throw new Error('SYMBOL_REQUIRED: fusion analysis requires an explicit BASE-QUOTE symbol');
+  const [baseAsset] = canonical.split("-");
+  if (!baseAsset)
+    throw new Error(
+      "SYMBOL_REQUIRED: fusion analysis requires an explicit BASE-QUOTE symbol",
+    );
   return baseAsset;
 }
 
-import { RedisService } from '../../../../redis/redis.service';
-import { PrismaService } from '../../../../database/prisma.service';
+import { RedisService } from "../../../../redis/redis.service";
+import { PrismaService } from "../../../../database/prisma.service";
 
 const ANALYSIS_TTL_SECONDS: Record<AnalysisName, number> = {
   market: 300,
@@ -73,11 +76,11 @@ export class FusionService {
     assetSymbol: string,
     userId?: string,
   ): string {
-    const userScope = userId ?? 'public';
-    if (name === 'macro') {
+    const userScope = userId ?? "public";
+    if (name === "macro") {
       return `fusion:analysis:${userScope}:macro:market-wide:lh${input.lookbackHours}`;
     }
-    if (name === 'news' || name === 'sentiment' || name === 'onchain') {
+    if (name === "news" || name === "sentiment" || name === "onchain") {
       return `fusion:analysis:${userScope}:${name}:${assetSymbol}:lh${input.lookbackHours}:mi${input.maxItems}`;
     }
     return `fusion:analysis:${userScope}:${name}:${input.provider}:${input.symbol}:${input.interval}:lc${input.lookbackCandles}`;
@@ -164,7 +167,9 @@ export class FusionService {
           await this.redis.compareAndDelete(lockKey, token).catch(() => false);
         }
       }
-      await new Promise((resolve) => setTimeout(resolve, ANALYSIS_LOCK_POLL_MS));
+      await new Promise((resolve) =>
+        setTimeout(resolve, ANALYSIS_LOCK_POLL_MS),
+      );
     }
 
     const value = await load();
@@ -195,7 +200,7 @@ export class FusionService {
     // --- STAGE 1: Technical & Market Analysis ---
     const stage1Requests = [
       {
-        name: 'market' as const,
+        name: "market" as const,
         agentType: AgentType.MARKET_ANALYST,
         input: {
           symbol: input.symbol,
@@ -206,7 +211,7 @@ export class FusionService {
         schema: MarketAgentOutputSchema,
       },
       {
-        name: 'technical' as const,
+        name: "technical" as const,
         agentType: AgentType.TECHNICAL_ANALYST,
         input: {
           symbol: input.symbol,
@@ -220,7 +225,7 @@ export class FusionService {
 
     const stage2Requests = [
       {
-        name: 'news' as const,
+        name: "news" as const,
         agentType: AgentType.NEWS_ANALYST,
         input: {
           symbol: assetSymbol,
@@ -230,7 +235,7 @@ export class FusionService {
         schema: NewsAgentOutputSchema,
       },
       {
-        name: 'sentiment' as const,
+        name: "sentiment" as const,
         agentType: AgentType.SENTIMENT_ANALYST,
         input: {
           symbol: assetSymbol,
@@ -240,13 +245,13 @@ export class FusionService {
         schema: SentimentAgentOutputSchema,
       },
       {
-        name: 'macro' as const,
+        name: "macro" as const,
         agentType: AgentType.MACRO_ANALYST,
         input: { lookbackHours: input.lookbackHours },
         schema: MacroAgentOutputSchema,
       },
       {
-        name: 'onchain' as const,
+        name: "onchain" as const,
         agentType: AgentType.ON_CHAIN_ANALYST,
         input: { symbol: assetSymbol, lookbackHours: input.lookbackHours },
         schema: OnChainAgentOutputSchema,
@@ -274,23 +279,29 @@ export class FusionService {
               input: request.input,
             });
             const parsed = request.schema.safeParse(run.output);
-            if (!parsed.success) throw new Error(`Invalid output from ${request.name}`);
+            if (!parsed.success)
+              throw new Error(`Invalid output from ${request.name}`);
             return parsed.data;
           },
         );
         const parsed = request.schema.safeParse(data);
-        if (!parsed.success) throw new Error(`Invalid cached output from ${request.name}`);
+        if (!parsed.success)
+          throw new Error(`Invalid cached output from ${request.name}`);
         return {
           name: request.name,
-          data: this.normalizeValidObservation(request.name, parsed.data, input.symbol),
+          data: this.normalizeValidObservation(
+            request.name,
+            parsed.data,
+            input.symbol,
+          ),
         };
-      })
+      }),
     );
 
     for (let i = 0; i < stage1Results.length; i++) {
       const result = stage1Results[i]!;
       const request = stage1Requests[i]!;
-      if (result.status === 'fulfilled') {
+      if (result.status === "fulfilled") {
         Object.assign(analyses, { [result.value.name]: result.value.data });
       } else {
         Object.assign(analyses, {
@@ -300,17 +311,23 @@ export class FusionService {
     }
 
     // Check if Stage 1 produces a directional market signal
-    const marketDir = analyses.market && 'trend' in analyses.market ? analyses.market.trend?.direction : undefined;
-    const techDir = analyses.technical && 'trend' in analyses.technical ? analyses.technical.trend?.direction : undefined;
+    const marketDir =
+      analyses.market && "trend" in analyses.market
+        ? analyses.market.trend?.direction
+        : undefined;
+    const techDir =
+      analyses.technical && "trend" in analyses.technical
+        ? analyses.technical.trend?.direction
+        : undefined;
     const hasDirectionalSignal =
-      (marketDir && marketDir !== 'SIDEWAYS') ||
-      (techDir && techDir !== 'SIDEWAYS');
+      (marketDir && marketDir !== "SIDEWAYS") ||
+      (techDir && techDir !== "SIDEWAYS");
 
     // --- STAGE 2: Secondary Analysis (News, Sentiment, Macro, On-chain) ---
     // If Stage 1 is SIDEWAYS/NEUTRAL, reuse cache if present or default to neutral observation to avoid extra AI calls
     const stage2Results = await Promise.allSettled(
       stage2Requests.map(async (request) => {
-        if (request.name === 'macro' && !macroEvidenceAvailable) {
+        if (request.name === "macro" && !macroEvidenceAvailable) {
           return {
             name: request.name,
             data: this.unavailableMacroImportAnalysis(),
@@ -331,7 +348,11 @@ export class FusionService {
             if (parsed.success) {
               return {
                 name: request.name,
-                data: this.normalizeValidObservation(request.name, parsed.data, input.symbol),
+                data: this.normalizeValidObservation(
+                  request.name,
+                  parsed.data,
+                  input.symbol,
+                ),
               };
             }
           }
@@ -351,23 +372,29 @@ export class FusionService {
               input: request.input,
             });
             const parsed = request.schema.safeParse(run.output);
-            if (!parsed.success) throw new Error(`Invalid output from ${request.name}`);
+            if (!parsed.success)
+              throw new Error(`Invalid output from ${request.name}`);
             return parsed.data;
           },
         );
         const parsed = request.schema.safeParse(data);
-        if (!parsed.success) throw new Error(`Invalid cached output from ${request.name}`);
+        if (!parsed.success)
+          throw new Error(`Invalid cached output from ${request.name}`);
         return {
           name: request.name,
-          data: this.normalizeValidObservation(request.name, parsed.data, input.symbol),
+          data: this.normalizeValidObservation(
+            request.name,
+            parsed.data,
+            input.symbol,
+          ),
         };
-      })
+      }),
     );
 
     for (let i = 0; i < stage2Results.length; i++) {
       const result = stage2Results[i]!;
       const request = stage2Requests[i]!;
-      if (result.status === 'fulfilled') {
+      if (result.status === "fulfilled") {
         Object.assign(analyses, { [result.value.name]: result.value.data });
       } else {
         Object.assign(analyses, {
@@ -391,11 +418,11 @@ export class FusionService {
       news: this.newsBias(input),
       sentiment: input.sentiment.sentiment.overall,
       macro:
-        input.macro.macroTrend === 'RISK_ON'
-          ? 'BULLISH'
-          : input.macro.macroTrend === 'RISK_OFF'
-            ? 'BEARISH'
-            : 'NEUTRAL',
+        input.macro.macroTrend === "RISK_ON"
+          ? "BULLISH"
+          : input.macro.macroTrend === "RISK_OFF"
+            ? "BEARISH"
+            : "NEUTRAL",
       onchain: this.onChainBias(input),
     };
     const qualities: Record<AnalysisName, AgentDataQuality> = {
@@ -407,43 +434,41 @@ export class FusionService {
       onchain: input.onchain.dataQuality,
     };
     const onChainConfigured = !input.onchain.signals.some((signal) =>
-      /no verified on-chain (?:provider|analysis)|coin metrics returned no verified coverage/i.test(signal),
+      /no verified on-chain (?:provider|analysis)|coin metrics returned no verified coverage/i.test(
+        signal,
+      ),
     );
-    const macroConfigured = !/no imported macro data/i.test(input.macro.summary);
+    const macroConfigured = !/no imported macro data/i.test(
+      input.macro.summary,
+    );
     const expectedNames = (Object.keys(votes) as AnalysisName[]).filter(
       (name) =>
-        (name !== 'onchain' || onChainConfigured) &&
-        (name !== 'macro' || macroConfigured),
+        (name !== "onchain" || onChainConfigured) &&
+        (name !== "macro" || macroConfigured),
     );
     const usableNames = expectedNames.filter(
-      (name) => qualities[name] !== 'INSUFFICIENT',
+      (name) => qualities[name] !== "INSUFFICIENT",
     );
     const counts = { BULLISH: 0, BEARISH: 0, NEUTRAL: 0 };
     usableNames.forEach((name) => counts[votes[name]]++);
 
     const overallBias: AnalysisBias =
       counts.BULLISH > usableNames.length / 2
-        ? 'BULLISH'
+        ? "BULLISH"
         : counts.BEARISH > usableNames.length / 2
-          ? 'BEARISH'
-          : 'NEUTRAL';
-    const agreement = Math.max(
-      counts.BULLISH,
-      counts.BEARISH,
-      counts.NEUTRAL,
-    );
+          ? "BEARISH"
+          : "NEUTRAL";
+    const agreement = Math.max(counts.BULLISH, counts.BEARISH, counts.NEUTRAL);
     const confidence = Math.round(
       (agreement / Math.max(expectedNames.length, 1)) * 100,
     );
     const dataQuality: AgentDataQuality = expectedNames.every(
-      (name) => qualities[name] === 'GOOD',
+      (name) => qualities[name] === "GOOD",
     )
-      ? 'GOOD'
-      : expectedNames.every(
-            (name) => qualities[name] === 'INSUFFICIENT',
-          )
-        ? 'INSUFFICIENT'
-        : 'PARTIAL';
+      ? "GOOD"
+      : expectedNames.every((name) => qualities[name] === "INSUFFICIENT")
+        ? "INSUFFICIENT"
+        : "PARTIAL";
     const conflicts = this.describeConflicts(votes, usableNames);
 
     return FusionOutputSchema.parse({
@@ -469,13 +494,13 @@ export class FusionService {
     value: unknown,
     symbol: string,
   ): unknown {
-    if (name === 'sentiment') {
+    if (name === "sentiment") {
       const sentiment = SentimentAgentOutputSchema.parse(value);
       if (sentiment.sources.marketSentimentIndex && !sentiment.sources.social) {
         return {
           ...sentiment,
           summary: `Global crypto-market Fear & Greed context only; it is not ${symbol}-specific sentiment. ${sentiment.summary}`,
-          sentiment: { overall: 'NEUTRAL' as const, intensity: 'LOW' as const },
+          sentiment: { overall: "NEUTRAL" as const, intensity: "LOW" as const },
           sources: {
             ...sentiment.sources,
             marketSentimentIndex: `GLOBAL_CRYPTO_MARKET_CONTEXT_ONLY: ${sentiment.sources.marketSentimentIndex}`,
@@ -484,18 +509,18 @@ export class FusionService {
             ...sentiment.anomalies,
             `No verified ${symbol}-specific social sentiment was available.`,
           ],
-          dataQuality: 'PARTIAL' as const,
+          dataQuality: "PARTIAL" as const,
         };
       }
       return sentiment;
     }
-    if (name !== 'news') return value;
+    if (name !== "news") return value;
 
     const news = NewsAgentOutputSchema.parse(value);
     const verifiedEmptyObservation =
-      news.dataQuality === 'INSUFFICIENT' &&
-      news.usedTools.includes('news.articles.list') &&
-      news.usedTools.includes('news.high_importance.list') &&
+      news.dataQuality === "INSUFFICIENT" &&
+      news.usedTools.includes("news.articles.list") &&
+      news.usedTools.includes("news.high_importance.list") &&
       news.keyEvents.length === 0 &&
       news.riskSignals.length === 0 &&
       /no recent news|no .*articles|no .*events .*identified|no material news/i.test(
@@ -506,61 +531,68 @@ export class FusionService {
     // neutral news state, not an agent outage. Keep it PARTIAL so absence of
     // news can participate without inflating confidence.
     return verifiedEmptyObservation
-      ? { ...news, dataQuality: 'PARTIAL' as const }
+      ? { ...news, dataQuality: "PARTIAL" as const }
       : news;
   }
 
-  private async hasImportedMacroEvidence(lookbackHours: number): Promise<boolean> {
+  private async hasImportedMacroEvidence(
+    lookbackHours: number,
+  ): Promise<boolean> {
     if (!this.prisma) return true;
     const windowMs = lookbackHours * 60 * 60_000;
     const now = Date.now();
     try {
-      return (await this.prisma.macroEconomicEvent.count({
-        where: {
-          scheduledAt: {
-            gte: new Date(now - windowMs),
-            lte: new Date(now + windowMs),
+      return (
+        (await this.prisma.macroEconomicEvent.count({
+          where: {
+            scheduledAt: {
+              gte: new Date(now - windowMs),
+              lte: new Date(now + windowMs),
+            },
           },
-        },
-      })) > 0;
+        })) > 0
+      );
     } catch {
       return false;
     }
   }
 
-  private unavailableMacroImportAnalysis(): FusionInput['macro'] {
+  private unavailableMacroImportAnalysis(): FusionInput["macro"] {
     return {
-      summary: 'Macro analysis omitted because no imported macro data covers the active window.',
-      macroTrend: 'NEUTRAL',
+      summary:
+        "Macro analysis omitted because no official or imported macro event covers the active window.",
+      macroTrend: "NEUTRAL",
       keyEvents: [],
-      riskFactors: ['No imported macro data is available for this analysis window.'],
-      dataQuality: 'INSUFFICIENT',
+      riskFactors: [
+        "No official or imported macro event is available for this analysis window.",
+      ],
+      dataQuality: "INSUFFICIENT",
       generatedAt: new Date().toISOString(),
     };
   }
 
   private marketBias(input: FusionInput): AnalysisBias {
-    return input.market.trend.direction === 'UP'
-      ? 'BULLISH'
-      : input.market.trend.direction === 'DOWN'
-        ? 'BEARISH'
-        : 'NEUTRAL';
+    return input.market.trend.direction === "UP"
+      ? "BULLISH"
+      : input.market.trend.direction === "DOWN"
+        ? "BEARISH"
+        : "NEUTRAL";
   }
 
   private technicalBias(input: FusionInput): AnalysisBias {
-    return input.technical.trend.direction === 'UP'
-      ? 'BULLISH'
-      : input.technical.trend.direction === 'DOWN'
-        ? 'BEARISH'
-        : 'NEUTRAL';
+    return input.technical.trend.direction === "UP"
+      ? "BULLISH"
+      : input.technical.trend.direction === "DOWN"
+        ? "BEARISH"
+        : "NEUTRAL";
   }
 
   private newsBias(input: FusionInput): AnalysisBias {
-    return input.news.impact.direction === 'POSITIVE'
-      ? 'BULLISH'
-      : input.news.impact.direction === 'NEGATIVE'
-        ? 'BEARISH'
-        : 'NEUTRAL';
+    return input.news.impact.direction === "POSITIVE"
+      ? "BULLISH"
+      : input.news.impact.direction === "NEGATIVE"
+        ? "BEARISH"
+        : "NEUTRAL";
   }
 
   private onChainBias(input: FusionInput): AnalysisBias {
@@ -570,22 +602,24 @@ export class FusionService {
       input.onchain.flows.exchangeOutflow,
     ]
       .filter((item): item is string => Boolean(item))
-      .join(' ')
+      .join(" ")
       .toLowerCase();
-    const bullish = /bullish|accumulat|net outflow|outflow (?:is )?(?:high|rising|increas)/.test(
-      evidence,
-    );
-    const bearish = /bearish|distribut|net inflow|inflow (?:is )?(?:high|rising|increas)/.test(
-      evidence,
-    );
-    return bullish === bearish ? 'NEUTRAL' : bullish ? 'BULLISH' : 'BEARISH';
+    const bullish =
+      /bullish|accumulat|net outflow|outflow (?:is )?(?:high|rising|increas)/.test(
+        evidence,
+      );
+    const bearish =
+      /bearish|distribut|net inflow|inflow (?:is )?(?:high|rising|increas)/.test(
+        evidence,
+      );
+    return bullish === bearish ? "NEUTRAL" : bullish ? "BULLISH" : "BEARISH";
   }
 
   private describeConflicts(
     votes: Record<AnalysisName, AnalysisBias>,
     usableNames: AnalysisName[],
   ): string[] {
-    const groups = (['BULLISH', 'BEARISH', 'NEUTRAL'] as const)
+    const groups = (["BULLISH", "BEARISH", "NEUTRAL"] as const)
       .map((bias) => ({
         bias,
         names: usableNames.filter((name) => votes[name] === bias),
@@ -594,81 +628,81 @@ export class FusionService {
     if (groups.length <= 1) return [];
     return groups.map(
       (group) =>
-        `${group.names.join(', ')} indicate ${group.bias.toLowerCase()} conditions.`,
+        `${group.names.join(", ")} indicate ${group.bias.toLowerCase()} conditions.`,
     );
   }
 
   private unavailableAnalysis(name: AnalysisName): FusionInput[AnalysisName] {
     const generatedAt = new Date().toISOString();
     switch (name) {
-      case 'market':
+      case "market":
         return {
-          summary: 'Market analysis is unavailable.',
-          trend: { direction: 'SIDEWAYS', strength: 'WEAK' },
-          volatility: { level: 'MEDIUM' },
+          summary: "Market analysis is unavailable.",
+          trend: { direction: "SIDEWAYS", strength: "WEAK" },
+          volatility: { level: "MEDIUM" },
           liquidity: {},
           derivatives: {},
-          anomalies: ['Agent execution failed or returned invalid output.'],
-          dataQuality: 'INSUFFICIENT',
+          anomalies: ["Agent execution failed or returned invalid output."],
+          dataQuality: "INSUFFICIENT",
           usedTools: [],
           generatedAt,
         };
-      case 'technical':
+      case "technical":
         return {
-          summary: 'Technical analysis is unavailable.',
-          trend: { direction: 'SIDEWAYS', strength: 'WEAK' },
+          summary: "Technical analysis is unavailable.",
+          trend: { direction: "SIDEWAYS", strength: "WEAK" },
           momentum: {
-            rsi: 'Unavailable',
-            rsiState: 'NEUTRAL',
-            macd: { trend: 'NEUTRAL' },
+            rsi: "Unavailable",
+            rsiState: "NEUTRAL",
+            macd: { trend: "NEUTRAL" },
           },
-          movingAverages: { alignment: 'MIXED', pricePosition: 'INSIDE' },
-          volatility: { bollinger: { position: 'MIDDLE', squeeze: false } },
-          structure: { marketStructure: 'RANGE' },
+          movingAverages: { alignment: "MIXED", pricePosition: "INSIDE" },
+          volatility: { bollinger: { position: "MIDDLE", squeeze: false } },
+          structure: { marketStructure: "RANGE" },
           divergence: {},
-          signals: ['Agent execution failed or returned invalid output.'],
-          dataQuality: 'INSUFFICIENT',
+          signals: ["Agent execution failed or returned invalid output."],
+          dataQuality: "INSUFFICIENT",
           usedTools: [],
           generatedAt,
         };
-      case 'news':
+      case "news":
         return {
-          summary: 'News analysis is unavailable.',
-          impact: { level: 'LOW', direction: 'NEUTRAL' },
+          summary: "News analysis is unavailable.",
+          impact: { level: "LOW", direction: "NEUTRAL" },
           keyEvents: [],
           themes: [],
-          riskSignals: ['Agent execution failed or returned invalid output.'],
-          dataQuality: 'INSUFFICIENT',
+          riskSignals: ["Agent execution failed or returned invalid output."],
+          dataQuality: "INSUFFICIENT",
           usedTools: [],
           generatedAt,
         };
-      case 'sentiment':
+      case "sentiment":
         return {
-          summary: 'Sentiment analysis is unavailable.',
-          sentiment: { overall: 'NEUTRAL', intensity: 'LOW' },
+          summary: "Sentiment analysis is unavailable.",
+          sentiment: { overall: "NEUTRAL", intensity: "LOW" },
           crowdBehavior: { fomo: false, panic: false, euphoria: false },
           sources: {},
-          anomalies: ['Agent execution failed or returned invalid output.'],
-          dataQuality: 'INSUFFICIENT',
+          anomalies: ["Agent execution failed or returned invalid output."],
+          dataQuality: "INSUFFICIENT",
           usedTools: [],
           generatedAt,
         };
-      case 'macro':
+      case "macro":
         return {
-          summary: 'Macro analysis is unavailable.',
-          macroTrend: 'NEUTRAL',
+          summary: "Macro analysis is unavailable.",
+          macroTrend: "NEUTRAL",
           keyEvents: [],
-          riskFactors: ['Agent execution failed or returned invalid output.'],
-          dataQuality: 'INSUFFICIENT',
+          riskFactors: ["Agent execution failed or returned invalid output."],
+          dataQuality: "INSUFFICIENT",
           generatedAt,
         };
-      case 'onchain':
+      case "onchain":
         return {
-          summary: 'On-chain analysis is unavailable.',
-          activity: 'NORMAL',
+          summary: "On-chain analysis is unavailable.",
+          activity: "NORMAL",
           flows: {},
-          signals: ['No verified on-chain analysis is available.'],
-          dataQuality: 'INSUFFICIENT',
+          signals: ["No verified on-chain analysis is available."],
+          dataQuality: "INSUFFICIENT",
           generatedAt,
         };
     }

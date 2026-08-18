@@ -1,15 +1,21 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
-import { Job } from 'bullmq';
-import { PrismaService } from '../../../../database/prisma.service';
-import { EXTERNAL_DATA_QUEUE_NAME, ExternalDataJobType } from '../../infrastructure/queues/external-data-queue.constants';
-import { GenericRssAdapter } from '../../infrastructure/providers/rss/generic-rss.adapter';
-import { BinanceAnnouncementAdapter } from '../../infrastructure/providers/binance/binance-announcement.adapter';
-import { OkxAnnouncementAdapter } from '../../infrastructure/providers/okx/okx-announcement.adapter';
-import { AlternativeMeFearGreedAdapter } from '../../infrastructure/providers/fear-greed/alternative-me-fear-greed.adapter';
-import { NewsIngestionService } from '../services/news-ingestion.service';
-import { ProviderHealthService } from '../services/provider-health.service';
-import { ExternalDataEventPublisher } from '../services/external-data-event-publisher.service';
+import { Processor, WorkerHost } from "@nestjs/bullmq";
+import { Logger } from "@nestjs/common";
+import { Job } from "bullmq";
+import { PrismaService } from "../../../../database/prisma.service";
+import {
+  EXTERNAL_DATA_QUEUE_NAME,
+  ExternalDataJobType,
+} from "../../infrastructure/queues/external-data-queue.constants";
+import { GenericRssAdapter } from "../../infrastructure/providers/rss/generic-rss.adapter";
+import { BinanceAnnouncementAdapter } from "../../infrastructure/providers/binance/binance-announcement.adapter";
+import { OkxAnnouncementAdapter } from "../../infrastructure/providers/okx/okx-announcement.adapter";
+import { AlternativeMeFearGreedAdapter } from "../../infrastructure/providers/fear-greed/alternative-me-fear-greed.adapter";
+import { RedditAdapter } from "../../infrastructure/providers/reddit/reddit.adapter";
+import { NewsIngestionService } from "../services/news-ingestion.service";
+import { MetadataExtractor } from "../services/metadata-extractor.service";
+import { OfficialMacroCalendarAdapter } from "../../infrastructure/providers/macro/official-macro-calendar.adapter";
+import { ProviderHealthService } from "../services/provider-health.service";
+import { ExternalDataEventPublisher } from "../services/external-data-event-publisher.service";
 
 @Processor(EXTERNAL_DATA_QUEUE_NAME)
 export class ExternalDataIngestionProcessor extends WorkerHost {
@@ -23,6 +29,9 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
     private readonly binanceAdapter: BinanceAnnouncementAdapter,
     private readonly okxAdapter: OkxAnnouncementAdapter,
     private readonly fearGreedAdapter: AlternativeMeFearGreedAdapter,
+    private readonly redditAdapter: RedditAdapter,
+    private readonly metadataExtractor: MetadataExtractor,
+    private readonly officialMacro: OfficialMacroCalendarAdapter,
     private readonly newsIngestionService: NewsIngestionService,
     private readonly providerHealth: ProviderHealthService,
     private readonly eventPublisher: ExternalDataEventPublisher,
@@ -31,8 +40,8 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
   }
 
   async process(job: Job<any, any, string>): Promise<any> {
-    if (process.env.CLI_DISABLE_SCHEDULERS === 'true') {
-      return { status: 'SKIPPED', reason: 'CLI background workers disabled' };
+    if (process.env.CLI_DISABLE_SCHEDULERS === "true") {
+      return { status: "SKIPPED", reason: "CLI background workers disabled" };
     }
     const startTime = Date.now();
     this.logger.debug(`Processing BullMQ job ${job.name} (id: ${job.id})`);
@@ -50,12 +59,18 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
       case ExternalDataJobType.POLL_FEAR_GREED:
         return this.handlePollFearGreed(startTime);
 
+      case ExternalDataJobType.POLL_REDDIT:
+        return this.handlePollReddit(startTime);
+
+      case ExternalDataJobType.POLL_OFFICIAL_MACRO:
+        return this.handlePollOfficialMacro();
+
       case ExternalDataJobType.RETENTION_CLEANUP:
         return this.handleRetentionCleanup();
 
       default:
         this.logger.warn(`Unknown job type: ${job.name}`);
-        return { status: 'SKIPPED' };
+        return { status: "SKIPPED" };
     }
   }
 
@@ -64,8 +79,8 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
     const staleSource = await this.prisma.externalDataSource.findFirst({
       where: {
         isEnabled: true,
-        provider: 'GENERIC_RSS',
-        sourceType: 'RSS',
+        provider: "GENERIC_RSS",
+        sourceType: "RSS",
         OR: [{ lastSuccessAt: null }, { lastSuccessAt: { lt: staleBefore } }],
       },
       select: { id: true },
@@ -74,31 +89,140 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
     if (!this.newsRefresh) {
       this.newsRefresh = this.handlePollRssSources(Date.now())
         .then(() => undefined)
-        .finally(() => { this.newsRefresh = undefined; });
+        .finally(() => {
+          this.newsRefresh = undefined;
+        });
     }
     await this.newsRefresh;
   }
 
   async refreshSentimentIfStale(maxAgeMs = 2 * 60 * 60_000): Promise<void> {
     const latest = await this.prisma.marketSentimentObservation.findFirst({
-      orderBy: { observedAt: 'desc' },
+      orderBy: { observedAt: "desc" },
       select: { observedAt: true },
     });
     if (latest && Date.now() - latest.observedAt.getTime() <= maxAgeMs) return;
     if (!this.sentimentRefresh) {
       this.sentimentRefresh = this.handlePollFearGreed(Date.now())
         .then(() => undefined)
-        .finally(() => { this.sentimentRefresh = undefined; });
+        .finally(() => {
+          this.sentimentRefresh = undefined;
+        });
     }
     await this.sentimentRefresh;
+  }
+
+  private async handlePollReddit(startTime: number) {
+    const communities = (
+      process.env.REDDIT_COMMUNITIES ??
+      "cryptocurrency,bitcoin,ethereum,solana,chainlink"
+    )
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    let totalFetched = 0;
+    let accepted = 0;
+    for (const community of communities) {
+      const posts = await this.redditAdapter.fetchPosts({
+        community,
+        limit: 50,
+      });
+      totalFetched += posts.length;
+      for (const post of posts) {
+        const metadata = this.metadataExtractor.extractMetadata(
+          post.title ?? "",
+          post.textExcerpt ?? "",
+        );
+        await this.prisma.socialPost.upsert({
+          where: {
+            provider_externalId: {
+              provider: "REDDIT",
+              externalId: post.externalId,
+            },
+          },
+          create: {
+            provider: "REDDIT",
+            externalId: post.externalId,
+            community: post.community,
+            title: post.title,
+            textExcerpt: post.textExcerpt,
+            authorHash: post.authorHash,
+            canonicalUrl: post.canonicalUrl,
+            publishedAt: post.publishedAt,
+            engagementScore: post.engagement?.score ?? 0,
+            commentsCount: post.engagement?.comments ?? 0,
+            upvoteRatio: post.engagement?.upvoteRatio,
+            relatedSymbols: metadata.symbols.map(
+              (symbol) => symbol.split("-")[0]!,
+            ),
+            topics: metadata.topics,
+          },
+          update: {
+            title: post.title,
+            textExcerpt: post.textExcerpt,
+            engagementScore: post.engagement?.score ?? 0,
+            commentsCount: post.engagement?.comments ?? 0,
+            upvoteRatio: post.engagement?.upvoteRatio,
+            relatedSymbols: metadata.symbols.map(
+              (symbol) => symbol.split("-")[0]!,
+            ),
+            topics: metadata.topics,
+          },
+        });
+        accepted++;
+      }
+    }
+    await this.providerHealth.recordAttempt(
+      "REDDIT",
+      Date.now() - startTime,
+      totalFetched,
+      accepted,
+    );
+    return { totalFetched, accepted, communities };
+  }
+
+  private async handlePollOfficialMacro() {
+    const events = await this.officialMacro.fetchEvents();
+    let accepted = 0;
+    for (const event of events) {
+      await this.prisma.macroEconomicEvent.upsert({
+        where: {
+          provider_name_scheduledAt: {
+            provider: "BLS_OFFICIAL",
+            name: event.name,
+            scheduledAt: event.scheduledAt,
+          },
+        },
+        create: {
+          provider: "BLS_OFFICIAL",
+          externalId: event.externalId,
+          name: event.name,
+          country: "US",
+          currency: "USD",
+          category: event.category,
+          importance: event.importance,
+          scheduledAt: event.scheduledAt,
+          status: "SCHEDULED",
+          sourceUrl: event.sourceUrl,
+        },
+        update: {
+          externalId: event.externalId,
+          category: event.category,
+          importance: event.importance,
+          sourceUrl: event.sourceUrl,
+        },
+      });
+      accepted++;
+    }
+    return { totalFetched: events.length, accepted, provider: "BLS_OFFICIAL" };
   }
 
   private async handlePollRssSources(startTime: number, sourceId?: string) {
     const sources = await this.prisma.externalDataSource.findMany({
       where: {
         isEnabled: true,
-        provider: 'GENERIC_RSS',
-        sourceType: 'RSS',
+        provider: "GENERIC_RSS",
+        sourceType: "RSS",
         ...(sourceId ? { sourceId } : {}),
       },
     });
@@ -115,13 +239,14 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
           lastModified: source.lastModified || undefined,
         });
 
-        const ingestionResult = await this.newsIngestionService.processRawNewsItems(
-          source.sourceId,
-          source.sourceType,
-          source.reliabilityScore,
-          source.isCustom === false && source.reliabilityScore >= 90,
-          fetchResult.items,
-        );
+        const ingestionResult =
+          await this.newsIngestionService.processRawNewsItems(
+            source.sourceId,
+            source.sourceType,
+            source.reliabilityScore,
+            source.isCustom === false && source.reliabilityScore >= 90,
+            fetchResult.items,
+          );
 
         totalFetched += ingestionResult.totalFetched;
         totalAccepted += ingestionResult.accepted;
@@ -144,7 +269,9 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
           ingestionResult.accepted,
         );
       } catch (err: any) {
-        this.logger.error(`Failed RSS poll for source ${source.sourceId}: ${err.message}`);
+        this.logger.error(
+          `Failed RSS poll for source ${source.sourceId}: ${err.message}`,
+        );
         await this.prisma.externalDataSource.update({
           where: { id: source.id },
           data: {
@@ -168,10 +295,11 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
 
   private async handlePollBinanceAnnouncements(startTime: number) {
     const source = await this.prisma.externalDataSource.findUnique({
-      where: { sourceId: 'binance-announcements' },
+      where: { sourceId: "binance-announcements" },
       select: { isEnabled: true },
     });
-    if (!source?.isEnabled) return { status: 'SKIPPED', reason: 'Source is disabled' };
+    if (!source?.isEnabled)
+      return { status: "SKIPPED", reason: "Source is disabled" };
 
     const announcements = await this.binanceAdapter.fetchLatest();
     let accepted = 0;
@@ -191,7 +319,7 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
             relatedSymbols: item.relatedSymbols,
             importanceScore: item.importanceScore,
             sourceReliabilityScore: item.sourceReliabilityScore,
-            rawLanguage: item.rawLanguage || 'en',
+            rawLanguage: item.rawLanguage || "en",
           },
           update: {
             category: item.category,
@@ -205,12 +333,14 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
         accepted++;
         await this.eventPublisher.publishExchangeAnnouncementCreated(created);
       } catch (err: any) {
-        this.logger.error(`Error saving Binance announcement "${item.title}": ${err.message}`);
+        this.logger.error(
+          `Error saving Binance announcement "${item.title}": ${err.message}`,
+        );
       }
     }
 
     await this.providerHealth.recordAttempt(
-      'BINANCE_ANNOUNCEMENTS',
+      "BINANCE_ANNOUNCEMENTS",
       Date.now() - startTime,
       announcements.length,
       accepted,
@@ -221,10 +351,11 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
 
   private async handlePollOkxAnnouncements(startTime: number) {
     const source = await this.prisma.externalDataSource.findUnique({
-      where: { sourceId: 'okx-announcements' },
+      where: { sourceId: "okx-announcements" },
       select: { isEnabled: true },
     });
-    if (!source?.isEnabled) return { status: 'SKIPPED', reason: 'Source is disabled' };
+    if (!source?.isEnabled)
+      return { status: "SKIPPED", reason: "Source is disabled" };
 
     const announcements = await this.okxAdapter.fetchLatest();
     let accepted = 0;
@@ -244,7 +375,7 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
             relatedSymbols: item.relatedSymbols,
             importanceScore: item.importanceScore,
             sourceReliabilityScore: item.sourceReliabilityScore,
-            rawLanguage: item.rawLanguage || 'en',
+            rawLanguage: item.rawLanguage || "en",
           },
           update: {
             category: item.category,
@@ -258,12 +389,14 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
         accepted++;
         await this.eventPublisher.publishExchangeAnnouncementCreated(created);
       } catch (err: any) {
-        this.logger.error(`Error saving OKX announcement "${item.title}": ${err.message}`);
+        this.logger.error(
+          `Error saving OKX announcement "${item.title}": ${err.message}`,
+        );
       }
     }
 
     await this.providerHealth.recordAttempt(
-      'OKX_ANNOUNCEMENTS',
+      "OKX_ANNOUNCEMENTS",
       Date.now() - startTime,
       announcements.length,
       accepted,
@@ -303,12 +436,14 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
         accepted++;
         await this.eventPublisher.publishSentimentUpdated(created);
       } catch (err: any) {
-        this.logger.error(`Error saving Fear & Greed observation: ${err.message}`);
+        this.logger.error(
+          `Error saving Fear & Greed observation: ${err.message}`,
+        );
       }
     }
 
     await this.providerHealth.recordAttempt(
-      'ALTERNATIVE_ME_FEAR_GREED',
+      "ALTERNATIVE_ME_FEAR_GREED",
       Date.now() - startTime,
       observations.length,
       accepted,
@@ -318,7 +453,7 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
   }
 
   private async handleRetentionCleanup() {
-    this.logger.log('Executing Phase 5 data retention cleanup...');
+    this.logger.log("Executing Phase 5 data retention cleanup...");
     const now = new Date();
 
     // Clean old ingestion runs (> 90 days)
@@ -327,6 +462,6 @@ export class ExternalDataIngestionProcessor extends WorkerHost {
       where: { startedAt: { lt: ninetyDaysAgo } },
     });
 
-    return { status: 'COMPLETED', runsDeleted: runsDeleted.count };
+    return { status: "COMPLETED", runsDeleted: runsDeleted.count };
   }
 }

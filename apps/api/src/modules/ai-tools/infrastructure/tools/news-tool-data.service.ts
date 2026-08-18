@@ -27,22 +27,30 @@ export class NewsToolDataService {
     await this.ingestion?.refreshNewsIfStale().catch(() => undefined);
     const limit = input.limit ?? 10;
     const lookbackHours = input.lookbackHours ?? 6;
-    const publishedAfter = new Date(Date.now() - lookbackHours * 60 * 60 * 1000);
+    const publishedAfter = new Date(
+      Date.now() - lookbackHours * 60 * 60 * 1000,
+    );
     const trustedSources = await this.trustedSources();
-    const trustedById = new Map(trustedSources.map((source) => [source.sourceId, source]));
+    const trustedById = new Map(
+      trustedSources.map((source) => [source.sourceId, source]),
+    );
     const symbol = this.symbolVariants(input.symbol);
 
-    const sourceFilters: Prisma.NewsArticleWhereInput[] = trustedSources.map((source) => ({
-      sourceId: source.sourceId,
-      canonicalUrl: { contains: source.baseDomain, mode: "insensitive" },
-    }));
+    const sourceFilters: Prisma.NewsArticleWhereInput[] = trustedSources.map(
+      (source) => ({
+        sourceId: source.sourceId,
+        canonicalUrl: { contains: source.baseDomain, mode: "insensitive" },
+      }),
+    );
     const where: Prisma.NewsArticleWhereInput = {
       status: "ACTIVE",
       publishedAt: { gte: publishedAfter },
       ...(input.minimumImportance != null
         ? { importanceScore: { gte: input.minimumImportance } }
         : {}),
-      ...(sourceFilters.length ? { OR: sourceFilters } : { id: "__no_trusted_sources__" }),
+      ...(sourceFilters.length
+        ? { OR: sourceFilters }
+        : { id: "__no_trusted_sources__" }),
       ...(symbol
         ? {
             symbols: {
@@ -78,7 +86,9 @@ export class NewsToolDataService {
     const normalizedArticles = articles
       .filter((article) => {
         const source = trustedById.get(article.sourceId);
-        return source ? this.matchesDomain(article.canonicalUrl, source.baseDomain) : false;
+        return source
+          ? this.matchesDomain(article.canonicalUrl, source.baseDomain)
+          : false;
       })
       .map((article) => {
         const source = trustedById.get(article.sourceId)!;
@@ -125,11 +135,58 @@ export class NewsToolDataService {
         duplicateCount: 1,
       }));
 
-    return [...normalizedArticles, ...normalizedAnnouncements]
+    let combined = [...normalizedArticles, ...normalizedAnnouncements];
+
+    // Asset-specific silence must not hide systemic crypto risk. When no
+    // direct match exists, provide a market-wide high-importance fallback
+    // (Fed/regulation/exchange incidents/BTC-wide moves) as partial context.
+    if (combined.length === 0 && symbol) {
+      const marketWide = await this.prisma.newsArticle.findMany({
+        where: {
+          status: "ACTIVE",
+          publishedAt: { gte: publishedAfter },
+          importanceScore: { gte: Math.max(70, input.minimumImportance ?? 0) },
+          ...(sourceFilters.length
+            ? { OR: sourceFilters }
+            : { id: "__no_trusted_sources__" }),
+        },
+        orderBy: [{ importanceScore: "desc" }, { publishedAt: "desc" }],
+        take: limit,
+        include: { symbols: true, topics: true, sourceReferences: true },
+      });
+      combined = marketWide
+        .filter((article) => {
+          const source = trustedById.get(article.sourceId);
+          return source
+            ? this.matchesDomain(article.canonicalUrl, source.baseDomain)
+            : false;
+        })
+        .map((article) => ({
+          id: article.id,
+          kind: "MARKET_WIDE_NEWS",
+          title: article.title,
+          summary: article.summary ?? article.excerpt,
+          url: article.canonicalUrl,
+          source: trustedById.get(article.sourceId)!.displayName,
+          sourceId: article.sourceId,
+          publishedAt: article.publishedAt.toISOString(),
+          importance: article.importanceScore,
+          reliability: article.reliabilityScore,
+          symbols: article.symbols.map((item) => item.symbol),
+          topics: article.topics.map((item) => item.topic),
+          duplicateCount: article.sourceReferences.length,
+          relevance: "MARKET_WIDE_CONTEXT",
+        }));
+    }
+
+    return combined
       .sort((left, right) => {
-        const importanceDiff = Number(right.importance) - Number(left.importance);
+        const importanceDiff =
+          Number(right.importance) - Number(left.importance);
         if (importanceDiff !== 0) return importanceDiff;
-        return String(right.publishedAt).localeCompare(String(left.publishedAt));
+        return String(right.publishedAt).localeCompare(
+          String(left.publishedAt),
+        );
       })
       .slice(0, limit);
   }
@@ -148,7 +205,10 @@ export class NewsToolDataService {
       const source = (await this.trustedSources()).find(
         (candidate) => candidate.sourceId === article.sourceId,
       );
-      if (source && this.matchesDomain(article.canonicalUrl, source.baseDomain)) {
+      if (
+        source &&
+        this.matchesDomain(article.canonicalUrl, source.baseDomain)
+      ) {
         return {
           id: article.id,
           kind: "NEWS_ARTICLE",
@@ -212,7 +272,10 @@ export class NewsToolDataService {
     try {
       const hostname = new URL(rawUrl).hostname.toLowerCase();
       const normalizedDomain = baseDomain.toLowerCase();
-      return hostname === normalizedDomain || hostname.endsWith(`.${normalizedDomain}`);
+      return (
+        hostname === normalizedDomain ||
+        hostname.endsWith(`.${normalizedDomain}`)
+      );
     } catch {
       return false;
     }

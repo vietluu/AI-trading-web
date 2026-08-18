@@ -1,10 +1,18 @@
-import type { ZodType, ZodTypeDef } from 'zod';
-import { type AgentType, type AgentStatus, type AgentExecutionMode, type AgentContextSection, type AgentMemoryMode } from '../enums';
+import type { ZodType, ZodTypeDef } from "zod";
+import {
+  type AgentType,
+  type AgentStatus,
+  type AgentExecutionMode,
+  type AgentContextSection,
+  type AgentMemoryMode,
+} from "../enums";
 
 export interface AgentContextPolicy {
   readonly allowedSections: AgentContextSection[];
   readonly requiredSections: AgentContextSection[];
-  readonly maximumAgeSecondsBySection: Partial<Record<AgentContextSection, number>>;
+  readonly maximumAgeSecondsBySection: Partial<
+    Record<AgentContextSection, number>
+  >;
   readonly maxItemsBySection: Partial<Record<AgentContextSection, number>>;
   readonly includeUserSettings: boolean;
   readonly includeOpenPositions: boolean;
@@ -70,8 +78,10 @@ export interface AgentDefinition<TInput = unknown, TOutput = unknown> {
     toolName: string;
     arguments: Record<string, unknown>;
   }>;
-  buildInsufficientOutput?(
+  /** Build a schema-valid observation directly from verified tool data. */
+  buildDeterministicOutput?(
+    toolData: Readonly<Record<string, unknown>>,
     usedTools: string[],
-    reason: string,
-  ): TOutput;
+  ): TOutput | undefined;
+  buildInsufficientOutput?(usedTools: string[], reason: string): TOutput;
 }
