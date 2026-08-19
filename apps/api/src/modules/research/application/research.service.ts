@@ -17,6 +17,7 @@ export function validationBacktestStrategy(strategyKey: string): string {
     trend: 'TREND_FOLLOWING',
     'mean-reversion': 'RSI_MEAN_REVERSION',
     breakout: 'BREAKOUT',
+    'momentum-scalp': 'MOMENTUM_STRATEGY',
   };
   const strategyName = strategies[strategyKey];
   if (!strategyName) {
@@ -417,4 +418,3 @@ export class ResearchService {
     };
   }
 }
-

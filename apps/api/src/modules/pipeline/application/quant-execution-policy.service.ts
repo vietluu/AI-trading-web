@@ -8,6 +8,7 @@ export interface QuantExecutionPolicyResult {
   allowed: boolean;
   evaluated?: boolean;
   advisory?: boolean;
+  sizeFactor?: number;
   reason?: "QUANT_VALIDATION_MISSING" | "QUANT_VALIDATION_STALE" |
     "QUANT_WALK_FORWARD_UNSTABLE" | "QUANT_PROBABILITY_TOO_LOW" |
     "QUANT_RUIN_RISK_TOO_HIGH" | "QUANT_OUT_OF_SAMPLE_EDGE_MISSING" |
@@ -39,7 +40,13 @@ export class QuantExecutionPolicyService {
     provider: string;
     timeframe: string;
     strategyKey?: string;
-    decision: Pick<DecisionOutput, "decision" | "regime">;
+    decision: Pick<DecisionOutput,
+      "decision" | "regime" | "confidence" | "opportunityScore" |
+      "expectedValue" | "riskScore" | "volatilityAdjustment" |
+      "dataQuality" | "conflictLevel"
+    >;
+    multiTimeframeConfirmation?: number;
+    primaryRsi?: number;
     now?: Date;
   }): Promise<QuantExecutionPolicyResult> {
     if (input.decision.decision === "WAIT") {
@@ -66,7 +73,17 @@ export class QuantExecutionPolicyService {
         orderBy: { detectedAt: "desc" },
       }),
     ]);
-    if (!validation) return this.insufficientEvidence("QUANT_VALIDATION_MISSING");
+    const regimeEvidence = regime
+      ? { value: regime.regime, confidence: regime.confidence, detectedAt: regime.detectedAt.toISOString() }
+      : undefined;
+    if (this.hasFreshRegimeConflict(input, regime, now)) {
+      return {
+        allowed: false,
+        reason: "QUANT_REGIME_CONFLICT",
+        ...(regimeEvidence ? { regime: regimeEvidence } : {}),
+      };
+    }
+    if (!validation) return this.insufficientEvidence("QUANT_VALIDATION_MISSING", input);
     const metrics = validation.metricsJson && typeof validation.metricsJson === "object" && !Array.isArray(validation.metricsJson)
       ? validation.metricsJson as Record<string, unknown>
       : {};
@@ -96,10 +113,10 @@ export class QuantExecutionPolicyService {
     };
     const maxAge = Math.max(36 * 3_600_000, timeframeMilliseconds(input.timeframe) * 12);
     if (now.getTime() - validation.createdAt.getTime() > maxAge)
-      return { ...this.insufficientEvidence("QUANT_VALIDATION_STALE"), validation: evidence };
-    // Negative evidence is actionable even when the sample is immature. In
-    // particular, a small sample must never hide an unstable walk-forward run,
-    // high ruin probability, or negative out-of-sample edge.
+      return { ...this.insufficientEvidence("QUANT_VALIDATION_STALE", input), validation: evidence };
+    // Fresh negative evidence is actionable even when the sample is immature.
+    // Once evidence has expired it can only authorize a bounded canary; it no
+    // longer has enough authority to veto a strong realtime setup by itself.
     if (!validation.walkForwardStable)
       return { allowed: false, reason: "QUANT_WALK_FORWARD_UNSTABLE", validation: evidence };
     if (validation.probabilityOfProfit < 52)
@@ -115,27 +132,13 @@ export class QuantExecutionPolicyService {
       Number(assumptions.leverage) !== liveLimits.maxLeverage ||
       Math.abs(Number(assumptions.riskPerTrade) - liveLimits.riskPerTrade) > 1e-9 ||
       Math.abs(Number(assumptions.riskRewardRatio) - liveLimits.riskRewardRatio) > 1e-9
-    ))) return { ...this.insufficientEvidence("QUANT_ASSUMPTION_MISMATCH"), validation: evidence };
+    ))) return { ...this.insufficientEvidence("QUANT_ASSUMPTION_MISMATCH", input), validation: evidence };
     if (
       Number(sampleEvidence.totalTrades ?? 0) < 30 ||
       Number(sampleEvidence.outOfSampleTrades ?? outOfSample.outOfSampleTrades ?? 0) < 10 ||
       Number(sampleEvidence.walkForwardWindows ?? windows) < 5
-    ) return { ...this.insufficientEvidence("QUANT_SAMPLE_TOO_SMALL"), validation: evidence };
+    ) return { ...this.insufficientEvidence("QUANT_SAMPLE_TOO_SMALL", input), validation: evidence };
 
-    const regimeEvidence = regime
-      ? { value: regime.regime, confidence: regime.confidence, detectedAt: regime.detectedAt.toISOString() }
-      : undefined;
-    const regimeFresh = regime && now.getTime() - regime.detectedAt.getTime() <=
-      Math.max(30 * 60_000, timeframeMilliseconds(input.timeframe) * 2);
-    if (regimeFresh && regime.confidence >= 65) {
-      const conflict =
-        (regime.regime === "BULL" && input.decision.decision === "SHORT") ||
-        (regime.regime === "BEAR" && input.decision.decision === "LONG") ||
-        (regime.regime === "SIDEWAYS" && input.decision.regime.type !== "RANGING") ||
-        (regime.regime === "HIGH_VOLATILITY" && input.decision.regime.type !== "HIGH_VOLATILITY");
-      if (conflict)
-        return { allowed: false, reason: "QUANT_REGIME_CONFLICT", validation: evidence, regime: regimeEvidence };
-    }
     return {
       allowed: true,
       evaluated: true,
@@ -148,7 +151,65 @@ export class QuantExecutionPolicyService {
   private insufficientEvidence(
     reason: "QUANT_VALIDATION_MISSING" | "QUANT_SAMPLE_TOO_SMALL" |
       "QUANT_ASSUMPTION_MISMATCH" | "QUANT_VALIDATION_STALE",
+    input: {
+      decision: Pick<DecisionOutput,
+        "decision" | "regime" | "confidence" | "opportunityScore" |
+        "expectedValue" | "riskScore" | "volatilityAdjustment" |
+        "dataQuality" | "conflictLevel"
+      >;
+      multiTimeframeConfirmation?: number;
+      primaryRsi?: number;
+    },
   ): QuantExecutionPolicyResult {
+    if (this.canUseBoundedCanary(input)) {
+      return {
+        allowed: true,
+        evaluated: false,
+        advisory: true,
+        reason,
+        sizeFactor: 0.25,
+      };
+    }
     return { allowed: false, evaluated: false, reason };
+  }
+
+  private canUseBoundedCanary(input: {
+    decision: Pick<DecisionOutput,
+      "decision" | "regime" | "confidence" | "opportunityScore" |
+      "expectedValue" | "riskScore" | "volatilityAdjustment" |
+      "dataQuality" | "conflictLevel"
+    >;
+    multiTimeframeConfirmation?: number;
+    primaryRsi?: number;
+  }): boolean {
+    const { decision } = input;
+    return decision.decision !== "WAIT" &&
+      decision.confidence >= 75 &&
+      decision.opportunityScore >= 68 &&
+      decision.expectedValue > 0.2 &&
+      decision.riskScore < 80 &&
+      decision.volatilityAdjustment > -30 &&
+      decision.regime.type !== "HIGH_VOLATILITY" &&
+      decision.dataQuality !== "INSUFFICIENT" &&
+      decision.conflictLevel !== "HIGH" &&
+      (input.multiTimeframeConfirmation ?? 0) >= 80 &&
+      (input.primaryRsi === undefined || input.primaryRsi < 80);
+  }
+
+  private hasFreshRegimeConflict(
+    input: {
+      timeframe: string;
+      decision: Pick<DecisionOutput, "decision" | "regime">;
+    },
+    regime: { regime: string; confidence: number; detectedAt: Date } | null,
+    now: Date,
+  ): boolean {
+    const fresh = regime && now.getTime() - regime.detectedAt.getTime() <=
+      Math.max(30 * 60_000, timeframeMilliseconds(input.timeframe) * 2);
+    if (!fresh || regime.confidence < 65) return false;
+    return (regime.regime === "BULL" && input.decision.decision === "SHORT") ||
+      (regime.regime === "BEAR" && input.decision.decision === "LONG") ||
+      (regime.regime === "SIDEWAYS" && input.decision.regime.type !== "RANGING") ||
+      (regime.regime === "HIGH_VOLATILITY" && input.decision.regime.type !== "HIGH_VOLATILITY");
   }
 }

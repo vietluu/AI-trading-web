@@ -48,7 +48,7 @@ describe('DecisionJudgeService', () => {
     expect(result).toEqual({ approved: true, verdict: 'APPROVE', reasons: [] });
   });
 
-  it('lets an unreliable global fallback calibration veto automatic execution', () => {
+  it('keeps an unreliable global fallback as telemetry instead of a hard veto', () => {
     const generatedAt = new Date().toISOString();
     const good = { dataQuality: 'GOOD', generatedAt };
     const result = judge.evaluate({
@@ -63,12 +63,7 @@ describe('DecisionJudgeService', () => {
       market: good, technical: good, news: good, sentiment: good, macro: good, onchain: good,
     } as never, { symbol: 'ETH-USDT', requireCalibratedConfidence: true });
 
-    expect(result.approved).toBe(false);
-    expect(result.verdict).toBe('REQUEST_MORE_DATA');
-    expect(result.reasons).toEqual(expect.arrayContaining([
-      'CALIBRATED_PROBABILITY_TOO_LOW',
-      'CALIBRATION_UNRELIABLE',
-    ]));
+    expect(result).toEqual({ approved: true, verdict: 'APPROVE', reasons: [] });
   });
 
   it('requires stronger raw confidence for uncalibrated automatic execution', () => {

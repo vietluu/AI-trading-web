@@ -7,11 +7,14 @@ import {
   Optional,
 } from "@nestjs/common";
 import { PipelineScheduleInputSchema } from "@platform/shared";
+import type { PipelineSchedule } from "@prisma/client";
+import type { ExchangeProvider } from "../../../exchange/domain/exchange.types";
 import { PrismaService } from "../../../database/prisma.service";
 import { cronMatches, validateCron } from "../domain/cron";
 import { PipelineService } from "./pipeline.service";
 import { PipelineConfigService } from "./pipeline-config.service";
 import { DistributedTaskLockService } from "../../../redis/distributed-task-lock.service";
+import { MarketEventScannerService } from "./market-event-scanner.service";
 
 @Injectable()
 export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
@@ -25,6 +28,7 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
     private readonly pipeline: PipelineService,
     private readonly config: PipelineConfigService,
     @Optional() private readonly taskLock?: DistributedTaskLockService,
+    @Optional() private readonly eventScanner?: MarketEventScannerService,
   ) {}
   onModuleInit() {
     if (process.env.CLI_DISABLE_SCHEDULERS === 'true') return;
@@ -139,12 +143,46 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
               cronMatches(schedule.cron, now, schedule.timezone) &&
               (!schedule.lastTriggeredAt ||
                 now.getTime() - schedule.lastTriggeredAt.getTime() >= 60_000);
-        if (!due) continue;
+        if (!due) {
+          await this.triggerConfirmedMarketEvents(schedule);
+          continue;
+        }
 
         this.activeSchedules.add(schedule.id);
         try {
           const triggerPromises: Promise<boolean>[] = [];
           for (const symbol of schedule.symbols) {
+            if (this.eventScanner) {
+              try {
+                const anchor = await this.eventScanner.reserveAnchor({
+                  userId: schedule.userId,
+                  provider: schedule.provider as ExchangeProvider,
+                  symbol,
+                  strategyIds: schedule.strategyIds,
+                });
+                if (!anchor.run) {
+                  this.logger.debug({
+                    event: "pipeline_anchor_duplicate_skipped",
+                    scheduleId: schedule.id,
+                    symbol,
+                    fingerprint: anchor.fingerprint,
+                  });
+                  // Count this as a healthy scheduler cycle so a duplicate
+                  // candle is not reconsidered every five seconds.
+                  triggerPromises.push(Promise.resolve(true));
+                  continue;
+                }
+              } catch (error) {
+                // Fingerprinting is an optimization. The pipeline freshness
+                // and risk gates remain authoritative if Redis/data lookup fails.
+                this.logger.warn({
+                  event: "pipeline_anchor_fingerprint_failed",
+                  scheduleId: schedule.id,
+                  symbol,
+                  message: error instanceof Error ? error.message : String(error),
+                });
+              }
+            }
             triggerPromises.push(
               this.pipeline
                 .trigger(
@@ -202,6 +240,62 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
     } finally {
       this.running = false;
     }
+  }
+
+  private async triggerConfirmedMarketEvents(schedule: PipelineSchedule): Promise<void> {
+    if (
+      !this.eventScanner ||
+      schedule.mode !== "INTERVAL" ||
+      (schedule.intervalMs ?? 0) < 15 * 60_000
+    ) return;
+
+    await Promise.all(schedule.symbols.map(async (symbol) => {
+      try {
+        const scan = await this.eventScanner!.scan({
+          userId: schedule.userId,
+          provider: schedule.provider as ExchangeProvider,
+          symbol,
+          strategyIds: schedule.strategyIds,
+        });
+        if (!scan.triggered || !scan.evidence) return;
+        await this.pipeline.trigger(
+          schedule.userId,
+          {
+            pipelineId: schedule.pipelineId,
+            symbol,
+            provider: schedule.provider,
+            params: {
+              interval: "15m",
+              strategyIds: schedule.strategyIds,
+              eventScan: {
+                fingerprint: scan.fingerprint,
+                ...scan.evidence,
+              },
+            },
+          },
+          "EVENT",
+          {
+            scheduleId: schedule.id,
+            maxRunsPerHour: schedule.maxRunsPerHour,
+          },
+        );
+        this.logger.log({
+          event: "pipeline_market_event_triggered",
+          scheduleId: schedule.id,
+          symbol,
+          direction: scan.evidence.direction,
+          fingerprint: scan.fingerprint,
+          reasons: scan.evidence.reasons,
+        });
+      } catch (error) {
+        this.logger.warn({
+          event: "pipeline_market_event_scan_failed",
+          scheduleId: schedule.id,
+          symbol,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }));
   }
 
 }

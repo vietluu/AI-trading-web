@@ -3,7 +3,10 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import { ExchangeError, ExchangeErrorCode } from "../src/exchange/domain/exchange.error";
 import { ExchangeProvider } from "../src/exchange/domain/exchange.types";
-import { LiveTradingService } from "../src/modules/live-trading/application/live-trading.service";
+import {
+  LiveTradingService,
+  reduceExecutionPositionSize,
+} from "../src/modules/live-trading/application/live-trading.service";
 
 const createPrisma = () => ({
   riskAssessment: {
@@ -39,6 +42,12 @@ const createPrisma = () => ({
 });
 
 describe("live trading duplicate order protection", () => {
+  it("reduces advisory canary size without allowing a size increase", () => {
+    expect(reduceExecutionPositionSize(0.1, 0.25)).toBe(0.025);
+    expect(reduceExecutionPositionSize(0.1, 1)).toBe(0.1);
+    expect(reduceExecutionPositionSize(0.1, 1.5)).toBe(0.1);
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
   });

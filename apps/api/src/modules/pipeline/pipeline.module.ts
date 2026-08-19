@@ -15,6 +15,7 @@ import { QuantExecutionPolicyService } from "./application/quant-execution-polic
 import { DecisionRiskPolicyService } from "../risk/application/decision-risk-policy.service";
 import { PipelineService } from "./application/pipeline.service";
 import { PipelineSchedulerService } from "./application/pipeline-scheduler.service";
+import { MarketEventScannerService } from "./application/market-event-scanner.service";
 import { PipelineHealthService } from "./application/pipeline-health.service";
 import { PipelineAnalyticsService } from "./application/pipeline-analytics.service";
 import { PipelineRecoveryService } from "./application/pipeline-recovery.service";
@@ -59,6 +60,7 @@ import { SettingsModule } from "../../settings/settings.module";
     QuantExecutionPolicyService,
     PipelineService,
     PipelineSchedulerService,
+    MarketEventScannerService,
     PipelineHealthService,
     PipelineAnalyticsService,
     PipelineRecoveryService,

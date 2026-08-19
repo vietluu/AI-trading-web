@@ -366,6 +366,10 @@ export class PipelineRunnerService {
         sourceTimestamp: indicatorSnapshot?.candleCloseTime ?? recentCandles[0]?.closeTime,
         requireCalibratedConfidence: true,
       }) ?? { verdict: 'APPROVE' as const, approved: true, reasons: [] };
+      const multiTimeframeFilter = evaluateMultiTimeframeDecision(output.decision, multiTimeframe);
+      const primaryRsi = multiTimeframe.frames.find(
+        (frame) => frame.timeframe === String(interval),
+      )?.rsi;
       const quant = this.quantPolicy
         ? await this.quantPolicy.evaluate({
             userId: job.userId,
@@ -374,6 +378,8 @@ export class PipelineRunnerService {
             timeframe: String(interval),
             strategyKey,
             decision: output,
+            multiTimeframeConfirmation: multiTimeframeFilter.confirmation,
+            primaryRsi,
           }).catch((error: unknown) => {
             this.logger.error({
               event: "quant_execution_policy_failed",
@@ -384,7 +390,6 @@ export class PipelineRunnerService {
             return { allowed: false as const, reason: "QUANT_POLICY_UNAVAILABLE" as const };
           })
         : { allowed: false as const, reason: "QUANT_VALIDATION_MISSING" as const };
-      const multiTimeframeFilter = evaluateMultiTimeframeDecision(output.decision, multiTimeframe);
       const actionable = filter.actionable && judge.approved && quant.allowed && multiTimeframeFilter.allowed;
       const quantBlockReason = quant.allowed ? undefined : quant.reason;
       const reason = filter.reason ?? judge.reasons[0] ?? quantBlockReason ?? multiTimeframeFilter.reason;
@@ -468,6 +473,10 @@ export class PipelineRunnerService {
             // Momentum scalp currently shares the governed breakout portfolio
             // bucket while retaining its own decision/quant identity.
             strategyKey: strategyKey === "momentum-scalp" ? "breakout" : strategyKey,
+            executionSizeFactor:
+              'advisory' in quant && quant.advisory && 'sizeFactor' in quant
+                ? quant.sizeFactor
+                : undefined,
             ...(volatilityAtr !== undefined
               ? { volatilityAtr }
               : {}),

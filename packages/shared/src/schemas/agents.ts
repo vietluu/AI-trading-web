@@ -521,12 +521,22 @@ export const DecisionOutputSchema = z
       brierScore: z.number().min(0).max(1).nullable(),
       scope: z.enum([
         'EXACT',
+        'BLENDED',
         'STRATEGY_CONTEXT',
         'STRATEGY_TIMEFRAME',
         'USER_GLOBAL',
         'NONE',
       ]).optional(),
       fallbackUsed: z.boolean().optional(),
+      hardGateEligible: z.boolean().optional(),
+      exactProbability: z.number().min(0).max(1).optional(),
+      fallbackProbability: z.number().min(0).max(1).optional(),
+      fallbackScope: z.enum([
+        'STRATEGY_CONTEXT',
+        'STRATEGY_TIMEFRAME',
+        'USER_GLOBAL',
+      ]).optional(),
+      exactWeight: z.number().min(0).max(1).optional(),
     }).strict().optional(),
     learningConfiguration: z.object({
       version: z.number().int().positive(),

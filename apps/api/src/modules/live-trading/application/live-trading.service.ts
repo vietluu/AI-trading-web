@@ -54,6 +54,16 @@ const TRADE_BACKFILL_PAGE_SIZE = 1000;
 const DEFAULT_TRADE_BACKFILL_MAX_PAGES = 100;
 const RECONCILIATION_DB_BATCH_SIZE = 10;
 
+export function reduceExecutionPositionSize(
+  positionSize: number,
+  sizeFactor?: number,
+): number {
+  const factor = Number(sizeFactor);
+  if (!Number.isFinite(factor) || factor <= 0 || factor >= 1)
+    return positionSize;
+  return Math.floor(positionSize * factor * 1e12) / 1e12;
+}
+
 export async function processInBatches<T>(
   rows: readonly T[],
   batchSize: number,
@@ -308,6 +318,8 @@ export class LiveTradingService {
     volatilityAtr?: number;
     tradePlanContext?: TradePlanMarketContext;
     strategyKey?: string;
+    /** Reduces, but can never increase, the risk-approved position size. */
+    executionSizeFactor?: number;
   }): Promise<{ outcome: string; price: number; risk?: RiskOutput }> {
     const settings = this.config.values;
     if (settings.mode !== "DEMO" && settings.mode !== "LIVE") {
@@ -516,6 +528,50 @@ export class LiveTradingService {
                 evidence: symbolPolicy.evidence,
               });
             }
+          }
+        }
+        const executionSizeFactor = Number(input.executionSizeFactor);
+        if (
+          risk.approved &&
+          risk.positionSize &&
+          input.decision.decision !== "WAIT" &&
+          Number.isFinite(executionSizeFactor) &&
+          executionSizeFactor > 0 &&
+          executionSizeFactor < 1
+        ) {
+          const positionSize = reduceExecutionPositionSize(
+            risk.positionSize,
+            executionSizeFactor,
+          );
+          if (positionSize <= 0) {
+            risk = {
+              approved: false,
+              reason: "CANARY_POSITION_TOO_SMALL",
+              riskScore: risk.riskScore,
+            };
+            await tx.riskAssessment.update({
+              where: { pipelineRunId: input.pipelineRunId },
+              data: {
+                approved: false,
+                reason: risk.reason,
+                positionSize: null,
+                leverage: null,
+                stopLoss: null,
+                takeProfit: null,
+              },
+            });
+          } else {
+            risk = { ...risk, positionSize };
+            await tx.riskAssessment.update({
+              where: { pipelineRunId: input.pipelineRunId },
+              data: { positionSize },
+            });
+            this.logger.warn({
+              event: "quant_advisory_canary_size_reduced",
+              symbol: input.symbol,
+              pipelineRunId: input.pipelineRunId,
+              sizeFactor: executionSizeFactor,
+            });
           }
         }
         if (

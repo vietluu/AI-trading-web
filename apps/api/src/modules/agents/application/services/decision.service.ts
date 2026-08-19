@@ -287,7 +287,7 @@ export class DecisionService {
     const rows = await this.prisma.performanceRecord.findMany({
       where: {
         userId,
-        horizon: "MID",
+        horizon: this.calibrationHorizon(strategyKey, timeframe),
         decision: { in: ["LONG", "SHORT"] },
         outcome: { in: ["CORRECT", "WRONG"] },
       },
@@ -388,7 +388,9 @@ export class DecisionService {
       if (oldest) this.calibrationCache.delete(oldest);
     }
     this.calibrationCache.set(key, {
-      expiresAt: Date.now() + 5 * 60_000,
+      // Performance outcomes arrive continuously; a short cache prevents a
+      // newly evaluated move from being hidden for several pipeline cycles.
+      expiresAt: Date.now() + 30_000,
       value,
     });
     return value;
@@ -398,10 +400,31 @@ export class DecisionService {
     calibration: Awaited<ReturnType<DecisionService["confidenceCalibration"]>>,
   ): number | undefined {
     return calibration.status === "CALIBRATED" &&
-      calibration.scope === "EXACT" &&
-      calibration.fallbackUsed !== true
+      (calibration.scope === "EXACT" || calibration.scope === "BLENDED") &&
+      calibration.hardGateEligible !== false
       ? (calibration.empiricalProbability ?? undefined)
       : undefined;
+  }
+
+  private calibrationHorizon(strategyKey?: string, timeframe?: string) {
+    const minutes = (() => {
+      const match = /^(\d+)([mhd])$/i.exec(timeframe ?? "15m");
+      if (!match) return 15;
+      const amount = Number(match[1]);
+      const unit = match[2]?.toLowerCase();
+      return amount * (unit === "d" ? 1440 : unit === "h" ? 60 : 1);
+    })();
+    if (strategyKey === "momentum-scalp") return minutes <= 5 ? "M15" : "M30";
+    if (strategyKey === "trend") return minutes <= 15 ? "H2" : "H4";
+    if (strategyKey === "breakout") return minutes <= 15 ? "MID" : "H2";
+    if (strategyKey === "mean-reversion") return minutes <= 15 ? "M30" : "MID";
+    return minutes <= 5
+      ? "M30"
+      : minutes <= 15
+        ? "MID"
+        : minutes <= 60
+          ? "H2"
+          : "H4";
   }
 
   private validWeights(value: unknown): Weighting | undefined {

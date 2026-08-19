@@ -390,6 +390,20 @@ export interface PipelineRun {
     actionable?: boolean;
     skippedReason?: string;
     judge?: { verdict?: string; approved?: boolean; reasons?: string[] };
+    candidateDecision?: {
+      decision?: string;
+      confidence?: number;
+      strategyKey?: string;
+      actionable?: boolean;
+      blockedReasons?: string[];
+      advisoryReasons?: string[];
+    };
+    quant?: {
+      allowed?: boolean;
+      evaluated?: boolean;
+      advisory?: boolean;
+      reason?: string;
+    };
   };
   steps: Array<{
     id: string;
@@ -582,7 +596,9 @@ export async function getReflectionData() {
 }
 
 export async function getSelfLearningLifecycle() {
-  return apiRequest<SelfLearningLifecycle>(API_ENDPOINTS.ai.selfLearningLifecycle);
+  return apiRequest<SelfLearningLifecycle>(
+    API_ENDPOINTS.ai.selfLearningLifecycle,
+  );
 }
 
 export async function getReflectionInsights() {

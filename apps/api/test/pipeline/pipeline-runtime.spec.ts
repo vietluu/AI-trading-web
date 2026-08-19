@@ -228,6 +228,107 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     expect(prisma.pipelineSchedule.update).not.toHaveBeenCalled();
   });
 
+  it('triggers an EVENT run between 15m anchors only after the lightweight scanner confirms it', async () => {
+    const prisma = {
+      pipelineSchedule: {
+        findMany: vi.fn().mockResolvedValue([{
+          id: 'schedule-zro',
+          userId: 'user-1',
+          pipelineId: 'FULL_ANALYSIS_DECISION',
+          symbols: ['ZRO-USDT'],
+          strategyIds: ['trend', 'breakout'],
+          provider: 'OKX_FUTURES',
+          mode: 'INTERVAL',
+          intervalMs: 900_000,
+          lastTriggeredAt: new Date('2026-08-19T01:10:00Z'),
+          timezone: 'UTC',
+          maxRunsPerHour: 60,
+        }]),
+        update: vi.fn(),
+      },
+    };
+    const pipeline = { trigger: vi.fn().mockResolvedValue({ id: 'event-run' }) };
+    const eventScanner = {
+      scan: vi.fn().mockResolvedValue({
+        triggered: true,
+        reason: 'EVENT_CONFIRMED',
+        fingerprint: 'zro-5m-bullish',
+        evidence: {
+          direction: 'BULLISH',
+          price: 0.7947,
+          atr: 0.005,
+          rsi: 68.06,
+          candleOpenTime: '2026-08-19T01:14:00.000Z',
+          indicatorCloseTime: '2026-08-19T01:14:59.999Z',
+          reasons: ['BULLISH_ATR_IMPULSE'],
+          confirmationCount: 2,
+        },
+      }),
+    };
+    const service = new PipelineSchedulerService(
+      prisma as never,
+      pipeline as never,
+      { enabled: true } as never,
+      undefined,
+      eventScanner as never,
+    );
+
+    await service.tick(new Date('2026-08-19T01:15:00Z'));
+
+    expect(eventScanner.scan).toHaveBeenCalledWith(expect.objectContaining({
+      symbol: 'ZRO-USDT',
+      strategyIds: ['trend', 'breakout'],
+    }));
+    expect(pipeline.trigger).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({
+        symbol: 'ZRO-USDT',
+        params: expect.objectContaining({
+          interval: '15m',
+          eventScan: expect.objectContaining({ fingerprint: 'zro-5m-bullish' }) as unknown,
+        }) as unknown,
+      }),
+      'EVENT',
+      { scheduleId: 'schedule-zro', maxRunsPerHour: 60 },
+    );
+    expect(prisma.pipelineSchedule.update).not.toHaveBeenCalled();
+  });
+
+  it('stamps but does not enqueue a due anchor when its closed-candle fingerprint is unchanged', async () => {
+    const schedule = {
+      id: 'schedule-zro', userId: 'user-1', pipelineId: 'FULL_ANALYSIS_DECISION',
+      symbols: ['ZRO-USDT'], strategyIds: ['trend'], provider: 'OKX_FUTURES',
+      mode: 'INTERVAL', intervalMs: 900_000, lastTriggeredAt: undefined,
+      timezone: 'UTC', maxRunsPerHour: 60,
+    };
+    const prisma = {
+      pipelineSchedule: {
+        findMany: vi.fn().mockResolvedValue([schedule]),
+        update: vi.fn().mockResolvedValue({}),
+      },
+    };
+    const pipeline = { trigger: vi.fn() };
+    const eventScanner = {
+      reserveAnchor: vi.fn().mockResolvedValue({ run: false, fingerprint: 'same-15m-candle' }),
+    };
+    const service = new PipelineSchedulerService(
+      prisma as never,
+      pipeline as never,
+      { enabled: true } as never,
+      undefined,
+      eventScanner as never,
+    );
+
+    const now = new Date('2026-08-19T01:15:00Z');
+    await service.tick(now);
+
+    expect(pipeline.trigger).not.toHaveBeenCalled();
+    expect(prisma.pipelineSchedule.update).toHaveBeenCalledWith({
+      where: { id: 'schedule-zro' },
+      data: { lastTriggeredAt: now },
+    });
+  });
+
   it('marks a schedule as triggered when at least one dispatch succeeds', async () => {
     let lastTriggeredAt: Date | undefined;
     const prisma = {

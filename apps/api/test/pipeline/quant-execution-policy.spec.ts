@@ -2,6 +2,18 @@ import { describe, expect, it, vi } from "vitest";
 import { QuantExecutionPolicyService } from "../../src/modules/pipeline/application/quant-execution-policy.service";
 
 const decision = (side: "LONG" | "SHORT" = "LONG", regime = "TRENDING") => ({ decision: side, regime: { type: regime } });
+const strongDecision = (overrides: Record<string, unknown> = {}) => ({
+  decision: "LONG",
+  regime: { type: "TRENDING" },
+  confidence: 75,
+  opportunityScore: 72,
+  expectedValue: 0.8,
+  riskScore: 55,
+  volatilityAdjustment: 0,
+  dataQuality: "GOOD",
+  conflictLevel: "LOW",
+  ...overrides,
+});
 
 function service(validation: Record<string, unknown> | null, regime: Record<string, unknown> | null = null) {
   const findFirst = vi.fn().mockResolvedValue(validation);
@@ -42,6 +54,97 @@ describe("QuantExecutionPolicyService", () => {
       allowed: false,
       evaluated: false,
       reason: "QUANT_VALIDATION_MISSING",
+    });
+  });
+
+  it("allows a ZRO-like quarter-size canary when validation is missing but realtime evidence is strong", async () => {
+    const result = await service(null).policy.evaluate({
+      ...input,
+      decision: strongDecision({
+        confidence: 75,
+        opportunityScore: 75,
+        expectedValue: 0.935,
+        riskScore: 55,
+      }) as never,
+      multiTimeframeConfirmation: 100,
+      primaryRsi: 68.06,
+    });
+
+    expect(result).toEqual({
+      allowed: true,
+      evaluated: false,
+      advisory: true,
+      reason: "QUANT_VALIDATION_MISSING",
+      sizeFactor: 0.25,
+    });
+  });
+
+  it("does not allow the canary in high volatility or at an overbought primary RSI", async () => {
+    const highVolatility = await service(null).policy.evaluate({
+      ...input,
+      decision: strongDecision({ regime: { type: "HIGH_VOLATILITY" } }) as never,
+      multiTimeframeConfirmation: 100,
+      primaryRsi: 75,
+    });
+    const overbought = await service(null).policy.evaluate({
+      ...input,
+      decision: strongDecision() as never,
+      multiTimeframeConfirmation: 100,
+      primaryRsi: 82,
+    });
+
+    expect(highVolatility).toMatchObject({ allowed: false, reason: "QUANT_VALIDATION_MISSING" });
+    expect(overbought).toMatchObject({ allowed: false, reason: "QUANT_VALIDATION_MISSING" });
+  });
+
+  it("keeps a fresh bearish quant regime as a hard block when validation is missing", async () => {
+    const result = await service(null, {
+      regime: "BEAR",
+      confidence: 82,
+      detectedAt: new Date("2026-08-12T00:55:00Z"),
+    }).policy.evaluate({
+      ...input,
+      decision: strongDecision() as never,
+      multiTimeframeConfirmation: 100,
+      primaryRsi: 75,
+    });
+
+    expect(result).toMatchObject({
+      allowed: false,
+      reason: "QUANT_REGIME_CONFLICT",
+    });
+  });
+
+  it("treats expired evidence as advisory while preserving fresh negative evidence as a hard block", async () => {
+    const canaryInput = {
+      ...input,
+      decision: strongDecision() as never,
+      multiTimeframeConfirmation: 100,
+      primaryRsi: 75,
+      now: new Date("2026-08-14T00:00:01Z"),
+    };
+    const positive = await service(valid()).policy.evaluate(canaryInput);
+    const expiredNegative = await service(valid({ walkForwardStable: false })).policy.evaluate(canaryInput);
+    const freshNegative = await service(valid({ walkForwardStable: false })).policy.evaluate({
+      ...canaryInput,
+      now: new Date("2026-08-12T01:00:00Z"),
+    });
+
+    expect(positive).toMatchObject({
+      allowed: true,
+      advisory: true,
+      reason: "QUANT_VALIDATION_STALE",
+      sizeFactor: 0.25,
+    });
+    expect(expiredNegative).toMatchObject({
+      allowed: true,
+      advisory: true,
+      reason: "QUANT_VALIDATION_STALE",
+      sizeFactor: 0.25,
+    });
+    expect(freshNegative).toMatchObject({
+      allowed: false,
+      reason: "QUANT_WALK_FORWARD_UNSTABLE",
     });
   });
 

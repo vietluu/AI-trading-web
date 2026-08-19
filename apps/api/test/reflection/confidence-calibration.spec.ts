@@ -43,6 +43,27 @@ describe('confidence calibration', () => {
     expect(calibration.status).toBe('CALIBRATED');
     expect(calibration.scope).toBe('USER_GLOBAL');
     expect(calibration.fallbackUsed).toBe(true);
+    expect(calibration.hardGateEligible).toBe(false);
+  });
+
+  it('blends a mature exact bucket with its calibrated parent before the exact scope reaches 50 samples', () => {
+    const exact = Array.from({ length: 38 }, (_, index) => ({
+      confidence: 75,
+      outcome: index < 23 ? 'CORRECT' as const : 'WRONG' as const,
+    }));
+    const parent = Array.from({ length: 80 }, (_, index) => ({
+      confidence: 75,
+      outcome: index < 36 ? 'CORRECT' as const : 'WRONG' as const,
+    }));
+    const calibration = calibrateConfidenceWithFallback(75, [
+      { scope: 'EXACT', records: exact },
+      { scope: 'STRATEGY_CONTEXT', records: parent },
+    ]);
+    expect(calibration.status).toBe('CALIBRATED');
+    expect(calibration.scope).toBe('BLENDED');
+    expect(calibration.hardGateEligible).toBe(true);
+    expect(calibration.exactProbability).toBeGreaterThan(calibration.fallbackProbability ?? 0);
+    expect(calibration.empiricalProbability).toBeGreaterThan(0.5);
   });
 
   it('marks a completely new account as cold start without inventing probability', () => {

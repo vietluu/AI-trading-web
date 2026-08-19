@@ -14,6 +14,12 @@ export default function PipelineRunDetailPage() {
     await query.refetch();
   };
   const run = query.data;
+  const candidate = run?.result?.candidateDecision;
+  const executionStatus = candidate?.actionable
+    ? "ACTIONABLE"
+    : candidate?.decision && candidate.decision !== "WAIT"
+      ? "BLOCKED"
+      : "NO TRADE";
   if (!run)
     return <p className="text-muted-foreground">Loading pipeline run…</p>;
   return (
@@ -50,11 +56,18 @@ export default function PipelineRunDetailPage() {
           )}
         </div>
       </div>
-      <section className="grid gap-4 md:grid-cols-5">
+      <section className="grid gap-4 md:grid-cols-6">
         {[
           ["Status", run.status],
-          ["Decision", run.decision ?? "—"],
-          ["Confidence score", run.confidence == null ? "—" : `${run.confidence}/100`],
+          [
+            "Detected signal",
+            candidate?.decision ?? run.result?.decision ?? "—",
+          ],
+          ["Execution", executionStatus],
+          [
+            "Confidence score",
+            run.confidence == null ? "—" : `${run.confidence}/100`,
+          ],
           ["Quality", run.dataQuality ?? "—"],
           ["Duration", run.durationMs == null ? "—" : `${run.durationMs}ms`],
         ].map(([k, v]) => (
@@ -74,6 +87,16 @@ export default function PipelineRunDetailPage() {
             <p className="mt-2 text-sm text-amber-500">
               Filter: {run.skippedReason}
             </p>
+          )}
+          {!!candidate?.blockedReasons?.length && (
+            <div className="mt-3 rounded border border-amber-500/30 p-3 text-sm">
+              <p className="font-medium">Signal detected, execution blocked</p>
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-muted-foreground">
+                {candidate.blockedReasons.map((reason) => (
+                  <li key={reason}>{reason}</li>
+                ))}
+              </ul>
+            </div>
           )}
           {run.errorCode && (
             <p className="mt-2 text-sm text-red-500">

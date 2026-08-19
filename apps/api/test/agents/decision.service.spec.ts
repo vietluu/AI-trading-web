@@ -73,6 +73,15 @@ function decisionInput(): DecisionInput {
 }
 
 describe('DecisionService', () => {
+  it('selects a performance horizon that matches the strategy holding period', () => {
+    const service = new DecisionService({} as never) as unknown as {
+      calibrationHorizon(strategyKey?: string, timeframe?: string): string;
+    };
+    expect(service.calibrationHorizon('momentum-scalp', '15m')).toBe('M30');
+    expect(service.calibrationHorizon('trend', '15m')).toBe('H2');
+    expect(service.calibrationHorizon('breakout', '15m')).toBe('MID');
+  });
+
   it('keeps fallback calibration as telemetry without changing execution economics', async () => {
     const service = new DecisionService({} as never);
     const base = service.decide(decisionInput());

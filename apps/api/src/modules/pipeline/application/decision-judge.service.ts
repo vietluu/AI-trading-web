@@ -102,24 +102,26 @@ export class DecisionJudgeService {
       calibration.fallbackUsed !== true
         ? calibration
         : undefined;
-    const executionCalibration =
-      context?.requireCalibratedConfidence && calibration?.status === 'CALIBRATED'
+    const hardGateCalibration =
+      calibration?.status === 'CALIBRATED' &&
+      (calibration.scope === 'EXACT' || calibration.scope === 'BLENDED') &&
+      calibration.hardGateEligible !== false
         ? calibration
         : exactCalibration;
     if (
       context?.requireCalibratedConfidence &&
       decision.decision !== 'WAIT' &&
-      calibration?.status !== 'CALIBRATED' &&
+      (!calibration || calibration.status !== 'CALIBRATED' || !hardGateCalibration) &&
       decision.confidence < 75
     ) reasons.push('UNCALIBRATED_CONFIDENCE_TOO_LOW');
     if (
       decision.decision !== 'WAIT' &&
-      executionCalibration &&
-      (executionCalibration.empiricalProbability ?? 0) < policy.minCalibratedProbability
+      hardGateCalibration &&
+      (hardGateCalibration.empiricalProbability ?? 0) < policy.minCalibratedProbability
     ) reasons.push('CALIBRATED_PROBABILITY_TOO_LOW');
     if (
-      executionCalibration &&
-      (executionCalibration.brierScore ?? 0) > 0.3
+      hardGateCalibration &&
+      (hardGateCalibration.brierScore ?? 0) > 0.3
     ) reasons.push('CALIBRATION_UNRELIABLE');
 
     if (reasons.some((reason) => reason.includes('DATA') || reason.includes('STALE') || reason.includes('USABLE') || reason.includes('CALIBRAT'))) {

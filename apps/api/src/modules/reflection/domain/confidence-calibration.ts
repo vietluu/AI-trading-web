@@ -58,6 +58,7 @@ export function calibrateConfidence(rawScore: number, records: CalibrationRecord
 
 export type CalibrationScope =
   | 'EXACT'
+  | 'BLENDED'
   | 'STRATEGY_CONTEXT'
   | 'STRATEGY_TIMEFRAME'
   | 'USER_GLOBAL'
@@ -67,16 +68,45 @@ export function calibrateConfidenceWithFallback(
   rawScore: number,
   scopes: Array<{ scope: Exclude<CalibrationScope, 'NONE'>; records: CalibrationRecord[] }>,
 ) {
+  const evaluated = scopes.map((candidate) => ({
+    ...candidate,
+    calibration: calibrateConfidence(rawScore, candidate.records),
+    curve: buildReliabilityCurve(candidate.records),
+  }));
+  const exact = evaluated.find((candidate) => candidate.scope === 'EXACT');
+  if (exact?.calibration.status === 'CALIBRATED') {
+    return { ...exact.calibration, scope: 'EXACT' as const, fallbackUsed: false, hardGateEligible: true };
+  }
+  const fallback = evaluated.find((candidate) =>
+    candidate.scope !== 'EXACT' && candidate.calibration.status === 'CALIBRATED');
+  const exactBucket = exact?.curve.buckets.find((item) =>
+    rawScore >= item.lower && (item.upper === 100 ? rawScore <= 100 : rawScore < item.upper));
+  // Blend a mature symbol bucket with its nearest calibrated parent instead
+  // of discarding useful local evidence before the broad 50-sample threshold.
+  if (exact && exactBucket && exactBucket.count >= 20 && fallback) {
+    const exactWeight = Math.min(0.8, exactBucket.count / (exactBucket.count + 20));
+    const fallbackProbability = fallback.calibration.empiricalProbability!;
+    return {
+      status: 'CALIBRATED' as const,
+      rawScore,
+      empiricalProbability: exactBucket.observedAccuracy * exactWeight + fallbackProbability * (1 - exactWeight),
+      sampleSize: exact.curve.sampleSize,
+      bucketSampleSize: exactBucket.count,
+      brierScore: exact.curve.brierScore,
+      scope: 'BLENDED' as const,
+      fallbackUsed: true,
+      hardGateEligible: true,
+      exactProbability: exactBucket.observedAccuracy,
+      fallbackProbability,
+      fallbackScope: fallback.scope as Exclude<CalibrationScope, 'EXACT' | 'BLENDED' | 'NONE'>,
+      exactWeight,
+    };
+  }
+  if (fallback) {
+    return { ...fallback.calibration, scope: fallback.scope, fallbackUsed: true, hardGateEligible: false };
+  }
   let largest = scopes[0];
   for (const candidate of scopes) {
-    const calibration = calibrateConfidence(rawScore, candidate.records);
-    if (calibration.status === 'CALIBRATED') {
-      return {
-        ...calibration,
-        scope: candidate.scope,
-        fallbackUsed: candidate.scope !== 'EXACT',
-      };
-    }
     if (!largest || candidate.records.length > largest.records.length) largest = candidate;
   }
   if (!largest || largest.records.length === 0) {
@@ -84,6 +114,7 @@ export function calibrateConfidenceWithFallback(
       ...calibrateConfidence(rawScore, []),
       scope: 'NONE' as const,
       fallbackUsed: false,
+      hardGateEligible: false,
     };
   }
   const diagnostic = calibrateConfidence(rawScore, largest?.records ?? []);
@@ -91,5 +122,6 @@ export function calibrateConfidenceWithFallback(
     ...diagnostic,
     scope: largest.scope,
     fallbackUsed: Boolean(largest && largest.scope !== 'EXACT'),
+    hardGateEligible: false,
   };
 }
