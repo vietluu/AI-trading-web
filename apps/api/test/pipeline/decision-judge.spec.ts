@@ -90,7 +90,7 @@ describe('DecisionJudgeService', () => {
       expectedValue: 0.8, profitFactorEstimate: 1.8, riskScore: 30,
       confidenceCalibration: {
         status: 'CALIBRATED', rawScore: 75, empiricalProbability: 0.4,
-        sampleSize: 80, bucketSampleSize: 25, brierScore: 0.35,
+        sampleSize: 80, bucketSampleSize: 25, brierScore: 0.36,
         scope: 'EXACT', fallbackUsed: false,
       },
     } as never, {

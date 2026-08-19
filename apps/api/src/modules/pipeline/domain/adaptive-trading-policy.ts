@@ -67,7 +67,7 @@ export function adaptiveTradingPolicy(context: AdaptivePolicyContext) {
     staleAfterMs: Math.round(Math.max(2 * 60_000, Math.min(30 * 60_000, timeframeMs * 2)) / (regime === 'HIGH_VOLATILITY' ? 1.5 : 1)),
     minExpectedValue: Number((0.08 + totalRisk * 0.025).toFixed(3)),
     minProfitFactor: Number((1.15 + totalRisk * 0.04).toFixed(2)),
-    minCalibratedProbability: Number((0.51 + totalRisk * 0.012).toFixed(3)),
+    minCalibratedProbability: Number((0.51 + totalRisk * 0.008).toFixed(3)),
     maxRiskScore: Math.round(88 - totalRisk * 2.5),
     minAtrPercent: timeframeAtrBase * (1 + classRisk * 0.2 + volatilityRisk * 0.1),
     minVolumeChangePercent: liquidityClass === 'MAJOR' ? 0.35 : liquidityClass === 'LIQUID_ALT' ? 0.7 : 1.2,

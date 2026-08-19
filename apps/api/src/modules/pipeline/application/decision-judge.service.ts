@@ -121,7 +121,7 @@ export class DecisionJudgeService {
     ) reasons.push('CALIBRATED_PROBABILITY_TOO_LOW');
     if (
       hardGateCalibration &&
-      (hardGateCalibration.brierScore ?? 0) > 0.3
+      (hardGateCalibration.brierScore ?? 0) > 0.35
     ) reasons.push('CALIBRATION_UNRELIABLE');
 
     if (reasons.some((reason) => reason.includes('DATA') || reason.includes('STALE') || reason.includes('USABLE') || reason.includes('CALIBRAT'))) {
