@@ -211,13 +211,25 @@ export class OkxPrivateStreamService implements OnModuleDestroy {
         }),
       );
     });
-    ws.on("message", (data) => this.handleMessage(state, data.toString()));
+    ws.on("message", (data) => {
+      const payload =
+        typeof data === "string"
+          ? data
+          : Buffer.isBuffer(data)
+            ? data.toString("utf8")
+            : Array.isArray(data)
+              ? data.map((item) => (Buffer.isBuffer(item) ? item.toString("utf8") : JSON.stringify(item))).join("")
+              : JSON.stringify(data);
+      this.handleMessage(state, payload);
+    });
     ws.on("close", () => this.disconnected(state));
     ws.on("error", (error) => {
       this.logger.warn({
         event: "okx_private_stream_error",
         connectionId: state.connectionId,
-        message: error.message,
+        message: typeof error === "object" && error && "message" in error
+          ? String(error.message)
+          : String(error),
       });
     });
   }
@@ -485,9 +497,10 @@ export class OkxPrivateStreamService implements OnModuleDestroy {
   }
 
   private text(value: unknown): string {
-    return typeof value === "string" || typeof value === "number"
-      ? String(value)
-      : "0";
+    if (typeof value === "string") {
+      return value.trim() === "" ? "0" : value;
+    }
+    return typeof value === "number" ? String(value) : "0";
   }
 
   private date(value: unknown): Date {

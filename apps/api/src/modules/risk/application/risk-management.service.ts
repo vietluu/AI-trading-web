@@ -180,6 +180,17 @@ export class RiskManagementService {
             this.connections!.account(userId, conn.id, {}),
             this.connections!.positions(userId, conn.id, {}),
           ]);
+          const totalEquity = Number(account.totalEquity);
+          if (!Number.isFinite(totalEquity) || totalEquity <= 0) {
+            this.logger.warn({
+              event: "exchange_account_snapshot_skipped",
+              connectionId: conn.id,
+              provider: conn.provider,
+              reason: "invalid_or_zero_total_equity",
+              totalEquity: account.totalEquity,
+            });
+            return;
+          }
           const syncedAt = new Date();
           await this.prisma.$transaction(async (tx) => {
             await tx.liveAccountSnapshot.create({
@@ -295,22 +306,28 @@ export class RiskManagementService {
     const freshPositions = positions.filter(
       (p) => !p.syncedAt || now - new Date(p.syncedAt).getTime() < STALE_TTL_MS,
     );
-    const latestMap = new Map<string, (typeof freshSnapshots)[number]>();
-    for (const snapshot of freshSnapshots) {
+    const validFreshSnapshots = freshSnapshots.filter(
+      (snapshot) => Number.isFinite(Number(snapshot.totalEquity)) && Number(snapshot.totalEquity) > 0,
+    );
+    const latestMap = new Map<string, (typeof validFreshSnapshots)[number]>();
+    for (const snapshot of validFreshSnapshots) {
       if (!latestMap.has(snapshot.connectionId)) {
         latestMap.set(snapshot.connectionId, snapshot);
       }
     }
     const latest = Array.from(latestMap.values());
     const peaks = new Map<string, number>();
-    for (const snapshot of snapshots)
+    for (const snapshot of snapshots) {
+      const value = Number(snapshot.totalEquity);
+      if (!Number.isFinite(value) || value <= 0) continue;
       peaks.set(
         snapshot.connectionId,
         Math.max(
           peaks.get(snapshot.connectionId) ?? 0,
-          Number(snapshot.totalEquity),
+          value,
         ),
       );
+    }
     const exposure = freshPositions.reduce(
       (sum, position) =>
         sum +
@@ -336,7 +353,9 @@ export class RiskManagementService {
       0,
     );
     const drawdown =
-      peakEquity > 0 ? Math.max(0, (peakEquity - equity) / peakEquity) : 0;
+      peakEquity > 0 && equity > 0
+        ? Math.max(0, (peakEquity - equity) / peakEquity)
+        : 0;
     return {
       config: {
         riskPreference: userSetting?.riskPreference ?? "UNKNOWN",

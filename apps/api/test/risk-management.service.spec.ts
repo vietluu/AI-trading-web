@@ -3,6 +3,33 @@ import { describe, expect, it, vi } from "vitest";
 import { RiskManagementService } from "../src/modules/risk/application/risk-management.service";
 
 describe("RiskManagementService", () => {
+  it("keeps the last valid snapshot instead of zeroing equity when the live snapshot is stale", async () => {
+    const prisma = {
+      userSetting: { findUnique: vi.fn().mockResolvedValue({ riskPreference: "MODERATE" }) },
+      exchangeConnection: { findMany: vi.fn().mockResolvedValue([]) },
+      livePosition: { findMany: vi.fn().mockResolvedValue([]) },
+      liveAccountSnapshot: { findMany: vi.fn().mockResolvedValue([
+        {
+          connectionId: "conn-1",
+          syncedAt: new Date(Date.now() - 60_000),
+          totalEquity: "1000",
+          availableBalance: "900",
+        },
+      ]) },
+      riskAssessment: { findMany: vi.fn().mockResolvedValue([]) },
+    };
+    const service = new RiskManagementService(
+      prisma as never,
+      { values: { maxDrawdown: 0.15 }, getUserLimits: vi.fn().mockResolvedValue({ riskPerTrade: 0.01, maxPositions: 3, maxLeverage: 10, maxDrawdown: 0.15, maxExposure: 1, cooldownMs: 0, stopLossPct: 0.02, riskRewardRatio: 1.5, highVolatility: 0.04, abnormalVolatility: 0.15, highVolatilitySizeFactor: 0.6, minimumConfidence: 60, estimatedRoundTripCostPct: 0.0008, maxStopLossRoe: 0.03, rangeScalpRoeMultiplier: 2, minLiquidationBufferPct: 0.01 }) } as never,
+      { get: vi.fn() } as never,
+    );
+
+    const result = await service.dashboard("11111111-1111-4111-8111-111111111111");
+    expect(result.portfolio.available).toBe(true);
+    expect(result.portfolio.equity).toBe(1000);
+    expect(result.portfolio.drawdownPct).toBe(0);
+  });
+
   it("uses upsert to avoid duplicate risk assessments under concurrent execution", async () => {
     const tx = {
       riskAssessment: {

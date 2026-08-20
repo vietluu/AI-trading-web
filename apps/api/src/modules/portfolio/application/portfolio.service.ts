@@ -492,6 +492,10 @@ export class PortfolioService {
             this.connections!.account(userId, conn.id, {}),
             this.connections!.positions(userId, conn.id, {}),
           ]);
+          const totalEquity = Number(account.totalEquity);
+          if (!Number.isFinite(totalEquity) || totalEquity <= 0) {
+            return;
+          }
           const syncedAt = new Date();
           await this.prisma.$transaction(async (tx) => {
             await tx.liveAccountSnapshot.create({
@@ -800,28 +804,35 @@ export class PortfolioService {
     ]);
     const now = Date.now();
     const STALE_TTL_MS = 10 * 60 * 1000;
-    const freshSnapshots = snapshots.filter(
+    const validSnapshots = snapshots.filter(
+      (s) => Number.isFinite(Number(s.totalEquity)) && Number(s.totalEquity) > 0,
+    );
+    const freshSnapshots = validSnapshots.filter(
       (s) => !s.syncedAt || now - new Date(s.syncedAt).getTime() < STALE_TTL_MS,
     );
+    const usableSnapshots = freshSnapshots.length > 0 ? freshSnapshots : validSnapshots;
     const freshPositions = positions.filter(
       (p) => !p.syncedAt || now - new Date(p.syncedAt).getTime() < STALE_TTL_MS,
     );
-    const latestMap = new Map<string, (typeof freshSnapshots)[number]>();
-    for (const snapshot of freshSnapshots) {
+    const latestMap = new Map<string, (typeof usableSnapshots)[number]>();
+    for (const snapshot of usableSnapshots) {
       if (!latestMap.has(snapshot.connectionId)) {
         latestMap.set(snapshot.connectionId, snapshot);
       }
     }
     const latest = Array.from(latestMap.values());
     const peaks = new Map<string, number>();
-    for (const snapshot of snapshots)
+    for (const snapshot of validSnapshots) {
+      const value = Number(snapshot.totalEquity);
+      if (!Number.isFinite(value) || value <= 0) continue;
       peaks.set(
         snapshot.connectionId,
         Math.max(
           peaks.get(snapshot.connectionId) ?? 0,
-          Number(snapshot.totalEquity),
+          value,
         ),
       );
+    }
     const syncedAt = latest.reduce<Date | null>(
       (result, snapshot) =>
         !result || snapshot.syncedAt > result ? snapshot.syncedAt : result,
