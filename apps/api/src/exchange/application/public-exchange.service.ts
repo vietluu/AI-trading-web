@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 
 import {
   ExchangeEnvironment,
@@ -30,6 +30,8 @@ export interface ExchangeProviderMetadata {
 
 @Injectable()
 export class PublicExchangeService {
+  private readonly logger = new Logger(PublicExchangeService.name);
+
   constructor(
     private readonly factory: ExchangeAdapterFactory,
     private readonly rateLimit: ExchangeRateLimitService,
@@ -310,6 +312,43 @@ export class PublicExchangeService {
   }
 
   /**
+   * Discovers all active trading pairs for a specific exchange provider (e.g. OKX_FUTURES).
+   * Strictly avoids calling other exchange providers to prevent conflicts and geo-blocking errors.
+   */
+  async providerSymbols(provider: ExchangeProvider): Promise<
+    Array<{
+      symbol: string;
+      baseAsset: string;
+      quoteAsset: string;
+      binanceSupported: boolean;
+      okxSupported: boolean;
+      isCommon: boolean;
+    }>
+  > {
+    try {
+      const insts = await this.instruments(provider, "TRADING");
+      return insts.map((i) => {
+        const [baseAsset, quoteAsset] = i.symbol.split("-");
+        return {
+          symbol: i.symbol,
+          baseAsset: baseAsset ?? i.baseAsset,
+          quoteAsset: quoteAsset ?? i.quoteAsset ?? "USDT",
+          binanceSupported: provider === ExchangeProvider.BINANCE_FUTURES,
+          okxSupported: provider === ExchangeProvider.OKX_FUTURES,
+          isCommon: false,
+        };
+      }).sort((a, b) => a.symbol.localeCompare(b.symbol));
+    } catch (error) {
+      this.logger.warn({
+        event: "provider_symbols_failed",
+        provider,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
+  }
+
+  /**
    * Discovers all active trading pairs across Binance Futures & OKX Perpetual Swaps.
    * Identifies symbols available on Binance, OKX, or common to both.
    */
@@ -386,14 +425,25 @@ export class PublicExchangeService {
     let activeProvider = options?.provider ?? ExchangeProvider.BINANCE_FUTURES;
     const limit = options?.limit ?? 10;
 
-    const [crossSymbols, initialInstruments] = await Promise.all([
-      this.crossExchangeSymbols(),
-      this.instruments(activeProvider, "TRADING").catch(() => []),
-    ]);
-    let instruments = initialInstruments;
+    let instruments: ExchangeInstrument[] = [];
+    let commonSet = new Set<string>();
+
+    if (options?.provider) {
+      // When a specific provider is requested, do not run cross-exchange logic against other exchanges
+      instruments = await this.instruments(activeProvider, "TRADING").catch(() => []);
+    } else {
+      const [crossSymbols, initialInstruments] = await Promise.all([
+        this.crossExchangeSymbols(),
+        this.instruments(activeProvider, "TRADING").catch(() => []),
+      ]);
+      instruments = initialInstruments;
+      commonSet = new Set(
+        crossSymbols.filter((s) => s.isCommon).map((s) => s.symbol),
+      );
+    }
 
     // Automatic fallback to OKX_FUTURES if requested provider (e.g. BINANCE_FUTURES) is unavailable
-    if (!instruments || instruments.length === 0) {
+    if ((!instruments || instruments.length === 0) && !options?.provider) {
       const fallbackProvider = ExchangeProvider.OKX_FUTURES;
       const fallbackInstruments = await this.instruments(
         fallbackProvider,
@@ -404,10 +454,6 @@ export class PublicExchangeService {
         instruments = fallbackInstruments;
       }
     }
-
-    const commonSet = new Set(
-      crossSymbols.filter((s) => s.isCommon).map((s) => s.symbol),
-    );
 
     let candidates = instruments;
     if (options?.symbols) {

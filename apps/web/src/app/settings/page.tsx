@@ -51,10 +51,15 @@ export default function SettingsPage(): React.JSX.Element {
     }
   }, [settingsQuery.data]);
 
+  const selectedExchange = settingsQuery.data?.preferredExchange ?? "OKX_FUTURES";
+
   useEffect(() => {
     async function loadSymbols() {
       try {
-        const data = await apiRequest<Array<{ symbol: string; isCommon: boolean }>>("/exchanges/symbols");
+        const url = selectedExchange
+          ? `/exchanges/symbols?provider=${encodeURIComponent(selectedExchange)}`
+          : "/exchanges/symbols";
+        const data = await apiRequest<Array<{ symbol: string; isCommon: boolean }>>(url);
         if (Array.isArray(data) && data.length > 0) {
           setDynamicSymbols(data.map((item) => item.symbol));
         }
@@ -63,7 +68,7 @@ export default function SettingsPage(): React.JSX.Element {
       }
     }
     void loadSymbols();
-  }, []);
+  }, [selectedExchange]);
 
   const toggleSymbol = (symbol: string) => {
     setSelectedSymbols((prev) =>

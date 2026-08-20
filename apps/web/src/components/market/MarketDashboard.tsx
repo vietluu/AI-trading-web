@@ -141,8 +141,8 @@ export function MarketDashboard({
   defaultSymbol = "BTC-USDT",
   defaultInterval = "1h",
 }: MarketDashboardProps): React.JSX.Element {
-  const { symbols: dynamicSymbols } = useExchangeSymbols();
   const [provider, setProvider] = useState<MarketProvider>("OKX_FUTURES");
+  const { symbols: dynamicSymbols } = useExchangeSymbols(provider);
   const [symbol, setSymbol] = useState(defaultSymbol);
   const [interval, setIntervalValue] = useState(defaultInterval);
   const [ticker, setTicker] = useState<TickerData | null>(null);

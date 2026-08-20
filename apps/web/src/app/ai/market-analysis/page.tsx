@@ -19,20 +19,13 @@ const fieldClassName =
 export default function MarketAnalysisPage(): React.JSX.Element {
   const { t } = useTranslation();
   const scope = useConfiguredTradingScope();
-  const exchangeSymbols = useExchangeSymbols();
   const [provider, setProvider] =
     useState<MarketAgentInput["provider"]>("OKX_FUTURES");
+  const exchangeSymbols = useExchangeSymbols(provider);
   const availableSymbols = useMemo(() => {
     const configured = scope.data?.symbols ?? [];
-    const fromExchange = exchangeSymbols.symbols.filter((s) => {
-      const info = exchangeSymbols.symbolObjects.find((item) => item.symbol === s);
-      if (!info) return true;
-      if (provider === "OKX_FUTURES") return info.okxSupported;
-      if (provider === "BINANCE_FUTURES") return info.binanceSupported;
-      return true;
-    });
-    return Array.from(new Set([...configured, ...fromExchange]));
-  }, [scope.data?.symbols, exchangeSymbols.symbols, exchangeSymbols.symbolObjects, provider]);
+    return Array.from(new Set([...configured, ...exchangeSymbols.symbols]));
+  }, [scope.data?.symbols, exchangeSymbols.symbols]);
   const [symbol, setSymbol] = useState<string>("");
   const [interval, setInterval] = useState<MarketAgentInput["interval"]>("1h");
   const [lookbackCandles, setLookbackCandles] = useState(100);

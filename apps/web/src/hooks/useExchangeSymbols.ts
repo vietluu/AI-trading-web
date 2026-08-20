@@ -31,8 +31,8 @@ const FALLBACK_SYMBOLS: ExchangeSymbolInfo[] = [
   isCommon: true,
 }));
 
-export function useExchangeSymbols() {
-  return useQuerySymbolsInternal();
+export function useExchangeSymbols(provider?: string) {
+  return useQuerySymbolsInternal(provider);
 }
 
 const MAJOR_ORDER = [
@@ -67,11 +67,14 @@ function sortPrioritized(list: string[]): string[] {
   return Array.from(new Set([...majorsInList, ...others]));
 }
 
-function useQuerySymbolsInternal() {
+function useQuerySymbolsInternal(provider?: string) {
   const query = useQuery({
-    queryKey: ["exchange-symbols"],
+    queryKey: ["exchange-symbols", provider ?? "ALL"],
     queryFn: async (): Promise<ExchangeSymbolInfo[]> => {
-      const data = await apiRequest<ExchangeSymbolInfo[]>("/exchanges/symbols");
+      const url = provider
+        ? `/exchanges/symbols?provider=${encodeURIComponent(provider)}`
+        : "/exchanges/symbols";
+      const data = await apiRequest<ExchangeSymbolInfo[]>(url);
       return Array.isArray(data) && data.length > 0 ? data : FALLBACK_SYMBOLS;
     },
     staleTime: 5 * 60 * 1000,

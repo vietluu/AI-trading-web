@@ -21,7 +21,10 @@ export class PublicExchangesController {
   }
 
   @Get("symbols")
-  symbols() {
+  symbols(@Query("provider") provider?: ExchangeProvider) {
+    if (provider) {
+      return this.exchanges.providerSymbols(provider);
+    }
     return this.exchanges.crossExchangeSymbols();
   }
 

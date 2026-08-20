@@ -16,19 +16,19 @@ import { useExchangeSymbols } from "@/hooks/useExchangeSymbols";
 export default function PipelinePage() {
   const { t } = useTranslation();
   const scope = useConfiguredTradingScope();
-  const exchangeSymbols = useExchangeSymbols();
   const [provider, setProvider] = useState("OKX_FUTURES");
+  const exchangeSymbols = useExchangeSymbols(provider);
+  const [symbolSearch, setSymbolSearch] = useState("");
+  
   const availableSymbols = useMemo(() => {
     const configured = scope.data?.symbols ?? [];
-    const fromExchange = exchangeSymbols.symbols.filter((s) => {
-      const info = exchangeSymbols.symbolObjects.find((item) => item.symbol === s);
-      if (!info) return true;
-      if (provider === "OKX_FUTURES") return info.okxSupported;
-      if (provider === "BINANCE_FUTURES") return info.binanceSupported;
-      return true;
-    });
-    return Array.from(new Set([...configured, ...fromExchange]));
-  }, [scope.data?.symbols, exchangeSymbols.symbols, exchangeSymbols.symbolObjects, provider]);
+    const fromExchange = exchangeSymbols.symbols;
+    const combined = Array.from(new Set([...configured, ...fromExchange]));
+    if (!symbolSearch.trim()) return combined;
+    const query = symbolSearch.trim().toUpperCase();
+    return combined.filter((s) => s.toUpperCase().includes(query));
+  }, [scope.data?.symbols, exchangeSymbols.symbols, symbolSearch]);
+
   const [symbol, setSymbol] = useState("");
   const [message, setMessage] = useState("");
   const health = usePipelineDashboard();
@@ -120,8 +120,14 @@ export default function PipelinePage() {
       <section className="rounded-lg border bg-card p-5">
         <h2 className="text-lg font-semibold">{t.ai.manualTriggerTitle}</h2>
         <div className="mt-4 flex flex-wrap gap-3">
+          <input
+            className="w-32 rounded border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground"
+            placeholder="Search..."
+            value={symbolSearch}
+            onChange={(e) => setSymbolSearch(e.target.value)}
+          />
           <select
-            className="min-w-36 flex-1 rounded border bg-background px-3 py-2 sm:flex-none"
+            className="min-w-40 flex-1 rounded border bg-background px-3 py-2 sm:flex-none"
             value={symbol}
             onChange={(e) => setSymbol(e.target.value)}
           >

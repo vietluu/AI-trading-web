@@ -14,20 +14,13 @@ const fieldClassName =
 export default function DecisionPage(): React.JSX.Element {
   const { t } = useTranslation();
   const scope = useConfiguredTradingScope();
-  const exchangeSymbols = useExchangeSymbols();
   const [provider, setProvider] =
     useState<FusionRunInput["provider"]>("OKX_FUTURES");
+  const exchangeSymbols = useExchangeSymbols(provider);
   const availableSymbols = useMemo(() => {
     const configured = scope.data?.symbols ?? [];
-    const fromExchange = exchangeSymbols.symbols.filter((s) => {
-      const info = exchangeSymbols.symbolObjects.find((item) => item.symbol === s);
-      if (!info) return true;
-      if (provider === "OKX_FUTURES") return info.okxSupported;
-      if (provider === "BINANCE_FUTURES") return info.binanceSupported;
-      return true;
-    });
-    return Array.from(new Set([...configured, ...fromExchange]));
-  }, [scope.data?.symbols, exchangeSymbols.symbols, exchangeSymbols.symbolObjects, provider]);
+    return Array.from(new Set([...configured, ...exchangeSymbols.symbols]));
+  }, [scope.data?.symbols, exchangeSymbols.symbols]);
   const [symbol, setSymbol] = useState<string>("");
   const [interval, setInterval] = useState<FusionRunInput["interval"]>("15m");
   useEffect(() => {
