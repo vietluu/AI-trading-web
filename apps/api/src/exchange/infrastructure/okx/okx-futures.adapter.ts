@@ -861,26 +861,35 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       ...(command.reduceOnly ? { reduceOnly: true } : {}),
       ...(sanitizedPosSide ? { posSide: sanitizedPosSide } : {}),
     };
-    const hasSl =
-      Number.isFinite(Number(command.stopLoss)) && Number(command.stopLoss) > 0;
-    const hasTp =
-      Number.isFinite(Number(command.takeProfit)) && Number(command.takeProfit) > 0;
-    if (hasSl || hasTp) {
+    const numericStopLoss = Number(command.stopLoss);
+    const numericTakeProfit = Number(command.takeProfit);
+    const hasSl = Number.isFinite(numericStopLoss) && numericStopLoss > 0;
+    const hasTp = Number.isFinite(numericTakeProfit) && numericTakeProfit > 0;
+    const formattedSl = hasSl
+      ? this.decimalString(numericStopLoss, instrument.pricePrecision)
+      : undefined;
+    const formattedTp = hasTp
+      ? this.decimalString(numericTakeProfit, instrument.pricePrecision)
+      : undefined;
+
+    if (formattedSl || formattedTp) {
       body.attachAlgoOrds = [
         {
           ...(protectiveClientOrderId
             ? { attachAlgoClOrdId: protectiveClientOrderId }
             : {}),
-          ...(hasSl
+          ...(formattedSl
             ? {
-                slTriggerPx: String(command.stopLoss),
+                slTriggerPx: formattedSl,
                 slOrdPx: "-1",
+                slTriggerPxType: "mark",
               }
             : {}),
-          ...(hasTp
+          ...(formattedTp
             ? {
-                tpTriggerPx: String(command.takeProfit),
+                tpTriggerPx: formattedTp,
                 tpOrdPx: "-1",
+                tpTriggerPxType: "mark",
               }
             : {}),
         },
@@ -1146,19 +1155,29 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     credentials: ExchangeCredentials,
     command: AmendProtectiveOrderCommand,
   ): Promise<void> {
-    const hasStop = Number.isFinite(Number(command.stopLoss)) && Number(command.stopLoss) > 0;
-    const hasTake = Number.isFinite(Number(command.takeProfit)) && Number(command.takeProfit) > 0;
+    const numericStop = Number(command.stopLoss);
+    const numericTake = Number(command.takeProfit);
+    const hasStop = Number.isFinite(numericStop) && numericStop > 0;
+    const hasTake = Number.isFinite(numericTake) && numericTake > 0;
     if (!hasStop && !hasTake) {
       throw ExchangeError.invalidRequest(this.provider, "A protective price is required");
     }
+    const instruments = await this.getInstruments({
+      symbol: command.symbol,
+      environment: credentials.environment,
+    });
+    const instrument = instruments.find(
+      (c) => c.symbol === command.symbol || mapSymbol(c.symbol, this.provider) === toOkxSymbol(command.symbol),
+    );
+    const precision = instrument?.pricePrecision ?? 2;
     const response = z.array(algoAckSchema).min(1).parse(
       await this.client.signedPost("/api/v5/trade/amend-algos", credentials, {
         instId: toOkxSymbol(command.symbol),
         algoClOrdId: normalizeClientOrderId(command.protectiveClientOrderId),
         reqId: normalizeClientOrderId(command.requestId),
         cxlOnFail: false,
-        ...(hasStop ? { newSlTriggerPx: String(command.stopLoss), newSlOrdPx: "-1" } : {}),
-        ...(hasTake ? { newTpTriggerPx: String(command.takeProfit), newTpOrdPx: "-1" } : {}),
+        ...(hasStop ? { newSlTriggerPx: this.decimalString(numericStop, precision), newSlOrdPx: "-1", newSlTriggerPxType: "mark" } : {}),
+        ...(hasTake ? { newTpTriggerPx: this.decimalString(numericTake, precision), newTpOrdPx: "-1", newTpTriggerPxType: "mark" } : {}),
       }),
     )[0]!;
     if (response.sCode !== "0") {

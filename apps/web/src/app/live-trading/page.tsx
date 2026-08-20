@@ -76,7 +76,7 @@ export default function LiveTradingPage(): React.JSX.Element {
   const { t } = useTranslation();
   const query = useLiveTradingDashboard();
   const [liveData, setLiveData] = useState<Dashboard | null>(null);
-  const {killMutation, enableMutation } =
+  const { killMutation, enableMutation } =
     useLiveTradingActions();
   const kill = killMutation;
   const enable = enableMutation;
@@ -118,7 +118,6 @@ export default function LiveTradingPage(): React.JSX.Element {
 
     socket.on("exception", (err: unknown) => {
       console.warn("Live trading socket exception:", err);
-      // Fallback: refetch query via HTTP
       void query.refetch();
     });
 
@@ -132,7 +131,7 @@ export default function LiveTradingPage(): React.JSX.Element {
     };
   }, [query]);
 
-  if (query.isLoading)
+  if (query.isLoading && !liveData)
     return <p className="text-muted-foreground">{t.ai.loadingStatus}…</p>;
   if (query.isError)
     return (

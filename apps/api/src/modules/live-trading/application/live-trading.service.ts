@@ -77,7 +77,7 @@ export async function processInBatches<T>(
 @Injectable()
 export class LiveTradingService {
   private readonly logger = new Logger(LiveTradingService.name);
-  private readonly realtimeSnapshots = new Map<string, unknown>();
+  private readonly realtimeSnapshots = new Map<string, { snapshot: unknown; expiresAt: number }>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -1408,7 +1408,7 @@ export class LiveTradingService {
     };
     this.realtimeSnapshots.set(
       this.realtimeCacheKey(userId, connectionId),
-      snapshot,
+      { snapshot, expiresAt: Date.now() + 2_000 },
     );
     this.realtimeSnapshots.delete(this.realtimeCacheKey(userId, undefined));
     if (this.gateway) {
@@ -1436,7 +1436,7 @@ export class LiveTradingService {
     const cached = this.realtimeSnapshots.get(
       this.realtimeCacheKey(userId, connectionId),
     );
-    if (cached) return cached;
+    if (cached && cached.expiresAt > Date.now()) return cached.snapshot;
     if (!this.isValidUserId(userId)) {
       this.logger.warn({
         event: "dashboard_snapshot_skipped_invalid_user_id",
@@ -1569,10 +1569,10 @@ export class LiveTradingService {
     // Fetch all connections once to resolve provider/environment from the key
     const allConnections = await this.connections.list(userId);
     const connectionMap = new Map(allConnections.map((c) => [c.id, c]));
-    for (const [key, snapshot] of persistedSnapshots) {
+    for (const [key, entry] of persistedSnapshots) {
       const connectionId = key.split(":").slice(1).join(":") ?? undefined;
       const account = (
-        snapshot as {
+        entry.snapshot as {
           accounts?: Array<{
             connectionId?: string;
             totalEquity?: number;

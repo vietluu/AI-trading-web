@@ -540,10 +540,10 @@ export async function getLiveTradingDashboard() {
   return apiRequest<LiveTradingDashboard>(API_ENDPOINTS.ai.liveTrading);
 }
 
-export async function syncLiveTradingConnection(connectionId: string) {
+export async function syncLiveTradingConnection(connectionId?: string) {
   return apiRequest(API_ENDPOINTS.ai.liveTradingSync, {
     method: "POST",
-    body: JSON.stringify({ connectionId }),
+    body: JSON.stringify(connectionId ? { connectionId } : {}),
   });
 }
 

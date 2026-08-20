@@ -23,8 +23,11 @@ interface TickerData {
   bidPrice?: string;
   askPrice?: string;
   volume24h?: string;
+  quoteVolume24h?: string;
   high24h?: string;
   low24h?: string;
+  priceChange24h?: string;
+  priceChangePercent24h?: string;
 }
 
 interface RawCandle {
@@ -368,12 +371,20 @@ export function MarketDashboard({
   const isLive = socketConnected && streamIsHealthy && !isStale;
 
   const priceColor = useMemo(() => {
-    const lastClose = historicalData.at(-1)?.close;
-    if (lastClose === undefined || !ticker) return "text-white";
-    return Number(ticker.lastPrice) >= Number(lastClose)
+    if (!ticker?.priceChangePercent24h && !ticker?.priceChange24h) {
+      const lastClose = historicalData.at(-1)?.close;
+      if (lastClose === undefined || !ticker) return "text-white";
+      return Number(ticker.lastPrice) >= Number(lastClose)
+        ? "text-emerald-400"
+        : "text-rose-400";
+    }
+    return Number(ticker.priceChangePercent24h ?? ticker.priceChange24h ?? 0) >= 0
       ? "text-emerald-400"
       : "text-rose-400";
   }, [historicalData, ticker]);
+
+  const changePct = Number(ticker?.priceChangePercent24h ?? 0);
+  const isPositiveChange = changePct >= 0;
 
   return (
     <div className="space-y-5 text-white">
@@ -383,7 +394,21 @@ export function MarketDashboard({
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-300">
               Realtime market
             </p>
-            <h1 className="mt-2 text-3xl font-bold">{symbol}</h1>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <h1 className="text-3xl font-bold">{symbol}</h1>
+              {ticker?.priceChangePercent24h !== undefined && (
+                <span
+                  className={`rounded-lg px-2.5 py-0.5 text-xs font-bold ${
+                    isPositiveChange
+                      ? "border border-emerald-500/40 bg-emerald-500/15 text-emerald-400"
+                      : "border border-rose-500/40 bg-rose-500/15 text-rose-400"
+                  }`}
+                >
+                  {isPositiveChange ? "+" : ""}
+                  {Number(ticker.priceChangePercent24h).toFixed(2)}% (24h)
+                </span>
+              )}
+            </div>
             <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-gray-400">
               <span className="flex items-center gap-2">
                 <span
@@ -494,11 +519,21 @@ export function MarketDashboard({
           label="Last price"
           value={formatNumber(ticker?.lastPrice)}
           valueClassName={priceColor}
+          detail={
+            ticker?.priceChangePercent24h !== undefined
+              ? `24h Change: ${Number(ticker.priceChangePercent24h) >= 0 ? "+" : ""}${Number(ticker.priceChangePercent24h).toFixed(2)}%`
+              : undefined
+          }
         />
         <MetricCard
           icon={<BarChart3 className="h-4 w-4" />}
           label="24h volume"
           value={formatNumber(ticker?.volume24h)}
+          detail={
+            ticker?.high24h && ticker?.low24h
+              ? `High: ${formatNumber(ticker.high24h)} · Low: ${formatNumber(ticker.low24h)}`
+              : undefined
+          }
         />
         <MetricCard
           icon={<Activity className="h-4 w-4" />}
