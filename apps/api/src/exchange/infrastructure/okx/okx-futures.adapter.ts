@@ -620,40 +620,67 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
   ): Promise<ExchangeFill[]> {
     const historyLimit = Math.min(1000, Math.max(1, Math.trunc(limit)));
     const pageSize = Math.min(100, historyLimit);
-    let values: Array<z.infer<typeof fillSchema>> = [];
+    const seenTradeKeys = new Set<string>();
+    const values: Array<z.infer<typeof fillSchema>> = [];
+
+    // 1. Fetch recent fills (last 3 days) first
     try {
-      let after: string | undefined;
-      while (values.length < historyLimit) {
-        const page = z.array(fillSchema).parse(
-          await this.client.signedGet(
-            "/api/v5/trade/fills-history",
-            credentials,
-            {
-              instType: "SWAP",
-              limit: Math.min(pageSize, historyLimit - values.length),
-              after,
-              ...(before ? { end: before.getTime() } : {}),
-            },
-          ),
-        );
-        if (!page.length) break;
-        values.push(...page);
-        const next = page.at(-1)?.billId;
-        if (page.length < pageSize || !next || next === after) break;
-        after = next;
-      }
-    } catch (error) {
-      this.logger.warn({
-        event: "okx_fill_history_fallback_to_recent",
-        error: error instanceof Error ? error.message : String(error),
-      });
-      values = z.array(fillSchema).parse(
+      const recentFills = z.array(fillSchema).parse(
         await this.client.signedGet("/api/v5/trade/fills", credentials, {
           instType: "SWAP",
           limit: pageSize,
           ...(before ? { end: before.getTime() } : {}),
         }),
       );
+      for (const fill of recentFills) {
+        const key = fill.tradeId || fill.billId || `${fill.ordId}:${fill.fillTime ?? fill.ts}`;
+        if (!seenTradeKeys.has(key)) {
+          seenTradeKeys.add(key);
+          values.push(fill);
+        }
+      }
+    } catch (error) {
+      this.logger.warn({
+        event: "okx_recent_fills_fetch_failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    // 2. Fetch older history if needed
+    if (values.length < historyLimit) {
+      try {
+        let after: string | undefined;
+        while (values.length < historyLimit) {
+          const page = z.array(fillSchema).parse(
+            await this.client.signedGet(
+              "/api/v5/trade/fills-history",
+              credentials,
+              {
+                instType: "SWAP",
+                limit: Math.min(pageSize, historyLimit - values.length),
+                after,
+                ...(before ? { end: before.getTime() } : {}),
+              },
+            ),
+          );
+          if (!page.length) break;
+          for (const fill of page) {
+            const key = fill.tradeId || fill.billId || `${fill.ordId}:${fill.fillTime ?? fill.ts}`;
+            if (!seenTradeKeys.has(key)) {
+              seenTradeKeys.add(key);
+              values.push(fill);
+            }
+          }
+          const next = page.at(-1)?.billId;
+          if (page.length < pageSize || !next || next === after) break;
+          after = next;
+        }
+      } catch (error) {
+        this.logger.warn({
+          event: "okx_fills_history_fetch_failed",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
     const instruments = await this.getInstruments({
       environment: credentials.environment,

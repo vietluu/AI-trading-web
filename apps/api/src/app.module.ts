@@ -30,7 +30,13 @@ import { ResearchModule } from "./modules/research/research.module";
     ConfigModule.forRoot({
       cache: true,
       envFilePath: [
+        resolve(process.cwd(), ".env.local"),
+        resolve(process.cwd(), ".env"),
+        resolve(process.cwd(), "../../.env.local"),
+        resolve(process.cwd(), "../../.env"),
+        resolve(__dirname, "../../../.env.local"),
         resolve(__dirname, "../../../.env"),
+        resolve(__dirname, "../../.env"),
         resolve(__dirname, "../.env"),
       ],
       isGlobal: true,

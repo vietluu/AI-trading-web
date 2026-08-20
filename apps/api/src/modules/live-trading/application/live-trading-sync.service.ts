@@ -45,7 +45,11 @@ export class LiveTradingSyncService
     this.running = true;
     try {
       if (this.taskLock) {
-        await this.taskLock.run('live-trading-sync', Math.max(30, Math.ceil(this.config.values.syncIntervalMs / 1000)), () => this.syncAllConnections());
+        await this.taskLock.run(
+          'live-trading-sync',
+          Math.max(3, Math.ceil(this.config.values.syncIntervalMs / 1000)),
+          () => this.syncAllConnections(),
+        );
       } else {
         await this.syncAllConnections();
       }

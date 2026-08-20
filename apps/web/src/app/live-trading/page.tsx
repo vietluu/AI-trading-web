@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 import { publicEnvironment } from "@/lib/environment";
@@ -8,61 +8,7 @@ import {
   useLiveTradingActions,
   useLiveTradingDashboard,
 } from "@/hooks/ai/useAiFeature";
-
-interface Dashboard {
-  mode: string;
-  globalTradingEnabled: boolean;
-  liveTradingEnabled: boolean;
-  connections: Array<{
-    id: string;
-    provider: string;
-    environment: string;
-    displayName: string | null;
-    isEnabled: boolean;
-    isVerified: boolean;
-  }>;
-  accounts: Array<{
-    connectionId: string;
-    totalEquity: number;
-    availableBalance: number;
-    unrealizedPnl: number;
-    marginBalance: number;
-    syncedAt: string;
-  }>;
-  positions: Array<{
-    id: string;
-    connectionId: string;
-    symbol: string;
-    side: string;
-    quantity: number;
-    entryPrice: number;
-    markPrice: number | null;
-    liquidationPrice: number | null;
-    leverage: number | null;
-    unrealizedPnl: number;
-    syncedAt: string;
-  }>;
-  orders: Array<{
-    id: string;
-    orderId: string | null;
-    clientOrderId: string;
-    provider: string;
-    environment: string;
-    symbol: string;
-    side: string;
-    size: number;
-    price: number | null;
-    status: string;
-    purpose: string;
-    errorCode: string | null;
-    grossPnl: number | null;
-    fee: number | null;
-    netPnl: number | null;
-    returnPct: number | null;
-    closeReason: string | null;
-    createdAt: string;
-  }>;
-}
+import type { LiveTradingDashboard } from "@/services/ai-feature.service";
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -75,18 +21,25 @@ const RECENT_TRADE_HISTORY_LIMIT = 20;
 export default function LiveTradingPage(): React.JSX.Element {
   const { t } = useTranslation();
   const query = useLiveTradingDashboard();
-  const [liveData, setLiveData] = useState<Dashboard | null>(null);
+  const [liveData, setLiveData] = useState<LiveTradingDashboard | null>(null);
+  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
   const { killMutation, enableMutation } =
     useLiveTradingActions();
   const kill = killMutation;
   const enable = enableMutation;
+  const queryDataRef = useRef(query.data);
+  queryDataRef.current = query.data;
+
   useEffect(() => {
     if (query.data) {
       setLiveData(query.data);
     }
   }, [query.data]);
 
+  // Connect sockets strictly AFTER initial API call succeeds to prevent overlap/blocking
   useEffect(() => {
+    if (!query.isSuccess) return;
+
     const rawApiUrl = publicEnvironment.NEXT_PUBLIC_API_BASE_URL.trim();
     const baseUrl = rawApiUrl
       ? rawApiUrl.replace(/\/$/, "")
@@ -96,6 +49,7 @@ export default function LiveTradingPage(): React.JSX.Element {
           : window.location.origin
         : "";
 
+    // 1. Dashboard snapshot socket
     const socket = io(`${baseUrl}/live-trading`, {
       path:
         typeof window !== "undefined"
@@ -104,7 +58,7 @@ export default function LiveTradingPage(): React.JSX.Element {
       transports: ["websocket", "polling"],
       reconnection: true,
       reconnectionAttempts: 5,
-      reconnectionDelay: 500,
+      reconnectionDelay: 1000,
       withCredentials: true,
     });
 
@@ -112,24 +66,54 @@ export default function LiveTradingPage(): React.JSX.Element {
       socket.emit("subscribe", {});
     });
 
-    socket.on("snapshot", (payload: Dashboard) => {
+    socket.on("snapshot", (payload: LiveTradingDashboard) => {
       setLiveData(payload);
     });
 
-    socket.on("exception", (err: unknown) => {
-      console.warn("Live trading socket exception:", err);
-      void query.refetch();
+    // 2. Real-time market ticker socket
+    const marketSocket = io(`${baseUrl}/market`, {
+      path:
+        typeof window !== "undefined"
+          ? (window as Window & { __SOCKET_IO_PATH__?: string }).__SOCKET_IO_PATH__ ?? "/socket.io/"
+          : "/socket.io/",
+      transports: ["websocket", "polling"],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
     });
 
-    socket.on("connect_error", (err: Error) => {
-      console.warn("Live trading socket connect_error:", err.message);
-      void query.refetch();
+    const subscribePositions = (positions: LiveTradingDashboard["positions"], connections: LiveTradingDashboard["connections"]) => {
+      for (const pos of positions) {
+        const provider =
+          pos.provider ??
+          connections.find((c) => c.id === pos.connectionId)?.provider ??
+          "OKX_FUTURES";
+        marketSocket.emit("subscribe", {
+          channel: "ticker",
+          provider,
+          symbol: pos.symbol,
+        });
+      }
+    };
+
+    marketSocket.on("connect", () => {
+      const initialPositions = queryDataRef.current?.positions ?? [];
+      const initialConnections = queryDataRef.current?.connections ?? [];
+      subscribePositions(initialPositions, initialConnections);
+    });
+
+    marketSocket.on("ticker", (ticker: { symbol: string; lastPrice?: string; markPrice?: string }) => {
+      const price = Number(ticker.lastPrice ?? ticker.markPrice ?? 0);
+      if (price > 0 && ticker.symbol) {
+        setLivePrices((prev) => ({ ...prev, [ticker.symbol]: price }));
+      }
     });
 
     return () => {
       socket.disconnect();
+      marketSocket.disconnect();
     };
-  }, [query]);
+  }, [query.isSuccess]);
 
   if (query.isLoading && !liveData)
     return <p className="text-muted-foreground">{t.ai.loadingStatus}…</p>;
@@ -142,14 +126,27 @@ export default function LiveTradingPage(): React.JSX.Element {
   const data = liveData ?? query.data;
   if (!data)
     return <p className="text-muted-foreground">{t.ai.configureConnection}</p>;
-  const totals = data.accounts.reduce(
-    (value, account) => ({
-      equity: value.equity + account.totalEquity,
-      available: value.available + account.availableBalance,
-      pnl: value.pnl + account.unrealizedPnl,
-    }),
-    { equity: 0, available: 0, pnl: 0 },
-  );
+
+  const totalPositionsPnl = data.positions.reduce((sum, pos) => {
+    const livePrice = livePrices[pos.symbol] ?? (pos.markPrice ? Number(pos.markPrice) : pos.entryPrice);
+    const upl =
+      pos.side === "LONG"
+        ? (livePrice - pos.entryPrice) * pos.quantity
+        : (pos.entryPrice - livePrice) * pos.quantity;
+    return sum + upl;
+  }, 0);
+
+  const initialAccountsUpl = data.accounts.reduce((sum, a) => sum + a.unrealizedPnl, 0);
+  const effectiveUpl = data.positions.length > 0 ? totalPositionsPnl : initialAccountsUpl;
+  const totalAvailable = data.accounts.reduce((sum, a) => sum + a.availableBalance, 0);
+  const totalEquity = data.accounts.reduce((sum, a) => sum + a.totalEquity, 0) + (effectiveUpl - initialAccountsUpl);
+
+  const totals = {
+    equity: totalEquity,
+    available: totalAvailable,
+    pnl: effectiveUpl,
+  };
+
   const openOrders = data.orders.filter((order) =>
     ["SUBMITTING", "NEW", "PARTIALLY_FILLED"].includes(order.status),
   );
@@ -214,36 +211,65 @@ export default function LiveTradingPage(): React.JSX.Element {
           "Size",
           "Entry / Mark",
           "Leverage",
-          "PnL",
+          "PnL (ROI %)",
           "Liquidation",
         ]}
         empty={t.ai.noPositions}
       >
-        {data.positions.map((position) => (
-          <tr key={position.id}>
-            <td className="p-3 font-semibold">{position.symbol}</td>
-            <td
-              className={`p-3 ${position.side === "LONG" ? "text-emerald-400" : "text-red-400"}`}
-            >
-              {position.side}
-            </td>
-            <td className="p-3 font-mono">{position.quantity}</td>
-            <td className="p-3 font-mono text-xs">
-              {position.entryPrice} / {position.markPrice ?? "—"}
-            </td>
-            <td className="p-3">
-              {position.leverage ? `${position.leverage}×` : "—"}
-            </td>
-            <td
-              className={`p-3 ${position.unrealizedPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}
-            >
-              {money.format(position.unrealizedPnl)}
-            </td>
-            <td className="p-3 font-mono text-xs">
-              {position.liquidationPrice ?? "—"}
-            </td>
-          </tr>
-        ))}
+        {data.positions.map((position) => {
+          const livePrice =
+            livePrices[position.symbol] ??
+            (position.markPrice ? Number(position.markPrice) : position.entryPrice);
+          const positionUpl =
+            position.side === "LONG"
+              ? (livePrice - position.entryPrice) * position.quantity
+              : (position.entryPrice - livePrice) * position.quantity;
+          const notional = Math.abs(position.entryPrice * position.quantity);
+          const leverage = position.leverage && position.leverage > 0 ? position.leverage : 1;
+          const margin = notional / leverage;
+          const roiPct = margin > 0 ? (positionUpl / margin) * 100 : 0;
+          return (
+            <tr key={position.id}>
+              <td className="p-3 font-semibold">{position.symbol}</td>
+              <td
+                className={`p-3 font-semibold ${position.side === "LONG" ? "text-emerald-400" : "text-red-400"}`}
+              >
+                {position.side}
+              </td>
+              <td className="p-3 font-mono">
+                <div>{position.quantity}</div>
+                {notional > 0 && (
+                  <div className="text-[11px] text-muted-foreground">
+                    ≈ {money.format(notional)}
+                  </div>
+                )}
+              </td>
+              <td className="p-3 font-mono text-xs">
+                {position.entryPrice} / {livePrice ? livePrice.toFixed(2) : "—"}
+              </td>
+              <td className="p-3">
+                {position.leverage ? `${position.leverage}×` : "—"}
+              </td>
+              <td
+                className={`p-3 font-mono font-semibold ${positionUpl >= 0 ? "text-emerald-400" : "text-red-400"}`}
+              >
+                <div>
+                  {positionUpl > 0 ? "+" : ""}
+                  {money.format(positionUpl)}
+                </div>
+                {margin > 0 && (
+                  <div className="text-xs font-normal opacity-85">
+                    ({positionUpl >= 0 ? "+" : ""}
+                    {roiPct.toFixed(2)}%)
+                  </div>
+                )}
+              </td>
+              <td className="p-3 font-mono text-xs">
+                {position.liquidationPrice ?? "—"}
+              </td>
+            </tr>
+          );
+        })}
       </Table>
       <Table
         title={t.ai.openOrdersTable}
@@ -317,7 +343,7 @@ function OrderRow({
   order,
   showPnl = false,
 }: {
-  order: Dashboard["orders"][number];
+  order: LiveTradingDashboard["orders"][number];
   showPnl?: boolean;
 }): React.JSX.Element {
   return (
@@ -357,7 +383,27 @@ function OrderRow({
               : `Gross: ${money.format(order.grossPnl ?? 0)} · Fee: ${money.format(order.fee ?? 0)}`
           }
         >
-          {order.netPnl === null ? "—" : money.format(order.netPnl)}
+          {order.netPnl === null ? (
+            "—"
+          ) : (
+            <div>
+              <div>
+                {order.netPnl > 0 ? "+" : ""}
+                {money.format(order.netPnl)}
+              </div>
+              {order.returnPct !== null && (
+                <div className="text-xs font-normal opacity-85">
+                  ({order.returnPct >= 0 ? "+" : ""}
+                  {order.returnPct.toFixed(2)}%)
+                </div>
+              )}
+              {order.fee !== null && order.fee > 0 && (
+                <div className="text-[10px] font-normal text-muted-foreground">
+                  Fee: {money.format(order.fee)}
+                </div>
+              )}
+            </div>
+          )}
         </td>
       )}
     </tr>

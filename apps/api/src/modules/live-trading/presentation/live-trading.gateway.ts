@@ -10,6 +10,7 @@ import { ModuleRef } from "@nestjs/core";
 import { Server, Socket } from "socket.io";
 import { resolveSocketIoPath } from "../../../common/utils/socket-io-path";
 import { SessionService } from "../../../session/session.service";
+import { PrismaService } from "../../../database/prisma.service";
 import { LiveTradingService } from "../application/live-trading.service";
 
 @WebSocketGateway({
@@ -29,6 +30,7 @@ export class LiveTradingGateway {
   constructor(
     private readonly moduleRef: ModuleRef,
     private readonly sessionService: SessionService,
+    private readonly prisma: PrismaService,
   ) {}
 
   handleConnection(client: Socket) {
@@ -126,6 +128,29 @@ export class LiveTradingGateway {
       }
       const snapshot = await service.dashboard(userId, payload.connectionId);
       client.emit("snapshot", snapshot);
+
+      // Trigger immediate background sync directly with exchange
+      const syncPromise = async () => {
+        let connId = payload.connectionId;
+        if (!connId) {
+          const verified = await this.prisma.exchangeConnection.findFirst({
+            where: { userId, isEnabled: true, isVerified: true },
+            select: { id: true },
+          });
+          connId = verified?.id;
+        }
+        if (connId) {
+          await service.sync(userId, connId, {});
+        }
+      };
+      void syncPromise().catch((err: unknown) => {
+        this.logger.warn({
+          event: "live_trading_initial_sync_failed",
+          userId,
+          connectionId: payload.connectionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error({

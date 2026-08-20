@@ -167,6 +167,8 @@ export function useLiveTradingDashboard() {
   return useQuery({
     queryKey: queryKeys.ai.liveTrading(),
     queryFn: getLiveTradingDashboard,
+    staleTime: 10_000,
+    refetchOnWindowFocus: false,
   });
 }
 

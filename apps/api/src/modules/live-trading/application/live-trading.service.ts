@@ -1145,6 +1145,16 @@ export class LiveTradingService {
     }
     const syncedAt = new Date();
     await this.prisma.$transaction(async (tx) => {
+      const activePositions = positions.filter((p) => Number(p.quantity) > 0);
+      const totalPositionUpl = activePositions.reduce(
+        (sum, p) => sum + Number(p.unrealizedPnl || 0),
+        0,
+      );
+      const effectiveUpl =
+        activePositions.length > 0
+          ? String(totalPositionUpl)
+          : account.totalUnrealizedPnl;
+
       await tx.liveAccountSnapshot.create({
         data: {
           userId,
@@ -1153,13 +1163,11 @@ export class LiveTradingService {
           environment: connection.environment,
           totalEquity: account.totalEquity,
           availableBalance: account.availableBalance,
-          unrealizedPnl: account.totalUnrealizedPnl,
+          unrealizedPnl: effectiveUpl,
           marginBalance: account.totalMarginBalance,
           syncedAt,
         },
       });
-
-      const activePositions = positions.filter((p) => Number(p.quantity) > 0);
       const activeKeysSet = new Set(
         activePositions.map((pos) => `${pos.symbol}:${pos.side}`),
       );
@@ -1358,7 +1366,10 @@ export class LiveTradingService {
           environment: connection.environment,
           totalEquity: Number(account.totalEquity),
           availableBalance: Number(account.availableBalance),
-          unrealizedPnl: Number(account.totalUnrealizedPnl),
+          unrealizedPnl:
+            positions.length > 0
+              ? positions.reduce((sum, p) => sum + Number(p.unrealizedPnl || 0), 0)
+              : Number(account.totalUnrealizedPnl || 0),
           marginBalance: Number(account.totalMarginBalance),
           syncedAt: syncedAt.toISOString(),
         },
@@ -1466,7 +1477,8 @@ export class LiveTradingService {
         in: connectionId ? [connectionId] : eligibleIds,
       },
     };
-    await Promise.allSettled(
+    // Trigger non-blocking background sync so dashboard returns DB snapshot instantly (< 10ms)
+    void Promise.allSettled(
       eligible.map((item) =>
         this.sync(userId, item.id, {}).catch((error: unknown) =>
           this.logger.warn({

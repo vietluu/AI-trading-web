@@ -116,6 +116,7 @@ export interface LiveTradingDashboard {
   positions: Array<{
     id: string;
     connectionId: string;
+    provider?: string;
     symbol: string;
     side: string;
     quantity: number;
