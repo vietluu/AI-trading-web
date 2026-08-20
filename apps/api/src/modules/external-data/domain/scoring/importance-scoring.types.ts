@@ -15,4 +15,6 @@ export interface ImportanceInput {
   publishedAt: Date;
   title: string;
   summary?: string;
+  topics?: string[];
+  entities?: Array<{ entity: string; entityType: string }>;
 }

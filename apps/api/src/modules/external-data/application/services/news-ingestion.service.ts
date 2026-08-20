@@ -108,6 +108,8 @@ export class NewsIngestionService {
           sourceReliabilityScore: reliabilityScore,
           isOfficialSource,
           category: rawItem.categories?.[0],
+          topics,
+          entities,
           relatedSymbolsCount: symbols.length,
           duplicateCount: 1,
           publishedAt: rawItem.publishedAt,
@@ -181,7 +183,7 @@ export class NewsIngestionService {
     };
   }
 
-  private async addSourceReferenceToArticle(articleId: string, sourceId: string, item: RawNewsItem) {
+  private async addSourceReferenceToArticle(articleId: string, sourceId: string, item: RawNewsItem): Promise<boolean> {
     const existingRef = await this.prisma.newsSourceReference.findFirst({
       where: { articleId, sourceId },
     });
@@ -196,7 +198,9 @@ export class NewsIngestionService {
           canonicalUrl,
         },
       });
+      return true;
     }
+    return false;
   }
 
   private async handleNearDuplicate(
@@ -223,6 +227,19 @@ export class NewsIngestionService {
     }
 
     // Add source reference to primary article
-    await this.addSourceReferenceToArticle(primaryArticleId, sourceId, item);
+    const added = await this.addSourceReferenceToArticle(primaryArticleId, sourceId, item);
+    if (added) {
+      const sourceCount = await this.prisma.newsSourceReference.count({
+        where: { articleId: primaryArticleId },
+      });
+      // The initial score used duplicateCount=1. Add five points for each of
+      // the next three independent sources without compounding beyond +15.
+      if (sourceCount >= 2 && sourceCount <= 4) {
+        await this.prisma.newsArticle.update({
+          where: { id: primaryArticleId },
+          data: { importanceScore: { increment: 5 } },
+        });
+      }
+    }
   }
 }

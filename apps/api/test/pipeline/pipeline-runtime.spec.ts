@@ -107,7 +107,12 @@ describe('Phase 6.6 pipeline runtime policies', () => {
       getIndicatorSnapshot: vi.fn().mockResolvedValue({ candleCloseTime: freshCloseTime, values: { rsi14: 55, atr14: 0.8, volumeChangePercent: 3, ema20: 100, ema50: 99, ema200: 95 } }),
       getHistoricalCandles: vi.fn().mockResolvedValue([{ close: '100', closeTime: freshCloseTime }]),
     };
-    const alerts = { contextual: vi.fn().mockResolvedValue(undefined), decision: vi.fn().mockResolvedValue(undefined), repeatedFailure: vi.fn().mockResolvedValue(undefined) };
+    const alerts = {
+      contextual: vi.fn().mockResolvedValue(undefined),
+      decision: vi.fn().mockResolvedValue(undefined),
+      repeatedFailure: vi.fn().mockResolvedValue(undefined),
+      blockedOpportunity: vi.fn().mockResolvedValue(undefined),
+    };
     const analytics = { recordStageTelemetry: vi.fn() };
     const liveTrading = {
       assessPipelineDecision: vi.fn().mockResolvedValue({ outcome: 'RISK_APPROVED', risk: { approved: true, reason: 'ok', riskScore: 20 } }),

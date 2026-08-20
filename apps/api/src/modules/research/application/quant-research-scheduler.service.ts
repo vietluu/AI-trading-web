@@ -3,15 +3,40 @@ import { PrismaService } from '../../../database/prisma.service';
 import { DistributedTaskLockService } from '../../../redis/distributed-task-lock.service';
 import { QuantIntelligenceService } from './quant-intelligence.service';
 import { ResearchService } from './research.service';
-import { ExchangeProvider } from '../../../exchange/domain/exchange.types';
+import { ExchangeInterval, ExchangeProvider } from '../../../exchange/domain/exchange.types';
 
 const REFRESH_INTERVAL_MS = 5 * 60_000;
+const KNOWN_STRATEGIES = ['ai-core', 'trend', 'mean-reversion', 'breakout', 'momentum-scalp'] as const;
+type ValidationCandidate = { strategyKey: string; symbol: string; interval: ExchangeInterval; provider: ExchangeProvider; previous?: Date };
+
+function rotatingHash(value: string, bucket: number): number {
+  let hash = bucket | 0;
+  for (let index = 0; index < value.length; index += 1) hash = Math.imul(hash ^ value.charCodeAt(index), 16777619);
+  return hash >>> 0;
+}
+
+export function scheduledStrategyKeys(schedules: Array<{ strategyIds: string[] }>): string[] {
+  const requested = new Set(schedules.flatMap((item) => item.strategyIds));
+  requested.add('ai-core');
+  if (requested.has('breakout')) requested.add('momentum-scalp');
+  return KNOWN_STRATEGIES.filter((key) => requested.has(key));
+}
+
+export function prioritizeValidationCandidates(candidates: ValidationCandidate[], now = new Date()): ValidationCandidate[] {
+  const bucket = Math.floor(now.getTime() / REFRESH_INTERVAL_MS);
+  return [...candidates].sort((left, right) => {
+    const ageOrder = (left.previous?.getTime() ?? 0) - (right.previous?.getTime() ?? 0);
+    if (ageOrder !== 0) return ageOrder;
+    const leftKey = `${left.strategyKey}:${left.symbol}:${left.interval}:${left.provider}`;
+    const rightKey = `${right.strategyKey}:${right.symbol}:${right.interval}:${right.provider}`;
+    return rotatingHash(leftKey, bucket) - rotatingHash(rightKey, bucket);
+  });
+}
 
 @Injectable()
 export class QuantResearchSchedulerService implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(QuantResearchSchedulerService.name);
   private timer?: NodeJS.Timeout;
-  private validationCursor = 0;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -56,21 +81,26 @@ export class QuantResearchSchedulerService implements OnApplicationBootstrap, On
     let symbols = 0;
     let unavailable = 0;
     let validations = 0;
-    let validationAttempts = 0;
     const validationCutoff = new Date(Date.now() - 24 * 60 * 60_000);
-    const maxValidationsPerSweep = 8;
+    const maxValidationsPerUser = 8;
+    const maxAttemptsPerUser = 24;
     for (const userId of userIds) {
       try {
         const result = await this.quant.generateSelectedHypotheses(userId);
         symbols += result.symbols.length;
         unavailable += result.hypotheses.filter((item) => item.status === 'DATA_UNAVAILABLE').length;
-        if (validationAttempts >= maxValidationsPerSweep) continue;
         const scope = await this.quant.getSelectedResearchScope(userId);
         if (!scope.symbols.length || !scope.timeframes.length) continue;
-        const connections = await this.prisma.exchangeConnection.findMany({
-          where: { userId, isEnabled: true, isVerified: true },
-          orderBy: { createdAt: 'asc' },
-        });
+        const [connections, schedules] = await Promise.all([
+          this.prisma.exchangeConnection.findMany({
+            where: { userId, isEnabled: true, isVerified: true },
+            orderBy: { createdAt: 'asc' },
+          }),
+          this.prisma.pipelineSchedule.findMany({
+            where: { userId, enabled: true },
+            select: { strategyIds: true },
+          }),
+        ]);
         if (!connections.length) continue;
         const latestRows = await this.prisma.researchValidationRun.findMany({
           where: { userId, symbol: { in: scope.symbols }, interval: { in: scope.timeframes } },
@@ -78,25 +108,33 @@ export class QuantResearchSchedulerService implements OnApplicationBootstrap, On
         });
         const latestByPair = new Map<string, Date>();
         for (const row of latestRows) {
-          const key = `${row.strategyKey}:${row.symbol}:${row.interval}`;
+          const key = `${row.strategyKey}:${row.symbol}:${row.interval}:${row.provider}`;
           if (!latestByPair.has(key)) latestByPair.set(key, row.createdAt);
         }
-        const strategyKeys = ['ai-core', 'trend', 'mean-reversion', 'breakout', 'momentum-scalp'];
-        const candidates = strategyKeys.flatMap((strategyKey) =>
-          scope.symbols.flatMap((symbol) => scope.timeframes.map((interval) => ({ strategyKey, symbol, interval }))));
-        const start = candidates.length ? this.validationCursor % candidates.length : 0;
-        this.validationCursor += maxValidationsPerSweep;
-        const rotated = [...candidates.slice(start), ...candidates.slice(0, start)];
-        for (const { strategyKey, symbol, interval } of rotated) {
-          if (validationAttempts >= maxValidationsPerSweep) break;
-          const previous = latestByPair.get(`${strategyKey}:${symbol}:${interval}`);
+        const strategyKeys = scheduledStrategyKeys(schedules);
+        const candidates = prioritizeValidationCandidates(strategyKeys.flatMap((strategyKey) =>
+          scope.symbols.flatMap((symbol) => scope.timeframes.map((interval) => {
+            const typedInterval = interval;
+            const recentProvider = scope.recentRuns.find((run) => run.symbol === symbol)?.provider;
+            const connection = connections.find((item) => item.provider === recentProvider) ?? connections[0]!;
+            const provider = connection.provider === 'BINANCE_FUTURES'
+              ? ExchangeProvider.BINANCE_FUTURES
+              : ExchangeProvider.OKX_FUTURES;
+            return {
+              strategyKey,
+              symbol,
+              interval: typedInterval,
+              provider,
+              previous: latestByPair.get(`${strategyKey}:${symbol}:${typedInterval}:${provider}`),
+            };
+          }))));
+        const staleOrMissing = candidates.filter((candidate) => !candidate.previous || candidate.previous < validationCutoff);
+        let userAttempts = 0;
+        let userValidations = 0;
+        for (const { strategyKey, symbol, interval, provider, previous } of staleOrMissing) {
+          if (userValidations >= maxValidationsPerUser || userAttempts >= maxAttemptsPerUser) break;
           if (previous && previous >= validationCutoff) continue;
-          const recentProvider = scope.recentRuns.find((run) => run.symbol === symbol)?.provider;
-          const connection = connections.find((item) => item.provider === recentProvider) ?? connections[0]!;
-          const provider = connection.provider === 'BINANCE_FUTURES'
-            ? ExchangeProvider.BINANCE_FUTURES
-            : ExchangeProvider.OKX_FUTURES;
-          validationAttempts += 1;
+          userAttempts += 1;
           try {
             await this.quant.getRegimeIntelligence(symbol, provider, interval);
             await this.quant.getDiscoveredStrategies(userId, symbol, provider, interval, 500);
@@ -110,15 +148,23 @@ export class QuantResearchSchedulerService implements OnApplicationBootstrap, On
               strategyKey,
             });
             validations += 1;
+            userValidations += 1;
           } catch (error) {
             unavailable += 1;
             this.logger.warn({ event: 'quant_research_pair_refresh_failed', userId, symbol, interval, strategyKey, error: error instanceof Error ? error.message : String(error) });
           }
         }
+        this.logger.log({
+          event: 'quant_research_coverage', userId, pairs: candidates.length,
+          fresh: candidates.length - staleOrMissing.length,
+          stale: staleOrMissing.filter((item) => item.previous).length,
+          missing: staleOrMissing.filter((item) => !item.previous).length,
+          attempts: userAttempts, validations: userValidations,
+        });
       } catch (error) {
         this.logger.warn({ event: 'quant_research_user_refresh_failed', userId, error: error instanceof Error ? error.message : String(error) });
       }
     }
-    this.logger.log({ event: 'quant_research_refresh_completed', users: userIds.length, symbols, validationAttempts, validations, unavailable });
+    this.logger.log({ event: 'quant_research_refresh_completed', users: userIds.length, symbols, validations, unavailable });
   }
 }

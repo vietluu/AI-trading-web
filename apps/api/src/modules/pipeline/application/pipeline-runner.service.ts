@@ -380,6 +380,8 @@ export class PipelineRunnerService {
             decision: output,
             multiTimeframeConfirmation: multiTimeframeFilter.confirmation,
             primaryRsi,
+            marketEventImpact: analyses.news.impact.level,
+            marketEventDirection: analyses.news.impact.direction,
           }).catch((error: unknown) => {
             this.logger.error({
               event: "quant_execution_policy_failed",
@@ -598,6 +600,23 @@ export class PipelineRunnerService {
         },
       });
       await this.alerts.contextual(runId, symbol, analyses);
+      if (!actionable) {
+        await this.alerts.blockedOpportunity({
+          runId,
+          userId: job.userId,
+          symbol,
+          decision: candidateDecision.decision,
+          confidence: candidateDecision.confidence,
+          blockedReasons: candidateDecision.blockedReasons,
+          analyses,
+          multiTimeframeConfirmation: multiTimeframeFilter.confirmation,
+        }).catch((error: unknown) => this.logger.warn({
+          event: 'pipeline_blocked_opportunity_alert_failed',
+          runId,
+          symbol,
+          message: error instanceof Error ? error.message : String(error),
+        }));
+      }
       if (actionable && riskApproved)
         await this.alerts.decision(runId, symbol, output);
     } catch (error) {

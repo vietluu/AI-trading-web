@@ -73,11 +73,33 @@ describe("NewsToolDataService", () => {
       }),
     );
     expect(JSON.stringify(result)).not.toContain("Synthetic test article");
-    expect(prisma.newsArticle.findMany).toHaveBeenCalledOnce();
+    expect(prisma.newsArticle.findMany).toHaveBeenCalledTimes(2);
     expect(ingestion.refreshNewsIfStale).toHaveBeenCalledOnce();
     expect(JSON.stringify(prisma.newsArticle.findMany.mock.calls)).toContain(
       '"symbols":{"some":{"symbol":{"in":["BTC","BTC-USDT"]}}}',
     );
+  });
+
+  it("includes systemic BTC/market-wide policy context alongside direct altcoin news", async () => {
+    const prisma = createPrismaMock();
+    prisma.newsArticle.findMany
+      .mockResolvedValueOnce([{
+        id: "alt-news", sourceId: "coindesk-rss", title: "ZRO ecosystem update", summary: null, excerpt: null,
+        canonicalUrl: "https://www.coindesk.com/markets/zro", publishedAt: new Date(), importanceScore: 50,
+        reliabilityScore: 85, symbols: [{ symbol: "ZRO-USDT" }], topics: [], sourceReferences: [],
+      }])
+      .mockResolvedValueOnce([{
+        id: "policy-news", sourceId: "coindesk-rss", title: "White House urges Congress to pass crypto legislation",
+        summary: null, excerpt: null, canonicalUrl: "https://www.coindesk.com/policy/crypto", publishedAt: new Date(),
+        importanceScore: 40, reliabilityScore: 85, symbols: [{ symbol: "BTC-USDT" }],
+        topics: [{ topic: "regulation" }], sourceReferences: [{ id: "r1" }, { id: "r2" }],
+      }]);
+    const service = new NewsToolDataService(prisma as unknown as PrismaService);
+
+    const result = await service.list({ symbol: "ZRO-USDT", lookbackHours: 6, limit: 20, minimumImportance: 70 });
+
+    expect(result.map((item) => item.id)).toEqual(expect.arrayContaining(["alt-news", "policy-news"]));
+    expect(result.find((item) => item.id === "policy-news")).toMatchObject({ relevance: "MARKET_WIDE_CONTEXT", importance: 70 });
   });
 
   it("normalizes arbitrary quote pairs to base and canonical symbol variants", async () => {

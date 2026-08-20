@@ -64,7 +64,7 @@ export class NewsToolDataService {
         : {}),
     };
 
-    const [articles, announcements] = await Promise.all([
+    const [articles, announcements, marketWideArticles] = await Promise.all([
       this.prisma.newsArticle.findMany({
         where,
         orderBy: [{ importanceScore: "desc" }, { publishedAt: "desc" }],
@@ -81,6 +81,23 @@ export class NewsToolDataService {
         orderBy: [{ importanceScore: "desc" }, { publishedAt: "desc" }],
         take: Math.min(limit * 3, 150),
       }),
+      symbol
+        ? this.prisma.newsArticle.findMany({
+            where: {
+              status: "ACTIVE",
+              publishedAt: { gte: publishedAfter },
+              // Read enough recent candidates to re-evaluate articles stored
+              // by older scoring versions; filtering uses effective importance below.
+              importanceScore: { gte: 35 },
+              ...(sourceFilters.length
+                ? { AND: [{ OR: sourceFilters }] }
+                : { id: "__no_trusted_sources__" }),
+            },
+            orderBy: [{ importanceScore: "desc" }, { publishedAt: "desc" }],
+            take: limit,
+            include: { symbols: true, topics: true, sourceReferences: true },
+          })
+        : Promise.resolve([]),
     ]);
 
     const normalizedArticles = articles
@@ -135,33 +152,34 @@ export class NewsToolDataService {
         duplicateCount: 1,
       }));
 
-    let combined = [...normalizedArticles, ...normalizedAnnouncements];
-
-    // Asset-specific silence must not hide systemic crypto risk. When no
-    // direct match exists, provide a market-wide high-importance fallback
-    // (Fed/regulation/exchange incidents/BTC-wide moves) as partial context.
-    if (combined.length === 0 && symbol) {
-      const marketWide = await this.prisma.newsArticle.findMany({
-        where: {
-          status: "ACTIVE",
-          publishedAt: { gte: publishedAfter },
-          importanceScore: { gte: Math.max(70, input.minimumImportance ?? 0) },
-          ...(sourceFilters.length
-            ? { OR: sourceFilters }
-            : { id: "__no_trusted_sources__" }),
-        },
-        orderBy: [{ importanceScore: "desc" }, { publishedAt: "desc" }],
-        take: limit,
-        include: { symbols: true, topics: true, sourceReferences: true },
-      });
-      combined = marketWide
+    // Systemic crypto events must accompany symbol-specific news instead of
+    // appearing only as a fallback when the symbol has no direct coverage.
+    const systemicTopics = new Set([
+      "regulation", "macro", "institutional_adoption", "governance", "derivatives", "stablecoin",
+    ]);
+    const normalizedMarketWide = marketWideArticles
+        .filter((article) => {
+          const text = `${article.title} ${article.summary ?? article.excerpt ?? ""}`;
+          const systemic = article.topics.some((item) => systemicTopics.has(item.topic.toLowerCase())) ||
+            /white house|congress|senate|treasury|cftc|sec\b|fomc|interest rate|systemic|market-wide/i.test(text);
+          const symbols = article.symbols.map((item) => item.symbol.toUpperCase());
+          return systemic && (symbols.length === 0 || symbols.some((item) => item === "BTC" || item === "BTC-USDT"));
+        })
         .filter((article) => {
           const source = trustedById.get(article.sourceId);
           return source
             ? this.matchesDomain(article.canonicalUrl, source.baseDomain)
             : false;
         })
-        .map((article) => ({
+        .map((article) => {
+          const text = `${article.title} ${article.summary ?? article.excerpt ?? ""}`;
+          const systemicPolicy = /crypto|bitcoin|digital asset|clarity act|stablecoin|cftc|sec\b/i.test(text) &&
+            /president|white house|congress|senate|treasury|cftc|sec\b|regulat/i.test(text);
+          const effectiveImportance = Math.min(100, Math.max(
+            article.importanceScore,
+            systemicPolicy ? 70 : article.importanceScore,
+          ));
+          return {
           id: article.id,
           kind: "MARKET_WIDE_NEWS",
           title: article.title,
@@ -170,14 +188,21 @@ export class NewsToolDataService {
           source: trustedById.get(article.sourceId)!.displayName,
           sourceId: article.sourceId,
           publishedAt: article.publishedAt.toISOString(),
-          importance: article.importanceScore,
+          importance: effectiveImportance,
           reliability: article.reliabilityScore,
           symbols: article.symbols.map((item) => item.symbol),
           topics: article.topics.map((item) => item.topic),
           duplicateCount: article.sourceReferences.length,
           relevance: "MARKET_WIDE_CONTEXT",
-        }));
-    }
+          };
+        })
+        .filter((article) => article.importance >= (input.minimumImportance ?? 0));
+    const combined = [
+      ...new Map(
+        [...normalizedArticles, ...normalizedMarketWide, ...normalizedAnnouncements]
+          .map((item) => [item.id, item]),
+      ).values(),
+    ];
 
     return combined
       .sort((left, right) => {

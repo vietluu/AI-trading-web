@@ -44,4 +44,20 @@ describe('DeterministicImportanceScorer', () => {
 
     expect(oldResult.score).toBeLessThan(freshResult.score);
   });
+
+  it('promotes systemic crypto policy from extracted topics when RSS categories are absent', () => {
+    const result = scorer.calculateScore({
+      sourceReliabilityScore: 70,
+      isOfficialSource: false,
+      relatedSymbolsCount: 0,
+      duplicateCount: 1,
+      publishedAt: new Date(),
+      title: 'President urges Senate to pass crypto market legislation',
+      topics: ['regulation'],
+      entities: [{ entity: 'White House', entityType: 'ORGANIZATION' }],
+    });
+
+    expect(result.score).toBeGreaterThanOrEqual(65);
+    expect(result.reasons).toContain('Systemic crypto-policy event: +15 pts');
+  });
 });

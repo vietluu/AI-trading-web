@@ -47,6 +47,8 @@ export class QuantExecutionPolicyService {
     >;
     multiTimeframeConfirmation?: number;
     primaryRsi?: number;
+    marketEventImpact?: "LOW" | "MEDIUM" | "HIGH";
+    marketEventDirection?: "POSITIVE" | "NEGATIVE" | "NEUTRAL";
     now?: Date;
   }): Promise<QuantExecutionPolicyResult> {
     if (input.decision.decision === "WAIT") {
@@ -159,21 +161,24 @@ export class QuantExecutionPolicyService {
       >;
       multiTimeframeConfirmation?: number;
       primaryRsi?: number;
+      marketEventImpact?: "LOW" | "MEDIUM" | "HIGH";
+      marketEventDirection?: "POSITIVE" | "NEGATIVE" | "NEUTRAL";
     },
   ): QuantExecutionPolicyResult {
-    if (this.canUseBoundedCanary(input)) {
+    const sizeFactor = this.boundedCanarySizeFactor(input);
+    if (sizeFactor !== undefined) {
       return {
         allowed: true,
         evaluated: false,
         advisory: true,
         reason,
-        sizeFactor: 0.25,
+        sizeFactor,
       };
     }
     return { allowed: false, evaluated: false, reason };
   }
 
-  private canUseBoundedCanary(input: {
+  private boundedCanarySizeFactor(input: {
     decision: Pick<DecisionOutput,
       "decision" | "regime" | "confidence" | "opportunityScore" |
       "expectedValue" | "riskScore" | "volatilityAdjustment" |
@@ -181,10 +186,15 @@ export class QuantExecutionPolicyService {
     >;
     multiTimeframeConfirmation?: number;
     primaryRsi?: number;
-  }): boolean {
+    marketEventImpact?: "LOW" | "MEDIUM" | "HIGH";
+    marketEventDirection?: "POSITIVE" | "NEGATIVE" | "NEUTRAL";
+  }): number | undefined {
     const { decision } = input;
-    return decision.decision !== "WAIT" &&
-      decision.confidence >= 75 &&
+    const eventAligned = input.marketEventImpact === "HIGH" &&
+      ((decision.decision === "LONG" && input.marketEventDirection === "POSITIVE") ||
+        (decision.decision === "SHORT" && input.marketEventDirection === "NEGATIVE"));
+    const eligible = decision.decision !== "WAIT" &&
+      decision.confidence >= (eventAligned ? 72 : 75) &&
       decision.opportunityScore >= 68 &&
       decision.expectedValue > 0.2 &&
       decision.riskScore < 80 &&
@@ -194,6 +204,9 @@ export class QuantExecutionPolicyService {
       decision.conflictLevel !== "HIGH" &&
       (input.multiTimeframeConfirmation ?? 0) >= 80 &&
       (input.primaryRsi === undefined || input.primaryRsi < 80);
+    if (!eligible) return undefined;
+    // News-driven entries use less risk than the generic cold-start canary.
+    return eventAligned ? 0.15 : 0.25;
   }
 
   private hasFreshRegimeConflict(

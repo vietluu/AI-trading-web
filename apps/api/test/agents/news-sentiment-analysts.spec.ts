@@ -172,6 +172,22 @@ describe("News and Sentiment Analyst Agents", () => {
     expect(output?.dataQuality).toBe("PARTIAL");
   });
 
+  it("raises a corroborated systemic policy cluster to high impact", () => {
+    const articles = [
+      ["n1", "Trump pushes Congress to pass CLARITY Act", 70],
+      ["n2", "White House crypto event urges Senate action", 70],
+      ["n3", "Trump teases more Bitcoin buys after crypto meeting", 70],
+      ["n4", "CFTC crypto access discussed at Trump White House event", 70],
+    ].map(([id, title, importance]) => ({ id, title, importance, topics: ["regulation"] }));
+    const output = NEWS_ANALYST_DEFINITION.buildDeterministicOutput?.(
+      { "news.articles.list": { articles } },
+      ["news.articles.list"],
+    );
+
+    expect(output?.impact.level).toBe("HIGH");
+    expect(output?.impact.direction).toBe("POSITIVE");
+  });
+
   it("uses current Fear and Greed as partial context when social coverage is empty", () => {
     const output = SENTIMENT_ANALYST_DEFINITION.buildDeterministicOutput?.(
       {

@@ -45,9 +45,22 @@ function deterministicNews(
     ).values(),
   ];
   const positive =
-    /surge|rally|approval|adoption|upgrade|inflow|launch|partnership|record/i;
+    /surge|rally|approval|adoption|upgrade|inflow|launch|partnership|record|teases? more (?:bitcoin|crypto) buys?|working to bring|push(?:es)? (?:congress|senate).*pass|urges? (?:congress|senate).*pass/i;
   const negative =
     /hack|exploit|lawsuit|ban|outflow|liquidation|delist|crash|breach/i;
+  const eventKey = (item: Record<string, unknown>): string | undefined => {
+    const text = `${safeText(item.title)} ${safeText(item.summary)}`;
+    if (/trump|white house/i.test(text) && /crypto|bitcoin|clarity act|cftc/i.test(text)) return "US_CRYPTO_POLICY";
+    if (/\betf\b/i.test(text)) return "ETF";
+    if (/\bfed\b|fomc|interest rate/i.test(text)) return "MONETARY_POLICY";
+    if (/hack|exploit|security breach/i.test(text)) return "SECURITY_INCIDENT";
+    return undefined;
+  };
+  const clusterCounts = new Map<string, number>();
+  for (const item of unique) {
+    const key = eventKey(item);
+    if (key) clusterCounts.set(key, (clusterCounts.get(key) ?? 0) + 1);
+  }
   const scored = unique
     .map((item) => {
       const text = `${safeText(item.title)} ${safeText(item.summary)}`;
@@ -56,7 +69,15 @@ function deterministicNews(
         : positive.test(text)
           ? ("POSITIVE" as const)
           : ("NEUTRAL" as const);
-      return { item, direction, importance: Number(item.importance ?? 0) };
+      const key = eventKey(item);
+      const corroborationBonus = key
+        ? Math.min(Math.max((clusterCounts.get(key) ?? 1) - 1, 0) * 5, 20)
+        : 0;
+      return {
+        item,
+        direction,
+        importance: Math.min(100, Number(item.importance ?? 0) + corroborationBonus),
+      };
     })
     .sort((a, b) => b.importance - a.importance);
   if (scored.length === 0) {

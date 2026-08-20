@@ -97,6 +97,37 @@ describe("QuantExecutionPolicyService", () => {
     expect(overbought).toMatchObject({ allowed: false, reason: "QUANT_VALIDATION_MISSING" });
   });
 
+  it("allows a smaller event canary for a corroborated high-impact event at 72 confidence", async () => {
+    const result = await service(null).policy.evaluate({
+      ...input,
+      decision: strongDecision({ confidence: 72 }) as never,
+      multiTimeframeConfirmation: 100,
+      primaryRsi: 70,
+      marketEventImpact: "HIGH",
+      marketEventDirection: "POSITIVE",
+    });
+
+    expect(result).toMatchObject({
+      allowed: true,
+      advisory: true,
+      reason: "QUANT_VALIDATION_MISSING",
+      sizeFactor: 0.15,
+    });
+  });
+
+  it("does not use an event canary when news direction opposes the trade", async () => {
+    const result = await service(null).policy.evaluate({
+      ...input,
+      decision: strongDecision({ confidence: 72 }) as never,
+      multiTimeframeConfirmation: 100,
+      primaryRsi: 70,
+      marketEventImpact: "HIGH",
+      marketEventDirection: "NEGATIVE",
+    });
+
+    expect(result).toMatchObject({ allowed: false, reason: "QUANT_VALIDATION_MISSING" });
+  });
+
   it("keeps a fresh bearish quant regime as a hard block when validation is missing", async () => {
     const result = await service(null, {
       regime: "BEAR",

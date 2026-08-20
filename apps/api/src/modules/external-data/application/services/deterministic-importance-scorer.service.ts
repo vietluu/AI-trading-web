@@ -24,21 +24,35 @@ export class DeterministicImportanceScorer {
     }
 
     // 3. Category Impact (+10 to +30 pts)
-    if (input.category) {
-      const cat = input.category.toUpperCase();
+    const inferredCategory = input.category ?? input.topics?.find((topic) =>
+      ['REGULATION', 'ETF', 'MACRO', 'CPI', 'FOMC', 'INTEREST_RATE_DECISION', 'SECURITY'].includes(topic.toUpperCase()),
+    );
+    if (inferredCategory) {
+      const cat = inferredCategory.toUpperCase();
       if (['LISTING', 'DELISTING', 'FUTURES_LAUNCH', 'SECURITY', 'SECURITY_NOTICE'].includes(cat)) {
         score += 30;
-        reasons.push(`High impact category (${input.category}): +30 pts`);
+        reasons.push(`High impact category (${inferredCategory}): +30 pts`);
       } else if (['REGULATION', 'ETF', 'MARGIN_RULES', 'TRADING_SUSPENSION'].includes(cat)) {
         score += 25;
-        reasons.push(`Medium-high impact category (${input.category}): +25 pts`);
+        reasons.push(`Medium-high impact category (${inferredCategory}): +25 pts`);
       } else if (['MACRO', 'CPI', 'FOMC', 'INTEREST_RATE_DECISION'].includes(cat)) {
         score += 20;
-        reasons.push(`Macro category (${input.category}): +20 pts`);
+        reasons.push(`Macro category (${inferredCategory}): +20 pts`);
       } else {
         score += 10;
-        reasons.push(`General news category (${input.category}): +10 pts`);
+        reasons.push(`General news category (${inferredCategory}): +10 pts`);
       }
+    }
+
+    // Systemic crypto-policy events affect the whole market even when an RSS
+    // item is not tagged with every tradable symbol.
+    const eventText = `${input.title} ${input.summary ?? ''} ${(input.topics ?? []).join(' ')} ${(input.entities ?? []).map((item) => item.entity).join(' ')}`;
+    if (
+      /crypto|bitcoin|digital asset|clarity act|stablecoin|cftc|sec\b/i.test(eventText) &&
+      /president|white house|congress|senate|treasury|cftc|sec\b|regulat/i.test(eventText)
+    ) {
+      score += 15;
+      reasons.push('Systemic crypto-policy event: +15 pts');
     }
 
     // 4. Incident Severity (+5 to +40 pts)
