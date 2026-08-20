@@ -77,14 +77,14 @@ describe("OKX private WebSocket cache", () => {
     service.onModuleDestroy();
   });
 
-  it("normalizes empty account balances to zero before exposing them as account snapshots", async () => {
+  it("extracts available balance from cashBal or availEq when availBal is empty", async () => {
     const service = new OkxPrivateStreamService(
       { sign: vi.fn().mockReturnValue("signature") },
       { instruments: vi.fn().mockResolvedValue([]) } as unknown as PublicExchangeService,
       { get: vi.fn().mockReturnValue(undefined) } as unknown as ConfigService,
     );
     const state = {
-      connectionId: "connection-empty-balance",
+      connectionId: "connection-multi-currency",
       credentials: {
         apiKey: "key",
         apiSecret: "secret",
@@ -106,21 +106,22 @@ describe("OKX private WebSocket cache", () => {
       target: unknown,
       data: Array<Record<string, unknown>>,
     ) => void;
-    states.set("connection-empty-balance", state);
+    states.set("connection-multi-currency", state);
     updateAccount.call(service, state, [{
-      totalEq: "85125.1901335633",
-      availEq: "",
+      totalEq: "85125.19",
+      availEq: "75000",
       upl: "12.5",
       uTime: "1787191200000",
-      details: [{ ccy: "USDT", cashBal: "90000", availBal: "", upl: "12.5" }],
+      details: [{ ccy: "USDT", cashBal: "90000", availBal: "", availEq: "75000", upl: "12.5" }],
     }]);
 
     await expect(
-      service.account("connection-empty-balance", state.credentials, vi.fn()),
+      service.account("connection-multi-currency", state.credentials, vi.fn()),
     ).resolves.toMatchObject({
-      totalEquity: "85125.1901335633",
-      availableBalance: "0",
+      totalEquity: "85125.19",
+      availableBalance: "75000",
       totalUnrealizedPnl: "12.5",
+      canTrade: true,
     });
   });
 

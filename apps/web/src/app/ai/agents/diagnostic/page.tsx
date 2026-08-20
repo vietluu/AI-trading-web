@@ -3,15 +3,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSystemDiagnostic, type DiagnosticRunResult } from "@/hooks/ai/useAiFeature";
 import { useConfiguredTradingScope } from '@/hooks/useConfiguredTradingScope';
+import { useExchangeSymbols } from "@/hooks/useExchangeSymbols";
 
 export default function SystemDiagnosticPage() {
   const scope = useConfiguredTradingScope();
-  const symbols = useMemo(() => scope.data?.symbols ?? [], [scope.data?.symbols]);
+  const exchangeSymbols = useExchangeSymbols();
+  const availableSymbols = useMemo(() => {
+    const configured = scope.data?.symbols ?? [];
+    return Array.from(new Set([...configured, ...exchangeSymbols.symbols]));
+  }, [scope.data?.symbols, exchangeSymbols.symbols]);
   const [symbol, setSymbol] = useState("");
   const [provider, setProvider] = useState("OPENAI");
   useEffect(() => {
-    if (!symbol && symbols[0]) setSymbol(symbols[0]);
-  }, [symbol, symbols]);
+    if ((!symbol || !availableSymbols.includes(symbol)) && availableSymbols[0]) {
+      setSymbol(availableSymbols[0]);
+    }
+  }, [availableSymbols, symbol]);
 
   const runMutation = useSystemDiagnostic(symbol, provider);
   const runData: DiagnosticRunResult | undefined = runMutation.data;
@@ -38,7 +45,7 @@ export default function SystemDiagnosticPage() {
             className="w-full bg-background border rounded px-3 py-2 text-sm font-mono"
           >
             {!symbol && <option value="">No symbol selected</option>}
-            {symbols.map((value) => <option key={value} value={value}>{value}</option>)}
+            {availableSymbols.map((value) => <option key={value} value={value}>{value}</option>)}
           </select>
         </div>
 

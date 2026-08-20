@@ -6,6 +6,7 @@ import { useDecisionRunner } from "@/hooks/ai/useAiFeature";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 
 import { useConfiguredTradingScope } from "@/hooks/useConfiguredTradingScope";
+import { useExchangeSymbols } from "@/hooks/useExchangeSymbols";
 
 const fieldClassName =
   "w-full rounded-md border border-border bg-background px-3 py-2 text-sm";
@@ -13,16 +14,29 @@ const fieldClassName =
 export default function DecisionPage(): React.JSX.Element {
   const { t } = useTranslation();
   const scope = useConfiguredTradingScope();
-  const symbols = useMemo(() => scope.data?.symbols ?? [], [scope.data?.symbols]);
-  const [symbol, setSymbol] = useState<string>("");
+  const exchangeSymbols = useExchangeSymbols();
   const [provider, setProvider] =
     useState<FusionRunInput["provider"]>("OKX_FUTURES");
+  const availableSymbols = useMemo(() => {
+    const configured = scope.data?.symbols ?? [];
+    const fromExchange = exchangeSymbols.symbols.filter((s) => {
+      const info = exchangeSymbols.symbolObjects.find((item) => item.symbol === s);
+      if (!info) return true;
+      if (provider === "OKX_FUTURES") return info.okxSupported;
+      if (provider === "BINANCE_FUTURES") return info.binanceSupported;
+      return true;
+    });
+    return Array.from(new Set([...configured, ...fromExchange]));
+  }, [scope.data?.symbols, exchangeSymbols.symbols, exchangeSymbols.symbolObjects, provider]);
+  const [symbol, setSymbol] = useState<string>("");
   const [interval, setInterval] = useState<FusionRunInput["interval"]>("15m");
   useEffect(() => {
-    if (!symbol && symbols[0]) setSymbol(symbols[0]);
+    if ((!symbol || !availableSymbols.includes(symbol)) && availableSymbols[0]) {
+      setSymbol(availableSymbols[0]);
+    }
     const preferred = scope.data?.timeframes[0] as FusionRunInput['interval'] | undefined;
     if (preferred) setInterval(preferred);
-  }, [scope.data?.timeframes, symbol, symbols]);
+  }, [availableSymbols, scope.data?.timeframes, symbol]);
 
   const decision = useDecisionRunner();
   const decisionInput: FusionRunInput = {
@@ -54,7 +68,7 @@ export default function DecisionPage(): React.JSX.Element {
           {t.ai.symbol}
           <select className={fieldClassName} value={symbol} onChange={(event) => setSymbol(event.target.value)}>
             {!symbol && <option value="">{t.ai.symbol}</option>}
-            {symbols.map((value) => <option key={value} value={value}>{value}</option>)}
+            {availableSymbols.map((value) => <option key={value} value={value}>{value}</option>)}
           </select>
         </label>
         <label className="space-y-1 text-xs font-semibold text-muted-foreground">

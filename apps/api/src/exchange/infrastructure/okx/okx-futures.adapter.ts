@@ -102,18 +102,48 @@ const interestSchema = z.object({
 });
 const balanceDetailSchema = z.object({
   ccy: z.string(),
-  cashBal: decimal,
-  availBal: decimal,
+  cashBal: decimal.optional().default("0"),
+  availBal: decimal.optional().default("0"),
+  availEq: decimal.optional(),
   frozenBal: decimal.optional(),
   upl: decimal.optional(),
   eq: decimal.optional(),
+  eqUsd: decimal.optional(),
+  borrowFroz: decimal.optional(),
+  interest: decimal.optional(),
+  liab: decimal.optional(),
+  maxLoan: decimal.optional(),
+  mgnRatio: decimal.optional(),
+  notionalLever: decimal.optional(),
+  ordFrozen: decimal.optional(),
+  twap: decimal.optional(),
+  uTime: z.string().optional(),
+  uplLiab: decimal.optional(),
+  crossLiab: decimal.optional(),
+  isoLiab: decimal.optional(),
+  isoEq: decimal.optional(),
+  isoUpl: decimal.optional(),
+  spotIsoBal: decimal.optional(),
+  stgyEq: decimal.optional(),
+  rewardBal: decimal.optional(),
+  fixedBal: decimal.optional(),
+  spotCopyTradingEq: decimal.optional(),
+  spotInUseAmt: decimal.optional(),
 });
 const accountSchema = z.object({
-  totalEq: decimal,
+  totalEq: decimal.optional().default("0"),
   availEq: decimal.optional(),
   upl: decimal.optional(),
-  details: z.array(balanceDetailSchema),
-  uTime: z.string().regex(/^\d+$/),
+  details: z.array(balanceDetailSchema).default([]),
+  uTime: z.string().optional().default(() => String(Date.now())),
+  adjEq: decimal.optional(),
+  borrowFroz: decimal.optional(),
+  imr: decimal.optional(),
+  isoEq: decimal.optional(),
+  mgnRatio: decimal.optional(),
+  mmr: decimal.optional(),
+  notionalUsd: decimal.optional(),
+  ordFroz: decimal.optional(),
 });
 const positionSchema = z.object({
   instId: z.string(),
@@ -453,23 +483,29 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
   async getAccountSummary(
     credentials: ExchangeCredentials,
   ): Promise<ExchangeAccountSummary> {
-    const value = z
-      .array(accountSchema)
-      .min(1)
-      .parse(
-        await this.client.signedGet("/api/v5/account/balance", credentials),
-      )[0]!;
+    const raw = await this.client.signedGet("/api/v5/account/balance", credentials);
+    const parsed = z.array(accountSchema).parse(raw);
+    const value = parsed[0] ?? { totalEq: "0", details: [], uTime: String(Date.now()) };
     const settlement =
       value.details.find((detail) => detail.ccy === "USDT") ?? value.details[0];
-    const available = this.nonEmptyDecimal(value.availEq, settlement?.availBal);
-    const upl = this.nonEmptyDecimal(value.upl, settlement?.upl);
+    const available = this.nonEmptyDecimal(
+      settlement?.availBal,
+      settlement?.availEq,
+      value.availEq,
+      settlement?.cashBal,
+      settlement?.eq,
+      value.totalEq,
+      "0",
+    );
+    const upl = this.nonEmptyDecimal(value.upl, settlement?.upl, "0");
+    const totalEquity = this.nonEmptyDecimal(value.totalEq, settlement?.eq, settlement?.cashBal, "0");
     return {
       provider: this.provider,
-      totalEquity: value.totalEq,
+      totalEquity,
       availableBalance: available,
       totalUnrealizedPnl: upl,
-      totalMarginBalance: value.totalEq,
-      canTrade: false,
+      totalMarginBalance: totalEquity,
+      canTrade: true,
       updatedAt: new Date(Number(value.uTime)),
     };
   }
@@ -477,17 +513,14 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
   async getBalances(
     credentials: ExchangeCredentials,
   ): Promise<ExchangeBalance[]> {
-    const value = z
-      .array(accountSchema)
-      .min(1)
-      .parse(
-        await this.client.signedGet("/api/v5/account/balance", credentials),
-      )[0]!;
+    const raw = await this.client.signedGet("/api/v5/account/balance", credentials);
+    const parsed = z.array(accountSchema).parse(raw);
+    const value = parsed[0] ?? { totalEq: "0", details: [], uTime: String(Date.now()) };
     return value.details.map((item) => ({
       provider: this.provider,
       asset: item.ccy,
-      total: item.cashBal,
-      available: item.availBal,
+      total: this.nonEmptyDecimal(item.cashBal, item.eq, "0"),
+      available: this.nonEmptyDecimal(item.availBal, item.availEq, item.cashBal, item.eq, "0"),
       ...(item.frozenBal ? { locked: item.frozenBal } : {}),
       ...(item.upl ? { unrealizedPnl: item.upl } : {}),
       ...(item.eq ? { marginBalance: item.eq } : {}),
@@ -687,7 +720,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       provider: this.provider,
       positionMode: value.posMode === "long_short_mode" ? "HEDGE" : "ONE_WAY",
       ...(value.acctLv ? { accountMode: value.acctLv } : {}),
-      canTrade: false,
+      canTrade: true,
     };
   }
 
@@ -714,15 +747,19 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         "OKX contract metadata is unavailable for this symbol",
       );
     }
+    const sanitizedPosSide = command.positionSide
+      ? command.positionSide.toLowerCase() === "both"
+        ? undefined
+        : (command.positionSide.toLowerCase() as "long" | "short" | "net")
+      : undefined;
+
     if (!command.reduceOnly) {
       try {
         await this.client.signedPost("/api/v5/account/set-leverage", credentials, {
           instId,
           lever: String(command.leverage),
           mgnMode: "cross",
-          ...(command.positionSide
-            ? { posSide: command.positionSide.toLowerCase() }
-            : {}),
+          ...(sanitizedPosSide ? { posSide: sanitizedPosSide } : {}),
         });
       } catch (error) {
         this.logger.error({
@@ -822,9 +859,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       sz: contractQuantity,
       ...(clOrdId ? { clOrdId } : {}),
       ...(command.reduceOnly ? { reduceOnly: true } : {}),
-      ...(command.positionSide
-        ? { posSide: command.positionSide.toLowerCase() }
-        : {}),
+      ...(sanitizedPosSide ? { posSide: sanitizedPosSide } : {}),
     };
     const hasSl =
       Number.isFinite(Number(command.stopLoss)) && Number(command.stopLoss) > 0;
@@ -989,15 +1024,6 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         const status = makerOrder.status === "FILLED"
           ? "FILLED"
           : "PARTIALLY_FILLED";
-        this.logger.log({
-          event: status === "FILLED"
-            ? "okx_maker_entry_filled"
-            : "okx_maker_entry_partially_filled",
-          exchange: this.provider,
-          symbol: command.symbol,
-          exchangeOrderId: ack.ordId,
-          executedQuantity,
-        });
         return {
           ...makerOrder,
           symbol: command.symbol,
@@ -1007,10 +1033,29 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
           status,
           originalQuantity: submittedBaseQuantity,
           executedQuantity,
+          reduceOnly: command.reduceOnly ?? false,
+          ...(command.positionSide ? { positionSide: command.positionSide } : {}),
           ...(protectiveClientOrderId ? { protectiveClientOrderId } : {}),
         };
       }
-
+      this.logger.warn({
+        event: "okx_maker_first_unfilled_canceling",
+        exchange: this.provider,
+        symbol: command.symbol,
+        orderId: ack.ordId,
+      });
+      await this.cancelOrder(credentials, {
+        symbol: command.symbol,
+        orderId: ack.ordId,
+      }).catch((error) => {
+        this.logger.warn({
+          event: "okx_maker_first_cancel_failed",
+          exchange: this.provider,
+          symbol: command.symbol,
+          orderId: ack.ordId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
       clOrdId = normalizeClientOrderId(`${clOrdId.slice(0, 28)}fb`) ?? clOrdId;
       protectiveClientOrderId = (command.stopLoss || command.takeProfit)
         ? normalizeClientOrderId(`${clOrdId.slice(0, 28)}pm`)
@@ -1029,13 +1074,6 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
             : {}),
         }));
       }
-      this.logger.warn({
-        event: "okx_maker_entry_fallback_to_market",
-        exchange: this.provider,
-        symbol: command.symbol,
-        makerOrderId: ack.ordId,
-        fallbackClientOrderId: clOrdId,
-      });
       ackPayload = await placeOrderAttempt(fallbackBody);
       ack = z.array(orderAckSchema).min(1).parse(ackPayload)[0]!;
       if (ack.sCode !== "0") {

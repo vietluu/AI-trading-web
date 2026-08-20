@@ -11,20 +11,34 @@ import {
 import { useTranslation } from "@/lib/i18n/i18n-context";
 
 import { useConfiguredTradingScope } from "@/hooks/useConfiguredTradingScope";
+import { useExchangeSymbols } from "@/hooks/useExchangeSymbols";
 
 export default function PipelinePage() {
   const { t } = useTranslation();
   const scope = useConfiguredTradingScope();
-  const configuredSymbols = useMemo(() => scope.data?.symbols ?? [], [scope.data?.symbols]);
-  const [symbol, setSymbol] = useState("");
+  const exchangeSymbols = useExchangeSymbols();
   const [provider, setProvider] = useState("OKX_FUTURES");
+  const availableSymbols = useMemo(() => {
+    const configured = scope.data?.symbols ?? [];
+    const fromExchange = exchangeSymbols.symbols.filter((s) => {
+      const info = exchangeSymbols.symbolObjects.find((item) => item.symbol === s);
+      if (!info) return true;
+      if (provider === "OKX_FUTURES") return info.okxSupported;
+      if (provider === "BINANCE_FUTURES") return info.binanceSupported;
+      return true;
+    });
+    return Array.from(new Set([...configured, ...fromExchange]));
+  }, [scope.data?.symbols, exchangeSymbols.symbols, exchangeSymbols.symbolObjects, provider]);
+  const [symbol, setSymbol] = useState("");
   const [message, setMessage] = useState("");
   const health = usePipelineDashboard();
   const schedules = usePipelineSchedules();
   const { runMutation, createScheduleMutation, cancelScheduleMutation } = usePipelineActions();
   useEffect(() => {
-    if (!symbol && configuredSymbols[0]) setSymbol(configuredSymbols[0]);
-  }, [configuredSymbols, symbol]);
+    if ((!symbol || !availableSymbols.includes(symbol)) && availableSymbols[0]) {
+      setSymbol(availableSymbols[0]);
+    }
+  }, [availableSymbols, symbol]);
   async function run() {
     if (!symbol) return setMessage('NO_SYMBOLS_SELECTED');
     try {
@@ -112,8 +126,8 @@ export default function PipelinePage() {
             onChange={(e) => setSymbol(e.target.value)}
           >
             {!symbol && <option value="">{t.ai.symbol}</option>}
-            {configuredSymbols.map((item) => (
-              <option key={item}>{item}</option>
+            {availableSymbols.map((item) => (
+              <option key={item} value={item}>{item}</option>
             ))}
           </select>
           <select

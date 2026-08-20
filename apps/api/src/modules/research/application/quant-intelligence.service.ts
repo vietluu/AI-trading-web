@@ -240,7 +240,12 @@ export class QuantIntelligenceService {
     const valid = (value: string) => /^[A-Z0-9]+-[A-Z0-9]+$/.test(value);
     const settings = [...new Set((setting?.preferredSymbols ?? []).map(normalize).filter(valid))];
     const pipelineTriggers = [...new Set(triggeredRuns.map((item) => normalize(item.symbol)).filter(valid))];
-    return { settings, pipelineTriggers, symbols: [...new Set([...settings, ...pipelineTriggers])] };
+    const userSymbols = [...new Set([...settings, ...pipelineTriggers])];
+    return {
+      settings,
+      pipelineTriggers,
+      symbols: userSymbols,
+    };
   }
 
   async getSelectedResearchScope(userId: string) {

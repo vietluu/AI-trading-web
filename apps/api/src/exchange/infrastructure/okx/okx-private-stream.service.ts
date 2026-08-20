@@ -306,20 +306,40 @@ export class OkxPrivateStreamService implements OnModuleDestroy {
     const settlement =
       details.find((item) => item.ccy === "USDT") ?? details[0];
     const updatedAt = this.date(value.uTime);
+    const availableBalance = this.firstNonEmptyText(
+      settlement?.availBal,
+      settlement?.availEq,
+      value.availEq,
+      settlement?.cashBal,
+      settlement?.eq,
+      value.totalEq,
+      "0",
+    );
+    const totalEquity = this.firstNonEmptyText(
+      value.totalEq,
+      settlement?.eq,
+      settlement?.cashBal,
+      "0",
+    );
+    const totalUnrealizedPnl = this.firstNonEmptyText(
+      value.upl,
+      settlement?.upl,
+      "0",
+    );
     state.account = {
       provider: ExchangeProvider.OKX_FUTURES,
-      totalEquity: this.text(value.totalEq),
-      availableBalance: this.text(value.availEq ?? settlement?.availBal),
-      totalUnrealizedPnl: this.text(value.upl ?? settlement?.upl),
-      totalMarginBalance: this.text(value.totalEq),
-      canTrade: false,
+      totalEquity,
+      availableBalance,
+      totalUnrealizedPnl,
+      totalMarginBalance: totalEquity,
+      canTrade: true,
       updatedAt,
     };
     state.balances = details.map((item) => ({
       provider: ExchangeProvider.OKX_FUTURES,
       asset: this.text(item.ccy),
-      total: this.text(item.cashBal),
-      available: this.text(item.availBal),
+      total: this.firstNonEmptyText(item.cashBal, item.eq, "0"),
+      available: this.firstNonEmptyText(item.availBal, item.availEq, item.cashBal, item.eq, "0"),
       ...(item.frozenBal ? { locked: this.text(item.frozenBal) } : {}),
       ...(item.upl ? { unrealizedPnl: this.text(item.upl) } : {}),
       ...(item.eq ? { marginBalance: this.text(item.eq) } : {}),
@@ -501,6 +521,18 @@ export class OkxPrivateStreamService implements OnModuleDestroy {
       return value.trim() === "" ? "0" : value;
     }
     return typeof value === "number" ? String(value) : "0";
+  }
+
+  private firstNonEmptyText(...values: unknown[]): string {
+    for (const value of values) {
+      if (typeof value === "string" && value.trim() !== "") {
+        return value.trim();
+      }
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return String(value);
+      }
+    }
+    return "0";
   }
 
   private date(value: unknown): Date {

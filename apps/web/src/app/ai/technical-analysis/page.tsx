@@ -10,6 +10,7 @@ import {
 import { useTranslation } from "@/lib/i18n/i18n-context";
 
 import { useConfiguredTradingScope } from "@/hooks/useConfiguredTradingScope";
+import { useExchangeSymbols } from "@/hooks/useExchangeSymbols";
 
 const fieldClassName =
   "w-full rounded-md border border-border bg-background px-3 py-2 text-sm";
@@ -17,18 +18,31 @@ const fieldClassName =
 export default function TechnicalAnalysisPage(): React.JSX.Element {
   const { t } = useTranslation();
   const scope = useConfiguredTradingScope();
-  const symbols = useMemo(() => scope.data?.symbols ?? [], [scope.data?.symbols]);
-  const [symbol, setSymbol] = useState<string>("");
+  const exchangeSymbols = useExchangeSymbols();
   const [provider, setProvider] =
     useState<TechnicalAgentInput["provider"]>("OKX_FUTURES");
+  const availableSymbols = useMemo(() => {
+    const configured = scope.data?.symbols ?? [];
+    const fromExchange = exchangeSymbols.symbols.filter((s) => {
+      const info = exchangeSymbols.symbolObjects.find((item) => item.symbol === s);
+      if (!info) return true;
+      if (provider === "OKX_FUTURES") return info.okxSupported;
+      if (provider === "BINANCE_FUTURES") return info.binanceSupported;
+      return true;
+    });
+    return Array.from(new Set([...configured, ...fromExchange]));
+  }, [scope.data?.symbols, exchangeSymbols.symbols, exchangeSymbols.symbolObjects, provider]);
+  const [symbol, setSymbol] = useState<string>("");
   const [interval, setInterval] =
     useState<TechnicalAgentInput["interval"]>("1h");
   const [lookbackCandles, setLookbackCandles] = useState(150);
   useEffect(() => {
-    if (!symbol && symbols[0]) setSymbol(symbols[0]);
+    if ((!symbol || !availableSymbols.includes(symbol)) && availableSymbols[0]) {
+      setSymbol(availableSymbols[0]);
+    }
     const preferred = scope.data?.timeframes[0] as TechnicalAgentInput['interval'] | undefined;
     if (preferred) setInterval(preferred);
-  }, [scope.data?.timeframes, symbol, symbols]);
+  }, [availableSymbols, scope.data?.timeframes, symbol]);
   const analysis = useAnalysisRunner("TECHNICAL");
   const analysisInput: TechnicalAgentInput = {
     symbol,
@@ -51,12 +65,21 @@ export default function TechnicalAnalysisPage(): React.JSX.Element {
       </div>
 
       <section className="grid gap-4 rounded-lg border bg-card p-6 md:grid-cols-4">
-        <Select
-          label={t.ai.symbol}
-          value={symbol}
-          onChange={(value) => setSymbol(value)}
-          options={symbols}
-        />
+        <label className="space-y-1 text-xs font-semibold text-muted-foreground">
+          {t.ai.symbol}
+          <select
+            className={fieldClassName}
+            value={symbol}
+            onChange={(event) => setSymbol(event.target.value)}
+          >
+            {!symbol && <option value="">{t.ai.symbol}</option>}
+            {availableSymbols.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+        </label>
         <Select
           label={t.ai.exchange}
           value={provider}

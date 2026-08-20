@@ -1,36 +1,54 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { apiRequest } from "@/lib/api-client";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 import { Cpu, Play, Award, CheckCircle } from "lucide-react";
 import { useConfiguredTradingScope } from "@/hooks/useConfiguredTradingScope";
+import { useExchangeSymbols } from "@/hooks/useExchangeSymbols";
 
 interface StrategyCandidate {
   key: string;
   name: string;
-  kind: string;
-  score: number;
-  expectedValue: number;
-  profitFactor: number;
-  sharpeRatio: number;
-  maxDrawdown: number;
+  category?: string;
+  kind?: string;
+  rationale?: string;
+  status?: string;
+  score?: number;
+  winRatePct?: number;
+  profitFactor?: number;
+  expectedValue?: number;
+  sharpeRatio?: number;
+  maxDrawdown?: number;
+  sampleSize?: number;
+  activeOpportunities?: number;
+  weight?: number;
+  governanceStatus?: string;
 }
 
 interface SimulationResultData {
-  name: string;
-  experimentType: string;
-  passedCriteria: boolean;
-  baselineExpectedValue: number;
-  simulatedExpectedValue: number;
-  baselineSharpe: number;
-  simulatedSharpe: number;
-  summary: string;
+  experimentId?: string;
+  strategyName?: string;
+  name?: string;
+  experimentType?: string;
+  passedCriteria?: boolean;
+  baselineWinRatePct?: number;
+  simulatedWinRatePct?: number;
+  baselineExpectedValue?: number;
+  simulatedExpectedValue?: number;
+  baselineSharpe?: number;
+  simulatedSharpe?: number;
+  summary?: string;
 }
 
 export default function StrategyLabPage() {
   const { t } = useTranslation();
   const scope = useConfiguredTradingScope();
+  const exchangeSymbols = useExchangeSymbols();
+  const availableSymbols = useMemo(() => {
+    const configured = scope.data?.symbols ?? [];
+    return Array.from(new Set([...configured, ...exchangeSymbols.symbols]));
+  }, [scope.data?.symbols, exchangeSymbols.symbols]);
   const [strategies, setStrategies] = useState<StrategyCandidate[]>([]);
   const [selectedSymbol, setSelectedSymbol] = useState("");
   const [selectedInterval, setSelectedInterval] = useState("");
@@ -40,9 +58,11 @@ export default function StrategyLabPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!selectedSymbol && scope.data?.symbols[0]) setSelectedSymbol(scope.data.symbols[0]);
+    if ((!selectedSymbol || !availableSymbols.includes(selectedSymbol)) && availableSymbols[0]) {
+      setSelectedSymbol(availableSymbols[0]);
+    }
     if (!selectedInterval && scope.data?.timeframes[0]) setSelectedInterval(scope.data.timeframes[0]);
-  }, [scope.data?.symbols, scope.data?.timeframes, selectedInterval, selectedSymbol]);
+  }, [availableSymbols, scope.data?.timeframes, selectedInterval, selectedSymbol]);
 
   useEffect(() => {
     if (!selectedSymbol || !selectedInterval) {
@@ -127,7 +147,7 @@ export default function StrategyLabPage() {
             }}
           >
             {!selectedSymbol && <option value="">{t.research.noSymbolsSelected}</option>}
-            {(scope.data?.symbols ?? []).map((symbol) => <option key={symbol} value={symbol}>{symbol}</option>)}
+            {availableSymbols.map((symbol) => <option key={symbol} value={symbol}>{symbol}</option>)}
           </select>
         </label>
         <label className="space-y-1 text-xs font-semibold text-muted-foreground">
