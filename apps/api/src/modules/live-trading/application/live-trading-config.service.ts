@@ -28,7 +28,7 @@ export class LiveTradingConfigService {
       syncEnabled:
         this.config.get<boolean>("LIVE_POSITION_SYNC_ENABLED") ?? true,
       syncIntervalMs:
-        this.config.get<number>("LIVE_POSITION_SYNC_INTERVAL_MS") ?? 5_000,
+        this.config.get<number>("LIVE_POSITION_SYNC_INTERVAL_MS") ?? 30_000,
       cooldownMs: this.config.get<number>("TRADE_COOLDOWN_MS") ?? 60_000,
       approvalTtlMs:
         this.config.get<number>("LIVE_RISK_APPROVAL_TTL_MS") ?? 300_000,

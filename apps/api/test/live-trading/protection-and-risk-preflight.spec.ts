@@ -1,5 +1,6 @@
 import { ForbiddenException } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
+import { LiveTradingConfigService } from "../../src/modules/live-trading/application/live-trading-config.service";
 import {
   LiveTradingService,
   processInBatches,
@@ -33,6 +34,18 @@ describe("bounded live reconciliation batches", () => {
 
     expect(processed.sort((left, right) => left - right)).toEqual([...Array(25).keys()]);
     expect(maximumActive).toBe(10);
+  });
+
+  it("uses a 30-second default reconciliation cadence when no override is configured", () => {
+    const config = new LiveTradingConfigService({
+      get: vi.fn().mockImplementation((key: string) => {
+        if (key === "GLOBAL_TRADING_ENABLED") return false;
+        if (key === "LIVE_POSITION_SYNC_INTERVAL_MS") return undefined;
+        return undefined;
+      }),
+    } as never);
+
+    expect(config.values.syncIntervalMs).toBe(30_000);
   });
 });
 

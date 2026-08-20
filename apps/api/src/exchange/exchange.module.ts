@@ -17,6 +17,7 @@ import { ExchangeTimeService } from "./infrastructure/exchange-time.service";
 import { OkxFuturesAdapter } from "./infrastructure/okx/okx-futures.adapter";
 import { OkxFuturesClient } from "./infrastructure/okx/okx-futures.client";
 import { OkxSignatureService } from "./infrastructure/okx/okx-signature.service";
+import { OkxPrivateStreamService } from "./infrastructure/okx/okx-private-stream.service";
 import { ExchangeConnectionsController } from "./presentation/exchange-connections.controller";
 import { PublicExchangesController } from "./presentation/public-exchanges.controller";
 import { MarketStreamsModule } from "../market-data/market-streams.module";
@@ -38,6 +39,7 @@ import { MarketStreamsModule } from "../market-data/market-streams.module";
     BinanceFuturesClient,
     BinanceFuturesAdapter,
     OkxSignatureService,
+    OkxPrivateStreamService,
     OkxFuturesClient,
     OkxFuturesAdapter,
   ],

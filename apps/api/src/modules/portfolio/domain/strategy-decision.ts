@@ -24,9 +24,15 @@ export interface StrategyMarketSnapshot {
 export function analysisParams(
   params: Record<string, unknown>,
 ): Record<string, unknown> {
-  const result = { ...params };
-  delete result.strategyId;
-  delete result.strategyIds;
+  const result: Record<string, unknown> = {};
+  for (const key of [
+    "interval",
+    "lookbackCandles",
+    "lookbackHours",
+    "maxItems",
+  ] as const) {
+    if (params[key] !== undefined) result[key] = params[key];
+  }
   return result;
 }
 

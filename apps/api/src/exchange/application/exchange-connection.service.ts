@@ -36,6 +36,7 @@ import {
   type CancelProtectiveOrderCommand,
 } from "../domain/exchange.types";
 import { ExchangeRateLimitService } from "../infrastructure/exchange-rate-limit.service";
+import { OkxPrivateStreamService } from "../infrastructure/okx/okx-private-stream.service";
 import { normalizeSymbol } from "../infrastructure/exchange-symbol";
 import { ExchangeAdapterFactory } from "./exchange-adapter.factory";
 import type {
@@ -78,6 +79,7 @@ export class ExchangeConnectionService {
     private readonly rateLimit: ExchangeRateLimitService,
     private readonly recentAuth: RecentAuthService,
     private readonly audit: AuditService,
+    private readonly okxPrivateStream: OkxPrivateStreamService,
     config: ConfigService,
   ) {
     this.productionEnabled =
@@ -378,7 +380,12 @@ export class ExchangeConnectionService {
       id,
       "ACCOUNT",
       context,
-      (adapter, credentials) => adapter.getAccountSummary(credentials),
+      (adapter, credentials) =>
+        adapter.provider === ExchangeProvider.OKX_FUTURES
+          ? this.okxPrivateStream.account(id, credentials, () =>
+              adapter.getAccountSummary(credentials),
+            )
+          : adapter.getAccountSummary(credentials),
     );
   }
 
@@ -392,7 +399,12 @@ export class ExchangeConnectionService {
       id,
       "BALANCES",
       context,
-      (adapter, credentials) => adapter.getBalances(credentials),
+      (adapter, credentials) =>
+        adapter.provider === ExchangeProvider.OKX_FUTURES
+          ? this.okxPrivateStream.balances(id, credentials, () =>
+              adapter.getBalances(credentials),
+            )
+          : adapter.getBalances(credentials),
     );
   }
 
@@ -406,7 +418,12 @@ export class ExchangeConnectionService {
       id,
       "POSITIONS",
       context,
-      (adapter, credentials) => adapter.getPositions(credentials),
+      (adapter, credentials) =>
+        adapter.provider === ExchangeProvider.OKX_FUTURES
+          ? this.okxPrivateStream.positions(id, credentials, () =>
+              adapter.getPositions(credentials),
+            )
+          : adapter.getPositions(credentials),
     );
   }
 
@@ -421,11 +438,16 @@ export class ExchangeConnectionService {
       id,
       "OPEN_ORDERS",
       context,
-      (adapter, credentials) =>
-        adapter.getOpenOrders(
-          credentials,
-          symbol ? { symbol: normalizeSymbol(symbol) } : undefined,
-        ),
+      (adapter, credentials) => {
+        const loader = () =>
+          adapter.getOpenOrders(
+            credentials,
+            symbol ? { symbol: normalizeSymbol(symbol) } : undefined,
+          );
+        return adapter.provider === ExchangeProvider.OKX_FUTURES && !symbol
+          ? this.okxPrivateStream.openOrders(id, credentials, loader)
+          : loader();
+      },
     );
   }
 

@@ -53,9 +53,16 @@ const analyses = {
 } as FusionInput;
 
 describe("independent strategy decisions", () => {
-  it("removes portfolio routing fields before strict analyst validation", () => {
+  it("only forwards supported analyst fields to strict validation", () => {
     expect(
-      analysisParams({ strategyId: "trend", strategyIds: ["trend", "news"], interval: "15m", maxItems: 50 }),
+      analysisParams({
+        strategyId: "trend",
+        strategyIds: ["trend", "news"],
+        eventScan: { fingerprint: "zro-5m-bullish" },
+        futureRoutingMetadata: true,
+        interval: "15m",
+        maxItems: 50,
+      }),
     ).toEqual({ interval: "15m", maxItems: 50 });
   });
 

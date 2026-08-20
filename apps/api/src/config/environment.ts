@@ -308,6 +308,20 @@ const environmentSchema = z
       .string()
       .url()
       .default("wss://ws.okx.com:8443/ws/v5/business"),
+    OKX_WS_PRIVATE_URL: z
+      .string()
+      .url()
+      .default("wss://ws.okx.com:8443/ws/v5/private"),
+    OKX_DEMO_WS_PRIVATE_URL: z
+      .string()
+      .url()
+      .default("wss://wspap.okx.com:8443/ws/v5/private?brokerId=9999"),
+    OKX_PRIVATE_WS_STALE_FALLBACK_MS: z.coerce
+      .number()
+      .int()
+      .min(1_000)
+      .max(300_000)
+      .default(30_000),
     // Phase 6.1: AI Infrastructure
     OPENAI_API_KEY: z.string().optional(),
     ANTHROPIC_API_KEY: z.string().optional(),

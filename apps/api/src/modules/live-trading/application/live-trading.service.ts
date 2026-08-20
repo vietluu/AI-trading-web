@@ -2162,6 +2162,30 @@ export class LiveTradingService {
           data: { protectiveClientOrderId: null },
         });
       } catch (error) {
+        // OKX cannot cancel an algo order that is already filled, cancelled or
+        // no longer exists. With no matching live position this is terminal,
+        // not a reason to retry the same stale ID every sync cycle.
+        if (
+          error instanceof ExchangeError &&
+          error.code === ExchangeErrorCode.INVALID_REQUEST
+        ) {
+          await this.prisma.liveOrder.update({
+            where: { id: source.id },
+            data: { protectiveClientOrderId: null },
+          });
+          await this.audit.record(
+            "STALE_PROTECTIVE_ORDER_CLEARED",
+            userId,
+            context,
+            {
+              sourceOrderId: source.id,
+              connectionId: connection.id,
+              symbol: source.symbol,
+              exchangeCode: error.exchangeCode,
+            },
+          );
+          continue;
+        }
         this.logger.warn({
           event: "orphan_protective_order_cancel_failed",
           connectionId: connection.id,
