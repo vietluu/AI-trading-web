@@ -7,7 +7,7 @@ import { ExchangeInterval, ExchangeProvider } from '../../../exchange/domain/exc
 
 const REFRESH_INTERVAL_MS = 5 * 60_000;
 const KNOWN_STRATEGIES = ['ai-core', 'trend', 'mean-reversion', 'breakout', 'momentum-scalp'] as const;
-type ValidationCandidate = { strategyKey: string; symbol: string; interval: ExchangeInterval; provider: ExchangeProvider; previous?: Date };
+type ValidationCandidate = { strategyKey: string; symbol: string; interval: ExchangeInterval; provider: ExchangeProvider; previous?: Date; priority?: number };
 
 function rotatingHash(value: string, bucket: number): number {
   let hash = bucket | 0;
@@ -25,6 +25,8 @@ export function scheduledStrategyKeys(schedules: Array<{ strategyIds: string[] }
 export function prioritizeValidationCandidates(candidates: ValidationCandidate[], now = new Date()): ValidationCandidate[] {
   const bucket = Math.floor(now.getTime() / REFRESH_INTERVAL_MS);
   return [...candidates].sort((left, right) => {
+    const priorityOrder = (left.priority ?? 1) - (right.priority ?? 1);
+    if (priorityOrder !== 0) return priorityOrder;
     const ageOrder = (left.previous?.getTime() ?? 0) - (right.previous?.getTime() ?? 0);
     if (ageOrder !== 0) return ageOrder;
     const leftKey = `${left.strategyKey}:${left.symbol}:${left.interval}:${left.provider}`;
@@ -91,7 +93,7 @@ export class QuantResearchSchedulerService implements OnApplicationBootstrap, On
         unavailable += result.hypotheses.filter((item) => item.status === 'DATA_UNAVAILABLE').length;
         const scope = await this.quant.getSelectedResearchScope(userId);
         if (!scope.symbols.length || !scope.timeframes.length) continue;
-        const [connections, schedules] = await Promise.all([
+        const [connections, schedules, portfolioStrategies] = await Promise.all([
           this.prisma.exchangeConnection.findMany({
             where: { userId, isEnabled: true, isVerified: true },
             orderBy: { createdAt: 'asc' },
@@ -99,6 +101,10 @@ export class QuantResearchSchedulerService implements OnApplicationBootstrap, On
           this.prisma.pipelineSchedule.findMany({
             where: { userId, enabled: true },
             select: { strategyIds: true },
+          }),
+          this.prisma.portfolioStrategy.findMany({
+            where: { userId, status: 'ACTIVE' },
+            select: { key: true, symbols: true },
           }),
         ]);
         if (!connections.length) continue;
@@ -112,6 +118,11 @@ export class QuantResearchSchedulerService implements OnApplicationBootstrap, On
           if (!latestByPair.has(key)) latestByPair.set(key, row.createdAt);
         }
         const strategyKeys = scheduledStrategyKeys(schedules);
+        const portfolioScope = new Set(
+          portfolioStrategies.flatMap((strategy) =>
+            strategy.symbols.map((symbol) => `${strategy.key}:${symbol}`),
+          ),
+        );
         const candidates = prioritizeValidationCandidates(strategyKeys.flatMap((strategyKey) =>
           scope.symbols.flatMap((symbol) => scope.timeframes.map((interval) => {
             const typedInterval = interval;
@@ -126,6 +137,7 @@ export class QuantResearchSchedulerService implements OnApplicationBootstrap, On
               interval: typedInterval,
               provider,
               previous: latestByPair.get(`${strategyKey}:${symbol}:${typedInterval}:${provider}`),
+              priority: portfolioScope.has(`${strategyKey}:${symbol}`) ? 0 : 1,
             };
           }))));
         const staleOrMissing = candidates.filter((candidate) => !candidate.previous || candidate.previous < validationCutoff);

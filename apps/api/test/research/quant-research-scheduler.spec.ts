@@ -24,4 +24,15 @@ describe("QuantResearchScheduler coverage", () => {
     expect(ordered[1]?.strategyKey).toBe("trend");
     expect(ordered[2]?.strategyKey).toBe("ai-core");
   });
+
+  it("refreshes active portfolio strategy pairs before unrelated missing scope", () => {
+    const provider = ExchangeProvider.OKX_FUTURES;
+    const ordered = prioritizeValidationCandidates([
+      { strategyKey: "ai-core", symbol: "ZRO-USDT", interval: ExchangeInterval.FIFTEEN_MINUTES, provider },
+      { strategyKey: "trend", symbol: "BTC-USDT", interval: ExchangeInterval.FIFTEEN_MINUTES, provider, previous: new Date("2026-08-12T00:00:00Z"), priority: 0 },
+    ], new Date("2026-08-21T00:00:00Z"));
+
+    expect(ordered[0]?.strategyKey).toBe("trend");
+    expect(ordered[0]?.symbol).toBe("BTC-USDT");
+  });
 });

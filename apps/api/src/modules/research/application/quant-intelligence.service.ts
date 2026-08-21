@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
 import { ExchangeInterval, ExchangeProvider } from '../../../exchange/domain/exchange.types';
@@ -138,6 +138,16 @@ export function resolveStrategyAllocationTarget(input: {
   };
 }
 
+export function portfolioRecommendationStatus(input: {
+  validationPassed: boolean;
+  verifiedAttributedTrades: number;
+  isAlreadyApplied: boolean;
+}): QuantRecommendation['status'] {
+  if (!input.validationPassed) return 'VALIDATION_REQUIRED';
+  if (!input.isAlreadyApplied) return 'PENDING_APPROVAL';
+  return input.verifiedAttributedTrades < 5 ? 'CANARY' : 'DEPLOYED';
+}
+
 type ReportType = 'DAILY' | 'WEEKLY' | 'MONTHLY';
 import { buildQuantRecommendation } from '../domain/explainability-governance.engine';
 import type { HypothesisInput } from '../domain/quant-research.engine';
@@ -149,6 +159,7 @@ import { KnowledgeBaseService } from './knowledge-base.service';
 import { runBenchmarkSuite, detectMarketRegime } from '../domain/benchmark-engine';
 import { runHistoricalBacktest } from '../domain/backtest-engine';
 import { BASE_WEIGHTS } from '../../agents/domain/constants/decision.constants';
+import { ResearchService, validationBacktestStrategy } from './research.service';
 
 @Injectable()
 export class QuantIntelligenceService {
@@ -159,6 +170,7 @@ export class QuantIntelligenceService {
     private readonly marketData: MarketDataService,
     private readonly reportService: QuantReportService,
     private readonly knowledgeService: KnowledgeBaseService,
+    @Optional() private readonly research?: ResearchService,
   ) {}
 
   async getDecisionScorecard(userId: string) {
@@ -623,6 +635,7 @@ export class QuantIntelligenceService {
             passRatePct: validation.passRatePct,
             passingPairs: validation.passingPairs,
             requiredPairs: validation.requiredPairs,
+            pairs: validation.pairs,
           },
         };
       }),
@@ -775,6 +788,15 @@ export class QuantIntelligenceService {
       symbolsWithPassingEvidence,
       validationRunIds: latest.map((row) => row.id),
       passingValidationRunIds: passing.map((row) => row.id),
+      pairs: latest.map((row) => ({
+        symbol: row.symbol,
+        interval: row.interval,
+        provider: row.provider,
+        walkForwardStable: row.walkForwardStable,
+        outOfSampleSharpe: Number(row.outOfSampleSharpe.toFixed(4)),
+        passed: row.walkForwardStable && row.outOfSampleSharpe > 0,
+        createdAt: row.createdAt?.toISOString?.() ?? null,
+      })),
       passed,
     };
   }
@@ -827,7 +849,6 @@ export class QuantIntelligenceService {
         const recommendedWeight = Math.max(0.05, Math.min(0.4, weight + delta));
         const isAlreadyApplied = Math.abs(delta) < 0.005 || Math.abs(weight - recommendedWeight) < 0.005;
         const verifiedAttributedTrades = strategy.closedTrades.length;
-        const hasMinimumTradeEvidence = verifiedAttributedTrades >= 5;
         return buildQuantRecommendation({
           title: `Adjust ${strategy.name} allocation to ${Math.round(recommendedWeight * 100)}%`,
           moduleSource: 'PORTFOLIO_INTELLIGENCE',
@@ -839,24 +860,37 @@ export class QuantIntelligenceService {
           priority: drawdownPct > 0.05 || marketRegime === 'HIGH_VOLATILITY' ? 'HIGH' : 'MEDIUM',
           implementationCost: 'LOW',
           rollbackPlan: 'Revert the allocation weight using the portfolio rebalance endpoint.',
-          status: !validationEvidence.passed
-            ? 'VALIDATION_REQUIRED'
-            : !hasMinimumTradeEvidence
-              ? 'CANARY'
-              : isAlreadyApplied
-              ? 'APPROVED'
-              : 'PENDING_APPROVAL',
+          status: portfolioRecommendationStatus({
+            validationPassed: validationEvidence.passed,
+            verifiedAttributedTrades,
+            isAlreadyApplied,
+          }),
         });
       }));
 
     const quantRecommendationModel = this.prisma.quantRecommendation;
-
-    await quantRecommendationModel.deleteMany({ where: { userId, moduleSource: 'PORTFOLIO_INTELLIGENCE' } });
-    await quantRecommendationModel.createMany({
-      data: recommendations.map((item) => ({
-        userId,
+    const existing = await quantRecommendationModel.findMany({
+      where: { userId, moduleSource: 'PORTFOLIO_INTELLIGENCE' },
+      orderBy: { createdAt: 'desc' },
+    });
+    const existingByStrategy = new Map<string, (typeof existing)[number]>();
+    for (const row of existing) {
+      const strategyKey = jsonObject(row.historicalResult).strategyKey;
+      if (typeof strategyKey === 'string' && !existingByStrategy.has(strategyKey)) {
+        existingByStrategy.set(strategyKey, row);
+      }
+    }
+    await Promise.all(recommendations.map(async (item) => {
+      const strategyKey = item.historicalResult.strategyKey;
+      const current = typeof strategyKey === 'string'
+        ? existingByStrategy.get(strategyKey)
+        : undefined;
+      const calculatedStatus = item.status ?? 'PENDING_APPROVAL';
+      const status = current?.status === 'REJECTED' && current.title === item.title
+        ? 'REJECTED'
+        : calculatedStatus;
+      const data = {
         title: item.title,
-        moduleSource: item.moduleSource,
         problemStatement: item.problemStatement,
         evidenceText: item.evidenceText,
         historicalResult: item.historicalResult as Prisma.InputJsonValue,
@@ -865,9 +899,19 @@ export class QuantIntelligenceService {
         priority: item.priority,
         implementationCost: item.implementationCost,
         rollbackPlan: item.rollbackPlan,
-        status: item.status ?? 'PENDING_APPROVAL',
-      })),
-    });
+        status,
+        ...(current && (current.title !== item.title || current.status !== status)
+          ? { reviewedByUserId: null, reviewedAt: null, rejectionReason: null }
+          : {}),
+      };
+      if (current) {
+        await quantRecommendationModel.update({ where: { id: current.id }, data });
+      } else {
+        await quantRecommendationModel.create({
+          data: { userId, moduleSource: item.moduleSource, ...data },
+        });
+      }
+    }));
 
     return recommendations;
   }
@@ -958,6 +1002,68 @@ export class QuantIntelligenceService {
     };
   }
 
+  async refreshStrategyValidations(userId: string, strategyKey: string) {
+    validationBacktestStrategy(strategyKey);
+    if (!this.research) {
+      throw new BadRequestException('VALIDATION_REFRESH_UNAVAILABLE');
+    }
+    const [strategy, scope, connections] = await Promise.all([
+      this.prisma.portfolioStrategy.findUnique({
+        where: { userId_key: { userId, key: strategyKey } },
+        select: { symbols: true },
+      }),
+      this.getSelectedResearchScope(userId),
+      this.prisma.exchangeConnection.findMany({
+        where: { userId, isEnabled: true, isVerified: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
+    if (!strategy) throw new NotFoundException('Portfolio strategy not found');
+    if (!connections.length) {
+      throw new BadRequestException('NO_VERIFIED_EXCHANGE_CONNECTION');
+    }
+    const configured = new Set(scope.symbols);
+    const selectedSymbols = strategy.symbols.filter((symbol) => configured.has(symbol));
+    const symbols = selectedSymbols.length ? selectedSymbols : strategy.symbols;
+    if (!symbols.length || !scope.timeframes.length) {
+      throw new BadRequestException('NO_VALIDATION_SCOPE');
+    }
+
+    const providerSymbols = new Map<ExchangeProvider, string[]>();
+    for (const symbol of symbols) {
+      const recentProvider = scope.recentRuns.find((run) => run.symbol === symbol)?.provider;
+      const connection = connections.find((item) => item.provider === recentProvider) ?? connections[0]!;
+      const provider = connection.provider === 'BINANCE_FUTURES'
+        ? ExchangeProvider.BINANCE_FUTURES
+        : ExchangeProvider.OKX_FUTURES;
+      providerSymbols.set(provider, [...(providerSymbols.get(provider) ?? []), symbol]);
+    }
+
+    const refreshes = [];
+    for (const interval of scope.timeframes) {
+      for (const [provider, providerScopedSymbols] of providerSymbols) {
+        refreshes.push(await this.research.refreshFullQuantValidations({
+          userId,
+          provider,
+          symbols: providerScopedSymbols,
+          interval,
+          strategyKeys: [strategyKey],
+          lookbackCandles: 500,
+        }));
+      }
+    }
+    await this.refreshRecommendations(userId);
+    const portfolio = await this.getPortfolioIntelligence(userId);
+    return {
+      strategyKey,
+      requested: refreshes.reduce((sum, item) => sum + item.requested, 0),
+      completed: refreshes.reduce((sum, item) => sum + item.completed, 0),
+      unavailable: refreshes.reduce((sum, item) => sum + item.unavailable, 0),
+      results: refreshes.flatMap((item) => item.results),
+      allocation: portfolio.allocations.find((item) => item.strategyKey === strategyKey),
+    };
+  }
+
   async reviewRecommendation(id: string, action: 'APPROVE' | 'REJECT', userId?: string, reason?: string) {
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
     if (isUuid) {
@@ -965,6 +1071,9 @@ export class QuantIntelligenceService {
         const quantRecommendationModel = this.prisma.quantRecommendation;
         const rec = await quantRecommendationModel.findFirst({ where: { id, ...(userId ? { userId } : { userId: null }) } });
         if (rec) {
+          let nextStatus: QuantRecommendation['status'] = action === 'APPROVE'
+            ? 'APPROVED'
+            : 'REJECTED';
           if (action === 'APPROVE') {
             const evidence = jsonObject(rec.historicalResult);
             const symbols = Array.isArray(evidence.symbols)
@@ -981,29 +1090,49 @@ export class QuantIntelligenceService {
             if (!validation.passed) {
               throw new BadRequestException(`VALIDATION_REQUIRED: recommendation has ${validation.coveragePct}% multi-symbol coverage and ${validation.passRatePct}% passing walk-forward/out-of-sample evidence`);
             }
-            const config = await this.prisma.selfLearningConfiguration.upsert({
-              where: { userId: userId! },
-              update: {},
-              create: { userId: userId!, weightsJson: BASE_WEIGHTS, shadowWeightsJson: BASE_WEIGHTS },
-            });
-            if (config.shadowEnabled || config.canaryEnabled) {
-              throw new BadRequestException('ACTIVE_LIFECYCLE_EXISTS: wait for the current shadow/canary experiment to finish');
-            }
-            if (rec.moduleSource === 'WEIGHT_OPTIMIZER') {
-              const optimizedWeights = validatedAgentWeights(evidence.weights);
-              await this.prisma.selfLearningConfiguration.update({ where: { userId: userId! }, data: { shadowEnabled: true, shadowWeightsJson: optimizedWeights, shadowVersion: config.liveVersion + 1, shadowStartedAt: new Date() } });
-            }
-            if (rec.moduleSource === 'THRESHOLD_OPTIMIZER' && typeof evidence.optimizedValue === 'number') {
-              await this.prisma.selfLearningConfiguration.update({ where: { userId: userId! }, data: { shadowEnabled: true, shadowThreshold: evidence.optimizedValue, shadowVersion: config.liveVersion + 1, shadowStartedAt: new Date() } });
+            if (rec.moduleSource === 'PORTFOLIO_INTELLIGENCE') {
+              const recommendedWeight = Number(evidence.recommendedWeight);
+              if (!Number.isFinite(recommendedWeight)) {
+                throw new BadRequestException('INVALID_PORTFOLIO_RECOMMENDATION_TARGET');
+              }
+              const applied = await this.applyStrategyRecommendation(
+                userId!,
+                strategyKey,
+                recommendedWeight,
+              );
+              if (!applied.applied) {
+                throw new BadRequestException('VALIDATION_REQUIRED: portfolio allocation remains blocked');
+              }
+              nextStatus = applied.mode === 'CANARY' ? 'CANARY' : 'DEPLOYED';
+            } else if (
+              rec.moduleSource === 'WEIGHT_OPTIMIZER' ||
+              rec.moduleSource === 'THRESHOLD_OPTIMIZER'
+            ) {
+              const config = await this.prisma.selfLearningConfiguration.upsert({
+                where: { userId: userId! },
+                update: {},
+                create: { userId: userId!, weightsJson: BASE_WEIGHTS, shadowWeightsJson: BASE_WEIGHTS },
+              });
+              if (config.shadowEnabled || config.canaryEnabled) {
+                throw new BadRequestException('ACTIVE_LIFECYCLE_EXISTS: wait for the current shadow/canary experiment to finish');
+              }
+              if (rec.moduleSource === 'WEIGHT_OPTIMIZER') {
+                const optimizedWeights = validatedAgentWeights(evidence.weights);
+                await this.prisma.selfLearningConfiguration.update({ where: { userId: userId! }, data: { shadowEnabled: true, shadowWeightsJson: optimizedWeights, shadowVersion: config.liveVersion + 1, shadowStartedAt: new Date() } });
+              }
+              if (rec.moduleSource === 'THRESHOLD_OPTIMIZER' && typeof evidence.optimizedValue === 'number') {
+                await this.prisma.selfLearningConfiguration.update({ where: { userId: userId! }, data: { shadowEnabled: true, shadowThreshold: evidence.optimizedValue, shadowVersion: config.liveVersion + 1, shadowStartedAt: new Date() } });
+              }
+              nextStatus = 'SHADOW';
             }
           }
           const updated = await quantRecommendationModel.update({
             where: { id: rec.id },
             data: {
-              status: action === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+              status: nextStatus,
               reviewedByUserId: userId ?? null,
               reviewedAt: new Date(),
-              rejectionReason: reason ?? null,
+              rejectionReason: action === 'REJECT' ? reason ?? null : null,
             },
           });
           this.logger.log({ event: 'quant_recommendation_reviewed', id, action, userId });

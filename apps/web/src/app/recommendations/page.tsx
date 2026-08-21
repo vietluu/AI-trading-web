@@ -2,23 +2,17 @@
 
 import { useEffect, useState } from "react";
 import { useTranslation } from "@/lib/i18n/i18n-context";
-import { getRecommendations, reviewRecommendation } from "@/services/quant.service";
+import { getRecommendations, reviewRecommendation, type RecommendationItem } from "@/services/quant.service";
 import { apiRequest } from "@/lib/api-client";
-import { ShieldCheck, Check, X, Inbox } from "lucide-react";
+import { ShieldCheck, Check, X, Inbox, RefreshCw } from "lucide-react";
 
-interface RecommendationItem {
-  id: string;
-  title: string;
-  moduleSource: string;
-  problemStatement: string;
-  evidenceText: string;
-  expectedBenefit: string;
-  estimatedRisk: string;
-  priority: string;
-  implementationCost: string;
-  rollbackPlan: string;
-  historicalResult?: Record<string, unknown>;
-  status: "VALIDATION_REQUIRED" | "PENDING_APPROVAL" | "APPROVED" | "SHADOW" | "CANARY" | "REJECTED" | "DEPLOYED" | "ROLLED_BACK";
+interface ValidationPair {
+  symbol: string;
+  interval: string;
+  provider: string;
+  walkForwardStable: boolean;
+  outOfSampleSharpe: number;
+  passed: boolean;
 }
 
 interface SymbolRecommendation {
@@ -38,6 +32,7 @@ export default function RecommendationsPage() {
   const [exchangeRecs, setExchangeRecs] = useState<SymbolRecommendation[]>([]);
   const [loading, setLoading] = useState(true);
   const [actioningId, setActioningId] = useState<string | null>(null);
+  const [refreshingStrategy, setRefreshingStrategy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const priorityLabels: Record<string, string> = {
     LOW: t.quant.recommendationPriorities.low,
@@ -114,14 +109,29 @@ export default function RecommendationsPage() {
     setActioningId(id);
     setActionError(null);
     try {
-      await reviewRecommendation(id, action);
+      const reviewed = await reviewRecommendation(id, action);
       setRecommendations((prev) =>
-        prev.map((r) => (r.id === id ? { ...r, status: action === "APPROVE" ? "APPROVED" : "REJECTED" } : r))
+        prev.map((r) => (r.id === id ? { ...r, ...reviewed } : r))
       );
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Recommendation review failed");
     } finally {
       setActioningId(null);
+    }
+  }
+
+  async function refreshStrategyValidations(strategyKey: string) {
+    setRefreshingStrategy(strategyKey);
+    setActionError(null);
+    try {
+      await apiRequest(`/quant-intelligence/portfolio/strategies/${encodeURIComponent(strategyKey)}/refresh-validations`, {
+        method: "POST",
+      });
+      setRecommendations(await getRecommendations());
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Quant validation refresh failed");
+    } finally {
+      setRefreshingStrategy(null);
     }
   }
 
@@ -199,6 +209,9 @@ export default function RecommendationsPage() {
         <div className="space-y-4">
           {recommendations.map((item) => {
             const rec = localizedRecommendation(item);
+            const strategyKey = typeof rec.historicalResult?.strategyKey === "string" ? rec.historicalResult.strategyKey : null;
+            const validationEvidence = rec.historicalResult?.validationEvidence as { pairs?: ValidationPair[] } | undefined;
+            const validationPairs = validationEvidence?.pairs ?? [];
             return (
             <div key={rec.id} className="rounded-2xl border border-border bg-card p-6 shadow-sm space-y-4">
               <div className="flex items-center justify-between">
@@ -233,6 +246,38 @@ export default function RecommendationsPage() {
                   <p>{rec.estimatedRisk} <br /><span className="text-xs text-muted-foreground">{t.quant.rollbackLabel}: {rec.rollbackPlan}</span></p>
                 </div>
               </div>
+
+              {rec.moduleSource === "PORTFOLIO_INTELLIGENCE" && validationPairs.length > 0 && (
+                <details className="rounded-xl border border-border p-3 text-xs text-muted-foreground">
+                  <summary className="cursor-pointer select-none font-semibold text-foreground/80">
+                    Quant validation details ({validationPairs.filter((pair) => pair.passed).length}/{validationPairs.length} pass)
+                  </summary>
+                  <div className="mt-2 grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
+                    {validationPairs.map((pair) => (
+                      <div key={`${pair.symbol}-${pair.interval}-${pair.provider}`} className="rounded-lg border border-border/70 px-2 py-1.5">
+                        <span className={pair.passed ? "font-bold text-emerald-400" : "font-bold text-rose-400"}>
+                          {pair.passed ? "PASS" : "FAIL"}
+                        </span>{" "}
+                        {pair.symbol} · {pair.interval} · {pair.provider}
+                        <div>WF {pair.walkForwardStable ? "stable" : "unstable"} · OOS Sharpe {pair.outOfSampleSharpe}</div>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+
+              {rec.status === "VALIDATION_REQUIRED" && rec.moduleSource === "PORTFOLIO_INTELLIGENCE" && strategyKey && (
+                <div className="flex justify-end pt-2">
+                  <button
+                    onClick={() => void refreshStrategyValidations(strategyKey)}
+                    disabled={refreshingStrategy === strategyKey}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-sky-500/30 bg-sky-500/10 px-4 py-2 text-xs font-bold text-sky-300 disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${refreshingStrategy === strategyKey ? "animate-spin" : ""}`} />
+                    {refreshingStrategy === strategyKey ? "Refreshing validation…" : "Refresh quant validation"}
+                  </button>
+                </div>
+              )}
 
               {rec.status === "PENDING_APPROVAL" && (
                 <div className="flex justify-end gap-3 pt-2">

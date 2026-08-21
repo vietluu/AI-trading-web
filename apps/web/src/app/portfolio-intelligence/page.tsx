@@ -3,7 +3,17 @@
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api-client";
 import { useTranslation } from "@/lib/i18n/i18n-context";
-import { CheckCircle2, PieChart } from "lucide-react";
+import { CheckCircle2, PieChart, RefreshCw } from "lucide-react";
+
+interface ValidationPair {
+  symbol: string;
+  interval: string;
+  provider: string;
+  walkForwardStable: boolean;
+  outOfSampleSharpe: number;
+  passed: boolean;
+  createdAt: string | null;
+}
 
 interface AllocationItem {
   strategyKey: string;
@@ -21,6 +31,7 @@ interface AllocationItem {
     passRatePct: number;
     passingPairs: number;
     requiredPairs: number;
+    pairs?: ValidationPair[];
   };
 }
 
@@ -56,6 +67,13 @@ interface StrategyApplyResult {
   };
 }
 
+interface ValidationRefreshResult {
+  strategyKey: string;
+  requested: number;
+  completed: number;
+  unavailable: number;
+}
+
 function metric(value: number | null | undefined, suffix = "") {
   return value === null || value === undefined ? "—" : `${value}${suffix}`;
 }
@@ -71,6 +89,7 @@ export default function PortfolioIntelligencePage() {
   const [loading, setLoading] = useState(true);
   const [applying, setApplying] = useState(false);
   const [applyingStrategy, setApplyingStrategy] = useState<string | null>(null);
+  const [refreshingStrategy, setRefreshingStrategy] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
@@ -140,6 +159,29 @@ export default function PortfolioIntelligencePage() {
       setErrorMessage(message);
     } finally {
       setApplyingStrategy(null);
+    }
+  }
+
+  async function refreshStrategyValidations(strategyKey: string) {
+    try {
+      setRefreshingStrategy(strategyKey);
+      setErrorMessage(null);
+      const result = await apiRequest<ValidationRefreshResult>(
+        `/quant-intelligence/portfolio/strategies/${encodeURIComponent(strategyKey)}/refresh-validations`,
+        { method: "POST" },
+      );
+      const refreshed = await apiRequest<PortfolioData>("/quant-intelligence/portfolio");
+      setPortfolio(refreshed);
+      setStatusMessage(
+        `${strategyKey}: refreshed ${result.completed}/${result.requested} validations` +
+          (result.unavailable ? `; ${result.unavailable} unavailable.` : "."),
+      );
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Unable to refresh strategy validations.",
+      );
+    } finally {
+      setRefreshingStrategy(null);
     }
   }
 
@@ -216,8 +258,8 @@ export default function PortfolioIntelligencePage() {
         </div>
         <div className="space-y-3">
           {portfolio?.allocations?.map((a, i) => (
-            <div key={i} className="flex items-center justify-between p-3 rounded-xl border border-border">
-              <div>
+            <div key={i} className="flex items-start justify-between gap-4 p-3 rounded-xl border border-border">
+              <div className="min-w-0 flex-1">
                 <p className="font-bold text-sm">{a.strategyName}</p>
                 <p className={`mb-1 text-xs ${a.canApply ? "text-emerald-300" : "text-amber-300"}`}>
                   {a.validationStatus === "FULL"
@@ -229,24 +271,55 @@ export default function PortfolioIntelligencePage() {
                 <span className="text-xs text-muted-foreground">
                   Correlation: {a.correlationWithPortfolio ?? "insufficient real trades"} · Diversification Score: {a.diversificationBenefitScore ?? "—"}/100
                 </span>
+                {(a.validation.pairs?.length ?? 0) > 0 && (
+                  <details className="mt-2 text-xs text-muted-foreground">
+                    <summary className="cursor-pointer select-none font-semibold text-foreground/80">
+                      Validation details ({a.validation.passingPairs}/{a.validation.requiredPairs} pass)
+                    </summary>
+                    <div className="mt-2 grid gap-1 sm:grid-cols-2">
+                      {a.validation.pairs?.map((pair) => (
+                        <div key={`${pair.symbol}-${pair.interval}-${pair.provider}`} className="rounded-lg border border-border/70 px-2 py-1.5">
+                          <span className={pair.passed ? "font-bold text-emerald-400" : "font-bold text-rose-400"}>
+                            {pair.passed ? "PASS" : "FAIL"}
+                          </span>{" "}
+                          {pair.symbol} · {pair.interval} · {pair.provider}
+                          <div>WF {pair.walkForwardStable ? "stable" : "unstable"} · OOS Sharpe {pair.outOfSampleSharpe}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
               </div>
               <div className="text-right space-y-2">
                 <div>
                   <span className="text-xs text-muted-foreground">Current: {a.currentCapitalAllocationPct}%</span>
                   <p className="text-base font-bold text-emerald-500">Recommended: {a.recommendedCapitalAllocationPct}%</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void applyStrategyRecommendation(a.strategyKey, a.recommendedCapitalAllocationPct)}
-                  disabled={applying || applyingStrategy === a.strategyKey || !a.canApply}
-                  className="rounded-lg border border-emerald-400/40 bg-emerald-400/10 px-3 py-2 text-sm font-semibold text-emerald-300 disabled:opacity-50"
-                >
-                  {applyingStrategy === a.strategyKey
-                    ? "Applying…"
-                    : a.canApply
-                      ? `Apply ${a.validationStatus}`
-                      : "Validation required"}
-                </button>
+                <div className="flex justify-end gap-2">
+                  {!a.canApply && (
+                    <button
+                      type="button"
+                      onClick={() => void refreshStrategyValidations(a.strategyKey)}
+                      disabled={refreshingStrategy === a.strategyKey}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-sky-400/40 bg-sky-400/10 px-3 py-2 text-sm font-semibold text-sky-300 disabled:opacity-50"
+                    >
+                      <RefreshCw className={`h-4 w-4 ${refreshingStrategy === a.strategyKey ? "animate-spin" : ""}`} />
+                      {refreshingStrategy === a.strategyKey ? "Refreshing…" : "Refresh validation"}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void applyStrategyRecommendation(a.strategyKey, a.recommendedCapitalAllocationPct)}
+                    disabled={applying || applyingStrategy === a.strategyKey || !a.canApply}
+                    className="rounded-lg border border-emerald-400/40 bg-emerald-400/10 px-3 py-2 text-sm font-semibold text-emerald-300 disabled:opacity-50"
+                  >
+                    {applyingStrategy === a.strategyKey
+                      ? "Applying…"
+                      : a.canApply
+                        ? `Apply ${a.validationStatus}`
+                        : "Validation required"}
+                  </button>
+                </div>
               </div>
             </div>
           ))}

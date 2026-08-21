@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   calculateLedgerPortfolioMetrics,
+  portfolioRecommendationStatus,
   resolveStrategyAllocationTarget,
 } from '../../src/modules/research/application/quant-intelligence.service';
 
@@ -44,6 +45,37 @@ describe('calculateLedgerPortfolioMetrics', () => {
     ]);
 
     expect(result.profitFactor).toBe(0.5);
+  });
+});
+
+describe('portfolioRecommendationStatus', () => {
+  it('remains blocked while quant validation fails', () => {
+    expect(portfolioRecommendationStatus({
+      validationPassed: false,
+      verifiedAttributedTrades: 20,
+      isAlreadyApplied: false,
+    })).toBe('VALIDATION_REQUIRED');
+  });
+
+  it('requires explicit approval after validation passes', () => {
+    expect(portfolioRecommendationStatus({
+      validationPassed: true,
+      verifiedAttributedTrades: 2,
+      isAlreadyApplied: false,
+    })).toBe('PENDING_APPROVAL');
+  });
+
+  it('shows the applied lifecycle instead of leaving an actionable recommendation', () => {
+    expect(portfolioRecommendationStatus({
+      validationPassed: true,
+      verifiedAttributedTrades: 2,
+      isAlreadyApplied: true,
+    })).toBe('CANARY');
+    expect(portfolioRecommendationStatus({
+      validationPassed: true,
+      verifiedAttributedTrades: 5,
+      isAlreadyApplied: true,
+    })).toBe('DEPLOYED');
   });
 });
 

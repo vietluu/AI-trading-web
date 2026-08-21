@@ -79,6 +79,14 @@ export class QuantIntelligenceController {
     return this.quantService.applyStrategyRecommendation(this.requireUserId(user), key, body.targetWeight);
   }
 
+  @Post('portfolio/strategies/:key/refresh-validations')
+  refreshStrategyValidations(
+    @CurrentUser() user: { id: string } | undefined,
+    @Param('key') key: string,
+  ) {
+    return this.quantService.refreshStrategyValidations(this.requireUserId(user), key);
+  }
+
   @Get('self-learning')
   getSelfLearning(@CurrentUser() user?: { id: string }) {
     return this.quantService.getSelfLearningInsights(this.requireUserId(user));

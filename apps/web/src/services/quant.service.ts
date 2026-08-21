@@ -5,7 +5,7 @@ export async function getRecommendations(): Promise<RecommendationItem[]> {
   return apiRequest(API_ENDPOINTS.quant.recommendations);
 }
 
-interface RecommendationItem {
+export interface RecommendationItem {
   id: string;
   title: string;
   moduleSource: string;
@@ -16,11 +16,12 @@ interface RecommendationItem {
   priority: string;
   implementationCost: string;
   rollbackPlan: string;
+  historicalResult?: Record<string, unknown>;
   status: "VALIDATION_REQUIRED" | "PENDING_APPROVAL" | "APPROVED" | "SHADOW" | "CANARY" | "REJECTED" | "DEPLOYED" | "ROLLED_BACK";
 }
 
-export async function reviewRecommendation(id: string, action: "APPROVE" | "REJECT") {
-  return apiRequest(API_ENDPOINTS.quant.recommendationReview(id), {
+export async function reviewRecommendation(id: string, action: "APPROVE" | "REJECT"): Promise<RecommendationItem> {
+  return apiRequest<RecommendationItem>(API_ENDPOINTS.quant.recommendationReview(id), {
     method: "POST",
     body: JSON.stringify({ action }),
   });
