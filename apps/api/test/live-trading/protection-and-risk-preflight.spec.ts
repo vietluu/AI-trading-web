@@ -249,6 +249,54 @@ describe("live protection and exchange risk preflight", () => {
     expect(JSON.stringify(prisma.liveOrder.create.mock.calls)).toContain('"reduceOnly":true');
   });
 
+  it("does not close a position only because its holding-candle horizon elapsed", async () => {
+    const { service, prisma, connections } = build();
+    prisma.liveOrder.findFirst.mockResolvedValue({
+      id: "open-stale-1",
+      clientOrderId: "entry-stale-1",
+      symbol: "ETH-USDT",
+      side: "BUY",
+      leverage: 3,
+      stopLoss: 98,
+      takeProfit: 103,
+      initialStopLoss: 98,
+      protectiveClientOrderId: null,
+      tradePlan: {
+        approved: true,
+        regime: "TREND_UP",
+        strategy: "TREND_PULLBACK",
+        maxHoldingCandles: 5,
+        breakEvenAtR: 0.8,
+        timeframeMs: 15 * 60_000,
+      },
+      strategyId: null,
+      createdAt: new Date(Date.now() - 90 * 60_000),
+      partialTakenAt: null,
+      highestMark: null,
+      lowestMark: null,
+    });
+    prisma.liveOrder.update.mockResolvedValue({});
+
+    await internals(service).monitorProtection(
+      "user-1",
+      { id: "conn-1", provider: "BINANCE_FUTURES", environment: "TESTNET" },
+      [{
+        provider: "BINANCE_FUTURES",
+        symbol: "ETH-USDT",
+        side: "LONG",
+        positionMode: "ONE_WAY",
+        quantity: "2",
+        entryPrice: "100",
+        markPrice: "100.2",
+        leverage: "3",
+      }],
+      {},
+    );
+
+    expect(connections.placeOrder).not.toHaveBeenCalled();
+    expect(prisma.liveOrder.create).not.toHaveBeenCalled();
+  });
+
   it("uses user-specific limits and blocks a stale approval whose fee-inclusive loss exceeds 2% equity", async () => {
     const { service, prisma } = build();
     prisma.liveAccountSnapshot.findFirst.mockResolvedValue({

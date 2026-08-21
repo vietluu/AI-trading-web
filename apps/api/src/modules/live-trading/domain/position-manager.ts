@@ -19,7 +19,14 @@ export function evaluatePositionManagement(input: PositionManagementInput) {
   const lowestMark = Math.min(input.lowestMark ?? input.entryPrice, input.markPrice);
   const risk = Math.abs(input.entryPrice - input.initialStopLoss);
   if (!Number.isFinite(risk) || risk <= 0) {
-    return { highestMark, lowestMark, peakR: 0, currentR: 0, takePartial: false, timeExit: false };
+    return {
+      highestMark,
+      lowestMark,
+      peakR: 0,
+      currentR: 0,
+      takePartial: false,
+      reassessmentDue: false,
+    };
   }
   const favorable = input.side === "LONG" ? highestMark - input.entryPrice : input.entryPrice - lowestMark;
   const currentProfit = input.side === "LONG" ? input.markPrice - input.entryPrice : input.entryPrice - input.markPrice;
@@ -53,6 +60,10 @@ export function evaluatePositionManagement(input: PositionManagementInput) {
     currentR,
     ...(improved ? { tightenedStopLoss: Number(candidate.toFixed(8)) } : {}),
     takePartial: !input.partialTaken && peakR >= 1,
-    timeExit: elapsedCandles >= input.plan.maxHoldingCandles && currentR < 0.3,
+    // maxHoldingCandles is an analysis horizon, not an execution deadline.
+    // A stale thesis must be reassessed by the normal Decision/Judge pipeline;
+    // it must never cause an unconditional market close here.
+    reassessmentDue:
+      elapsedCandles >= input.plan.maxHoldingCandles && currentR < 0.3,
   };
 }

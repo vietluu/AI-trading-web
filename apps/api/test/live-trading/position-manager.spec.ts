@@ -47,7 +47,7 @@ describe("position manager", () => {
     expect(ratcheted.tightenedStopLoss).toBeUndefined();
   });
 
-  it("time-exits a stale position that has not progressed 0.3R", () => {
+  it("marks a stale position for reassessment without requesting a time exit", () => {
     const action = evaluatePositionManagement({
       side: "LONG",
       entryPrice: 100,
@@ -59,7 +59,8 @@ describe("position manager", () => {
       partialTaken: false,
       plan,
     });
-    expect(action.timeExit).toBe(true);
+    expect(action.reassessmentDue).toBe(true);
+    expect(action).not.toHaveProperty("timeExit");
   });
 
   it("applies symmetric break-even logic to SHORT positions", () => {

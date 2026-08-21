@@ -2005,74 +2005,24 @@ export class LiveTradingService {
             },
           });
 
+          // Reaching the plan horizon no longer closes a position. Scheduled
+          // pipelines keep refreshing market/news inputs and Decision/Judge may
+          // explicitly reverse it; until then native TP/SL remain authoritative.
+          if (action.reassessmentDue) {
+            this.logger.debug({
+              event: "position_reassessment_due",
+              connectionId: connection.id,
+              symbol: position.symbol,
+              strategy: rawPlan.strategy,
+              maxHoldingCandles: rawPlan.maxHoldingCandles,
+              currentR: action.currentR,
+            });
+          }
           const configuration = await this.connections.configuration(
             userId,
             connection.id,
             context,
           );
-          if (action.timeExit) {
-            const clientOrderId = this.derivedId(source.clientOrderId, "time");
-            const duplicate = await this.prisma.liveOrder.findUnique({
-              where: {
-                connectionId_clientOrderId: {
-                  connectionId: connection.id,
-                  clientOrderId,
-                },
-              },
-            });
-            if (!duplicate) {
-              try {
-                await this.submit(
-                  userId,
-                  connection,
-                  {
-                    symbol: position.symbol,
-                    side: position.side === "LONG" ? "SELL" : "BUY",
-                    quantity: position.quantity,
-                    leverage: Number(position.leverage ?? source.leverage),
-                    clientOrderId,
-                    reduceOnly: true,
-                    ...(configuration.positionMode === "HEDGE"
-                      ? { positionSide: position.side as "LONG" | "SHORT" }
-                      : {}),
-                  },
-                  "CLOSE",
-                  null,
-                  source.strategyId,
-                  context,
-                );
-                if (
-                  position.provider === ExchangeProvider.OKX_FUTURES &&
-                  source.protectiveClientOrderId
-                ) {
-                  await this.connections
-                    .cancelProtectiveOrder(
-                      userId,
-                      connection.id,
-                      {
-                        symbol: position.symbol,
-                        protectiveClientOrderId: source.protectiveClientOrderId,
-                      },
-                      context,
-                    )
-                    .catch((error: unknown) =>
-                      this.logger.warn({
-                        event: "protective_order_cancel_after_close_failed",
-                        symbol: position.symbol,
-                        error: this.safeError(error),
-                      }),
-                    );
-                }
-              } catch (error) {
-                this.logger.error({
-                  event: "position_time_exit_failed",
-                  symbol: position.symbol,
-                  error: this.safeError(error),
-                });
-              }
-            }
-            continue;
-          }
           if (action.takePartial) {
             const clientOrderId = this.derivedId(
               source.clientOrderId,
