@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
 import { RiskConfigService } from '../../risk/application/risk-config.service';
@@ -295,6 +295,7 @@ export class ResearchService {
         validationRunId = (persisted as { id?: string }).id ?? null;
       } catch (err) {
         this.logger.warn(`Failed to persist ResearchValidationRun to DB: ${(err as Error).message}`);
+        throw new ServiceUnavailableException('VALIDATION_PERSISTENCE_FAILED');
       }
     }
 

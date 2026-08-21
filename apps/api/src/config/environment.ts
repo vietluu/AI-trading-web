@@ -629,6 +629,26 @@ const environmentSchema = z
       });
     }
     if (
+      environment.NODE_ENV === "production" &&
+      /^(replace-with|ci-only)/i.test(environment.SESSION_SECRET)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "SESSION_SECRET must be a unique production secret",
+        path: ["SESSION_SECRET"],
+      });
+    }
+    if (
+      environment.NODE_ENV === "production" &&
+      environment.ENCRYPTION_MASTER_KEY === "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "ENCRYPTION_MASTER_KEY must not use the documented placeholder in production",
+        path: ["ENCRYPTION_MASTER_KEY"],
+      });
+    }
+    if (
       environment.EMAIL_VERIFICATION_ENABLED &&
       (!environment.AUTH_EMAIL_WEBHOOK_URL ||
         !environment.AUTH_EMAIL_WEBHOOK_SECRET)

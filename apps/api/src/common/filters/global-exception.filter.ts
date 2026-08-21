@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import type { ApiError } from "@platform/shared";
 import type { Request, Response } from "express";
+import { ZodError } from "zod";
 
 import { ExchangeError } from "../../exchange/domain/exchange.error";
 import {
@@ -22,6 +23,11 @@ function hasMessage(value: object): value is { message: unknown } {
 function extractMessage(exception: unknown): string {
   if (exception instanceof ExchangeError) return exception.message;
   if (exception instanceof AgentError) return exception.safeMessage;
+  if (exception instanceof ZodError) {
+    return exception.issues
+      .map((issue) => `${issue.path.join(".") || "request"}: ${issue.message}`)
+      .join(", ");
+  }
   if (exception instanceof HttpException) {
     const response = exception.getResponse();
 
@@ -104,6 +110,8 @@ export class GlobalExceptionFilter implements ExceptionFilter {
           : exception.statusCode
         : exception instanceof AgentError
           ? agentErrorStatus(exception.code)
+        : exception instanceof ZodError
+          ? HttpStatus.BAD_REQUEST
         : exception instanceof HttpException
           ? exception.getStatus()
         : statusFromObj && statusFromObj >= 400 && statusFromObj < 600
@@ -114,6 +122,8 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         ? exception.code
         : exception instanceof AgentError
           ? exception.code
+        : exception instanceof ZodError
+          ? "ValidationError"
         : exception instanceof HttpException
           ? exception.name
         : (exception as Record<string, unknown>)?.code as string || "InternalServerError";

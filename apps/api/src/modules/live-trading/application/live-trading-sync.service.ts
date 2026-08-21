@@ -28,9 +28,9 @@ export class LiveTradingSyncService
   onApplicationBootstrap(): void {
     if (process.env.CLI_DISABLE_SCHEDULERS === 'true') return;
     if (!this.config.values.syncEnabled) return;
-    void this.syncAll();
+    void this.syncAllSafely();
     this.timer = setInterval(
-      () => void this.syncAll(),
+      () => void this.syncAllSafely(),
       this.config.values.syncIntervalMs,
     );
     this.timer.unref();
@@ -38,6 +38,17 @@ export class LiveTradingSyncService
 
   onApplicationShutdown(): void {
     if (this.timer) clearInterval(this.timer);
+  }
+
+  private async syncAllSafely(): Promise<void> {
+    try {
+      await this.syncAll();
+    } catch (error) {
+      this.logger.error({
+        event: "live_state_sync_sweep_failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private async syncAll(): Promise<void> {

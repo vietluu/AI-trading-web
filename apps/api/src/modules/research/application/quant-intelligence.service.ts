@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
 import { ExchangeInterval, ExchangeProvider } from '../../../exchange/domain/exchange.types';
 import { MarketDataService } from '../../../market-data/application/market-data.service';
 import { aggregateClosedTradeCycles } from '../../live-trading/domain/closed-trade-cycle';
+import { timeframeMilliseconds } from '../../pipeline/domain/adaptive-trading-policy';
 
 type QuantRecommendation = {
   id?: string;
@@ -160,6 +161,7 @@ import { runBenchmarkSuite, detectMarketRegime } from '../domain/benchmark-engin
 import { runHistoricalBacktest } from '../domain/backtest-engine';
 import { BASE_WEIGHTS } from '../../agents/domain/constants/decision.constants';
 import { ResearchService, validationBacktestStrategy } from './research.service';
+import { DistributedTaskLockService } from '../../../redis/distributed-task-lock.service';
 
 @Injectable()
 export class QuantIntelligenceService {
@@ -171,6 +173,7 @@ export class QuantIntelligenceService {
     private readonly reportService: QuantReportService,
     private readonly knowledgeService: KnowledgeBaseService,
     @Optional() private readonly research?: ResearchService,
+    @Optional() private readonly taskLock?: DistributedTaskLockService,
   ) {}
 
   async getDecisionScorecard(userId: string) {
@@ -716,25 +719,14 @@ export class QuantIntelligenceService {
   }
 
   async getRecommendations(userId?: string): Promise<QuantRecommendation[]> {
-    try {
-      if (userId) await this.refreshRecommendations(userId);
-      const dbRecs = await this.prisma.quantRecommendation.findMany({
-        where: userId ? { userId } : undefined,
-        orderBy: { createdAt: 'desc' },
-      });
-      const normalizedDbRecs: QuantRecommendation[] = (dbRecs ?? []).map((item: QuantRecommendationRecord) => ({
-        ...item,
-        historicalResult: (item.historicalResult ?? {}) as Record<string, unknown>,
-      }));
-      return normalizedDbRecs;
-    } catch (error) {
-      this.logger.warn({
-        event: 'quant_recommendations_db_error',
-        message: 'Database query failed or unmigrated; returning empty list',
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return [];
-    }
+    const dbRecs = await this.prisma.quantRecommendation.findMany({
+      where: userId ? { userId } : undefined,
+      orderBy: { createdAt: 'desc' },
+    });
+    return (dbRecs ?? []).map((item: QuantRecommendationRecord) => ({
+      ...item,
+      historicalResult: (item.historicalResult ?? {}) as Record<string, unknown>,
+    }));
   }
 
   private async multiSymbolValidationEvidence(
@@ -743,14 +735,14 @@ export class QuantIntelligenceService {
     strategyKey = 'ai-core',
   ) {
     const scope = await this.getSelectedResearchScope(userId);
-    const configured = new Set(scope.symbols);
     const requested = requestedSymbols
       .map((value) => value.trim().toUpperCase().replace(/[/_]/g, '-'))
-      .filter((value) => configured.has(value));
+      .filter((value) => /^[A-Z0-9]+-[A-Z0-9]+$/.test(value));
     const symbols = [...new Set(requested.length ? requested : scope.symbols)];
     const timeframes = scope.timeframes;
-    const rows = symbols.length && timeframes.length
-      ? await this.prisma.researchValidationRun.findMany({
+    const [rows, connections] = symbols.length && timeframes.length
+      ? await Promise.all([
+        this.prisma.researchValidationRun.findMany({
           where: {
             userId,
             strategyKey,
@@ -758,19 +750,41 @@ export class QuantIntelligenceService {
             interval: { in: timeframes },
           },
           orderBy: { createdAt: 'desc' },
-        })
-      : [];
+        }),
+        this.prisma.exchangeConnection.findMany({
+          where: { userId, isEnabled: true, isVerified: true },
+          select: { provider: true },
+          orderBy: { createdAt: 'asc' },
+        }),
+      ])
+      : [[], []] as const;
+    const activeProviders = new Set(connections.map((connection) => connection.provider));
+    const expectedProviderBySymbol = new Map(symbols.map((symbol) => {
+      const recentProvider = scope.recentRuns.find((run) =>
+        run.symbol === symbol && activeProviders.has(run.provider),
+      )?.provider;
+      return [symbol, recentProvider ?? connections[0]?.provider] as const;
+    }));
     const latestByPair = new Map<string, (typeof rows)[number]>();
     for (const row of rows) {
-      const key = `${row.symbol}:${row.interval}`;
+      const expectedProvider = expectedProviderBySymbol.get(row.symbol);
+      if (!expectedProvider || row.provider !== expectedProvider) continue;
+      const key = `${row.symbol}:${row.interval}:${row.provider}`;
       if (!latestByPair.has(key)) latestByPair.set(key, row);
     }
     const latest = [...latestByPair.values()];
-    const passing = latest.filter((row) => row.walkForwardStable && row.outOfSampleSharpe > 0);
+    const now = Date.now();
+    const isFresh = (row: (typeof latest)[number]) => {
+      if (!(row.createdAt instanceof Date)) return false;
+      const maxAge = Math.max(36 * 3_600_000, timeframeMilliseconds(row.interval) * 12);
+      return now - row.createdAt.getTime() <= maxAge;
+    };
+    const available = latest.filter(isFresh);
+    const passing = available.filter((row) => row.walkForwardStable && row.outOfSampleSharpe > 0);
     const requiredPairs = symbols.length * timeframes.length;
-    const coveragePct = requiredPairs ? latest.length / requiredPairs * 100 : 0;
-    const passRatePct = latest.length ? passing.length / latest.length * 100 : 0;
-    const averageSharpe = latest.length ? latest.reduce((sum, row) => sum + row.outOfSampleSharpe, 0) / latest.length : null;
+    const coveragePct = requiredPairs ? available.length / requiredPairs * 100 : 0;
+    const passRatePct = available.length ? passing.length / available.length * 100 : 0;
+    const averageSharpe = available.length ? available.reduce((sum, row) => sum + row.outOfSampleSharpe, 0) / available.length : null;
     const symbolsWithPassingEvidence = [...new Set(passing.map((row) => row.symbol))];
     const everySymbolCovered = symbols.length > 0 && symbols.every((symbol) => symbolsWithPassingEvidence.includes(symbol));
     const passed = requiredPairs > 0 && coveragePct === 100 && passRatePct >= 50 && everySymbolCovered && averageSharpe !== null && averageSharpe > 0;
@@ -778,8 +792,9 @@ export class QuantIntelligenceService {
       source: 'MULTI_SYMBOL_REAL_CANDLE_VALIDATION',
       symbols,
       timeframes,
+      expectedProviders: Object.fromEntries(expectedProviderBySymbol),
       requiredPairs,
-      availablePairs: latest.length,
+      availablePairs: available.length,
       passingPairs: passing.length,
       coveragePct: Number(coveragePct.toFixed(2)),
       passRatePct: Number(passRatePct.toFixed(2)),
@@ -792,9 +807,10 @@ export class QuantIntelligenceService {
         symbol: row.symbol,
         interval: row.interval,
         provider: row.provider,
+        fresh: isFresh(row),
         walkForwardStable: row.walkForwardStable,
         outOfSampleSharpe: Number(row.outOfSampleSharpe.toFixed(4)),
-        passed: row.walkForwardStable && row.outOfSampleSharpe > 0,
+        passed: isFresh(row) && row.walkForwardStable && row.outOfSampleSharpe > 0,
         createdAt: row.createdAt?.toISOString?.() ?? null,
       })),
       passed,
@@ -802,6 +818,17 @@ export class QuantIntelligenceService {
   }
 
   async refreshRecommendations(userId: string) {
+    const refresh = () => this.performRecommendationsRefresh(userId);
+    if (!this.taskLock) return refresh();
+    const result = await this.taskLock.run(
+      `quant-recommendations-refresh:${userId}`,
+      300,
+      refresh,
+    );
+    return result ?? this.getRecommendations(userId);
+  }
+
+  private async performRecommendationsRefresh(userId: string) {
     const strategies = await this.prisma.portfolioStrategy.findMany({
       where: { userId },
       include: {
@@ -978,17 +1005,19 @@ export class QuantIntelligenceService {
     const finalWeights = normalizedWeights.map((value) => value / totalWeight);
     const totalCapital = strategies.reduce((sum, item) => sum + Number(item.allocation?.allocatedCapital ?? 0), 0) || 100_000;
 
-    await Promise.all(
-      strategies.map((item, index) => {
-        const weight = Number(finalWeights[index] ?? 0.01);
-        const allocatedCapital = totalCapital > 0 ? totalCapital * weight : 100_000 * weight;
-        return this.prisma.strategyAllocation.upsert({
-          where: { strategyId: item.id },
-          update: { weight, allocatedCapital },
-          create: { strategyId: item.id, weight, allocatedCapital },
-        });
-      }),
-    );
+    await this.prisma.$transaction(async (tx) => {
+      await Promise.all(
+        strategies.map((item, index) => {
+          const weight = Number(finalWeights[index] ?? 0.01);
+          const allocatedCapital = totalCapital > 0 ? totalCapital * weight : 100_000 * weight;
+          return tx.strategyAllocation.upsert({
+            where: { strategyId: item.id },
+            update: { weight, allocatedCapital },
+            create: { strategyId: item.id, weight, allocatedCapital },
+          });
+        }),
+      );
+    });
 
     await this.refreshRecommendations(userId);
     return {
@@ -1003,6 +1032,20 @@ export class QuantIntelligenceService {
   }
 
   async refreshStrategyValidations(userId: string, strategyKey: string) {
+    const refresh = () => this.performStrategyValidationRefresh(userId, strategyKey);
+    if (!this.taskLock) return refresh();
+    const result = await this.taskLock.run(
+      `quant-validation-refresh:${userId}:${strategyKey}`,
+      600,
+      refresh,
+    );
+    if (!result) {
+      throw new ConflictException('VALIDATION_REFRESH_ALREADY_RUNNING');
+    }
+    return result;
+  }
+
+  private async performStrategyValidationRefresh(userId: string, strategyKey: string) {
     validationBacktestStrategy(strategyKey);
     if (!this.research) {
       throw new BadRequestException('VALIDATION_REFRESH_UNAVAILABLE');
@@ -1140,7 +1183,7 @@ export class QuantIntelligenceService {
         }
       } catch (error) {
         this.logger.warn({ event: 'quant_recommendation_review_failed', id, error: error instanceof Error ? error.message : String(error) });
-        if (error instanceof BadRequestException || error instanceof NotFoundException) throw error;
+        throw error;
       }
     }
     throw new NotFoundException('Evidence-backed recommendation not found');

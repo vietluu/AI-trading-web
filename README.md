@@ -55,11 +55,11 @@ After entry, the Position Manager synchronizes exchange state and can:
 - move the stop to break-even plus a fee buffer;
 - trail by ATR after sufficient favorable movement;
 - take one partial profit at 1R;
-- perform a time exit when a trade stagnates;
+- keep stagnant positions open until an explicit protective, manual, exchange, or strategy-authorized close occurs;
 - amend or cancel/recreate protective orders through the exchange adapter;
 - clean orphan protection after the position closes.
 
-`LIVE_POSITION_SYNC_INTERVAL_MS` defaults to 5 seconds. Exchange order-history
+`LIVE_POSITION_SYNC_INTERVAL_MS` defaults to 30 seconds. Exchange order-history
 imports and the Live Trading dashboard are capped at the 20 most recent orders;
 positions and safety/protection checks are not truncated.
 

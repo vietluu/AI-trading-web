@@ -16,8 +16,8 @@ export class DataRetentionService implements OnApplicationBootstrap, OnModuleDes
 
   onApplicationBootstrap() {
     // Run initial cleanup on startup, then schedule every 12 hours
-    void this.runPurge();
-    this.timer = setInterval(() => void this.runPurge(), 12 * 60 * 60 * 1000);
+    void this.runPurgeSafely();
+    this.timer = setInterval(() => void this.runPurgeSafely(), 12 * 60 * 60 * 1000);
     this.timer.unref();
   }
 
@@ -29,6 +29,17 @@ export class DataRetentionService implements OnApplicationBootstrap, OnModuleDes
       return;
     }
     await this.purgeOldData();
+  }
+
+  private async runPurgeSafely() {
+    try {
+      await this.runPurge();
+    } catch (error) {
+      this.logger.error({
+        event: "data_retention_scheduler_failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   async purgeOldData(daysToKeep = 30): Promise<{

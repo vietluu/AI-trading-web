@@ -46,7 +46,9 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
     if (this.destroyed || !this.config.enabled) return;
     this.timer = setTimeout(() => {
       this.timer = undefined;
-      void this.tick().finally(() => {
+      void this.tick().catch((error) => {
+        this.logger.error({ event: 'pipeline_scheduler_tick_failed', message: error instanceof Error ? error.message : String(error) });
+      }).finally(() => {
         if (!this.destroyed && this.config.enabled) this.scheduleNextTick();
       });
     }, 5_000);

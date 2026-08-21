@@ -9,6 +9,7 @@ interface ValidationPair {
   symbol: string;
   interval: string;
   provider: string;
+  fresh: boolean;
   walkForwardStable: boolean;
   outOfSampleSharpe: number;
   passed: boolean;
@@ -283,7 +284,7 @@ export default function PortfolioIntelligencePage() {
                             {pair.passed ? "PASS" : "FAIL"}
                           </span>{" "}
                           {pair.symbol} · {pair.interval} · {pair.provider}
-                          <div>WF {pair.walkForwardStable ? "stable" : "unstable"} · OOS Sharpe {pair.outOfSampleSharpe}</div>
+                          <div>{pair.fresh ? "Fresh" : "STALE"} · WF {pair.walkForwardStable ? "stable" : "unstable"} · OOS Sharpe {pair.outOfSampleSharpe}</div>
                         </div>
                       ))}
                     </div>

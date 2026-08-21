@@ -19,9 +19,9 @@ export class ReflectionSchedulerService implements OnApplicationBootstrap, OnMod
   onApplicationBootstrap() {
     if (process.env.CLI_DISABLE_SCHEDULERS === 'true') return;
     if (!this.config.get<boolean>('REFLECTION_ENABLED', true)) return;
-    this.timer = setInterval(() => void this.sweep(), 60_000);
+    this.timer = setInterval(() => void this.runSweepSafely(), 60_000);
     this.timer.unref();
-    void this.sweep();
+    void this.runSweepSafely();
   }
 
   onModuleDestroy() { if (this.timer) clearInterval(this.timer); }
@@ -32,6 +32,14 @@ export class ReflectionSchedulerService implements OnApplicationBootstrap, OnMod
       return;
     }
     await this.sweepOnce();
+  }
+
+  private async runSweepSafely() {
+    try {
+      await this.sweep();
+    } catch (error) {
+      this.logger.error({ event: 'reflection_scheduler_failed', error: error instanceof Error ? error.message : String(error) });
+    }
   }
 
   private async sweepOnce() {

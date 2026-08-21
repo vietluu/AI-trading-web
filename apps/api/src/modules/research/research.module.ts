@@ -9,6 +9,7 @@ import { QuantIntelligenceService } from './application/quant-intelligence.servi
 import { QuantIntelligenceController } from './presentation/quant-intelligence.controller';
 import { QuantResearchSchedulerService } from './application/quant-research-scheduler.service';
 import { RiskModule } from '../risk/risk.module';
+import { ResearchRateLimitGuard } from './presentation/research-rate-limit.guard';
 
 @Module({
   imports: [MarketDataModule, ExchangeModule, RiskModule],
@@ -19,6 +20,7 @@ import { RiskModule } from '../risk/risk.module';
     KnowledgeBaseService,
     QuantIntelligenceService,
     QuantResearchSchedulerService,
+    ResearchRateLimitGuard,
   ],
   exports: [ResearchService, QuantIntelligenceService],
 })

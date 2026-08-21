@@ -10,6 +10,7 @@ interface ValidationPair {
   symbol: string;
   interval: string;
   provider: string;
+  fresh: boolean;
   walkForwardStable: boolean;
   outOfSampleSharpe: number;
   passed: boolean;
@@ -33,6 +34,7 @@ export default function RecommendationsPage() {
   const [loading, setLoading] = useState(true);
   const [actioningId, setActioningId] = useState<string | null>(null);
   const [refreshingStrategy, setRefreshingStrategy] = useState<string | null>(null);
+  const [refreshingRecommendations, setRefreshingRecommendations] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const priorityLabels: Record<string, string> = {
     LOW: t.quant.recommendationPriorities.low,
@@ -135,6 +137,21 @@ export default function RecommendationsPage() {
     }
   }
 
+  async function refreshAllRecommendations() {
+    setRefreshingRecommendations(true);
+    setActionError(null);
+    try {
+      const refreshed = await apiRequest<RecommendationItem[]>("/quant-intelligence/recommendations/refresh", {
+        method: "POST",
+      });
+      setRecommendations(refreshed);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Recommendation refresh failed");
+    } finally {
+      setRefreshingRecommendations(false);
+    }
+  }
+
   if (loading) return <div className="p-8 text-center text-muted-foreground">{t.common.loading}</div>;
 
   return (
@@ -148,6 +165,15 @@ export default function RecommendationsPage() {
             {t.quant.recommendationsSubtitle}
           </p>
         </div>
+        <button
+          type="button"
+          onClick={() => void refreshAllRecommendations()}
+          disabled={refreshingRecommendations}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-sky-500/30 bg-sky-500/10 px-4 py-2 text-xs font-bold text-sky-300 disabled:opacity-50"
+        >
+          <RefreshCw className={`h-4 w-4 ${refreshingRecommendations ? "animate-spin" : ""}`} />
+          {refreshingRecommendations ? "Refreshing…" : "Refresh recommendations"}
+        </button>
       </div>
       {actionError && <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-300">{actionError}</div>}
 
@@ -259,7 +285,7 @@ export default function RecommendationsPage() {
                           {pair.passed ? "PASS" : "FAIL"}
                         </span>{" "}
                         {pair.symbol} · {pair.interval} · {pair.provider}
-                        <div>WF {pair.walkForwardStable ? "stable" : "unstable"} · OOS Sharpe {pair.outOfSampleSharpe}</div>
+                        <div>{pair.fresh ? "Fresh" : "STALE"} · WF {pair.walkForwardStable ? "stable" : "unstable"} · OOS Sharpe {pair.outOfSampleSharpe}</div>
                       </div>
                     ))}
                   </div>
