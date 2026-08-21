@@ -1134,6 +1134,19 @@ export class LiveTradingService {
           ),
         );
       } catch (error) {
+        if (
+          error instanceof ExchangeError &&
+          [
+            ExchangeErrorCode.RESOURCE_NOT_FOUND,
+            ExchangeErrorCode.INVALID_REQUEST,
+          ].includes(error.code)
+        ) {
+          await this.prisma.liveOrder.update({
+            where: { id: localOrder.id },
+            data: { status: "CANCELED", updatedAt: new Date() },
+          });
+          continue;
+        }
         this.logger.warn({
           event: "live_order_reconciliation_failed",
           connectionId,
@@ -1392,30 +1405,32 @@ export class LiveTradingService {
         notional: position.notional ? Number(position.notional) : null,
         syncedAt: syncedAt.toISOString(),
       })),
-      orders: persistedOrders.map((row) => {
-        const trade = row.exchangeOrderId
-          ? closedTradeByOrderId.get(row.exchangeOrderId)
-          : undefined;
-        return {
-          ...this.orderView({
-            id: row.id,
-            exchangeOrderId: row.exchangeOrderId,
-            clientOrderId: row.clientOrderId,
-            provider: row.provider,
-            environment: row.environment,
-            symbol: row.symbol,
-            side: row.side,
-            quantity: row.quantity,
-            averagePrice: row.averagePrice,
-            status: row.status,
-            purpose: row.purpose,
-            errorCode: row.errorCode,
-            createdAt: row.createdAt,
-            updatedAt: row.updatedAt,
-          }),
-          ...this.closedTradePnlView(trade),
-        };
-      }),
+      orders: persistedOrders
+        .filter((row) => isAuthoritativeDashboardOrder(row, openOrders))
+        .map((row) => {
+          const trade = row.exchangeOrderId
+            ? closedTradeByOrderId.get(row.exchangeOrderId)
+            : undefined;
+          return {
+            ...this.orderView({
+              id: row.id,
+              exchangeOrderId: row.exchangeOrderId,
+              clientOrderId: row.clientOrderId,
+              provider: row.provider,
+              environment: row.environment,
+              symbol: row.symbol,
+              side: row.side,
+              quantity: row.quantity,
+              averagePrice: row.averagePrice,
+              status: row.status,
+              purpose: row.purpose,
+              errorCode: row.errorCode,
+              createdAt: row.createdAt,
+              updatedAt: row.updatedAt,
+            }),
+            ...this.closedTradePnlView(trade),
+          };
+        }),
     };
     this.realtimeSnapshots.set(
       this.realtimeCacheKey(userId, connectionId),
@@ -1477,7 +1492,18 @@ export class LiveTradingService {
         in: connectionId ? [connectionId] : eligibleIds,
       },
     };
-    // Trigger non-blocking background sync so dashboard returns DB snapshot instantly (< 10ms)
+    const authoritativeOpenOrders = new Map<string, ExchangeOrder[] | undefined>(
+      await Promise.all(
+        eligible.map(async (item) => {
+          const value = await this.connections
+            .openOrders(userId, item.id, {})
+            .catch(() => undefined);
+          return [item.id, value] as const;
+        }),
+      ),
+    );
+    // Full ledger reconciliation remains non-blocking. The lightweight open
+    // order snapshot above prevents stale DB rows in the immediate response.
     void Promise.allSettled(
       eligible.map((item) =>
         this.sync(userId, item.id, {}).catch((error: unknown) =>
@@ -1546,14 +1572,21 @@ export class LiveTradingService {
         notional: row.notional ? Number(row.notional) : null,
         syncedAt: row.syncedAt.toISOString(),
       })),
-      orders: orders.map((row) => ({
-        ...this.orderView(row),
-        ...this.closedTradePnlView(
-          row.exchangeOrderId
-            ? closedTradeByOrderId.get(row.exchangeOrderId)
-            : undefined,
-        ),
-      })),
+      orders: orders
+        .filter((row) => {
+          const exchangeOrders = authoritativeOpenOrders.get(row.connectionId);
+          return exchangeOrders === undefined
+            ? true
+            : isAuthoritativeDashboardOrder(row, exchangeOrders);
+        })
+        .map((row) => ({
+          ...this.orderView(row),
+          ...this.closedTradePnlView(
+            row.exchangeOrderId
+              ? closedTradeByOrderId.get(row.exchangeOrderId)
+              : undefined,
+          ),
+        })),
     };
   }
 
@@ -2547,4 +2580,22 @@ export class LiveTradingService {
       retryable: false,
     };
   }
+}
+
+export function isAuthoritativeDashboardOrder(
+  row: {
+    status: string;
+    exchangeOrderId: string | null;
+    clientOrderId: string;
+  },
+  exchangeOpenOrders: ExchangeOrder[],
+): boolean {
+  if (!ACTIVE_ORDER_STATUSES.includes(row.status)) return true;
+  return exchangeOpenOrders.some(
+    (order) =>
+      (Boolean(row.exchangeOrderId) &&
+        order.exchangeOrderId === row.exchangeOrderId) ||
+      (Boolean(order.clientOrderId) &&
+        order.clientOrderId === row.clientOrderId),
+  );
 }

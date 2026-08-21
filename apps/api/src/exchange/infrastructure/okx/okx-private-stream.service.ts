@@ -471,6 +471,8 @@ export class OkxPrivateStreamService implements OnModuleDestroy {
   private disconnected(state: StreamState): void {
     state.connected = false;
     state.disconnectedAt = Date.now();
+    // The orders channel sends no initial snapshot after reconnect.
+    state.ordersSeeded = false;
     if (state.heartbeat) clearInterval(state.heartbeat);
     state.heartbeat = undefined;
     if (state.stopped) return;

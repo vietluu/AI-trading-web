@@ -125,6 +125,8 @@ export interface LiveTradingDashboard {
     liquidationPrice: number | null;
     leverage: number | null;
     unrealizedPnl: number;
+    realizedPnl?: number | null;
+    notional?: number | null;
     syncedAt: string;
   }>;
   orders: Array<{

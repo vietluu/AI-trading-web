@@ -9,6 +9,7 @@ import {
   useLiveTradingDashboard,
 } from "@/hooks/ai/useAiFeature";
 import type { LiveTradingDashboard } from "@/services/ai-feature.service";
+import { calculateLiveTradingTotals } from "@/lib/live-trading-metrics";
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -127,25 +128,8 @@ export default function LiveTradingPage(): React.JSX.Element {
   if (!data)
     return <p className="text-muted-foreground">{t.ai.configureConnection}</p>;
 
-  const totalPositionsPnl = data.positions.reduce((sum, pos) => {
-    const livePrice = livePrices[pos.symbol] ?? (pos.markPrice ? Number(pos.markPrice) : pos.entryPrice);
-    const upl =
-      pos.side === "LONG"
-        ? (livePrice - pos.entryPrice) * pos.quantity
-        : (pos.entryPrice - livePrice) * pos.quantity;
-    return sum + upl;
-  }, 0);
-
-  const initialAccountsUpl = data.accounts.reduce((sum, a) => sum + a.unrealizedPnl, 0);
-  const effectiveUpl = data.positions.length > 0 ? totalPositionsPnl : initialAccountsUpl;
-  const totalAvailable = data.accounts.reduce((sum, a) => sum + a.availableBalance, 0);
-  const totalEquity = data.accounts.reduce((sum, a) => sum + a.totalEquity, 0) + (effectiveUpl - initialAccountsUpl);
-
-  const totals = {
-    equity: totalEquity,
-    available: totalAvailable,
-    pnl: effectiveUpl,
-  };
+  // Exchange-native UPL is authoritative for contract size and mark-price rules.
+  const totals = calculateLiveTradingTotals(data.accounts, data.positions);
 
   const openOrders = data.orders.filter((order) =>
     ["SUBMITTING", "NEW", "PARTIALLY_FILLED"].includes(order.status),
@@ -220,11 +204,10 @@ export default function LiveTradingPage(): React.JSX.Element {
           const livePrice =
             livePrices[position.symbol] ??
             (position.markPrice ? Number(position.markPrice) : position.entryPrice);
-          const positionUpl =
-            position.side === "LONG"
-              ? (livePrice - position.entryPrice) * position.quantity
-              : (position.entryPrice - livePrice) * position.quantity;
-          const notional = Math.abs(position.entryPrice * position.quantity);
+          const positionUpl = position.unrealizedPnl;
+          const notional = Math.abs(
+            position.notional ?? position.entryPrice * position.quantity,
+          );
           const leverage = position.leverage && position.leverage > 0 ? position.leverage : 1;
           const margin = notional / leverage;
           const roiPct = margin > 0 ? (positionUpl / margin) * 100 : 0;
