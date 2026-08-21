@@ -176,6 +176,10 @@ const orderSchema = z.object({
   accFillSz: decimal,
   reduceOnly: z.union([z.string(), z.boolean()]).optional(),
   posSide: z.string().optional(),
+  source: z.string().optional(),
+  algoClOrdId: z.string().optional(),
+  algoId: z.string().optional(),
+  category: z.string().optional(),
   cTime: z.string().regex(/^\d+$/).optional(),
   uTime: z.string().regex(/^\d+$/).optional(),
 });
@@ -1240,9 +1244,11 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       );
       const order = values[0];
       if (!order) return "MISSING";
-      return ["effective", "partially_effective"].includes(order.state)
-        ? "ACTIVE"
-        : "TERMINAL";
+      if (["live", "partially_filled"].includes(order.state)) return "ACTIVE";
+      if (["effective", "partially_effective"].includes(order.state)) {
+        return "TERMINAL";
+      }
+      return "MISSING";
     } catch (error) {
       if (error instanceof ExchangeError && error.exchangeCode === "51603") {
         return "MISSING";
@@ -1646,6 +1652,10 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       ...(item.posSide
         ? { positionSide: this.positionSide(item.posSide) }
         : {}),
+      ...(item.source ? { sourceCode: item.source } : {}),
+      ...(item.algoClOrdId ? { algoClientOrderId: item.algoClOrdId } : {}),
+      ...(item.algoId ? { algoOrderId: item.algoId } : {}),
+      ...(item.category ? { category: item.category } : {}),
       ...(item.cTime ? { createdAt: new Date(Number(item.cTime)) } : {}),
       ...(item.uTime ? { updatedAt: new Date(Number(item.uTime)) } : {}),
     };

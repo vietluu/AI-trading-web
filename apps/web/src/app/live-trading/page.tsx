@@ -15,6 +15,16 @@ const money = new Intl.NumberFormat("en-US", {
 });
 
 const RECENT_TRADE_HISTORY_LIMIT = 20;
+const vietnamOrderTime = new Intl.DateTimeFormat("vi-VN", {
+  timeZone: "Asia/Ho_Chi_Minh",
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
 
 export default function LiveTradingPage(): React.JSX.Element {
   const { t } = useTranslation();
@@ -171,11 +181,20 @@ export default function LiveTradingPage(): React.JSX.Element {
       </Table>
       <Table
         title={t.ai.tradeHistory}
-        headings={["Order", t.ai.symbol, "Side", "Size", "Price", "Status", t.ai.realizedPnl]}
+        headings={[
+          "Order",
+          t.ai.symbol,
+          "Side",
+          "Size",
+          "Price",
+          "Status",
+          t.ai.realizedPnl,
+          t.ai.orderTime,
+        ]}
         empty={t.ai.noTradeHistory}
       >
         {data.orders.slice(0, RECENT_TRADE_HISTORY_LIMIT).map((order) => (
-          <OrderRow order={order} key={order.id} showPnl />
+          <OrderRow order={order} key={order.id} showPnl showTime />
         ))}
       </Table>
       {(killMutation.error || enableMutation.error) && (
@@ -231,15 +250,19 @@ function Table({
 function OrderRow({
   order,
   showPnl = false,
+  showTime = false,
 }: {
   order: LiveTradingDashboard["orders"][number];
   showPnl?: boolean;
+  showTime?: boolean;
 }): React.JSX.Element {
   return (
     <tr>
       <td className="p-3 font-mono text-xs">
         {order.orderId ?? order.clientOrderId}
-        <div className="text-muted-foreground">{order.purpose}</div>
+        <div className="text-muted-foreground">
+          {order.closeReason ?? order.purpose}
+        </div>
       </td>
       <td className="p-3 font-semibold">{order.symbol}</td>
       <td
@@ -293,6 +316,12 @@ function OrderRow({
               )}
             </div>
           )}
+        </td>
+      )}
+      {showTime && (
+        <td className="whitespace-nowrap p-3 font-mono text-xs">
+          <div>{vietnamOrderTime.format(new Date(order.createdAt))}</div>
+          <div className="text-[10px] text-muted-foreground">GMT+7</div>
         </td>
       )}
     </tr>

@@ -217,6 +217,9 @@ describe("exchange adapter normalization contract", () => {
         state: "live",
         sz: "1",
         accFillSz: "0",
+        source: "13",
+        algoClOrdId: "protective-child-1",
+        algoId: "algo-1",
       },
       {
         instId: "LINK-USDT",
@@ -240,6 +243,9 @@ describe("exchange adapter normalization contract", () => {
     expect(orders[0]).toMatchObject({
       symbol: "BTC-USDT",
       exchangeOrderId: "swap-order",
+      sourceCode: "13",
+      algoClientOrderId: "protective-child-1",
+      algoOrderId: "algo-1",
     });
   });
 
@@ -834,9 +840,9 @@ describe("exchange adapter normalization contract", () => {
     })]);
   });
 
-  it("verifies and recreates missing OKX protection as a full-position OCO", async () => {
+  it("recognizes live OKX protection and recreates a full-position OCO", async () => {
     const signedGet = vi.fn().mockResolvedValue([
-      { algoId: "algo-1", algoClOrdId: "protect-1", state: "effective" },
+      { algoId: "algo-1", algoClOrdId: "protect-1", state: "live" },
     ]);
     const signedPost = vi.fn().mockResolvedValue([
       { algoId: "algo-2", algoClOrdId: "repair-1", sCode: "0", sMsg: "" },

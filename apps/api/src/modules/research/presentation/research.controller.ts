@@ -55,6 +55,18 @@ export class ResearchController {
     return this.researchService.runFullQuantValidation({ ...input, userId: user.id });
   }
 
+  @Post('refresh-validations')
+  async refreshValidations(@CurrentUser() user: { id: string }, @Body() body: unknown) {
+    const input = body as {
+      provider: ExchangeProvider;
+      symbols: string[];
+      interval: ExchangeInterval;
+      strategyKeys: string[];
+      lookbackCandles?: number;
+    };
+    return this.researchService.refreshFullQuantValidations({ ...input, userId: user.id });
+  }
+
   @Post('sensitivity')
   async sensitivity(@CurrentUser() user: { id: string }, @Body() body: unknown) {
     const input = body as {

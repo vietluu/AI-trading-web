@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { FusionInput, FusionOutput } from '@platform/shared';
 import { cronMatches, validateCron } from '../../src/modules/pipeline/domain/cron';
 import { pipelineSkipReason } from '../../src/modules/pipeline/domain/rate-limit';
 import { FULL_ANALYSIS_DECISION } from '../../src/modules/pipeline/domain/pipeline.definition';
@@ -57,8 +58,7 @@ describe('Phase 6.6 pipeline runtime policies', () => {
       updateStep: vi.fn().mockResolvedValue({}),
       findRun: vi.fn().mockResolvedValue(undefined),
     };
-    const fusion = {
-      runDetailed: vi.fn().mockResolvedValue({
+    const fusionResult = {
         analyses: {
           market: { summary: 'market', trend: { direction: 'UP', strength: 'STRONG' }, volatility: { level: 'MEDIUM' }, liquidity: {}, derivatives: {}, anomalies: [], dataQuality: 'GOOD', usedTools: [], generatedAt: new Date().toISOString() },
           technical: { summary: 'tech', trend: { direction: 'UP', strength: 'STRONG' }, momentum: { rsi: '58', rsiState: 'NEUTRAL', macd: { trend: 'BULLISH' } }, movingAverages: { alignment: 'BULLISH', pricePosition: 'ABOVE' }, volatility: { bollinger: { position: 'MIDDLE', squeeze: false } }, structure: { marketStructure: 'HH_HL' }, divergence: {}, signals: [], dataQuality: 'GOOD', usedTools: [], generatedAt: new Date().toISOString() },
@@ -68,9 +68,13 @@ describe('Phase 6.6 pipeline runtime policies', () => {
           onchain: { summary: 'onchain', activity: 'HIGH', flows: { exchangeInflow: 'rising' }, signals: [], dataQuality: 'GOOD', generatedAt: new Date().toISOString() },
         },
         fusionOutput: {
-          summary: 'fusion', combinedAnalysis: {}, overallBias: 'BULLISH', confidence: 70, conflicts: [], dataQuality: 'GOOD', generatedAt: new Date().toISOString(),
+          summary: 'fusion',
+          combinedAnalysis: { news: 'news', sentiment: 'sentiment', macro: 'macro', market: 'market', technical: 'technical', onchain: 'onchain' },
+          overallBias: 'BULLISH', confidence: 70, conflicts: [], dataQuality: 'GOOD', generatedAt: new Date().toISOString(),
         },
-      }),
+      } as { analyses: FusionInput; fusionOutput: FusionOutput };
+    const fusion = {
+      runDetailed: vi.fn().mockResolvedValue(fusionResult),
     };
     const decision = {
       decideForUser: vi.fn().mockResolvedValue({
@@ -190,6 +194,78 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     expect(repository.updateRun).toHaveBeenCalledWith('run-2', expect.objectContaining({
       status: 'COMPLETED', decision: 'LONG', skippedReason: undefined,
     }));
+
+    vi.clearAllMocks();
+    const fallbackFusion: typeof fusionResult = {
+      ...fusionResult,
+      analyses: {
+        ...fusionResult.analyses,
+        market: {
+          ...fusionResult.analyses.market,
+          trend: { ...fusionResult.analyses.market.trend, strength: 'MODERATE' },
+        },
+        technical: {
+          ...fusionResult.analyses.technical,
+          trend: { ...fusionResult.analyses.technical.trend, strength: 'MODERATE' },
+        },
+      },
+    };
+    fusion.runDetailed.mockResolvedValue(fallbackFusion);
+    marketData.getIndicatorSnapshot.mockResolvedValue({
+      candleCloseTime: freshCloseTime,
+      values: {
+        rsi14: 55,
+        atr14: 0.8,
+        priceChangePercent: -0.8,
+        volumeChangePercent: 3,
+        adx14: 24,
+        efficiencyRatio20: 0.4,
+        ema20: 99,
+        ema50: 100,
+        ema200: 95,
+      },
+    });
+    riskPolicy.evaluate.mockReturnValue({ actionable: true, decision: 'LONG' });
+    const fallbackJudge = {
+      evaluate: vi.fn((value: { decision: string }) => value.decision === 'SHORT'
+        ? { verdict: 'REJECT', approved: false, reasons: ['DIRECTION_REJECTED'] }
+        : { verdict: 'APPROVE', approved: true, reasons: [] }),
+    };
+    const fallbackService = new PipelineRunnerService(
+      fusion as never,
+      decision as never,
+      repository as never,
+      { isCancelled: vi.fn().mockResolvedValue(false) } as never,
+      riskPolicy,
+      signalFilter,
+      marketData as never,
+      alerts as never,
+      analytics as never,
+      liveTrading as never,
+      redis as never,
+      fallbackJudge as never,
+      undefined,
+      { evaluate: vi.fn().mockResolvedValue({ allowed: true, evaluated: true }) } as never,
+    );
+
+    await fallbackService.run({
+      pipelineId: 'FULL_ANALYSIS_DECISION',
+      runId: 'run-3',
+      userId: 'user-1',
+      provider: 'BINANCE_FUTURES',
+      symbol: 'BTC-USDT',
+      params: { interval: '15m', strategyIds: ['ai-core', 'trend', 'momentum-scalp'] },
+      trigger: 'EVENT',
+    } as never);
+
+    expect(repository.updateRun).toHaveBeenCalledWith('run-3', expect.objectContaining({
+      status: 'COMPLETED', decision: 'LONG', skippedReason: undefined,
+    }));
+    const fallbackCalls = JSON.stringify(repository.updateRun.mock.calls);
+    expect(fallbackCalls).toContain('"initialSelectedStrategyKey":"momentum-scalp"');
+    expect(fallbackCalls).toContain('"selectedStrategyKey":"trend"');
+    expect(fallbackCalls).toContain('"strategyKey":"momentum-scalp","decision":"SHORT"');
+    expect(fallbackCalls).toContain('"strategyKey":"trend","decision":"LONG"');
   });
 
   it('uses BullMQ-safe pipeline queue names', () => {

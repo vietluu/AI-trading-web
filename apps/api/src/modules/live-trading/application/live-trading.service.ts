@@ -46,6 +46,7 @@ import {
   DEFAULT_SYMBOL_EXECUTION_POLICY,
   evaluateSymbolExecutionPolicy,
 } from "../domain/symbol-execution-policy";
+import { inferProtectiveClosePurpose } from "../domain/protective-close-reason";
 
 const RECENT_TRADE_HISTORY_LIMIT = 20;
 const ORDER_RECONCILIATION_LIMIT = 100;
@@ -1248,6 +1249,27 @@ export class LiveTradingService {
     // interactive Prisma transaction caused the transaction to expire midway
     // through reconciliation. Each write is idempotent, so bounded batches are
     // both safer and faster without holding a database transaction open.
+    const protectiveOpeningOrders =
+      connection.provider === ExchangeProvider.OKX_FUTURES
+        ? await this.prisma.liveOrder.findMany({
+            where: {
+              userId,
+              connectionId,
+              purpose: { in: ["OPEN", "REVERSE"] },
+              status: { not: "FAILED" },
+              OR: [{ stopLoss: { not: null } }, { takeProfit: { not: null } }],
+            },
+            select: {
+              symbol: true,
+              side: true,
+              stopLoss: true,
+              takeProfit: true,
+              protectiveClientOrderId: true,
+              createdAt: true,
+            },
+            orderBy: { createdAt: "desc" },
+          })
+        : [];
     await processInBatches(openOrders, RECONCILIATION_DB_BATCH_SIZE, (order) =>
       this.prisma.liveOrder.updateMany({
         where: {
@@ -1268,6 +1290,10 @@ export class LiveTradingService {
       async (order) => {
         const clientOrderId =
           order.clientOrderId || `external-${order.exchangeOrderId}`;
+        const inferredPurpose = inferProtectiveClosePurpose(
+          order,
+          protectiveOpeningOrders,
+        );
         const updateData = {
           exchangeOrderId: order.exchangeOrderId,
           status: order.status,
@@ -1281,7 +1307,22 @@ export class LiveTradingService {
           },
           data: updateData,
         });
-        if (matched.count > 0) return;
+        if (matched.count > 0) {
+          if (inferredPurpose) {
+            await this.prisma.liveOrder.updateMany({
+              where: {
+                connectionId,
+                purpose: "IMPORTED",
+                OR: [
+                  { exchangeOrderId: order.exchangeOrderId },
+                  { clientOrderId },
+                ],
+              },
+              data: { purpose: inferredPurpose },
+            });
+          }
+          return;
+        }
         await this.prisma.liveOrder.upsert({
           where: {
             connectionId_clientOrderId: { connectionId, clientOrderId },
@@ -1301,7 +1342,7 @@ export class LiveTradingService {
             leverage: 1,
             averagePrice: order.averagePrice,
             status: order.status,
-            purpose: "IMPORTED",
+            purpose: inferredPurpose ?? "IMPORTED",
             reduceOnly: order.reduceOnly ?? false,
             createdAt: order.createdAt ?? syncedAt,
             updatedAt: order.updatedAt ?? syncedAt,
@@ -2172,6 +2213,10 @@ export class LiveTradingService {
           context,
         );
         if (status === "ACTIVE") return source.protectiveClientOrderId;
+        // An effective algo has already fired. The exchange-created child can
+        // fill before the position channel publishes the close, so recreating
+        // protection in this short window produces duplicate full-close OCOs.
+        if (status === "TERMINAL") return source.protectiveClientOrderId;
       } catch (error) {
         this.logger.warn({
           event: "protective_order_verification_failed",

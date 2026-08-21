@@ -25,7 +25,7 @@ export class PipelineService {
     const input = PipelineRunRequestSchema.parse(raw);
     const definition = resolvePipelineDefinition(input.pipelineId);
     if (!definition?.enabled) throw new NotFoundException('Pipeline definition not found or disabled');
-    const symbols = this.extractSymbols(raw, input.symbol);
+    const symbols = this.extractSymbols(raw, PipelineSymbolSchema.parse(input.symbol));
     if (symbols.length > 1) {
       const createdRuns = [] as Array<Awaited<ReturnType<PipelineRepository['createRun']>>>;
       const batches = [] as PipelineSymbol[][];
@@ -66,7 +66,7 @@ export class PipelineService {
       userId,
       input,
       definition,
-      input.symbol,
+      symbols[0]!,
       trigger,
       options,
       input.provider,

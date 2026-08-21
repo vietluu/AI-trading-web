@@ -237,6 +237,14 @@ export interface ExchangeOrder {
   createdAt?: Date;
   updatedAt?: Date;
   protectiveClientOrderId?: string;
+  /** Exchange-specific origin code for system/algo-generated child orders. */
+  sourceCode?: string;
+  /** Parent algo client id when exposed on a triggered child order. */
+  algoClientOrderId?: string;
+  /** Parent algo exchange id when exposed on a triggered child order. */
+  algoOrderId?: string;
+  /** Exchange order category, such as liquidation or ADL. */
+  category?: string;
 }
 
 /** An immutable private-account execution reported by the exchange. */

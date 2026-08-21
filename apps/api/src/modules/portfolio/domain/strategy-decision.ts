@@ -50,6 +50,32 @@ export interface StrategySelection {
   reason: "BEST_REGIME_ADJUSTED_CANDIDATE" | "NO_ACTIONABLE_STRATEGY";
 }
 
+export interface RankedStrategyDecision {
+  strategyKey: StrategyKey;
+  decision: DecisionOutput;
+  score: number;
+}
+
+/**
+ * Returns actionable strategy candidates in arbitration order. When no
+ * strategy is actionable, the normal safe WAIT fallback is returned so callers
+ * can still persist a complete decision record.
+ */
+export function rankStrategyDecisionCandidates(
+  requestedKeys: readonly string[],
+  base: DecisionOutput,
+  analyses: FusionInput,
+  market?: StrategyMarketSnapshot,
+): RankedStrategyDecision[] {
+  const candidates = evaluateStrategyCandidates(requestedKeys, base, analyses, market);
+  const active = candidates
+    .filter((candidate) => candidate.decision.decision !== "WAIT")
+    .sort(compareCandidates);
+  if (active.length > 0) return active;
+  const fallback = candidates.find((candidate) => candidate.strategyKey === "ai-core") ?? candidates[0];
+  return fallback ? [fallback] : [];
+}
+
 /**
  * Evaluates every configured strategy against one shared analysis snapshot and
  * deterministically selects one candidate. This is deliberately pure: the
@@ -61,15 +87,7 @@ export function selectStrategyDecision(
   analyses: FusionInput,
   market?: StrategyMarketSnapshot,
 ): StrategySelection {
-  const keys = normalizeStrategyKeys(requestedKeys);
-  const candidates = keys.map((strategyKey) => {
-    const decision = decisionForStrategy(strategyKey, base, analyses, market);
-    return {
-      strategyKey,
-      decision,
-      score: strategyCandidateScore(strategyKey, decision),
-    };
-  });
+  const candidates = evaluateStrategyCandidates(requestedKeys, base, analyses, market);
   const active = candidates
     .filter((candidate) => candidate.decision.decision !== "WAIT")
     .sort(compareCandidates);
@@ -92,6 +110,22 @@ export function selectStrategyDecision(
       ? "BEST_REGIME_ADJUSTED_CANDIDATE"
       : "NO_ACTIONABLE_STRATEGY",
   };
+}
+
+function evaluateStrategyCandidates(
+  requestedKeys: readonly string[],
+  base: DecisionOutput,
+  analyses: FusionInput,
+  market?: StrategyMarketSnapshot,
+): RankedStrategyDecision[] {
+  return normalizeStrategyKeys(requestedKeys).map((strategyKey) => {
+    const decision = decisionForStrategy(strategyKey, base, analyses, market);
+    return {
+      strategyKey,
+      decision,
+      score: strategyCandidateScore(strategyKey, decision),
+    };
+  });
 }
 
 function normalizeStrategyKeys(keys: readonly string[]): StrategyKey[] {

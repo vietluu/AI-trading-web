@@ -555,6 +555,7 @@ export const vi: Dictionary = {
     positions: 'Vị trí',
     openOrdersTable: 'Lệnh mở',
     tradeHistory: 'Lịch sử giao dịch',
+    orderTime: 'Thời gian',
     noPositions: 'Không có vị trí giao dịch nào.',
     noOpenOrders: 'Không có lệnh mở nào.',
     noTradeHistory: 'Không có lịch sử thực thi nào.',

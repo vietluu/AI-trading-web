@@ -309,6 +309,74 @@ export class ResearchService {
     return { ...result, validationRunId, provenance: { source: 'REAL_EXCHANGE_CANDLES_AND_VERIFIED_RUNTIME_RECORDS', provider: input.provider, symbol: input.symbol, interval: input.interval, lookbackCandles: candles.length, executionAssumptions } };
   }
 
+  async refreshFullQuantValidations(input: {
+    userId: string;
+    provider: ExchangeProvider;
+    symbols: string[];
+    interval: ExchangeInterval;
+    strategyKeys: string[];
+    lookbackCandles?: number;
+  }) {
+    if (!Object.values(ExchangeProvider).includes(input.provider) ||
+      !Object.values(ExchangeInterval).includes(input.interval)) {
+      throw new BadRequestException('provider or interval is invalid');
+    }
+    const symbols = [...new Set((Array.isArray(input.symbols) ? input.symbols : [])
+      .filter((symbol): symbol is string => typeof symbol === 'string')
+      .map((symbol) => symbol.trim().toUpperCase()))];
+    const strategyKeys = [...new Set((Array.isArray(input.strategyKeys) ? input.strategyKeys : [])
+      .filter((key): key is string => typeof key === 'string')
+      .map((key) => key.trim()))];
+    if (symbols.length === 0 || symbols.length > 10 ||
+      symbols.some((symbol) => !/^[A-Z0-9]+-[A-Z0-9]+$/.test(symbol))) {
+      throw new BadRequestException('symbols must contain 1-10 normalized trading pairs');
+    }
+    if (strategyKeys.length === 0 || strategyKeys.length > 5) {
+      throw new BadRequestException('strategyKeys must contain 1-5 strategies');
+    }
+    strategyKeys.forEach(validationBacktestStrategy);
+    const lookbackCandles = Math.min(1500, Math.max(300, input.lookbackCandles ?? 500));
+    const results: Array<{
+      symbol: string;
+      strategyKey: string;
+      status: 'COMPLETED' | 'DATA_UNAVAILABLE';
+      validationRunId?: string | null;
+      message?: string;
+    }> = [];
+    // Run serially to keep exchange pressure and Monte Carlo CPU bounded.
+    for (const symbol of symbols) {
+      for (const strategyKey of strategyKeys) {
+        try {
+          const result = await this.runFullQuantValidation({
+            userId: input.userId,
+            provider: input.provider,
+            symbol,
+            interval: input.interval,
+            lookbackCandles,
+            initialBalance: 10_000,
+            strategyKey,
+          });
+          results.push({
+            symbol,
+            strategyKey,
+            status: 'COMPLETED',
+            validationRunId: result.validationRunId,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Validation unavailable';
+          results.push({ symbol, strategyKey, status: 'DATA_UNAVAILABLE', message });
+          this.logger.warn({ event: 'manual_quant_validation_refresh_failed', symbol, strategyKey, message });
+        }
+      }
+    }
+    return {
+      requested: results.length,
+      completed: results.filter((item) => item.status === 'COMPLETED').length,
+      unavailable: results.filter((item) => item.status === 'DATA_UNAVAILABLE').length,
+      results,
+    };
+  }
+
   async runSensitivityAnalysis(input: {
     userId?: string;
     provider: ExchangeProvider;

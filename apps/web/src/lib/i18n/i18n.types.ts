@@ -555,6 +555,7 @@ export interface Dictionary {
     positions: string;
     openOrdersTable: string;
     tradeHistory: string;
+    orderTime: string;
     noPositions: string;
     noOpenOrders: string;
     noTradeHistory: string;

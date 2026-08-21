@@ -20,6 +20,7 @@ import type { PipelineJob } from "../infrastructure/pipeline-queue.service";
 import { LiveTradingService } from "../../live-trading/application/live-trading.service";
 import {
   analysisParams,
+  rankStrategyDecisionCandidates,
   selectStrategyDecision,
 } from "../../portfolio/domain/strategy-decision";
 import { MarketDataService } from "../../../market-data/application/market-data.service";
@@ -344,55 +345,124 @@ export class PipelineRunnerService {
           ema50: Number(indicatorSnapshot?.values.ema50),
         },
       );
-      const strategyKey = strategySelection.selectedStrategyKey;
-      const output = await this.decision.calibrateForExecution(
-        strategySelection.decision,
-        job.userId,
-        {
-          symbol,
-          strategyKey,
-          provider: job.provider,
-          timeframe: String(interval),
-        },
-      );
-      const decisionCompletedAt = new Date();
-      const policyContext = { symbol, provider: job.provider, timeframe: String(interval), regime: output.regime.type };
-      const filter = this.riskPolicy.evaluate(output, policyContext);
-      const judge = this.judge?.evaluate(output, analyses, {
-        symbol,
-        provider: job.provider,
-        timeframe: String(interval),
-        referencePrice: lastPrice,
-        sourceTimestamp: indicatorSnapshot?.candleCloseTime ?? recentCandles[0]?.closeTime,
-        requireCalibratedConfidence: true,
-      }) ?? { verdict: 'APPROVE' as const, approved: true, reasons: [] };
-      const multiTimeframeFilter = evaluateMultiTimeframeDecision(output.decision, multiTimeframe);
       const primaryRsi = multiTimeframe.frames.find(
         (frame) => frame.timeframe === String(interval),
       )?.rsi;
-      const quant = this.quantPolicy
-        ? await this.quantPolicy.evaluate({
-            userId: job.userId,
+      const rankedCandidates = rankStrategyDecisionCandidates(
+        requestedStrategyKeys,
+        synthesizedOutput,
+        analyses,
+        {
+          timeframe: String(interval),
+          priceChangePercent: Number(indicatorSnapshot?.values.priceChangePercent),
+          volumeChangePercent: Number(indicatorSnapshot?.values.volumeChangePercent),
+          adx: Number(indicatorSnapshot?.values.adx14),
+          efficiencyRatio: Number(indicatorSnapshot?.values.efficiencyRatio20),
+          ema20: Number(indicatorSnapshot?.values.ema20),
+          ema50: Number(indicatorSnapshot?.values.ema50),
+        },
+      );
+      const gateAttempts: Array<{
+        strategyKey: string;
+        decision: string;
+        score: number;
+        actionable: boolean;
+        blockedReasons: string[];
+      }> = [];
+      let selectedGate: {
+        strategyKey: string;
+        output: Awaited<ReturnType<DecisionService["calibrateForExecution"]>>;
+        filter: ReturnType<DecisionRiskPolicyService["evaluate"]>;
+        judge: ReturnType<DecisionJudgeService["evaluate"]>;
+        multiTimeframeFilter: ReturnType<typeof evaluateMultiTimeframeDecision>;
+        quant: Awaited<ReturnType<QuantExecutionPolicyService["evaluate"]>>;
+        actionable: boolean;
+      } | undefined;
+      for (const candidate of rankedCandidates) {
+        const calibrated = await this.decision.calibrateForExecution(
+          candidate.decision,
+          job.userId,
+          {
             symbol,
+            strategyKey: candidate.strategyKey,
             provider: job.provider,
             timeframe: String(interval),
-            strategyKey,
-            decision: output,
-            multiTimeframeConfirmation: multiTimeframeFilter.confirmation,
-            primaryRsi,
-            marketEventImpact: analyses.news.impact.level,
-            marketEventDirection: analyses.news.impact.direction,
-          }).catch((error: unknown) => {
-            this.logger.error({
-              event: "quant_execution_policy_failed",
-              runId,
+          },
+        );
+        const policyContext = { symbol, provider: job.provider, timeframe: String(interval), regime: calibrated.regime.type };
+        const candidateFilter = this.riskPolicy.evaluate(calibrated, policyContext);
+        const candidateJudge = this.judge?.evaluate(calibrated, analyses, {
+          symbol,
+          provider: job.provider,
+          timeframe: String(interval),
+          referencePrice: lastPrice,
+          sourceTimestamp: indicatorSnapshot?.candleCloseTime ?? recentCandles[0]?.closeTime,
+          requireCalibratedConfidence: true,
+        }) ?? { verdict: 'APPROVE' as const, approved: true, reasons: [] };
+        const candidateMultiTimeframe = evaluateMultiTimeframeDecision(calibrated.decision, multiTimeframe);
+        const candidateQuant = this.quantPolicy
+          ? await this.quantPolicy.evaluate({
+              userId: job.userId,
               symbol,
-              message: error instanceof Error ? error.message : "Unknown quant policy error",
-            });
-            return { allowed: false as const, reason: "QUANT_POLICY_UNAVAILABLE" as const };
-          })
-        : { allowed: false as const, reason: "QUANT_VALIDATION_MISSING" as const };
-      const actionable = filter.actionable && judge.approved && quant.allowed && multiTimeframeFilter.allowed;
+              provider: job.provider,
+              timeframe: String(interval),
+              strategyKey: candidate.strategyKey,
+              decision: calibrated,
+              multiTimeframeConfirmation: candidateMultiTimeframe.confirmation,
+              primaryRsi,
+              marketEventImpact: analyses.news.impact.level,
+              marketEventDirection: analyses.news.impact.direction,
+            }).catch((error: unknown) => {
+              this.logger.error({
+                event: "quant_execution_policy_failed",
+                runId,
+                symbol,
+                strategyKey: candidate.strategyKey,
+                message: error instanceof Error ? error.message : "Unknown quant policy error",
+              });
+              return { allowed: false as const, reason: "QUANT_POLICY_UNAVAILABLE" as const };
+            })
+          : { allowed: false as const, reason: "QUANT_VALIDATION_MISSING" as const };
+        const candidateActionable = candidateFilter.actionable && candidateJudge.approved &&
+          candidateQuant.allowed && candidateMultiTimeframe.allowed;
+        const candidateBlockedReasons = [
+          candidateFilter.reason,
+          ...candidateJudge.reasons,
+          candidateQuant.allowed ? undefined : candidateQuant.reason,
+          candidateMultiTimeframe.allowed ? undefined : candidateMultiTimeframe.reason,
+        ].filter((item): item is string => Boolean(item));
+        const evaluated = {
+          strategyKey: candidate.strategyKey,
+          output: calibrated,
+          filter: candidateFilter,
+          judge: candidateJudge,
+          multiTimeframeFilter: candidateMultiTimeframe,
+          quant: candidateQuant,
+          actionable: candidateActionable,
+        };
+        gateAttempts.push({
+          strategyKey: candidate.strategyKey,
+          decision: calibrated.decision,
+          score: candidate.score,
+          actionable: candidateActionable,
+          blockedReasons: [...new Set(candidateBlockedReasons)],
+        });
+        selectedGate ??= evaluated;
+        if (candidateActionable) {
+          selectedGate = evaluated;
+          break;
+        }
+      }
+      if (!selectedGate) throw new Error("NO_STRATEGY_CANDIDATE");
+      const { strategyKey, output, filter, judge, multiTimeframeFilter, quant, actionable } = selectedGate;
+      const executionStrategySelection = {
+        ...strategySelection,
+        initialSelectedStrategyKey: strategySelection.selectedStrategyKey,
+        selectedStrategyKey: strategyKey,
+        decision: output,
+        gateAttempts,
+      };
+      const decisionCompletedAt = new Date();
       const quantBlockReason = quant.allowed ? undefined : quant.reason;
       const reason = filter.reason ?? judge.reasons[0] ?? quantBlockReason ?? multiTimeframeFilter.reason;
       const blockedReasons = [
@@ -575,12 +645,12 @@ export class PipelineRunnerService {
         learningStage: output.learningConfiguration?.stage,
         timeframe: String(interval),
         skippedReason: finalSkippedReason,
-        storedContext: { analyses, fusionOutput, candidateDecision, strategySelection: strategySelection as unknown as Prisma.InputJsonValue, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue },
+        storedContext: { analyses, fusionOutput, candidateDecision, strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue },
         result: {
           ...output,
           candidateDecision,
           selectedStrategyKey: strategyKey,
-          strategySelection: strategySelection as unknown as Prisma.InputJsonValue,
+          strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue,
           actionable,
           skippedReason: finalSkippedReason,
           signalFilter: {

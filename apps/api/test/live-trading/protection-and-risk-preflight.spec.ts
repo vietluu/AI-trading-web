@@ -50,6 +50,13 @@ describe("bounded live reconciliation batches", () => {
 });
 
 interface LiveTradingInternals {
+  reconcileNativeProtection: (
+    userId: string,
+    connection: unknown,
+    position: unknown,
+    source: unknown,
+    context: Record<string, never>,
+  ) => Promise<string | null>;
   monitorProtection: (
     userId: string,
     connection: unknown,
@@ -102,6 +109,33 @@ function build() {
 }
 
 describe("live protection and exchange risk preflight", () => {
+  it("waits for an effective protective child instead of creating a duplicate OCO", async () => {
+    const { service, prisma, connections } = build();
+    const source = {
+      id: "open-triggered-1",
+      clientOrderId: "entry-triggered-1",
+      symbol: "ETH-USDT",
+      stopLoss: 100,
+      takeProfit: 120,
+      protectiveClientOrderId: "protective-triggered-1",
+      createdAt: new Date(),
+    };
+    connections.getProtectiveOrderStatus.mockResolvedValue("TERMINAL");
+
+    await expect(
+      internals(service).reconcileNativeProtection(
+        "user-1",
+        { id: "conn-1", provider: "OKX_FUTURES", environment: "DEMO" },
+        { symbol: "ETH-USDT", side: "LONG", positionMode: "HEDGE" },
+        source,
+        {},
+      ),
+    ).resolves.toBe("protective-triggered-1");
+
+    expect(connections.placeProtectiveOrder).not.toHaveBeenCalled();
+    expect(prisma.liveOrder.update).not.toHaveBeenCalled();
+  });
+
   it("recreates missing native TP/SL for an open OKX position", async () => {
     const { service, prisma, connections, audit } = build();
     prisma.liveOrder.findFirst.mockResolvedValue({

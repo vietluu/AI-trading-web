@@ -555,6 +555,7 @@ export const en: Dictionary = {
     positions: 'Positions',
     openOrdersTable: 'Open orders',
     tradeHistory: 'Trade history',
+    orderTime: 'Time',
     noPositions: 'No exchange positions.',
     noOpenOrders: 'No open exchange orders.',
     noTradeHistory: 'No execution history.',
