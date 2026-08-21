@@ -7,16 +7,6 @@
     "node": ">=22.0.0",
     "pnpm": ">=11.0.0"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "msgpackr-extract",
-      "@prisma/engines",
-      "@prisma/client",
-      "argon2",
-      "esbuild",
-      "sharp"
-    ]
-  },
   "scripts": {
     "dev": "pnpm --filter @platform/shared build && pnpm --parallel --filter @platform/api --filter @platform/web dev",
     "build": "pnpm -r --if-present build",

@@ -32,6 +32,7 @@ export class LiveTradingController {
   }
 
   @Post("orders/:id/cancel")
+  @UseGuards(SensitiveActionGuard)
   cancel(
     @Param("id", new ParseUUIDPipe({ version: "4" })) id: string,
     @Req() request: AuthenticatedRequest,
@@ -50,6 +51,7 @@ export class LiveTradingController {
   }
 
   @Post("kill-switch/enable")
+  @UseGuards(SensitiveActionGuard)
   enable(@Req() request: AuthenticatedRequest) {
     return this.trading.enable(request.auth.userId, requestMetadata(request));
   }

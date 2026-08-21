@@ -49,9 +49,9 @@ export class QuantResearchSchedulerService implements OnApplicationBootstrap, On
 
   onApplicationBootstrap(): void {
     if (process.env.CLI_DISABLE_SCHEDULERS === 'true') return;
-    this.timer = setInterval(() => void this.sweep(), REFRESH_INTERVAL_MS);
+    this.timer = setInterval(() => void this.runSweepSafely(), REFRESH_INTERVAL_MS);
     this.timer.unref();
-    void this.sweep();
+    void this.runSweepSafely();
   }
 
   onModuleDestroy(): void {
@@ -64,6 +64,14 @@ export class QuantResearchSchedulerService implements OnApplicationBootstrap, On
       return;
     }
     await this.sweepOnce();
+  }
+
+  private async runSweepSafely(): Promise<void> {
+    try {
+      await this.sweep();
+    } catch (error) {
+      this.logger.error({ event: 'quant_research_sweep_failed', error: error instanceof Error ? error.message : String(error) });
+    }
   }
 
   private async sweepOnce(): Promise<void> {
@@ -166,6 +174,7 @@ export class QuantResearchSchedulerService implements OnApplicationBootstrap, On
             this.logger.warn({ event: 'quant_research_pair_refresh_failed', userId, symbol, interval, strategyKey, error: error instanceof Error ? error.message : String(error) });
           }
         }
+        await this.quant.refreshRecommendations(userId);
         this.logger.log({
           event: 'quant_research_coverage', userId, pairs: candidates.length,
           fresh: candidates.length - staleOrMissing.length,

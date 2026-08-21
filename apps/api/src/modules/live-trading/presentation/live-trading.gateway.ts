@@ -100,15 +100,8 @@ export class LiveTradingGateway {
       token = authObj.token.trim();
     }
 
-    // 2. Try query param (e.g. io(url, { query: { token: "..." } }))
-    if (!token) {
-      const queryObj = client.handshake.query as Record<string, unknown> | undefined;
-      if (typeof queryObj?.token === "string" && queryObj.token.trim()) {
-        token = queryObj.token.trim();
-      }
-    }
-
-    // 3. Fallback to session cookie
+    // 2. Fallback to session cookie. Query-string tokens are deliberately not
+    // accepted because URLs are routinely persisted by proxies and logs.
     if (!token) {
       const cookies = client.handshake.headers.cookie;
       if (cookies) {
@@ -146,11 +139,23 @@ export class LiveTradingGateway {
     @MessageBody() payload: { userId?: string; connectionId?: string },
   ) {
     try {
-      const requestedUserId = payload.userId?.trim();
       const sessionUserId = await this.resolveAuthenticatedUserId(client);
-      const userId = requestedUserId || sessionUserId;
-      const room = `dashboard:${userId ?? "default"}`;
-      await client.join(room);
+      if (!sessionUserId) {
+        client.emit("exception", {
+          status: "error",
+          message: "Authentication required to access live-trading snapshots",
+        });
+        client.disconnect(true);
+        return;
+      }
+      if (payload.userId?.trim() && payload.userId.trim() !== sessionUserId) {
+        this.logger.warn({
+          event: "live_trading_socket_user_override_rejected",
+          sessionUserId,
+        });
+      }
+      const userId = sessionUserId;
+      await client.join(`dashboard:${userId}`);
       const service = this.moduleRef.get(LiveTradingService, { strict: false });
       if (!service) {
         this.logger.warn(
@@ -159,13 +164,6 @@ export class LiveTradingGateway {
         client.emit("exception", {
           status: "error",
           message: "LiveTradingService unavailable",
-        });
-        return;
-      }
-      if (!userId) {
-        client.emit("exception", {
-          status: "error",
-          message: "Authentication required to access live-trading snapshots",
         });
         return;
       }
@@ -223,7 +221,6 @@ export class LiveTradingGateway {
       client.emit("exception", {
         status: "error",
         message: "Failed to load live-trading snapshot",
-        cause: error,
       });
     }
   }

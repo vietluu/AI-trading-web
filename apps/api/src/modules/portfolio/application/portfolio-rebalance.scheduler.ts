@@ -25,13 +25,23 @@ export class PortfolioRebalanceScheduler
   onModuleInit() {
     if (process.env.CLI_DISABLE_SCHEDULERS === 'true') return;
     this.timer = setInterval(
-      () => void this.run(),
+      () => void this.runSafely(),
       this.config.values.rebalanceIntervalMs,
     );
     this.timer.unref();
   }
   onModuleDestroy() {
     if (this.timer) clearInterval(this.timer);
+  }
+  private async runSafely() {
+    try {
+      await this.run();
+    } catch (error) {
+      this.logger.error({
+        event: "portfolio_rebalance_sweep_failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
   private async run() {
     if (this.taskLock) {

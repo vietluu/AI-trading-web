@@ -52,10 +52,4 @@ export class PipelineQueueService {
     const job = await this.queue.getJob(runId);
     return job ? job.getState() : undefined;
   }
-  async pause(): Promise<void> {
-    await this.queue.pause();
-  }
-  async resume(): Promise<void> {
-    await this.queue.resume();
-  }
 }

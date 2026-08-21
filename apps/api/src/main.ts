@@ -4,6 +4,7 @@ import { ConsoleLogger, Logger, ValidationPipe } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
+import type { NextFunction, Request, Response } from "express";
 
 import { AppModule } from "./app.module";
 import { GlobalExceptionFilter } from "./common/filters/global-exception.filter";
@@ -21,10 +22,20 @@ async function bootstrap(): Promise<void> {
   });
   const configService = app.get(ConfigService);
   const requestedPort = configService.getOrThrow<number>("API_PORT");
+  const isProduction = configService.getOrThrow<string>("NODE_ENV") === "production";
   const allowedOrigins = configService.getOrThrow<string[]>("CORS_ORIGINS");
-  const port = await getAvailablePort(requestedPort).catch(() => requestedPort);
+  const port = isProduction ? requestedPort : await getAvailablePort(requestedPort);
 
   app.useLogger(structuredLogger);
+  app.use((_request: Request, response: Response, next: NextFunction) => {
+    if (isProduction) response.setHeader("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    response.setHeader("X-Frame-Options", "DENY");
+    response.setHeader("Referrer-Policy", "no-referrer");
+    response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    if (isProduction) response.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    next();
+  });
   app.setGlobalPrefix("api");
   app.enableCors({
     credentials: true,
@@ -59,17 +70,19 @@ async function bootstrap(): Promise<void> {
     .setVersion("1.0")
     .addCookieAuth("sid", { type: "apiKey", in: "cookie" })
     .build();
-  const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup("docs", app, swaggerDocument, {
-    jsonDocumentUrl: "api/docs/json",
-  });
+  if (!isProduction) {
+    const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup("docs", app, swaggerDocument, {
+      jsonDocumentUrl: "api/docs/json",
+    });
+  }
 
   await app.listen(port, "0.0.0.0");
   Logger.log({
     event: "application_started",
     port,
     healthUrl: `http://localhost:${port}/api/health`,
-    swaggerUrl: `http://localhost:${port}/api/docs`,
+    swaggerUrl: isProduction ? undefined : `http://localhost:${port}/api/docs`,
   });
 }
 

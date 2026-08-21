@@ -7,11 +7,12 @@ import type { HypothesisInput } from '../domain/quant-research.engine';
 import type { OptimizedWeightsResult } from '../domain/weight-threshold-optimizer.engine';
 import { ExchangeInterval, ExchangeProvider } from '../../../exchange/domain/exchange.types';
 import { PublicExchangeService } from '../../../exchange/application/public-exchange.service';
+import { ResearchRateLimitGuard } from './research-rate-limit.guard';
 
 type ReportType = 'DAILY' | 'WEEKLY' | 'MONTHLY';
 
 @Controller('quant-intelligence')
-@UseGuards(SessionGuard)
+@UseGuards(SessionGuard, ResearchRateLimitGuard)
 export class QuantIntelligenceController {
   constructor(
     private readonly quantService: QuantIntelligenceService,
@@ -100,6 +101,13 @@ export class QuantIntelligenceController {
   @Get('recommendations')
   getRecommendations(@CurrentUser() user?: { id: string }) {
     return this.quantService.getRecommendations(this.requireUserId(user));
+  }
+
+  @Post('recommendations/refresh')
+  async refreshRecommendations(@CurrentUser() user?: { id: string }) {
+    const userId = this.requireUserId(user);
+    await this.quantService.refreshRecommendations(userId);
+    return this.quantService.getRecommendations(userId);
   }
 
   @Get('scope')

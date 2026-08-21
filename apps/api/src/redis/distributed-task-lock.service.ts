@@ -21,9 +21,15 @@ export class DistributedTaskLockService {
   async run<T>(key: string, ttlSeconds: number, task: () => Promise<T>): Promise<T | undefined> {
     const token = await this.acquire(key, ttlSeconds);
     if (!token) return undefined;
+    const renewal = setInterval(
+      () => void this.renew(key, token, ttlSeconds).catch(() => false),
+      Math.max(1_000, Math.floor(ttlSeconds * 1_000 / 3)),
+    );
+    renewal.unref();
     try {
       return await task();
     } finally {
+      clearInterval(renewal);
       await this.release(key, token);
     }
   }

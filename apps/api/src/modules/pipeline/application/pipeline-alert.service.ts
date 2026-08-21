@@ -9,7 +9,7 @@ export class PipelineAlertService {
   constructor(private readonly prisma: PrismaService, private readonly config: PipelineConfigService) {}
   async decision(runId: string, symbol: string, output: DecisionOutput): Promise<void> {
     if (output.decision === 'WAIT' || output.confidence < this.config.minConfidence) return;
-    const alert = await this.prisma.pipelineAlert.create({ data: { runId, kind: 'ACTIONABLE_DECISION', symbol, decision: output.decision, confidence: output.confidence, reasoningSummary: output.reasoning, delivered: true } });
+    const alert = await this.prisma.pipelineAlert.create({ data: { runId, kind: 'ACTIONABLE_DECISION', symbol, decision: output.decision, confidence: output.confidence, reasoningSummary: output.reasoning, delivered: false } });
     this.logger.warn({ event: 'pipeline_alert', channel: 'CONSOLE', alert: { id: alert.id, symbol, decision: output.decision, confidence: output.confidence, timestamp: alert.createdAt } });
   }
   async repeatedFailure(runId: string, symbol: string): Promise<void> {

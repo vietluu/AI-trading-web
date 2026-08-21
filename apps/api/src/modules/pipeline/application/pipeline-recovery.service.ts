@@ -34,11 +34,11 @@ export class PipelineRecoveryService
   onApplicationBootstrap(): void {
     if (process.env.CLI_DISABLE_SCHEDULERS === "true") return;
     this.timer = setInterval(
-      () => void this.sweep(),
+      () => void this.runSweepSafely(),
       this.config.recoveryIntervalMs,
     );
     this.timer.unref();
-    void this.sweep();
+    void this.runSweepSafely();
   }
 
   onModuleDestroy(): void {
@@ -119,5 +119,13 @@ export class PipelineRecoveryService
         return result;
       })) ?? fallback
     );
+  }
+
+  private async runSweepSafely(): Promise<void> {
+    try {
+      await this.sweep();
+    } catch (error) {
+      this.logger.error({ event: "pipeline_recovery_failed", message: error instanceof Error ? error.message : String(error) });
+    }
   }
 }

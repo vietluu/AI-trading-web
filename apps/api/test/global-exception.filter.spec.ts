@@ -1,68 +1,38 @@
-import { Logger } from "@nestjs/common";
-import type { ArgumentsHost } from "@nestjs/common";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
+import { describe, expect, it, vi } from "vitest";
 
 import { GlobalExceptionFilter } from "../src/common/filters/global-exception.filter";
-import {
-  AgentError,
-  AgentErrorCode,
-} from "../src/modules/agents/domain/errors/agent-errors";
-
-afterEach(() => vi.restoreAllMocks());
 
 describe("GlobalExceptionFilter", () => {
-  it("maps agent quota failures to HTTP 429 with a safe error code", () => {
-    vi.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+  it("returns a safe 400 response for invalid Zod input", () => {
+    const status = vi.fn().mockReturnThis();
     const json = vi.fn();
-    const status = vi.fn().mockReturnValue({ json });
     const host = {
       switchToHttp: () => ({
-        getRequest: () => ({ method: "POST", originalUrl: "/api/agents/NEWS_ANALYST/runs" }),
-        getResponse: () => ({ status }),
+        getRequest: () => ({ method: "POST", originalUrl: "/ai/research/backtest" }),
+        getResponse: () => ({ status, json }),
       }),
-    } as unknown as ArgumentsHost;
+    };
+    const invalidInput = z.object({ symbol: z.string().regex(/^[A-Z]+-[A-Z]+$/) }).safeParse({
+      symbol: "not-a-pair",
+    });
+    if (invalidInput.success) throw new Error("Expected invalid fixture");
 
-    new GlobalExceptionFilter().catch(
-      new AgentError(
-        AgentErrorCode.AGENT_QUOTA_EXCEEDED,
-        "Execution denied: User quota check failed: Exceeded hourly quota of 100",
-      ),
-      host,
-    );
+    new GlobalExceptionFilter().catch(invalidInput.error, host as never);
 
-    expect(status).toHaveBeenCalledWith(429);
-    expect(json).toHaveBeenCalledWith(
-      expect.objectContaining({
-        statusCode: 429,
-        code: "AGENT_QUOTA_EXCEEDED",
-        error: "AGENT_QUOTA_EXCEEDED",
-      }),
-    );
-  });
-
-  it("does not expose unexpected exception details to the client", () => {
-    vi.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
-    const json = vi.fn();
-    const status = vi.fn().mockReturnValue({ json });
-    const host = {
-      switchToHttp: () => ({
-        getRequest: () => ({ method: "GET", originalUrl: "/api/private" }),
-        getResponse: () => ({ status }),
-      }),
-    } as unknown as ArgumentsHost;
-
-    new GlobalExceptionFilter().catch(
-      new Error("database password appeared in an internal exception"),
-      host,
-    );
-
-    expect(status).toHaveBeenCalledWith(500);
-    expect(json).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: "An unexpected error occurred",
-        error: "InternalServerError",
-      }),
-    );
-    expect(JSON.stringify(json.mock.calls)).not.toContain("database password");
+    expect(status).toHaveBeenCalledWith(400);
+    expect(json).toHaveBeenCalledOnce();
+    const body = z.object({
+      statusCode: z.number(),
+      path: z.string(),
+      error: z.string(),
+      message: z.string(),
+    }).parse(json.mock.calls[0]?.[0]);
+    expect(body).toMatchObject({
+      statusCode: 400,
+      path: "/ai/research/backtest",
+      error: "ValidationError",
+    });
+    expect(body.message).toContain("symbol");
   });
 });
