@@ -34,6 +34,8 @@ import {
   type CancelOrderCommand,
   type AmendProtectiveOrderCommand,
   type CancelProtectiveOrderCommand,
+  type PlaceProtectiveOrderCommand,
+  type ProtectiveOrderStatus,
 } from "../domain/exchange.types";
 import { ExchangeRateLimitService } from "../infrastructure/exchange-rate-limit.service";
 import { OkxPrivateStreamService } from "../infrastructure/okx/okx-private-stream.service";
@@ -624,6 +626,46 @@ export class ExchangeConnectionService {
           throw new Error("PROTECTIVE_ORDER_CANCEL_UNSUPPORTED");
         }
         return adapter.cancelProtectiveOrder(credentials, command);
+      },
+    );
+  }
+
+  getProtectiveOrderStatus(
+    userId: string,
+    id: string,
+    command: CancelProtectiveOrderCommand,
+    context: RequestMetadata,
+  ): Promise<ProtectiveOrderStatus> {
+    return this.privateCall(
+      userId,
+      id,
+      "GET_PROTECTIVE_ORDER_STATUS",
+      context,
+      (adapter, credentials) => {
+        if (!adapter.getProtectiveOrderStatus) {
+          throw new Error("PROTECTIVE_ORDER_STATUS_UNSUPPORTED");
+        }
+        return adapter.getProtectiveOrderStatus(credentials, command);
+      },
+    );
+  }
+
+  placeProtectiveOrder(
+    userId: string,
+    id: string,
+    command: PlaceProtectiveOrderCommand,
+    context: RequestMetadata,
+  ): Promise<void> {
+    return this.privateCall(
+      userId,
+      id,
+      "PLACE_PROTECTIVE_ORDER",
+      context,
+      (adapter, credentials) => {
+        if (!adapter.placeProtectiveOrder) {
+          throw new Error("PROTECTIVE_ORDER_PLACE_UNSUPPORTED");
+        }
+        return adapter.placeProtectiveOrder(credentials, command);
       },
     );
   }

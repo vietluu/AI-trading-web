@@ -12,6 +12,10 @@ import { resolveSocketIoPath } from "../../../common/utils/socket-io-path";
 import { SessionService } from "../../../session/session.service";
 import { PrismaService } from "../../../database/prisma.service";
 import { LiveTradingService } from "../application/live-trading.service";
+import {
+  OkxPrivateStreamService,
+  type OkxPrivatePositionUpdate,
+} from "../../../exchange/infrastructure/okx/okx-private-stream.service";
 
 @WebSocketGateway({
   cors: {
@@ -23,6 +27,10 @@ import { LiveTradingService } from "../application/live-trading.service";
 })
 export class LiveTradingGateway {
   private readonly logger = new Logger(LiveTradingGateway.name);
+  private readonly privatePositionSubscriptions = new Map<
+    string,
+    Array<() => void>
+  >();
 
   @WebSocketServer()
   server!: Server;
@@ -31,6 +39,7 @@ export class LiveTradingGateway {
     private readonly moduleRef: ModuleRef,
     private readonly sessionService: SessionService,
     private readonly prisma: PrismaService,
+    private readonly okxPrivateStream: OkxPrivateStreamService,
   ) {}
 
   handleConnection(client: Socket) {
@@ -38,7 +47,41 @@ export class LiveTradingGateway {
   }
 
   handleDisconnect(client: Socket) {
+    this.clearPrivatePositionSubscriptions(client.id);
     this.logger.debug(`Live trading client disconnected: ${client.id}`);
+  }
+
+  private clearPrivatePositionSubscriptions(clientId: string): void {
+    for (const unsubscribe of this.privatePositionSubscriptions.get(clientId) ?? []) {
+      unsubscribe();
+    }
+    this.privatePositionSubscriptions.delete(clientId);
+  }
+
+  private positionPayload(update: OkxPrivatePositionUpdate) {
+    return {
+      connectionId: update.connectionId,
+      positions: update.positions.map((position) => ({
+        id: `${update.connectionId}:${position.symbol}:${position.side}`,
+        connectionId: update.connectionId,
+        provider: position.provider,
+        symbol: position.symbol,
+        side: position.side,
+        quantity: Number(position.quantity),
+        entryPrice: Number(position.entryPrice),
+        markPrice: position.markPrice ? Number(position.markPrice) : null,
+        liquidationPrice: position.liquidationPrice
+          ? Number(position.liquidationPrice)
+          : null,
+        leverage: position.leverage ? Number(position.leverage) : null,
+        unrealizedPnl: Number(position.unrealizedPnl),
+        realizedPnl: position.realizedPnl
+          ? Number(position.realizedPnl)
+          : null,
+        notional: position.notional ? Number(position.notional) : null,
+        syncedAt: (position.updatedAt ?? new Date()).toISOString(),
+      })),
+    };
   }
 
   private readUserAgent(client: Socket): string | undefined {
@@ -128,6 +171,25 @@ export class LiveTradingGateway {
       }
       const snapshot = await service.dashboard(userId, payload.connectionId);
       client.emit("snapshot", snapshot);
+
+      this.clearPrivatePositionSubscriptions(client.id);
+      const connections = await this.prisma.exchangeConnection.findMany({
+        where: {
+          userId,
+          isEnabled: true,
+          isVerified: true,
+          ...(payload.connectionId ? { id: payload.connectionId } : {}),
+        },
+        select: { id: true, provider: true },
+      });
+      const unsubscribers = connections
+        .filter((connection) => connection.provider === "OKX_FUTURES")
+        .map((connection) =>
+          this.okxPrivateStream.subscribePositions(connection.id, (update) => {
+            client.emit("positions", this.positionPayload(update));
+          }),
+        );
+      this.privatePositionSubscriptions.set(client.id, unsubscribers);
 
       // Trigger immediate background sync directly with exchange
       const syncPromise = async () => {

@@ -23,13 +23,13 @@ import { MarketResearchReport } from "@/components/dashboard/market-research-rep
 import { Card } from "@/components/ui/card";
 import { ROUTES } from "@/constants/routes";
 import {
-  useLiveTradingDashboard,
   usePerformanceDashboard,
   usePipelineDashboard,
   usePipelineRuns,
   usePortfolioDashboard,
   useRiskDashboard,
 } from "@/hooks/ai/useAiFeature";
+import { useRealtimeLiveTradingDashboard } from "@/hooks/ai/useRealtimeLiveTrading";
 import {
   useHomeRecommendations,
   useHomeResearchRuns,
@@ -92,7 +92,7 @@ export default function DashboardPage(): React.JSX.Element {
 function AuthenticatedDashboard(): React.JSX.Element {
   const portfolio = usePortfolioDashboard();
   const risk = useRiskDashboard();
-  const live = useLiveTradingDashboard();
+  const live = useRealtimeLiveTradingDashboard();
   const performance = usePerformanceDashboard();
   const pipeline = usePipelineDashboard();
   const runs = usePipelineRuns();
@@ -112,7 +112,9 @@ function AuthenticatedDashboard(): React.JSX.Element {
     0,
   );
   const equity = portfolioData?.portfolio.equity ?? riskData?.portfolio.equity;
-  const pnl = portfolioData?.portfolio.pnl;
+  const pnl = portfolioData
+    ? portfolioData.portfolio.realizedPnl + totalUnrealizedPnl
+    : undefined;
   const estimatedStartingEquity =
     equity !== undefined && pnl !== undefined ? equity - pnl : undefined;
   const pnlMargin =

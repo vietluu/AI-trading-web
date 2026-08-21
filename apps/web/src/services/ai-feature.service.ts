@@ -205,6 +205,8 @@ export interface PortfolioDashboard {
   portfolio: {
     equity: number;
     pnl: number;
+    realizedPnl: number;
+    unrealizedPnl: number;
     grossExposure: number;
     exposurePct: number;
     drawdownPct: number;

@@ -84,21 +84,126 @@ function build() {
   const connections = {
     configuration: vi.fn().mockResolvedValue({ positionMode: "ONE_WAY" }),
     placeOrder: vi.fn(),
+    getProtectiveOrderStatus: vi.fn(),
+    placeProtectiveOrder: vi.fn(),
   };
+  const audit = { record: vi.fn() };
   const service = new LiveTradingService(
     prisma as never,
     connections as never,
     { assertExecutionAllowed: vi.fn(), values: {} } as never,
-    { record: vi.fn() } as never,
+    audit as never,
     { getUserLimits: vi.fn().mockResolvedValue(limits), values: limits } as never,
     {} as never,
     {} as never,
     {} as never,
   );
-  return { service, prisma, connections };
+  return { service, prisma, connections, audit };
 }
 
 describe("live protection and exchange risk preflight", () => {
+  it("recreates missing native TP/SL for an open OKX position", async () => {
+    const { service, prisma, connections, audit } = build();
+    prisma.liveOrder.findFirst.mockResolvedValue({
+      id: "open-repair-1",
+      clientOrderId: "entry-repair-1",
+      symbol: "ETH-USDT",
+      side: "BUY",
+      leverage: 3,
+      stopLoss: 100,
+      takeProfit: 120,
+      initialStopLoss: 100,
+      protectiveClientOrderId: null,
+      tradePlan: null,
+      strategyId: null,
+      createdAt: new Date(Date.now() - 180_000),
+    });
+    prisma.liveOrder.update.mockResolvedValue({});
+    connections.placeProtectiveOrder.mockResolvedValue(undefined);
+
+    await internals(service).monitorProtection(
+      "user-1",
+      { id: "conn-1", provider: "OKX_FUTURES", environment: "DEMO" },
+      [
+        {
+          provider: "OKX_FUTURES",
+          symbol: "ETH-USDT",
+          side: "LONG",
+          positionMode: "HEDGE",
+          quantity: "2",
+          entryPrice: "110",
+          markPrice: "110",
+          unrealizedPnl: "0",
+          updatedAt: new Date(),
+        },
+      ],
+      {},
+    );
+
+    expect(connections.placeProtectiveOrder).toHaveBeenCalledWith(
+      "user-1",
+      "conn-1",
+      expect.objectContaining({
+        symbol: "ETH-USDT",
+        positionSide: "LONG",
+        positionMode: "HEDGE",
+        stopLoss: "100",
+        takeProfit: "120",
+      }),
+      {},
+    );
+    expect(JSON.stringify(prisma.liveOrder.findFirst.mock.calls)).toContain(
+      '"side":"BUY"',
+    );
+    expect(audit.record).toHaveBeenCalledWith(
+      "PROTECTIVE_ORDER_RECOVERED",
+      "user-1",
+      {},
+      expect.objectContaining({ symbol: "ETH-USDT" }),
+    );
+  });
+
+  it("does not duplicate an OKX protective algo that is still effective", async () => {
+    const { service, prisma, connections } = build();
+    prisma.liveOrder.findFirst.mockResolvedValue({
+      id: "open-protected-1",
+      clientOrderId: "entry-protected-1",
+      symbol: "ETH-USDT",
+      side: "BUY",
+      leverage: 3,
+      stopLoss: 100,
+      takeProfit: 120,
+      initialStopLoss: 100,
+      protectiveClientOrderId: "protective-1",
+      tradePlan: null,
+      strategyId: null,
+      createdAt: new Date(Date.now() - 180_000),
+    });
+    connections.getProtectiveOrderStatus.mockResolvedValue("ACTIVE");
+
+    await internals(service).monitorProtection(
+      "user-1",
+      { id: "conn-1", provider: "OKX_FUTURES", environment: "DEMO" },
+      [
+        {
+          provider: "OKX_FUTURES",
+          symbol: "ETH-USDT",
+          side: "LONG",
+          positionMode: "HEDGE",
+          quantity: "2",
+          entryPrice: "110",
+          markPrice: "110",
+          unrealizedPnl: "0",
+          updatedAt: new Date(),
+        },
+      ],
+      {},
+    );
+
+    expect(connections.getProtectiveOrderStatus).toHaveBeenCalled();
+    expect(connections.placeProtectiveOrder).not.toHaveBeenCalled();
+  });
+
   it("submits a local reduce-only stop fallback for OKX when the stop is crossed", async () => {
     const { service, prisma, connections } = build();
     const source = {

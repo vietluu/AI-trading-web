@@ -34,6 +34,8 @@ import {
   type CancelOrderCommand,
   type AmendProtectiveOrderCommand,
   type CancelProtectiveOrderCommand,
+  type PlaceProtectiveOrderCommand,
+  type ProtectiveOrderStatus,
   type OrderStatus,
   type OrderType,
   type PositionSide,
@@ -214,6 +216,11 @@ const algoAckSchema = z.object({
   algoClOrdId: z.string().optional(),
   sCode: z.string(),
   sMsg: z.string().optional(),
+});
+const algoOrderDetailSchema = z.object({
+  algoId: z.string().optional(),
+  algoClOrdId: z.string().optional(),
+  state: z.string(),
 });
 
 @Injectable()
@@ -1214,6 +1221,99 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         false,
         400,
         response.sMsg || "OKX rejected protective order amendment",
+        response.sCode,
+      );
+    }
+  }
+
+  async getProtectiveOrderStatus(
+    credentials: ExchangeCredentials,
+    command: CancelProtectiveOrderCommand,
+  ): Promise<ProtectiveOrderStatus> {
+    try {
+      const values = z.array(algoOrderDetailSchema).parse(
+        await this.client.signedGet("/api/v5/trade/order-algo", credentials, {
+          algoClOrdId: normalizeClientOrderId(
+            command.protectiveClientOrderId,
+          ),
+        }),
+      );
+      const order = values[0];
+      if (!order) return "MISSING";
+      return ["effective", "partially_effective"].includes(order.state)
+        ? "ACTIVE"
+        : "TERMINAL";
+    } catch (error) {
+      if (error instanceof ExchangeError && error.exchangeCode === "51603") {
+        return "MISSING";
+      }
+      throw error;
+    }
+  }
+
+  async placeProtectiveOrder(
+    credentials: ExchangeCredentials,
+    command: PlaceProtectiveOrderCommand,
+  ): Promise<void> {
+    const numericStop = Number(command.stopLoss);
+    const numericTake = Number(command.takeProfit);
+    const hasStop = Number.isFinite(numericStop) && numericStop > 0;
+    const hasTake = Number.isFinite(numericTake) && numericTake > 0;
+    if (!hasStop && !hasTake) {
+      throw ExchangeError.invalidRequest(
+        this.provider,
+        "A protective price is required",
+      );
+    }
+    const instruments = await this.getInstruments({
+      symbol: command.symbol,
+      environment: credentials.environment,
+    });
+    const instrument = instruments.find(
+      (candidate) =>
+        candidate.symbol === command.symbol ||
+        mapSymbol(candidate.symbol, this.provider) ===
+          toOkxSymbol(command.symbol),
+    );
+    const precision = instrument?.pricePrecision ?? 2;
+    const response = z.array(algoAckSchema).min(1).parse(
+      await this.client.signedPost("/api/v5/trade/order-algo", credentials, {
+        instId: toOkxSymbol(command.symbol),
+        tdMode: "cross",
+        side: command.positionSide === "LONG" ? "sell" : "buy",
+        posSide:
+          command.positionMode === "HEDGE"
+            ? command.positionSide.toLowerCase()
+            : "net",
+        ordType: hasStop && hasTake ? "oco" : "conditional",
+        closeFraction: "1",
+        algoClOrdId: normalizeClientOrderId(
+          command.protectiveClientOrderId,
+        ),
+        ...(command.positionMode === "ONE_WAY" ? { reduceOnly: true } : {}),
+        ...(hasStop
+          ? {
+              slTriggerPx: this.decimalString(numericStop, precision),
+              slOrdPx: "-1",
+              slTriggerPxType: "mark",
+            }
+          : {}),
+        ...(hasTake
+          ? {
+              tpTriggerPx: this.decimalString(numericTake, precision),
+              tpOrdPx: "-1",
+              tpTriggerPxType: "mark",
+            }
+          : {}),
+      }),
+    )[0]!;
+    if (response.sCode !== "0") {
+      throw new ExchangeError(
+        ExchangeErrorCode.INVALID_REQUEST,
+        this.provider,
+        false,
+        400,
+        response.sMsg || "OKX rejected protective order recovery",
         response.sCode,
       );
     }

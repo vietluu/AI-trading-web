@@ -1,13 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { io } from "socket.io-client";
 import { useTranslation } from "@/lib/i18n/i18n-context";
-import { publicEnvironment } from "@/lib/environment";
 import {
   useLiveTradingActions,
-  useLiveTradingDashboard,
 } from "@/hooks/ai/useAiFeature";
+import { useRealtimeLiveTradingDashboard } from "@/hooks/ai/useRealtimeLiveTrading";
 import type { LiveTradingDashboard } from "@/services/ai-feature.service";
 import { calculateLiveTradingTotals } from "@/lib/live-trading-metrics";
 
@@ -21,102 +18,13 @@ const RECENT_TRADE_HISTORY_LIMIT = 20;
 
 export default function LiveTradingPage(): React.JSX.Element {
   const { t } = useTranslation();
-  const query = useLiveTradingDashboard();
-  const [liveData, setLiveData] = useState<LiveTradingDashboard | null>(null);
-  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
+  const query = useRealtimeLiveTradingDashboard();
   const { killMutation, enableMutation } =
     useLiveTradingActions();
   const kill = killMutation;
   const enable = enableMutation;
-  const queryDataRef = useRef(query.data);
-  queryDataRef.current = query.data;
 
-  useEffect(() => {
-    if (query.data) {
-      setLiveData(query.data);
-    }
-  }, [query.data]);
-
-  // Connect sockets strictly AFTER initial API call succeeds to prevent overlap/blocking
-  useEffect(() => {
-    if (!query.isSuccess) return;
-
-    const rawApiUrl = publicEnvironment.NEXT_PUBLIC_API_BASE_URL.trim();
-    const baseUrl = rawApiUrl
-      ? rawApiUrl.replace(/\/$/, "")
-      : typeof window !== "undefined"
-        ? window.location.port === "3000"
-          ? `${window.location.protocol}//${window.location.hostname}:3001`
-          : window.location.origin
-        : "";
-
-    // 1. Dashboard snapshot socket
-    const socket = io(`${baseUrl}/live-trading`, {
-      path:
-        typeof window !== "undefined"
-          ? (window as Window & { __SOCKET_IO_PATH__?: string }).__SOCKET_IO_PATH__ ?? "/socket.io/"
-          : "/socket.io/",
-      transports: ["websocket", "polling"],
-      reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000,
-      withCredentials: true,
-    });
-
-    socket.on("connect", () => {
-      socket.emit("subscribe", {});
-    });
-
-    socket.on("snapshot", (payload: LiveTradingDashboard) => {
-      setLiveData(payload);
-    });
-
-    // 2. Real-time market ticker socket
-    const marketSocket = io(`${baseUrl}/market`, {
-      path:
-        typeof window !== "undefined"
-          ? (window as Window & { __SOCKET_IO_PATH__?: string }).__SOCKET_IO_PATH__ ?? "/socket.io/"
-          : "/socket.io/",
-      transports: ["websocket", "polling"],
-      reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000,
-    });
-
-    const subscribePositions = (positions: LiveTradingDashboard["positions"], connections: LiveTradingDashboard["connections"]) => {
-      for (const pos of positions) {
-        const provider =
-          pos.provider ??
-          connections.find((c) => c.id === pos.connectionId)?.provider ??
-          "OKX_FUTURES";
-        marketSocket.emit("subscribe", {
-          channel: "ticker",
-          provider,
-          symbol: pos.symbol,
-        });
-      }
-    };
-
-    marketSocket.on("connect", () => {
-      const initialPositions = queryDataRef.current?.positions ?? [];
-      const initialConnections = queryDataRef.current?.connections ?? [];
-      subscribePositions(initialPositions, initialConnections);
-    });
-
-    marketSocket.on("ticker", (ticker: { symbol: string; lastPrice?: string; markPrice?: string }) => {
-      const price = Number(ticker.lastPrice ?? ticker.markPrice ?? 0);
-      if (price > 0 && ticker.symbol) {
-        setLivePrices((prev) => ({ ...prev, [ticker.symbol]: price }));
-      }
-    });
-
-    return () => {
-      socket.disconnect();
-      marketSocket.disconnect();
-    };
-  }, [query.isSuccess]);
-
-  if (query.isLoading && !liveData)
+  if (query.isLoading && !query.data)
     return <p className="text-muted-foreground">{t.ai.loadingStatus}…</p>;
   if (query.isError)
     return (
@@ -124,7 +32,7 @@ export default function LiveTradingPage(): React.JSX.Element {
         {query.error.message}
       </p>
     );
-  const data = liveData ?? query.data;
+  const data = query.data;
   if (!data)
     return <p className="text-muted-foreground">{t.ai.configureConnection}</p>;
 
@@ -201,9 +109,7 @@ export default function LiveTradingPage(): React.JSX.Element {
         empty={t.ai.noPositions}
       >
         {data.positions.map((position) => {
-          const livePrice =
-            livePrices[position.symbol] ??
-            (position.markPrice ? Number(position.markPrice) : position.entryPrice);
+          const livePrice = position.markPrice ?? position.entryPrice;
           const positionUpl = position.unrealizedPnl;
           const notional = Math.abs(
             position.notional ?? position.entryPrice * position.quantity,

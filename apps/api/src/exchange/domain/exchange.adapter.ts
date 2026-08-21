@@ -25,6 +25,8 @@ import type {
   CancelOrderCommand,
   AmendProtectiveOrderCommand,
   CancelProtectiveOrderCommand,
+  PlaceProtectiveOrderCommand,
+  ProtectiveOrderStatus,
 } from "./exchange.types";
 
 export interface ExchangeAdapter {
@@ -88,5 +90,13 @@ export interface ExchangeAdapter {
   cancelProtectiveOrder?(
     credentials: ExchangeCredentials,
     command: CancelProtectiveOrderCommand,
+  ): Promise<void>;
+  getProtectiveOrderStatus?(
+    credentials: ExchangeCredentials,
+    command: CancelProtectiveOrderCommand,
+  ): Promise<ProtectiveOrderStatus>;
+  placeProtectiveOrder?(
+    credentials: ExchangeCredentials,
+    command: PlaceProtectiveOrderCommand,
   ): Promise<void>;
 }

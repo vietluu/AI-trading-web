@@ -14,6 +14,7 @@ import { buttonClass, Feedback, Field } from "@/components/form-controls";
 import { ROUTES } from "@/constants/routes";
 import { useExchangeConnectionDetail } from "@/hooks/settings/useSettings";
 import { reauthenticate } from "@/services/auth.service";
+import { useRealtimeLiveTradingDashboard } from "@/hooks/ai/useRealtimeLiveTrading";
 
 function formString(form: FormData, name: string): string {
   const value = form.get(name);
@@ -34,6 +35,11 @@ export default function ExchangeDetailPage(): React.JSX.Element {
   const orders = ordersQuery;
   const privateEnabled = Boolean(
     connection.data?.isEnabled && connection.data.isVerified,
+  );
+  const live = useRealtimeLiveTradingDashboard(id);
+  const realtimePositions = live.data?.positions ?? positions.data ?? [];
+  const realtimeAccount = live.data?.accounts.find(
+    (candidate) => candidate.connectionId === id,
   );
 
   async function mutate(path: string, success: string): Promise<void> {
@@ -258,7 +264,10 @@ export default function ExchangeDetailPage(): React.JSX.Element {
               ["Equity", account.data.totalEquity],
               ["Available", account.data.availableBalance],
               ["Margin", account.data.totalMarginBalance],
-              ["Unrealized PnL", account.data.totalUnrealizedPnl],
+              [
+                "Unrealized PnL",
+                realtimeAccount?.unrealizedPnl ?? account.data.totalUnrealizedPnl,
+              ],
             ].map(([label, value]) => (
               <div key={label}>
                 <p className="text-xs text-muted-foreground">{label}</p>
@@ -285,13 +294,13 @@ export default function ExchangeDetailPage(): React.JSX.Element {
         title="Positions"
         headers={["Symbol", "Side", "Quantity", "Entry", "PnL"]}
         rows={
-          positions.data?.map((row) => [
+          realtimePositions.map((row) => [
             row.symbol,
             row.side,
-            row.quantity,
-            row.entryPrice,
-            row.unrealizedPnl,
-          ]) ?? []
+            String(row.quantity),
+            String(row.entryPrice),
+            String(row.unrealizedPnl),
+          ])
         }
       />
       <DataTable

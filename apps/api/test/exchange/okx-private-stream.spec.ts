@@ -77,6 +77,63 @@ describe("OKX private WebSocket cache", () => {
     service.onModuleDestroy();
   });
 
+  it("publishes exchange-native mark price and PnL updates to dashboard listeners", () => {
+    const service = new OkxPrivateStreamService(
+      { sign: vi.fn().mockReturnValue("signature") },
+      { instruments: vi.fn().mockResolvedValue([]) } as unknown as PublicExchangeService,
+      { get: vi.fn().mockReturnValue(undefined) } as unknown as ConfigService,
+    );
+    const state = {
+      connectionId: "connection-realtime",
+      credentials: {
+        apiKey: "key",
+        apiSecret: "secret",
+        passphrase: "passphrase",
+        environment: ExchangeEnvironment.PRODUCTION,
+      },
+      connected: true,
+      stopped: false,
+      reconnectAttempts: 0,
+      lastMessageAt: Date.now(),
+      instruments: new Map([["BNB-USDT-SWAP", "0.1"]]),
+      positions: new Map(),
+      positionsInitialized: false,
+      orders: new Map(),
+      ordersSeeded: false,
+    };
+    const states = Reflect.get(service, "states") as Map<string, unknown>;
+    states.set(state.connectionId, state);
+    const listener = vi.fn();
+    const unsubscribe = service.subscribePositions(state.connectionId, listener);
+    const updatePositions = Reflect.get(service, "updatePositions") as (
+      target: unknown,
+      data: Array<Record<string, unknown>>,
+    ) => void;
+
+    updatePositions.call(service, state, [{
+      instId: "BNB-USDT-SWAP",
+      pos: "16",
+      posSide: "long",
+      avgPx: "661.9",
+      markPx: "662.2",
+      upl: "0.48",
+      notionalUsd: "1059.52",
+      uTime: "1787191200000",
+    }]);
+
+    expect(listener).toHaveBeenLastCalledWith({
+      connectionId: state.connectionId,
+      positions: [expect.objectContaining({
+        symbol: "BNB-USDT",
+        quantity: "1.6",
+        markPrice: "662.2",
+        unrealizedPnl: "0.48",
+      })],
+    });
+    unsubscribe();
+    service.onModuleDestroy();
+  });
+
   it("extracts available balance from cashBal or availEq when availBal is empty", async () => {
     const service = new OkxPrivateStreamService(
       { sign: vi.fn().mockReturnValue("signature") },

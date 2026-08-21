@@ -43,6 +43,11 @@ import { MarketStreamsModule } from "../market-data/market-streams.module";
     OkxFuturesClient,
     OkxFuturesAdapter,
   ],
-  exports: [PublicExchangeService, ExchangeConnectionService, ExchangeRealtimeService],
+  exports: [
+    PublicExchangeService,
+    ExchangeConnectionService,
+    ExchangeRealtimeService,
+    OkxPrivateStreamService,
+  ],
 })
 export class ExchangeModule {}

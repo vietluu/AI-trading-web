@@ -40,6 +40,13 @@ interface StreamState {
   disconnectedAt?: number;
 }
 
+export interface OkxPrivatePositionUpdate {
+  connectionId: string;
+  positions: ExchangePosition[];
+}
+
+type PositionListener = (update: OkxPrivatePositionUpdate) => void;
+
 /**
  * Ephemeral OKX private-account cache. Nothing in this service is persisted:
  * REST seeds/recovery snapshots live only in memory and WebSocket events keep
@@ -50,6 +57,7 @@ export class OkxPrivateStreamService implements OnModuleDestroy {
   private readonly logger = new Logger(OkxPrivateStreamService.name);
   private readonly states = new Map<string, StreamState>();
   private readonly starting = new Map<string, Promise<StreamState>>();
+  private readonly positionListeners = new Map<string, Set<PositionListener>>();
   private readonly productionUrl: string;
   private readonly demoUrl: string;
   private readonly staleFallbackMs: number;
@@ -108,7 +116,29 @@ export class OkxPrivateStreamService implements OnModuleDestroy {
     state.positions = new Map(values.map((item) => [this.positionKey(item), item]));
     state.positionsInitialized = true;
     state.lastMessageAt = Date.now();
+    this.publishPositions(state);
     return values;
+  }
+
+  subscribePositions(
+    connectionId: string,
+    listener: PositionListener,
+  ): () => void {
+    const listeners = this.positionListeners.get(connectionId) ?? new Set();
+    listeners.add(listener);
+    this.positionListeners.set(connectionId, listeners);
+    const state = this.states.get(connectionId);
+    if (state?.positionsInitialized) {
+      listener({
+        connectionId,
+        positions: [...state.positions.values()],
+      });
+    }
+    return () => {
+      const current = this.positionListeners.get(connectionId);
+      current?.delete(listener);
+      if (current?.size === 0) this.positionListeners.delete(connectionId);
+    };
   }
 
   async openOrders(
@@ -137,6 +167,7 @@ export class OkxPrivateStreamService implements OnModuleDestroy {
 
   onModuleDestroy(): void {
     for (const connectionId of [...this.states.keys()]) this.invalidate(connectionId);
+    this.positionListeners.clear();
   }
 
   private async ensure(
@@ -267,7 +298,7 @@ export class OkxPrivateStreamService implements OnModuleDestroy {
             {
               channel: "positions",
               instType: "ANY",
-              extraParams: JSON.stringify({ updateInterval: "0" }),
+              extraParams: JSON.stringify({ updateInterval: "2000" }),
             },
             { channel: "orders", instType: "SWAP" },
           ],
@@ -394,8 +425,31 @@ export class OkxPrivateStreamService implements OnModuleDestroy {
         unrealizedPnl: this.text(item.upl),
         ...(item.realizedPnl ? { realizedPnl: this.text(item.realizedPnl) } : {}),
         ...(item.notionalUsd ? { notional: this.text(item.notionalUsd) } : {}),
-        updatedAt: this.date(item.uTime),
+        // pTime advances on each periodic position push, while uTime only
+        // changes when the position itself is adjusted.
+        updatedAt: this.date(item.pTime ?? item.uTime),
       });
+    }
+    this.publishPositions(state);
+  }
+
+  private publishPositions(state: StreamState): void {
+    const listeners = this.positionListeners.get(state.connectionId);
+    if (!listeners?.size) return;
+    const update: OkxPrivatePositionUpdate = {
+      connectionId: state.connectionId,
+      positions: [...state.positions.values()],
+    };
+    for (const listener of listeners) {
+      try {
+        listener(update);
+      } catch (error) {
+        this.logger.warn({
+          event: "okx_private_position_listener_failed",
+          connectionId: state.connectionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 

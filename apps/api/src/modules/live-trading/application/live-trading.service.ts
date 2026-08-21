@@ -53,6 +53,14 @@ const ACTIVE_ORDER_STATUSES = ["SUBMITTING", "NEW", "PARTIALLY_FILLED"];
 const TRADE_BACKFILL_PAGE_SIZE = 1000;
 const DEFAULT_TRADE_BACKFILL_MAX_PAGES = 100;
 const RECONCILIATION_DB_BATCH_SIZE = 10;
+const ORPHAN_PROTECTION_GRACE_MS = 120_000;
+
+export function isPastProtectionOrphanGrace(
+  createdAt: Date,
+  now = Date.now(),
+): boolean {
+  return now - createdAt.getTime() >= ORPHAN_PROTECTION_GRACE_MS;
+}
 
 export function reduceExecutionPositionSize(
   positionSize: number,
@@ -1891,6 +1899,11 @@ export class LiveTradingService {
           userId,
           connectionId: connection.id,
           symbol: position.symbol,
+          ...(position.side === "LONG"
+            ? { side: "BUY" }
+            : position.side === "SHORT"
+              ? { side: "SELL" }
+              : {}),
           purpose: { in: ["OPEN", "REVERSE"] },
           status: { not: "FAILED" },
           OR: [{ stopLoss: { not: null } }, { takeProfit: { not: null } }],
@@ -1898,6 +1911,28 @@ export class LiveTradingService {
         orderBy: { createdAt: "desc" },
       });
       if (!source) continue;
+      const stop = source.stopLoss ? Number(source.stopLoss) : undefined;
+      const take = source.takeProfit ? Number(source.takeProfit) : undefined;
+      const stopHit =
+        stop !== undefined &&
+        (position.side === "LONG" ? mark <= stop : mark >= stop);
+      const takeHit =
+        take !== undefined &&
+        (position.side === "LONG" ? mark >= take : mark <= take);
+      if (
+        position.provider === ExchangeProvider.OKX_FUTURES &&
+        !stopHit &&
+        !takeHit
+      ) {
+        const recoveredId = await this.reconcileNativeProtection(
+          userId,
+          connection,
+          position,
+          source,
+          context,
+        );
+        if (recoveredId) source.protectiveClientOrderId = recoveredId;
+      }
       const rawPlan = source.tradePlan as unknown as Partial<TradePlan> | null;
       if (
         rawPlan &&
@@ -2094,14 +2129,6 @@ export class LiveTradingService {
       // Native exchange protection is the first line of defence. This local,
       // reduce-only exit is mandatory for every provider so an unacknowledged,
       // rejected, or delayed native algo order cannot leave a position exposed.
-      const stop = source.stopLoss ? Number(source.stopLoss) : undefined;
-      const take = source.takeProfit ? Number(source.takeProfit) : undefined;
-      const stopHit =
-        stop !== undefined &&
-        (position.side === "LONG" ? mark <= stop : mark >= stop);
-      const takeHit =
-        take !== undefined &&
-        (position.side === "LONG" ? mark >= take : mark <= take);
       if (!stopHit && !takeHit) continue;
       const purpose = stopHit ? "STOP_LOSS" : "TAKE_PROFIT";
       this.logger.warn({
@@ -2162,6 +2189,119 @@ export class LiveTradingService {
     }
   }
 
+  private async reconcileNativeProtection(
+    userId: string,
+    connection: Awaited<ReturnType<ExchangeConnectionService["get"]>>,
+    position: ExchangePosition,
+    source: {
+      id: string;
+      clientOrderId: string;
+      symbol: string;
+      stopLoss: Prisma.Decimal | null;
+      takeProfit: Prisma.Decimal | null;
+      protectiveClientOrderId: string | null;
+      createdAt: Date;
+    },
+    context: RequestMetadata,
+  ): Promise<string | null> {
+    if (position.side === "BOTH") return source.protectiveClientOrderId;
+    const stopLoss = source.stopLoss ? String(source.stopLoss) : undefined;
+    const takeProfit = source.takeProfit ? String(source.takeProfit) : undefined;
+    if (!stopLoss && !takeProfit) return null;
+
+    let status: "ACTIVE" | "TERMINAL" | "MISSING" = "MISSING";
+    if (source.protectiveClientOrderId) {
+      try {
+        status = await this.connections.getProtectiveOrderStatus(
+          userId,
+          connection.id,
+          {
+            symbol: position.symbol,
+            protectiveClientOrderId: source.protectiveClientOrderId,
+          },
+          context,
+        );
+        if (status === "ACTIVE") return source.protectiveClientOrderId;
+      } catch (error) {
+        this.logger.warn({
+          event: "protective_order_verification_failed",
+          connectionId: connection.id,
+          symbol: position.symbol,
+          protectiveClientOrderId: source.protectiveClientOrderId,
+          error: this.safeError(error),
+        });
+        return source.protectiveClientOrderId;
+      }
+    }
+
+    const repairId =
+      status === "MISSING" && source.protectiveClientOrderId
+        ? source.protectiveClientOrderId
+        : this.derivedId(
+            source.clientOrderId,
+            `r${Math.floor(Date.now() / 60_000).toString(36)}`,
+          );
+    // Persist the intended id before the exchange call. If the response is
+    // lost after OKX accepts the request, the next sync verifies the same id
+    // instead of placing a duplicate full-close algo order.
+    await this.prisma.liveOrder.update({
+      where: { id: source.id },
+      data: { protectiveClientOrderId: repairId },
+    });
+    try {
+      await this.connections.placeProtectiveOrder(
+        userId,
+        connection.id,
+        {
+          symbol: position.symbol,
+          positionSide: position.side,
+          positionMode: position.positionMode,
+          protectiveClientOrderId: repairId,
+          ...(stopLoss ? { stopLoss } : {}),
+          ...(takeProfit ? { takeProfit } : {}),
+        },
+        context,
+      );
+      await this.audit.record("PROTECTIVE_ORDER_RECOVERED", userId, context, {
+        sourceOrderId: source.id,
+        connectionId: connection.id,
+        symbol: position.symbol,
+        previousStatus: status,
+        protectiveClientOrderId: repairId,
+        stopLoss,
+        takeProfit,
+      });
+      this.logger.log({
+        event: "protective_order_recovered",
+        connectionId: connection.id,
+        symbol: position.symbol,
+        protectiveClientOrderId: repairId,
+      });
+      return repairId;
+    } catch (error) {
+      await this.audit.record(
+        "PROTECTIVE_ORDER_RECOVERY_FAILED",
+        userId,
+        context,
+        {
+          sourceOrderId: source.id,
+          connectionId: connection.id,
+          symbol: position.symbol,
+          protectiveClientOrderId: repairId,
+          error: this.safeError(error),
+        },
+      );
+      this.logger.error({
+        event: "protective_order_recovery_failed",
+        connectionId: connection.id,
+        symbol: position.symbol,
+        protectiveClientOrderId: repairId,
+        error: this.safeError(error),
+      });
+      return repairId;
+    }
+  }
+
   private async cleanupOrphanProtection(
     userId: string,
     connection: Awaited<ReturnType<ExchangeConnectionService["get"]>>,
@@ -2179,6 +2319,10 @@ export class LiveTradingService {
       },
     });
     for (const source of protectedEntries) {
+      // A newly filled OKX parent order can be visible before the private
+      // positions channel publishes its first position snapshot. Cancelling
+      // attached TP/SL during that window leaves the new position exposed.
+      if (!isPastProtectionOrphanGrace(source.createdAt)) continue;
       const expectedSide = source.side === "BUY" ? "LONG" : "SHORT";
       const stillOpen = positions.some(
         (position) =>

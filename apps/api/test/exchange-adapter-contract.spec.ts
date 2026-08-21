@@ -792,7 +792,19 @@ describe("exchange adapter normalization contract", () => {
     const signedPost = vi.fn().mockResolvedValue([
       { algoId: "algo-1", algoClOrdId: "protect-1", sCode: "0", sMsg: "" },
     ]);
-    const adapter = okxAdapter({ signedPost });
+    const publicGet = vi.fn().mockResolvedValue([
+      {
+        instId: "BTC-USDT-SWAP",
+        instType: "SWAP",
+        state: "live",
+        settleCcy: "USDT",
+        ctVal: "0.01",
+        tickSz: "0.1",
+        lotSz: "1",
+        minSz: "1",
+      },
+    ]);
+    const adapter = okxAdapter({ signedPost, publicGet });
     const credentials = {
       apiKey: "demo-key",
       apiSecret: "demo-secret",
@@ -820,6 +832,64 @@ describe("exchange adapter normalization contract", () => {
     expect(signedPost).toHaveBeenNthCalledWith(2, "/api/v5/trade/cancel-algos", credentials, [expect.objectContaining({
       algoClOrdId: "protect1",
     })]);
+  });
+
+  it("verifies and recreates missing OKX protection as a full-position OCO", async () => {
+    const signedGet = vi.fn().mockResolvedValue([
+      { algoId: "algo-1", algoClOrdId: "protect-1", state: "effective" },
+    ]);
+    const signedPost = vi.fn().mockResolvedValue([
+      { algoId: "algo-2", algoClOrdId: "repair-1", sCode: "0", sMsg: "" },
+    ]);
+    const publicGet = vi.fn().mockResolvedValue([
+      {
+        instId: "BTC-USDT-SWAP",
+        instType: "SWAP",
+        state: "live",
+        settleCcy: "USDT",
+        ctVal: "0.01",
+        tickSz: "0.1",
+        lotSz: "1",
+        minSz: "1",
+      },
+    ]);
+    const adapter = okxAdapter({ signedGet, signedPost, publicGet });
+    const credentials = {
+      apiKey: "demo-key",
+      apiSecret: "demo-secret",
+      passphrase: "demo-passphrase",
+      environment: ExchangeEnvironment.DEMO,
+    };
+
+    await expect(
+      adapter.getProtectiveOrderStatus(credentials, {
+        symbol: "BTC-USDT",
+        protectiveClientOrderId: "protect-1",
+      }),
+    ).resolves.toBe("ACTIVE");
+    await adapter.placeProtectiveOrder(credentials, {
+      symbol: "BTC-USDT",
+      positionSide: "LONG",
+      positionMode: "HEDGE",
+      protectiveClientOrderId: "repair-1",
+      stopLoss: "65000",
+      takeProfit: "68000",
+    });
+
+    expect(signedPost).toHaveBeenCalledWith(
+      "/api/v5/trade/order-algo",
+      credentials,
+      expect.objectContaining({
+        instId: "BTC-USDT-SWAP",
+        side: "sell",
+        posSide: "long",
+        ordType: "oco",
+        closeFraction: "1",
+        algoClOrdId: "repair1",
+        slTriggerPx: "65000",
+        tpTriggerPx: "68000",
+      }),
+    );
   });
 
   it("removes hyphens from UUID-style client order ids before OKX submission", async () => {

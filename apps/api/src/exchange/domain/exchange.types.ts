@@ -314,6 +314,15 @@ export interface CancelProtectiveOrderCommand {
   symbol: string;
   protectiveClientOrderId: string;
 }
+export interface PlaceProtectiveOrderCommand {
+  symbol: string;
+  positionSide: "LONG" | "SHORT";
+  positionMode: PositionMode;
+  protectiveClientOrderId: string;
+  stopLoss?: string;
+  takeProfit?: string;
+}
+export type ProtectiveOrderStatus = "ACTIVE" | "TERMINAL" | "MISSING";
 export interface GetOrderQuery {
   symbol: string;
   orderId: string;

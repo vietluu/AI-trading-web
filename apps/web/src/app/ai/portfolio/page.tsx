@@ -4,6 +4,7 @@ import { useState } from "react";
 import { LoadingButton } from "@/components/loading-button";
 import { PaginationControls } from "@/components/pagination-controls";
 import { usePortfolioActions, usePortfolioDashboard } from "@/hooks/ai/useAiFeature";
+import { useRealtimeLiveTradingDashboard } from "@/hooks/ai/useRealtimeLiveTrading";
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -16,6 +17,7 @@ const optionalPercent = (value: number | null | undefined): string =>
 
 export default function PortfolioPage(): React.JSX.Element {
   const query = usePortfolioDashboard();
+  const live = useRealtimeLiveTradingDashboard();
   const { rebalanceMutation, updateStrategyStatusMutation } = usePortfolioActions();
   const [currentRiskPage, setCurrentRiskPage] = useState(1);
   const pageSize = 20;
@@ -47,6 +49,13 @@ export default function PortfolioPage(): React.JSX.Element {
     (currentRiskPage - 1) * pageSize,
     currentRiskPage * pageSize,
   );
+  const realtimeUnrealizedPnl = live.data
+    ? live.data.positions.reduce(
+        (sum, position) => sum + position.unrealizedPnl,
+        0,
+      )
+    : portfolio.unrealizedPnl;
+  const realtimePortfolioPnl = portfolio.realizedPnl + realtimeUnrealizedPnl;
 
   return (
     <div className="space-y-6">
@@ -113,7 +122,7 @@ export default function PortfolioPage(): React.JSX.Element {
             portfolio.pnlKind === "EXCHANGE_FILL_NET_PLUS_MARK_TO_MARKET"
               ? "Exchange net + unrealized PnL"
               : "Realized PnL",
-            money.format(portfolio.pnl),
+            money.format(realtimePortfolioPnl),
           ],
           [
             "Exposure",

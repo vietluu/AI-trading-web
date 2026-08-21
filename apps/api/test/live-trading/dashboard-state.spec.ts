@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { ExchangeProvider, type ExchangeOrder } from "../../src/exchange/domain/exchange.types";
-import { isAuthoritativeDashboardOrder } from "../../src/modules/live-trading/application/live-trading.service";
+import {
+  isAuthoritativeDashboardOrder,
+  isPastProtectionOrphanGrace,
+} from "../../src/modules/live-trading/application/live-trading.service";
 
 const exchangeOrder = {
   provider: ExchangeProvider.OKX_FUTURES,
@@ -48,6 +51,24 @@ describe("live dashboard authoritative order state", () => {
           clientOrderId: "historical-client",
         },
         [],
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("native protection orphan grace", () => {
+  it("does not cancel attached TP/SL while OKX position visibility catches up", () => {
+    const now = new Date("2026-08-21T02:00:00.000Z").getTime();
+    expect(
+      isPastProtectionOrphanGrace(
+        new Date("2026-08-21T01:59:51.000Z"),
+        now,
+      ),
+    ).toBe(false);
+    expect(
+      isPastProtectionOrphanGrace(
+        new Date("2026-08-21T01:57:59.000Z"),
+        now,
       ),
     ).toBe(true);
   });
