@@ -49,6 +49,21 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     return this.client.getdel(key);
   }
 
+  async consumeLinkedToken(
+    tokenKey: string,
+    pointerKey: string,
+    expectedPointer: string,
+  ): Promise<string | null> {
+    const result = await this.client.eval(
+      "if redis.call('get', KEYS[2]) ~= ARGV[1] then return false end; local value = redis.call('get', KEYS[1]); if not value then return false end; redis.call('del', KEYS[1], KEYS[2]); return value",
+      2,
+      tokenKey,
+      pointerKey,
+      expectedPointer,
+    );
+    return typeof result === "string" ? result : null;
+  }
+
   async setWithTtl(
     key: string,
     value: string,

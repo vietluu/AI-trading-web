@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import Link from "next/link";
 import { buttonClass, Feedback, Field } from "@/components/form-controls";
 import { apiRequest } from "@/lib/api-client";
 import { useTranslation } from "@/lib/i18n/i18n-context";
+import { ROUTES } from "@/constants/routes";
 
 export default function ForgotPasswordPage(): React.JSX.Element {
   const { t } = useTranslation();
@@ -41,6 +43,11 @@ export default function ForgotPasswordPage(): React.JSX.Element {
           {busy ? t.auth.requesting : t.auth.requestReset}
         </button>
       </form>
+      <p className="mt-4 text-center text-sm">
+        <Link className="text-primary hover:underline" href={ROUTES.login}>
+          {t.auth.returnToSignIn}
+        </Link>
+      </p>
     </section>
   );
 }

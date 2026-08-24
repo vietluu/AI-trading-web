@@ -119,22 +119,29 @@ describe("AuthService", () => {
 
   it("issues a short-lived reset token without storing the raw value", async () => {
     const users = {
-      findByEmail: vi
-        .fn()
-        .mockResolvedValue({ id: "user-id", email: "user@example.com" }),
+      findByEmail: vi.fn().mockResolvedValue({ id: "user-id", email: "user@example.com" }),
     };
     const redis = {
+      setNx: vi.fn().mockResolvedValue(true),
+      get: vi.fn().mockResolvedValue(null),
       setWithTtl: vi.fn().mockResolvedValue(undefined),
     };
     const audit = { record: vi.fn().mockResolvedValue(undefined) };
     const service = makeService(users, {}, redis, audit);
-    const token = await service.requestPasswordReset("user@example.com", {});
-    expect(token).toHaveLength(43);
-    expect(redis.setWithTtl).toHaveBeenCalledWith(
-      expect.not.stringContaining(token ?? ""),
-      "user-id",
-      900,
-    );
+    await service.requestPasswordReset("user@example.com", {});
+    expect(redis.setNx).toHaveBeenCalledWith(expect.stringMatching(/^password-reset-request:/), "1", 60);
+    expect(redis.setWithTtl).toHaveBeenCalledTimes(2);
+    expect(redis.setWithTtl).toHaveBeenNthCalledWith(1, expect.stringMatching(/^password-reset:/), "user-id", 900);
+  });
+
+  it("rate limits reset requests before looking up the account", async () => {
+    const users = { findByEmail: vi.fn() };
+    const redis = { setNx: vi.fn().mockResolvedValue(false) };
+    const service = makeService(users, {}, redis, {});
+
+    await service.requestPasswordReset("user@example.com", {});
+
+    expect(users.findByEmail).not.toHaveBeenCalled();
   });
 
   it("atomically consumes a password-reset token before changing the password", async () => {
@@ -149,20 +156,16 @@ describe("AuthService", () => {
     const sessions = { destroyAll: vi.fn().mockResolvedValue(undefined) };
     const redis = {
       get: vi.fn().mockResolvedValue("user-id"),
-      getAndDelete: vi
-        .fn()
-        .mockResolvedValueOnce("user-id")
-        .mockResolvedValueOnce(null),
+      consumeLinkedToken: vi.fn().mockResolvedValueOnce("user-id").mockResolvedValueOnce(null),
     };
     const audit = { record: vi.fn().mockResolvedValue(undefined) };
     const service = makeService(users, sessions, redis, audit);
     const dto = { token: "a".repeat(43), newPassword: "new-password-value" };
 
     await expect(service.resetPassword(dto, {})).resolves.toBeUndefined();
-    await expect(service.resetPassword(dto, {})).rejects.toBeInstanceOf(
-      UnauthorizedException,
-    );
+    await expect(service.resetPassword(dto, {})).rejects.toBeInstanceOf(UnauthorizedException);
     expect(users.updatePassword).toHaveBeenCalledOnce();
     expect(sessions.destroyAll).toHaveBeenCalledWith("user-id");
+    expect(redis.consumeLinkedToken).toHaveBeenCalledWith(expect.stringMatching(/^password-reset:/), "password-reset-user:user-id", expect.any(String));
   });
 });

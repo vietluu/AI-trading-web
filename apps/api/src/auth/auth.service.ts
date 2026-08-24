@@ -187,31 +187,46 @@ export class AuthService {
   async requestPasswordReset(
     email: string,
     context: RequestMetadata,
-  ): Promise<string | undefined> {
-    const user = await this.users.findByEmail(email);
-    if (!user) return undefined;
+  ): Promise<void> {
+    const normalizedEmail = email.trim().toLowerCase();
+    const requestHash = this.tokenHash(normalizedEmail);
+    const allowed = await this.redis.setNx(
+      `password-reset-request:${requestHash}`,
+      "1",
+      60,
+    );
+    if (!allowed) return;
+    const user = await this.users.findByEmail(normalizedEmail);
+    if (!user) return;
     const token = randomBytes(32).toString("base64url");
+    const hash = this.tokenHash(token);
+    const key = `password-reset:${hash}`;
+    const pointerKey = `password-reset-user:${user.id}`;
+    const previousHash = await this.redis.get(pointerKey);
+    if (previousHash) await this.redis.delete(`password-reset:${previousHash}`);
     await this.redis.setWithTtl(
-      `password-reset:${this.tokenHash(token)}`,
+      key,
       user.id,
       900,
     );
+    await this.redis.setWithTtl(pointerKey, hash, 900);
     try {
       await this.emailDelivery.send("RESET_PASSWORD", user.email, token);
     } catch {
+      await this.redis.delete(key, pointerKey);
       await this.audit.record("AUTH_EMAIL_DELIVERY_FAILED", user.id, context, {
         type: "RESET_PASSWORD",
       });
     }
     await this.audit.record("PASSWORD_RESET_REQUEST", user.id, context);
-    return token;
   }
 
   async resetPassword(
     dto: ResetPasswordDto,
     context: RequestMetadata,
   ): Promise<void> {
-    const key = `password-reset:${this.tokenHash(dto.token)}`;
+    const tokenHash = this.tokenHash(dto.token);
+    const key = `password-reset:${tokenHash}`;
     const userId = await this.redis.get(key);
     if (!userId)
       throw new UnauthorizedException("Reset token is invalid or expired");
@@ -222,7 +237,12 @@ export class AuthService {
       user.email.split("@")[0] ?? "",
       user.username,
     ]);
-    if (!(await this.redis.getAndDelete(key))) {
+    const consumedUserId = await this.redis.consumeLinkedToken(
+      key,
+      `password-reset-user:${userId}`,
+      tokenHash,
+    );
+    if (consumedUserId !== userId) {
       throw new UnauthorizedException("Reset token is invalid or expired");
     }
     await this.users.updatePassword(

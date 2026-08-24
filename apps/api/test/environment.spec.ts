@@ -45,7 +45,7 @@ describe("validateEnvironment", () => {
     ).toThrow("COOKIE_SECURE must be true in production");
   });
 
-  it("requires a delivery webhook when email verification is enabled", () => {
+  it("requires an email delivery transport when email verification is enabled", () => {
     expect(() =>
       validateEnvironment({
         DATABASE_URL: "postgresql://user:password@localhost:5432/platform",
@@ -54,6 +54,21 @@ describe("validateEnvironment", () => {
         ENCRYPTION_MASTER_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
         EMAIL_VERIFICATION_ENABLED: "true",
       }),
-    ).toThrow("Email verification requires");
+    ).toThrow("require SMTP or AUTH_EMAIL_WEBHOOK");
+  });
+
+  it("accepts SMTP as the production password-reset transport", () => {
+    expect(() =>
+      validateEnvironment({
+        NODE_ENV: "production",
+        DATABASE_URL: "postgresql://user:password@localhost:5432/platform",
+        REDIS_URL: "redis://localhost:6379",
+        SESSION_SECRET: "a-secure-production-session-secret-with-32-characters",
+        ENCRYPTION_MASTER_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+        COOKIE_SECURE: "true",
+        AUTH_EMAIL_SMTP_HOST: "smtp.example.com",
+        AUTH_EMAIL_FROM: "AI Trading <no-reply@example.com>",
+      }),
+    ).not.toThrow();
   });
 });

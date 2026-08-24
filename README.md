@@ -112,6 +112,25 @@ The API reads the root `.env` and `apps/api/.env`; Next.js reads
 `apps/web/.env.local`. Use `.env.example` as the authoritative list of runtime
 settings. Do not expose secrets through a `NEXT_PUBLIC_` variable.
 
+### Password-reset email
+
+Production must configure one email transport. SMTP is the simplest option:
+
+```dotenv
+WEB_APP_URL=https://trade.example.com
+AUTH_EMAIL_SMTP_HOST=smtp.example.com
+AUTH_EMAIL_SMTP_PORT=587
+AUTH_EMAIL_SMTP_SECURE=false
+AUTH_EMAIL_SMTP_USER=mailer@example.com
+AUTH_EMAIL_SMTP_PASSWORD=replace-with-provider-password
+AUTH_EMAIL_FROM=AI Trading <no-reply@example.com>
+```
+
+Alternatively, configure both `AUTH_EMAIL_WEBHOOK_URL` and
+`AUTH_EMAIL_WEBHOOK_SECRET`. Reset links expire after 15 minutes, are single-use,
+and a successful password change revokes every existing session for the account.
+The reset token is never stored or logged in plaintext.
+
 ## Commands
 
 | Command                 | Purpose                             |

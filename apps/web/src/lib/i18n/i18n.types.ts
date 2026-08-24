@@ -1,4 +1,4 @@
-export type Language = 'en' | 'vi';
+export type Language = "en" | "vi";
 
 export interface Dictionary {
   nav: {
@@ -86,6 +86,9 @@ export interface Dictionary {
     requestFailed: string;
     chooseNewPassword: string;
     newPassword: string;
+    confirmNewPassword: string;
+    passwordsDoNotMatch: string;
+    resetTokenMissing: string;
     resetting: string;
     resetPasswordAction: string;
     passwordResetSuccess: string;

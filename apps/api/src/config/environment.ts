@@ -52,6 +52,27 @@ const environmentSchema = z
       (value) => (value === "" ? undefined : value),
       z.string().min(16).optional(),
     ),
+    AUTH_EMAIL_SMTP_HOST: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z.string().min(1).optional(),
+    ),
+    AUTH_EMAIL_SMTP_PORT: z.coerce.number().int().min(1).max(65_535).default(587),
+    AUTH_EMAIL_SMTP_SECURE: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
+    AUTH_EMAIL_SMTP_USER: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z.string().min(1).optional(),
+    ),
+    AUTH_EMAIL_SMTP_PASSWORD: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z.string().min(1).optional(),
+    ),
+    AUTH_EMAIL_FROM: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z.string().min(3).optional(),
+    ),
     PASSWORD_BREACH_CHECK_ENABLED: z
       .enum(["true", "false"])
       .default("false")
@@ -648,16 +669,32 @@ const environmentSchema = z
         path: ["ENCRYPTION_MASTER_KEY"],
       });
     }
+    const webhookConfigured = Boolean(
+      environment.AUTH_EMAIL_WEBHOOK_URL && environment.AUTH_EMAIL_WEBHOOK_SECRET,
+    );
+    const smtpConfigured = Boolean(
+      environment.AUTH_EMAIL_SMTP_HOST && environment.AUTH_EMAIL_FROM,
+    );
     if (
-      environment.EMAIL_VERIFICATION_ENABLED &&
-      (!environment.AUTH_EMAIL_WEBHOOK_URL ||
-        !environment.AUTH_EMAIL_WEBHOOK_SECRET)
+      (environment.NODE_ENV === "production" || environment.EMAIL_VERIFICATION_ENABLED) &&
+      !webhookConfigured &&
+      !smtpConfigured
     ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message:
-          "Email verification requires AUTH_EMAIL_WEBHOOK_URL and AUTH_EMAIL_WEBHOOK_SECRET",
-        path: ["EMAIL_VERIFICATION_ENABLED"],
+          "Password reset and email verification require SMTP or AUTH_EMAIL_WEBHOOK configuration",
+        path: ["AUTH_EMAIL_FROM"],
+      });
+    }
+    if (
+      Boolean(environment.AUTH_EMAIL_SMTP_USER) !==
+      Boolean(environment.AUTH_EMAIL_SMTP_PASSWORD)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "SMTP user and password must be configured together",
+        path: ["AUTH_EMAIL_SMTP_PASSWORD"],
       });
     }
   });
