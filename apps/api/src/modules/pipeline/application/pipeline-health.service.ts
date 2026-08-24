@@ -13,7 +13,7 @@ export class PipelineHealthService {
     private readonly config: PipelineConfigService,
   ) {}
   async health() {
-    const [recent, staleRunningRuns] = await Promise.all([
+    const [recent, staleRunningRuns, staleQueuedRuns] = await Promise.all([
       this.prisma.pipelineRun.findMany({
         select: { status: true, completedAt: true },
         orderBy: { createdAt: "desc" },
@@ -23,6 +23,12 @@ export class PipelineHealthService {
         where: {
           status: "RUNNING",
           startedAt: { lt: new Date(Date.now() - this.config.staleRunAfterMs) },
+        },
+      }),
+      this.prisma.pipelineRun.count({
+        where: {
+          status: "QUEUED",
+          createdAt: { lt: new Date(Date.now() - this.config.staleRunAfterMs) },
         },
       }),
     ]);
@@ -35,11 +41,17 @@ export class PipelineHealthService {
     }
     return {
       status:
-        failureStreak >= 3 || staleRunningRuns > 0 ? "DEGRADED" : "HEALTHY",
+        failureStreak >= 3 || staleRunningRuns > 0 || staleQueuedRuns > 0
+          ? "DEGRADED"
+          : "HEALTHY",
       scheduler: this.scheduler.status(),
       queueDepth: await this.queue.depth(),
       queuePaused: await this.queue.isPaused(),
-      worker: { healthy: staleRunningRuns === 0, staleRunningRuns },
+      worker: {
+        healthy: staleRunningRuns === 0 && staleQueuedRuns === 0,
+        staleRunningRuns,
+        staleQueuedRuns,
+      },
       lastSuccessfulRun,
       failureStreak,
     };

@@ -76,11 +76,15 @@ export function shouldDisableStrategy(
   metrics: StrategyMetrics,
   limits: PortfolioLimits,
 ): boolean {
+  const enoughEvidence = metrics.totalTrades >= limits.disableMinTrades;
+  const sharpe = Number(metrics.sharpeRatio);
   return (
     metrics.drawdownPct >= limits.maxDrawdown ||
-    (metrics.totalTrades >= limits.disableMinTrades &&
-      metrics.returnPct <= limits.disableReturnPct &&
-      metrics.winRate < limits.disableWinRate)
+    (enoughEvidence && (
+      metrics.returnPct <= limits.disableReturnPct ||
+      metrics.winRate < limits.disableWinRate ||
+      (Number.isFinite(sharpe) && sharpe <= -1)
+    ))
   );
 }
 

@@ -50,20 +50,27 @@ export class PipelineRecoveryService
     timedOut: number;
     requeued: number;
     activeStale: number;
+    staleQueued: number;
   }> {
-    const fallback = { inspected: 0, timedOut: 0, requeued: 0, activeStale: 0 };
+    const fallback = { inspected: 0, timedOut: 0, requeued: 0, activeStale: 0, staleQueued: 0 };
     return (
       (await this.taskLock.run("pipeline-recovery-sweep", 55, async () => {
         const cutoff = new Date(now.getTime() - this.config.staleRunAfterMs);
         const stale = await this.prisma.pipelineRun.findMany({
-          where: { status: "RUNNING", startedAt: { lt: cutoff } },
-          select: { id: true, startedAt: true },
-          orderBy: { startedAt: "asc" },
+          where: {
+            OR: [
+              { status: "RUNNING", startedAt: { lt: cutoff } },
+              { status: "QUEUED", createdAt: { lt: cutoff } },
+            ],
+          },
+          select: { id: true, status: true, startedAt: true, createdAt: true },
+          orderBy: { createdAt: "asc" },
           take: 500,
         });
         let timedOut = 0;
         let requeued = 0;
         let activeStale = 0;
+        const staleQueued = stale.filter((run) => run.status === "QUEUED").length;
         for (const run of stale) {
           let state: string | undefined;
           try {
@@ -81,6 +88,7 @@ export class PipelineRecoveryService
             continue;
           }
           if (state && RETRY_JOB_STATES.has(state)) {
+            if (run.status === "QUEUED") continue;
             const updated = await this.prisma.pipelineRun.updateMany({
               where: { id: run.id, status: "RUNNING" },
               data: {
@@ -94,16 +102,21 @@ export class PipelineRecoveryService
           }
           const completedAt = now;
           const updated = await this.prisma.pipelineRun.updateMany({
-            where: { id: run.id, status: "RUNNING" },
+            where: { id: run.id, status: run.status },
             data: {
               status: "TIMEOUT",
               completedAt,
-              durationMs: run.startedAt
-                ? Math.max(0, completedAt.getTime() - run.startedAt.getTime())
-                : null,
-              errorCode: "ORPHANED_PIPELINE_RUN",
+              durationMs: Math.max(
+                0,
+                completedAt.getTime() - (run.startedAt ?? run.createdAt).getTime(),
+              ),
+              errorCode: run.status === "QUEUED"
+                ? "ORPHANED_QUEUED_RUN"
+                : "ORPHANED_PIPELINE_RUN",
               safeErrorMessage:
-                "Pipeline worker disappeared before completing the run.",
+                run.status === "QUEUED"
+                  ? "Pipeline run remained queued after its queue job disappeared."
+                  : "Pipeline worker disappeared before completing the run.",
             },
           });
           timedOut += updated.count;
@@ -113,6 +126,7 @@ export class PipelineRecoveryService
           timedOut,
           requeued,
           activeStale,
+          staleQueued,
         };
         if (stale.length > 0)
           this.logger.warn({ event: "pipeline_recovery_sweep", ...result });

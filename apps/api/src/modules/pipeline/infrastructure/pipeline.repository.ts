@@ -19,5 +19,18 @@ export class PipelineRepository {
   updateStep(runId: string, stepId: string, data: Prisma.PipelineStepRunUpdateInput) { return this.prisma.pipelineStepRun.update({ where: { runId_stepId: { runId, stepId } }, data }); }
   countRecent(userId: string, since: Date, extra: Prisma.PipelineRunWhereInput = {}) { return this.prisma.pipelineRun.count({ where: { userId, createdAt: { gte: since }, ...extra } }); }
   latestForSymbol(userId: string, symbol: string, provider: ExchangeProvider) { return this.prisma.pipelineRun.findFirst({ where: { userId, symbol, provider, status: { in: ['QUEUED', 'RUNNING', 'COMPLETED'] } }, orderBy: { createdAt: 'desc' } }); }
+  async activeStrategyKeys(userId: string, requestedKeys: string[]): Promise<string[]> {
+    if (!requestedKeys.length) return [];
+    const strategies = await this.prisma.portfolioStrategy.findMany({
+      where: {
+        userId,
+        key: { in: requestedKeys },
+        status: 'ACTIVE',
+      },
+      select: { key: true },
+    });
+    const eligible = new Set(strategies.map((strategy) => strategy.key));
+    return requestedKeys.filter((key) => eligible.has(key));
+  }
   metrics() { return this.prisma.pipelineRun.findMany({ select: { status: true, durationMs: true, decision: true, confidence: true, completedAt: true }, orderBy: { createdAt: 'desc' }, take: 1000 }); }
 }

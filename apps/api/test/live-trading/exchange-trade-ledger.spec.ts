@@ -58,6 +58,7 @@ describe("ExchangeTradeLedgerService", () => {
 
   it("attributes an imported close to its opening strategy and stable trade cycle", async () => {
     const openedAt = new Date("2026-08-16T03:57:42.000Z");
+    const openingFillAt = new Date("2026-08-16T03:57:47.000Z");
     const closedAt = new Date("2026-08-16T04:35:01.000Z");
     const openingFill = {
       id: "fill-open",
@@ -74,7 +75,7 @@ describe("ExchangeTradeLedgerService", () => {
       fee: -0.59,
       feeAsset: "USDT",
       isClosing: false,
-      executedAt: new Date("2026-08-16T03:57:47.000Z"),
+      executedAt: openingFillAt,
     };
     const closingFill = {
       id: "fill-close",
@@ -109,8 +110,8 @@ describe("ExchangeTradeLedgerService", () => {
       sourceDataComplete: true,
     });
     const findFirst = vi.fn().mockResolvedValue({
-      id: "live-open",
-      strategyId: "strategy-1",
+      id: "newer-but-unrelated-open",
+      strategyId: "strategy-wrong",
       createdAt: openedAt,
     });
     const prisma = {
@@ -156,11 +157,11 @@ describe("ExchangeTradeLedgerService", () => {
     expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
       update: expect.objectContaining({
         strategyId: "strategy-1",
-        openedAt,
+        openedAt: openingFillAt,
       }) as unknown,
       create: expect.objectContaining({
         strategyId: "strategy-1",
-        openedAt,
+        openedAt: openingFillAt,
       }) as unknown,
     }));
   });

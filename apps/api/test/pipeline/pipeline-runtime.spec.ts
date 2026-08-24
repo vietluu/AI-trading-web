@@ -44,6 +44,7 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     expect(service.evaluate({ ...output, expectedValue: -0.05 } as never, context)).toEqual({ actionable: false, decision: 'WAIT', reason: 'EXPECTED_VALUE_NEGATIVE' });
     expect(service.evaluate({ ...output, opportunityScore: 56 } as never, context)).toEqual({ actionable: false, decision: 'WAIT', reason: 'OPPORTUNITY_BELOW_THRESHOLD' });
     expect(service.evaluate({ ...output, dataQuality: 'INSUFFICIENT' } as never, context)).toEqual({ actionable: false, decision: 'WAIT', reason: 'DATA_QUALITY_INSUFFICIENT' });
+    expect(service.evaluate({ ...output, dataQuality: 'PARTIAL', confidence: 62 } as never, context)).toEqual({ actionable: false, decision: 'WAIT', reason: 'PARTIAL_DATA_CONVICTION_TOO_LOW' });
     expect(service.evaluate({ ...output, conflictLevel: 'HIGH' } as never, context)).toEqual({ actionable: false, decision: 'WAIT', reason: 'HIGH_CONFLICT' });
   });
 
@@ -52,11 +53,52 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     expect(FULL_ANALYSIS_DECISION.steps.at(-1)?.type).toBe('DECISION');
   });
 
+  it('skips before analysis when none of the requested strategies are active', async () => {
+    const repository = {
+      updateRun: vi.fn().mockResolvedValue({}),
+      activeStrategyKeys: vi.fn().mockResolvedValue([]),
+    };
+    const fusion = { runDetailed: vi.fn() };
+    const service = new PipelineRunnerService(
+      fusion as never,
+      {} as never,
+      repository as never,
+      { isCancelled: vi.fn().mockResolvedValue(false) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+
+    await service.run({
+      pipelineId: 'FULL_ANALYSIS_DECISION',
+      runId: 'scope-run',
+      userId: 'user-1',
+      provider: 'OKX_FUTURES',
+      symbol: 'SOL-USDT',
+      params: { strategyIds: ['trend'] },
+      trigger: 'SCHEDULE',
+    } as never);
+
+    expect(fusion.runDetailed).not.toHaveBeenCalled();
+    expect(repository.updateRun).toHaveBeenLastCalledWith('scope-run', expect.objectContaining({
+      status: 'SKIPPED',
+      decision: 'WAIT',
+      skippedReason: 'NO_ACTIVE_STRATEGY',
+    }));
+  });
+
   it('skips live assessment and execution when the decision gate blocks the trade', async () => {
     const repository = {
       updateRun: vi.fn().mockResolvedValue({}),
       updateStep: vi.fn().mockResolvedValue({}),
       findRun: vi.fn().mockResolvedValue(undefined),
+      activeStrategyKeys: vi.fn().mockImplementation(
+        (_userId: string, keys: string[]) => Promise.resolve(keys),
+      ),
     };
     const fusionResult = {
         analyses: {
@@ -460,5 +502,87 @@ describe('Phase 6.6 pipeline runtime policies', () => {
       expect.objectContaining({ scheduleId: 'schedule-1' }),
     );
     expect(prisma.pipelineSchedule.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not enqueue a user schedule when its exchange connection is no longer eligible', async () => {
+    const prisma = {
+      exchangeConnection: {
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
+      pipelineSchedule: {
+        findMany: vi.fn().mockResolvedValue([{
+          id: 'schedule-connection',
+          userId: 'user-1',
+          pipelineId: 'FULL_ANALYSIS_DECISION',
+          symbols: ['BTC-USDT'],
+          strategyIds: ['trend'],
+          provider: 'OKX_FUTURES',
+          mode: 'INTERVAL',
+          intervalMs: 300_000,
+          lastTriggeredAt: undefined,
+          timezone: 'UTC',
+          maxRunsPerHour: 12,
+        }]),
+        update: vi.fn(),
+      },
+    };
+    const pipeline = { trigger: vi.fn() };
+    const service = new PipelineSchedulerService(
+      prisma as never,
+      pipeline as never,
+      { enabled: true } as never,
+    );
+
+    await service.tick(new Date('2026-08-24T03:00:00Z'));
+
+    expect(prisma.exchangeConnection.findFirst).toHaveBeenCalledWith({
+      where: {
+        userId: 'user-1',
+        provider: 'OKX_FUTURES',
+        isEnabled: true,
+        isVerified: true,
+      },
+      select: { id: true },
+    });
+    expect(pipeline.trigger).not.toHaveBeenCalled();
+    expect(prisma.pipelineSchedule.update).not.toHaveBeenCalled();
+  });
+
+  it('accepts a scheduled symbol independently of legacy portfolio strategy symbols', async () => {
+    const prisma = {
+      exchangeConnection: { findFirst: vi.fn().mockResolvedValue({ id: 'connection-1' }) },
+      portfolioStrategy: { findMany: vi.fn().mockResolvedValue([{ key: 'trend' }]) },
+      pipelineSchedule: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockImplementation(({ data }: { data: unknown }) => Promise.resolve(data)),
+      },
+    };
+    const service = new PipelineSchedulerService(
+      prisma as never,
+      {} as never,
+      { enabled: true } as never,
+    );
+
+    const created = await service.create('user-1', {
+      pipelineId: 'FULL_ANALYSIS_DECISION',
+      symbols: ['SOL-USDT'],
+      strategyIds: ['trend'],
+      provider: 'OKX_FUTURES',
+      mode: 'INTERVAL',
+      intervalMs: 900_000,
+      enabled: true,
+      timezone: 'Asia/Saigon',
+      maxRunsPerHour: 12,
+    });
+
+    expect(prisma.portfolioStrategy.findMany).toHaveBeenCalledWith({
+      where: {
+        userId: 'user-1',
+        key: { in: ['trend'] },
+        status: 'ACTIVE',
+      },
+      select: { key: true },
+    });
+    expect(created).toEqual(expect.objectContaining({ symbols: ['SOL-USDT'] }));
   });
 });

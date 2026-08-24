@@ -1,9 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 import { QuantIntelligenceService } from '../../src/modules/research/application/quant-intelligence.service';
 
-function serviceWith(preferredSymbols: string[], pipelineSymbols: string[]) {
+function serviceWith(
+  preferredSymbols: string[],
+  pipelineSymbols: string[],
+  scheduledSymbols: string[] = [],
+) {
   const prisma = {
     userSetting: { findUnique: vi.fn().mockResolvedValue({ preferredSymbols }) },
+    pipelineSchedule: {
+      findMany: vi.fn().mockResolvedValue(
+        scheduledSymbols.length ? [{ symbols: scheduledSymbols }] : [],
+      ),
+    },
     pipelineRun: { findMany: vi.fn().mockResolvedValue(pipelineSymbols.map((symbol) => ({ symbol }))) },
   };
   return new QuantIntelligenceService(prisma as never, {} as never, {} as never, {} as never);
@@ -17,6 +26,16 @@ describe('Quant Research symbol selection', () => {
       settings: ['SOL-USDT', 'BTC-USDT'],
       pipelineTriggers: ['ADA-USDT', 'BTC-USDT'],
       symbols: ['SOL-USDT', 'BTC-USDT', 'ADA-USDT'],
+    });
+  });
+
+  it('includes enabled schedule symbols even before their first pipeline run', async () => {
+    const service = serviceWith(['SOL-USDT'], [], ['BNB-USDT', 'ZRO-USDT']);
+
+    await expect(service.getSelectedResearchSymbols('user-1')).resolves.toEqual({
+      settings: ['SOL-USDT'],
+      pipelineTriggers: ['BNB-USDT', 'ZRO-USDT'],
+      symbols: ['SOL-USDT', 'BNB-USDT', 'ZRO-USDT'],
     });
   });
 

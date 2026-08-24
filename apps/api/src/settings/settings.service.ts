@@ -6,6 +6,7 @@ import type { RequestMetadata } from "../common/request-context";
 import { PrismaService } from "../database/prisma.service";
 import type { UpdateSettingsDto } from "./settings.dto";
 import { SettingsRepository } from "./settings.repository";
+import { normalizeSymbol } from "../exchange/infrastructure/exchange-symbol";
 
 @Injectable()
 export class SettingsService {
@@ -29,6 +30,13 @@ export class SettingsService {
       ...dto,
       ...(dto.riskPreference
         ? { riskPreference: dto.riskPreference.toUpperCase() }
+        : {}),
+      ...(dto.preferredSymbols
+        ? {
+            preferredSymbols: [
+              ...new Set(dto.preferredSymbols.map((symbol) => normalizeSymbol(symbol))),
+            ],
+          }
         : {}),
     };
     const setting = await this.repository.update(userId, normalizedDto);

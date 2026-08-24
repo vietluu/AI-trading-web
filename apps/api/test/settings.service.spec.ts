@@ -47,4 +47,32 @@ describe("SettingsService", () => {
       { fields: ["theme"] },
     );
   });
+
+  it("normalizes and deduplicates registered symbols before saving", async () => {
+    const repository = {
+      getOrCreate: vi.fn().mockResolvedValue({}),
+      update: vi.fn().mockResolvedValue({
+        theme: "dark", timezone: "UTC", preferredExchange: null,
+        preferredSymbols: ["SOL-USDT", "BNB-USDT"], preferredTimeframes: [],
+        aiDailyBudget: new Prisma.Decimal(0), defaultLeverage: 3,
+        riskPreference: "MODERATE", maxRiskPerTrade: new Prisma.Decimal(0.01),
+        updatedAt: new Date(),
+      }),
+    };
+    const service = new SettingsService(
+      repository as unknown as SettingsRepository,
+      { record: vi.fn() } as unknown as AuditService,
+      { aIConfiguration: { upsert: vi.fn() } } as unknown as PrismaService,
+    );
+
+    await service.update(
+      "user-id",
+      { preferredSymbols: ["sol_usdt", "SOL-USDT", "bnb/usdt"] },
+      {},
+    );
+
+    expect(repository.update).toHaveBeenCalledWith("user-id", {
+      preferredSymbols: ["SOL-USDT", "BNB-USDT"],
+    });
+  });
 });

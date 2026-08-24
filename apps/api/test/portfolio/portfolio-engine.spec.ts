@@ -82,6 +82,18 @@ describe("Phase 10 portfolio engine", () => {
       weight: 0,
       allocatedCapital: 0,
     });
+    expect(
+      shouldDisableStrategy(
+        { totalTrades: 12, winRate: 0.5, returnPct: -0.02, drawdownPct: 0.03, sharpeRatio: -2 },
+        limits,
+      ),
+    ).toBe(true);
+    expect(
+      shouldDisableStrategy(
+        { totalTrades: 5, winRate: 0.1, returnPct: -0.2, drawdownPct: 0.03, sharpeRatio: -5 },
+        limits,
+      ),
+    ).toBe(false);
   });
 
   it("caps a trade at both its allocation and the global portfolio limit", () => {

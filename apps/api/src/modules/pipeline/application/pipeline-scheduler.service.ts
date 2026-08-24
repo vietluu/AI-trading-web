@@ -7,7 +7,10 @@ import {
   Optional,
 } from "@nestjs/common";
 import { PipelineScheduleInputSchema } from "@platform/shared";
-import type { PipelineSchedule } from "@prisma/client";
+import {
+  ExchangeProvider as PrismaExchangeProvider,
+  type PipelineSchedule,
+} from "@prisma/client";
 import type { ExchangeProvider } from "../../../exchange/domain/exchange.types";
 import { PrismaService } from "../../../database/prisma.service";
 import { cronMatches, validateCron } from "../domain/cron";
@@ -61,6 +64,17 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
       new Intl.DateTimeFormat("en-US", { timeZone: input.timezone });
     } catch {
       throw new ConflictException("Invalid schedule timezone");
+    }
+    if (!(await this.hasEligibleExchangeConnection(userId, input.provider))) {
+      throw new ConflictException(
+        "NO_ELIGIBLE_EXCHANGE_CONNECTION: an enabled, verified connection is required",
+      );
+    }
+    const activeStrategyKeys = await this.activeStrategyKeys(userId, input.strategyIds);
+    if (!activeStrategyKeys.length) {
+      throw new ConflictException(
+        "NO_ACTIVE_STRATEGY: at least one requested strategy must be active",
+      );
     }
     const duplicate = await this.prisma.pipelineSchedule.findFirst({
       where: {
@@ -153,14 +167,37 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
         this.activeSchedules.add(schedule.id);
         try {
           const triggerPromises: Promise<boolean>[] = [];
+          if (!(await this.hasEligibleExchangeConnection(schedule.userId, schedule.provider))) {
+            this.logger.warn({
+              event: "pipeline_schedule_missing_exchange_connection",
+              scheduleId: schedule.id,
+              userId: schedule.userId,
+              provider: schedule.provider,
+            });
+            continue;
+          }
           for (const symbol of schedule.symbols) {
+            const eligibleStrategyKeys = await this.activeStrategyKeys(
+              schedule.userId,
+              schedule.strategyIds,
+            );
+            if (!eligibleStrategyKeys.length) {
+              this.logger.warn({
+                event: "pipeline_schedule_no_active_strategy",
+                scheduleId: schedule.id,
+                symbol,
+                requestedStrategyKeys: schedule.strategyIds,
+              });
+              triggerPromises.push(Promise.resolve(true));
+              continue;
+            }
             if (this.eventScanner) {
               try {
                 const anchor = await this.eventScanner.reserveAnchor({
                   userId: schedule.userId,
                   provider: schedule.provider as ExchangeProvider,
                   symbol,
-                  strategyIds: schedule.strategyIds,
+                  strategyIds: eligibleStrategyKeys,
                 });
                 if (!anchor.run) {
                   this.logger.debug({
@@ -195,7 +232,7 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
                     provider: schedule.provider,
                     // One shared agent/fusion snapshot per symbol. Strategy
                     // arbitration happens inside the runner before the gates.
-                    params: { strategyIds: schedule.strategyIds },
+                    params: { strategyIds: eligibleStrategyKeys },
                   },
                   "SCHEDULE",
                   {
@@ -253,11 +290,19 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
 
     await Promise.all(schedule.symbols.map(async (symbol) => {
       try {
+        if (!(await this.hasEligibleExchangeConnection(schedule.userId, schedule.provider))) {
+          return;
+        }
+        const eligibleStrategyKeys = await this.activeStrategyKeys(
+          schedule.userId,
+          schedule.strategyIds,
+        );
+        if (!eligibleStrategyKeys.length) return;
         const scan = await this.eventScanner!.scan({
           userId: schedule.userId,
           provider: schedule.provider as ExchangeProvider,
           symbol,
-          strategyIds: schedule.strategyIds,
+          strategyIds: eligibleStrategyKeys,
         });
         if (!scan.triggered || !scan.evidence) return;
         await this.pipeline.trigger(
@@ -268,7 +313,7 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
             provider: schedule.provider,
             params: {
               interval: "15m",
-              strategyIds: schedule.strategyIds,
+              strategyIds: eligibleStrategyKeys,
               eventScan: {
                 fingerprint: scan.fingerprint,
                 ...scan.evidence,
@@ -298,6 +343,44 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
         });
       }
     }));
+  }
+
+  private async activeStrategyKeys(
+    userId: string,
+    requestedKeys: string[],
+  ): Promise<string[]> {
+    const model = this.prisma.portfolioStrategy as typeof this.prisma.portfolioStrategy | undefined;
+    if (!model) return requestedKeys;
+    const strategies = await model.findMany({
+      where: {
+        userId,
+        key: { in: requestedKeys },
+        status: "ACTIVE",
+      },
+      select: { key: true },
+    });
+    const eligible = new Set(strategies.map((strategy) => strategy.key));
+    return requestedKeys.filter((key) => eligible.has(key));
+  }
+
+  private async hasEligibleExchangeConnection(
+    userId: string,
+    provider: PrismaExchangeProvider,
+  ): Promise<boolean> {
+    const model = this.prisma.exchangeConnection as
+      | typeof this.prisma.exchangeConnection
+      | undefined;
+    if (!model) return true;
+    const connection = await model.findFirst({
+      where: {
+        userId,
+        provider,
+        isEnabled: true,
+        isVerified: true,
+      },
+      select: { id: true },
+    });
+    return Boolean(connection);
   }
 
 }

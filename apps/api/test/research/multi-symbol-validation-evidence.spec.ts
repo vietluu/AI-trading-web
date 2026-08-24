@@ -22,6 +22,7 @@ function createService(validationRows: Array<Record<string, unknown>>) {
       ),
     },
     pipelineRun: { findMany: vi.fn().mockResolvedValue([]) },
+    pipelineSchedule: { findMany: vi.fn().mockResolvedValue([]) },
     exchangeConnection: {
       findMany: vi.fn().mockResolvedValue([{ provider: 'OKX_FUTURES' }]),
     },
@@ -73,23 +74,23 @@ describe('multi-symbol validation evidence', () => {
     ]);
 
     await expect(service.multiSymbolValidationEvidence('user-1', ['ALGO-USDT'])).resolves.toMatchObject({
-      requiredPairs: 2,
+      requiredPairs: 4,
       availablePairs: 0,
       passingPairs: 0,
       passed: false,
     });
   });
 
-  it('uses the requested strategy symbols even when they are outside preferred scope', async () => {
+  it('does not let legacy strategy symbols override the registered user scope', async () => {
     const service = createService([
       { id: 'sol-15', symbol: 'SOL-USDT', provider: 'OKX_FUTURES', interval: '15m', createdAt: new Date(), walkForwardStable: true, outOfSampleSharpe: 1 },
       { id: 'sol-1h', symbol: 'SOL-USDT', provider: 'OKX_FUTURES', interval: '1h', createdAt: new Date(), walkForwardStable: true, outOfSampleSharpe: 1 },
     ]);
 
     await expect(service.multiSymbolValidationEvidence('user-1', ['SOL-USDT'])).resolves.toMatchObject({
-      requiredPairs: 2,
-      availablePairs: 2,
-      passed: true,
+      requiredPairs: 4,
+      availablePairs: 0,
+      passed: false,
     });
   });
 });

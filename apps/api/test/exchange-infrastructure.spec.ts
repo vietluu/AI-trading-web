@@ -61,6 +61,7 @@ describe("exchange infrastructure", () => {
     expect(normalizeSymbol(" btc-usdt ")).toBe("BTC-USDT");
     expect(normalizeSymbol("BTC - USDT")).toBe("BTC-USDT");
     expect(normalizeSymbol("BTCUSDT")).toBe("BTC-USDT");
+    expect(normalizeSymbol("sol_usdt")).toBe("SOL-USDT");
     expect(fromAssets("BTC", "USDT")).toBe("BTC-USDT");
     expect(toBinanceSymbol("BTC-USDT")).toBe("BTCUSDT");
     expect(toOkxSymbol("BTC-USDT")).toBe("BTC-USDT-SWAP");

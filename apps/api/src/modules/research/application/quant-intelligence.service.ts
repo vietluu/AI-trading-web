@@ -241,8 +241,12 @@ export class QuantIntelligenceService {
 
   async getSelectedResearchSymbols(userId: string): Promise<{ symbols: string[]; settings: string[]; pipelineTriggers: string[] }> {
     const recentCutoff = new Date(Date.now() - 30 * 24 * 60 * 60_000);
-    const [setting, triggeredRuns] = await Promise.all([
+    const [setting, schedules, triggeredRuns] = await Promise.all([
       this.prisma.userSetting.findUnique({ where: { userId }, select: { preferredSymbols: true } }),
+      this.prisma.pipelineSchedule.findMany({
+        where: { userId, enabled: true },
+        select: { symbols: true },
+      }),
       this.prisma.pipelineRun.findMany({
         where: { userId, createdAt: { gte: recentCutoff } },
         select: { symbol: true },
@@ -254,7 +258,10 @@ export class QuantIntelligenceService {
     const normalize = (value: string) => value.trim().toUpperCase().replace(/[/_]/g, '-');
     const valid = (value: string) => /^[A-Z0-9]+-[A-Z0-9]+$/.test(value);
     const settings = [...new Set((setting?.preferredSymbols ?? []).map(normalize).filter(valid))];
-    const pipelineTriggers = [...new Set(triggeredRuns.map((item) => normalize(item.symbol)).filter(valid))];
+    const pipelineTriggers = [...new Set([
+      ...schedules.flatMap((schedule) => schedule.symbols),
+      ...triggeredRuns.map((item) => item.symbol),
+    ].map(normalize).filter(valid))];
     const userSymbols = [...new Set([...settings, ...pipelineTriggers])];
     return {
       settings,
@@ -738,7 +745,10 @@ export class QuantIntelligenceService {
     const requested = requestedSymbols
       .map((value) => value.trim().toUpperCase().replace(/[/_]/g, '-'))
       .filter((value) => /^[A-Z0-9]+-[A-Z0-9]+$/.test(value));
-    const symbols = [...new Set(requested.length ? requested : scope.symbols)];
+    // Registered settings/schedules are authoritative. PortfolioStrategy.symbols
+    // may still contain the BTC/ETH defaults created before the user configured
+    // their trading universe, so only use requested symbols as a legacy fallback.
+    const symbols = [...new Set(scope.symbols.length ? scope.symbols : requested)];
     const timeframes = scope.timeframes;
     const [rows, connections] = symbols.length && timeframes.length
       ? await Promise.all([
@@ -1065,9 +1075,7 @@ export class QuantIntelligenceService {
     if (!connections.length) {
       throw new BadRequestException('NO_VERIFIED_EXCHANGE_CONNECTION');
     }
-    const configured = new Set(scope.symbols);
-    const selectedSymbols = strategy.symbols.filter((symbol) => configured.has(symbol));
-    const symbols = selectedSymbols.length ? selectedSymbols : strategy.symbols;
+    const symbols = scope.symbols.length ? scope.symbols : strategy.symbols;
     if (!symbols.length || !scope.timeframes.length) {
       throw new BadRequestException('NO_VALIDATION_SCOPE');
     }

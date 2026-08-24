@@ -21,9 +21,9 @@ describe("PipelineRecoveryService", () => {
     const prisma = {
       pipelineRun: {
         findMany: vi.fn().mockResolvedValue([
-          { id: "orphan", startedAt },
-          { id: "retrying", startedAt },
-          { id: "active", startedAt },
+          { id: "orphan", status: "RUNNING", startedAt, createdAt: startedAt },
+          { id: "retrying", status: "RUNNING", startedAt, createdAt: startedAt },
+          { id: "active", status: "RUNNING", startedAt, createdAt: startedAt },
         ]),
         updateMany: vi.fn((update: RecoveryUpdate) => {
           updates.push(update);
@@ -53,6 +53,7 @@ describe("PipelineRecoveryService", () => {
       timedOut: 1,
       requeued: 1,
       activeStale: 1,
+      staleQueued: 0,
     });
     expect(updates[0]).toMatchObject({
       where: { id: "orphan", status: "RUNNING" },
@@ -70,7 +71,7 @@ describe("PipelineRecoveryService", () => {
       pipelineRun: {
         findMany: vi
           .fn()
-          .mockResolvedValue([{ id: "unknown", startedAt: new Date(0) }]),
+          .mockResolvedValue([{ id: "unknown", status: "RUNNING", startedAt: new Date(0), createdAt: new Date(0) }]),
         updateMany: vi.fn(),
       },
     };
@@ -88,7 +89,41 @@ describe("PipelineRecoveryService", () => {
       timedOut: 0,
       requeued: 0,
       activeStale: 0,
+      staleQueued: 0,
     });
     expect(prisma.pipelineRun.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("times out a stale queued run whose BullMQ job no longer exists", async () => {
+    const createdAt = new Date("2026-08-20T00:00:00Z");
+    const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const service = new PipelineRecoveryService(
+      {
+        pipelineRun: {
+          findMany: vi.fn().mockResolvedValue([
+            { id: "queued-orphan", status: "QUEUED", startedAt: null, createdAt },
+          ]),
+          updateMany,
+        },
+      } as never,
+      { jobState: vi.fn().mockResolvedValue(undefined) } as never,
+      { staleRunAfterMs: 960_000, recoveryIntervalMs: 60_000 } as never,
+      { run: vi.fn(runWithLock) } as never,
+    );
+
+    expect(await service.sweep(new Date("2026-08-20T01:00:00Z"))).toEqual({
+      inspected: 1,
+      timedOut: 1,
+      requeued: 0,
+      activeStale: 0,
+      staleQueued: 1,
+    });
+    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "queued-orphan", status: "QUEUED" },
+      data: expect.objectContaining({
+        status: "TIMEOUT",
+        errorCode: "ORPHANED_QUEUED_RUN",
+      }) as unknown,
+    }));
   });
 });

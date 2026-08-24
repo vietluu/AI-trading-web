@@ -8,6 +8,38 @@ import { describe, expect, it, vi } from "vitest";
 import { PortfolioService } from "../../src/modules/portfolio/application/portfolio.service";
 
 describe("PortfolioService persistence", () => {
+  it("synchronizes default strategy metadata with settings and enabled schedules", async () => {
+    const strategyUpsert = vi.fn().mockImplementation(
+      ({ create }: { create: { key: string } }) =>
+        Promise.resolve({ id: `strategy-${create.key}` }),
+    );
+    const prisma = {
+      userSetting: {
+        findUnique: vi.fn().mockResolvedValue({ preferredSymbols: ["sol_usdt"] }),
+      },
+      pipelineSchedule: {
+        findMany: vi.fn().mockResolvedValue([{ symbols: ["BNB-USDT", "ZRO-USDT"] }]),
+      },
+      portfolioStrategy: { upsert: strategyUpsert },
+      strategyPerformance: { upsert: vi.fn() },
+      strategyAllocation: { upsert: vi.fn() },
+    };
+    const service = new PortfolioService(
+      prisma as never,
+      { values: { maxStrategies: 5 } } as never,
+    );
+
+    await service.ensureDefaults("user-1");
+
+    expect(strategyUpsert).toHaveBeenCalledTimes(5);
+    expect(strategyUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: { symbols: ["SOL-USDT", "BNB-USDT", "ZRO-USDT"] },
+      create: expect.objectContaining({
+        symbols: ["SOL-USDT", "BNB-USDT", "ZRO-USDT"],
+      }) as unknown,
+    }));
+  });
+
   it("does not persist the calculated-only disabled allocation flag", async () => {
     const upsert = vi.fn().mockResolvedValue({});
     const transactionClient = {

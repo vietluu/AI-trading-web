@@ -76,10 +76,15 @@ export class QuantResearchSchedulerService implements OnApplicationBootstrap, On
 
   private async sweepOnce(): Promise<void> {
     const recentCutoff = new Date(Date.now() - 30 * 24 * 60 * 60_000);
-    const [settingsUsers, pipelineUsers] = await Promise.all([
+    const [settingsUsers, scheduleUsers, pipelineUsers] = await Promise.all([
       this.prisma.userSetting.findMany({
         where: { preferredSymbols: { isEmpty: false } },
         select: { userId: true },
+      }),
+      this.prisma.pipelineSchedule.findMany({
+        where: { enabled: true },
+        select: { userId: true },
+        distinct: ['userId'],
       }),
       this.prisma.pipelineRun.findMany({
         where: { createdAt: { gte: recentCutoff } },
@@ -87,7 +92,9 @@ export class QuantResearchSchedulerService implements OnApplicationBootstrap, On
         distinct: ['userId'],
       }),
     ]);
-    const userIds = [...new Set([...settingsUsers, ...pipelineUsers].map((item) => item.userId))];
+    const userIds = [
+      ...new Set([...settingsUsers, ...scheduleUsers, ...pipelineUsers].map((item) => item.userId)),
+    ];
     let symbols = 0;
     let unavailable = 0;
     let validations = 0;

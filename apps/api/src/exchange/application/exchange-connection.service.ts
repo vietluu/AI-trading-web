@@ -372,12 +372,12 @@ export class ExchangeConnectionService {
     return result;
   }
 
-  account(
+  async account(
     userId: string,
     id: string,
     context: RequestMetadata,
   ): Promise<ExchangeAccountSummary> {
-    return this.privateCall(
+    const account = await this.privateCall(
       userId,
       id,
       "ACCOUNT",
@@ -389,6 +389,18 @@ export class ExchangeConnectionService {
             )
           : adapter.getAccountSummary(credentials),
     );
+    return {
+      ...account,
+      totalEquity: this.decimalText(account.totalEquity),
+      // Never substitute equity for missing free collateral: doing so could
+      // overstate executable balance when margin is already in use.
+      availableBalance: this.decimalText(account.availableBalance),
+      totalUnrealizedPnl: this.decimalText(account.totalUnrealizedPnl),
+      totalMarginBalance: this.decimalText(
+        account.totalMarginBalance,
+        account.totalEquity,
+      ),
+    };
   }
 
   balances(
@@ -836,6 +848,14 @@ export class ExchangeConnectionService {
 
   private additionalData(userId: string, provider: CredentialProvider): string {
     return `${userId}:${provider}`;
+  }
+
+  private decimalText(...values: Array<string | null | undefined>): string {
+    for (const value of values) {
+      const normalized = value?.trim();
+      if (normalized && Number.isFinite(Number(normalized))) return normalized;
+    }
+    return "0";
   }
 
   private view(connection: ConnectionWithCredential): ExchangeConnectionView {

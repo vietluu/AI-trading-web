@@ -186,10 +186,10 @@ export class ExchangeTradeLedgerService {
           where: { id: fills.find((fill) => fill.liveOrderId)!.liveOrderId! },
         })
       : null;
-    // Exchange-native protective orders can be imported without a client order
-    // id, so their synthetic local row has no strategy. Attribute the close to
-    // the most recent opening order for the non-pyramided symbol regardless of
-    // whether the closing row itself carries strategy metadata.
+    // The nearest opening order is only a timestamp fallback. Strategy
+    // attribution must come from the closing order or the FIFO lots actually
+    // consumed; a later opening order for the same symbol may belong to a
+    // different strategy.
     const openingOrder = await this.prisma.liveOrder.findFirst({
       where: {
         userId,
@@ -203,8 +203,9 @@ export class ExchangeTradeLedgerService {
     });
     const strategyId =
       sourceOrder?.strategyId ??
-      openingOrder?.strategyId ??
-      fills.find((fill) => fill.strategyId)?.strategyId;
+      allocation.strategyId ??
+      fills.find((fill) => fill.strategyId)?.strategyId ??
+      null;
     const closedAt = fills.at(-1)!.executedAt;
     const sourceDataComplete = allocation.complete && feesConvertible;
     const returnPct = entryPrice && entryPrice > 0
@@ -226,7 +227,7 @@ export class ExchangeTradeLedgerService {
         returnPct,
         closeReason: sourceOrder?.purpose ?? "EXCHANGE_FILL",
         sourceDataComplete,
-        openedAt: openingOrder?.createdAt ?? allocation.openedAt,
+        openedAt: allocation.openedAt ?? openingOrder?.createdAt,
         closedAt,
       },
       create: {
@@ -248,7 +249,7 @@ export class ExchangeTradeLedgerService {
         returnPct,
         closeReason: sourceOrder?.purpose ?? "EXCHANGE_FILL",
         sourceDataComplete,
-        openedAt: openingOrder?.createdAt ?? allocation.openedAt,
+        openedAt: allocation.openedAt ?? openingOrder?.createdAt,
         closedAt,
       },
     });
@@ -261,18 +262,32 @@ export class ExchangeTradeLedgerService {
     symbol: string,
     targetOrderId: string,
     settlementAsset?: string,
-  ): Promise<{ complete: boolean; entryPrice: number | null; openingFee: number; openedAt: Date | null }> {
+  ): Promise<{
+    complete: boolean;
+    entryPrice: number | null;
+    openingFee: number;
+    openedAt: Date | null;
+    strategyId: string | null;
+  }> {
     const history = await this.prisma.exchangeFill.findMany({
       where: { connectionId, symbol },
       orderBy: { executedAt: "asc" },
     });
-    type Lot = { quantity: number; price: number; fee: number; feeConvertible: boolean; openedAt: Date };
+    type Lot = {
+      quantity: number;
+      price: number;
+      fee: number;
+      feeConvertible: boolean;
+      openedAt: Date;
+      strategyId: string | null;
+    };
     const lots: Record<"LONG" | "SHORT", Lot[]> = { LONG: [], SHORT: [] };
     let matchedQuantity = 0;
     let entryNotional = 0;
     let openingFee = 0;
     let complete = true;
     let openedAtMs: number | undefined;
+    const consumedStrategyIds = new Set<string | null>();
 
     for (const fill of history) {
       const quantity = Number(fill.quantity);
@@ -288,6 +303,7 @@ export class ExchangeTradeLedgerService {
           fee: Number(fill.fee),
           feeConvertible: !fill.feeAsset || fill.feeAsset.toUpperCase() === settlementAsset,
           openedAt: fill.executedAt,
+          strategyId: fill.strategyId,
         });
         continue;
       }
@@ -305,6 +321,7 @@ export class ExchangeTradeLedgerService {
           openingFee += lot.feeConvertible ? allocatedFee : 0;
           complete = complete && lot.feeConvertible;
           openedAtMs = Math.min(openedAtMs ?? Number.POSITIVE_INFINITY, lot.openedAt.getTime());
+          consumedStrategyIds.add(lot.strategyId);
         }
         lot.quantity -= consumed;
         lot.fee -= allocatedFee;
@@ -322,6 +339,9 @@ export class ExchangeTradeLedgerService {
       entryPrice: matchedQuantity > 0 ? entryNotional / matchedQuantity : null,
       openingFee,
       openedAt: openedAtMs === undefined ? null : new Date(openedAtMs),
+      strategyId: consumedStrategyIds.size === 1
+        ? [...consumedStrategyIds][0] ?? null
+        : null,
     };
   }
 

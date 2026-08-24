@@ -79,14 +79,34 @@ export class PortfolioService {
   ) {}
 
   async ensureDefaults(userId: string): Promise<void> {
-    const symbols = resolveDefaultSymbols();
+    const [setting, schedules] = await Promise.all([
+      this.prisma.userSetting.findUnique({
+        where: { userId },
+        select: { preferredSymbols: true },
+      }),
+      this.prisma.pipelineSchedule.findMany({
+        where: { userId, enabled: true },
+        select: { symbols: true },
+      }),
+    ]);
+    const normalize = (value: string) =>
+      value.trim().toUpperCase().replace(/[/_]/g, "-");
+    const registeredSymbols = [
+      ...new Set([
+        ...(setting?.preferredSymbols ?? []),
+        ...schedules.flatMap((schedule) => schedule.symbols),
+      ].map(normalize).filter((value) => /^[A-Z0-9]+-[A-Z0-9]+$/.test(value))),
+    ];
+    const symbols = registeredSymbols.length
+      ? registeredSymbols
+      : resolveDefaultSymbols();
     for (const definition of defaults.slice(
       0,
       this.config.values.maxStrategies,
     )) {
       const strategy = await this.prisma.portfolioStrategy.upsert({
         where: { userId_key: { userId, key: definition.key } },
-        update: {},
+        update: { symbols },
         create: { userId, ...definition, symbols },
       });
       await Promise.all([

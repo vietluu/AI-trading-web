@@ -32,6 +32,11 @@ export function evaluatePositionManagement(input: PositionManagementInput) {
   const currentProfit = input.side === "LONG" ? input.markPrice - input.entryPrice : input.entryPrice - input.markPrice;
   const peakR = favorable / risk;
   const currentR = currentProfit / risk;
+  const currentProfitPct = input.entryPrice > 0 ? currentProfit / input.entryPrice : 0;
+  const minimumPartialProfitPct = Math.max(
+    0,
+    input.plan.estimatedRoundTripCostPct ?? 0.001,
+  ) * 3;
   let candidate = input.currentStopLoss;
   if (peakR >= input.plan.breakEvenAtR) {
     // A stop exactly at gross break-even can still realize a net loss. Keep a
@@ -59,7 +64,11 @@ export function evaluatePositionManagement(input: PositionManagementInput) {
     peakR,
     currentR,
     ...(improved ? { tightenedStopLoss: Number(candidate.toFixed(8)) } : {}),
-    takePartial: !input.partialTaken && peakR >= 1,
+    takePartial:
+      !input.partialTaken &&
+      peakR >= 1 &&
+      currentR >= 1 &&
+      currentProfitPct > minimumPartialProfitPct,
     // maxHoldingCandles is an analysis horizon, not an execution deadline.
     // A stale thesis must be reassessed by the normal Decision/Judge pipeline;
     // it must never cause an unconditional market close here.

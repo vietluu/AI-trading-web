@@ -24,6 +24,7 @@ describe("trade ledger backfill", () => {
     const refreshDerivedData = vi.fn().mockResolvedValue(undefined);
     const prisma = {
       userSetting: { findUnique: vi.fn().mockResolvedValue({ preferredSymbols: ["algo/usdt"] }) },
+      pipelineSchedule: { findMany: vi.fn().mockResolvedValue([]) },
       pipelineRun: { findMany: vi.fn().mockResolvedValue([]) },
       liveOrder: { findMany: vi.fn().mockResolvedValue([]) },
       livePosition: { findMany: vi.fn().mockResolvedValue([]) },
@@ -79,6 +80,7 @@ describe("trade ledger backfill", () => {
   it("reports missing Binance symbols instead of falling back to BTC", async () => {
     const prisma = {
       userSetting: { findUnique: vi.fn().mockResolvedValue({ preferredSymbols: [] }) },
+      pipelineSchedule: { findMany: vi.fn().mockResolvedValue([]) },
       pipelineRun: { findMany: vi.fn().mockResolvedValue([]) },
       liveOrder: { findMany: vi.fn().mockResolvedValue([]) },
       livePosition: { findMany: vi.fn().mockResolvedValue([]) },

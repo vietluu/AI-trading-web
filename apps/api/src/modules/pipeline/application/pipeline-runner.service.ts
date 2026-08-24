@@ -75,6 +75,36 @@ export class PipelineRunnerService {
     });
     await this.assertNotCancelled(runId);
     try {
+      const requestedStrategyKeys = Array.isArray(job.params?.strategyIds)
+        ? job.params.strategyIds.filter((item): item is string => typeof item === "string")
+        : typeof job.params?.strategyId === "string"
+          ? [job.params.strategyId]
+          : ["ai-core"];
+      const eligibleStrategyKeys = await this.repository.activeStrategyKeys(
+        job.userId,
+        requestedStrategyKeys,
+      );
+      if (!eligibleStrategyKeys.length) {
+        await this.repository.updateRun(runId, {
+          status: "SKIPPED",
+          decision: "WAIT",
+          skippedReason: "NO_ACTIVE_STRATEGY",
+          completedAt: new Date(),
+          durationMs: Math.max(0, Date.now() - startedAt.getTime()),
+          result: {
+            requestedStrategyKeys,
+            symbol,
+          },
+        });
+        this.logger.warn({
+          event: "pipeline_no_active_strategy",
+          runId,
+          userId: job.userId,
+          symbol,
+          requestedStrategyKeys,
+        });
+        return;
+      }
       let analyses: FusionInput;
       let fusionOutput: FusionOutput;
       const preferredTimeframes = this.settings
@@ -319,20 +349,15 @@ export class PipelineRunnerService {
         timeframe: String(interval),
         referencePrice: lastPrice,
       });
-      const requestedStrategyKeys = Array.isArray(job.params?.strategyIds)
-        ? job.params.strategyIds.filter((item): item is string => typeof item === "string")
-        : typeof job.params?.strategyId === "string"
-          ? [job.params.strategyId]
-          : ["ai-core"];
       // Existing short-timeframe schedules that already opted into breakout
       // automatically participate in the bounded momentum scalp candidate.
       if (
         timeframeMilliseconds(String(interval)) <= 15 * 60_000 &&
-        requestedStrategyKeys.includes("breakout") &&
-        !requestedStrategyKeys.includes("momentum-scalp")
-      ) requestedStrategyKeys.push("momentum-scalp");
+        eligibleStrategyKeys.includes("breakout") &&
+        !eligibleStrategyKeys.includes("momentum-scalp")
+      ) eligibleStrategyKeys.push("momentum-scalp");
       const strategySelection = selectStrategyDecision(
-        requestedStrategyKeys,
+        eligibleStrategyKeys,
         synthesizedOutput,
         analyses,
         {
@@ -349,7 +374,7 @@ export class PipelineRunnerService {
         (frame) => frame.timeframe === String(interval),
       )?.rsi;
       const rankedCandidates = rankStrategyDecisionCandidates(
-        requestedStrategyKeys,
+        eligibleStrategyKeys,
         synthesizedOutput,
         analyses,
         {
@@ -490,7 +515,7 @@ export class PipelineRunnerService {
         exchange: String(job.provider),
         timeframe: String(job.params?.interval ?? definition.defaultParams.interval),
         stageName: 'decision',
-        inputSummary: `regime=${output.regime.type}; conflict=${output.conflictLevel}; strategies=${requestedStrategyKeys.join(',')}`,
+        inputSummary: `regime=${output.regime.type}; conflict=${output.conflictLevel}; strategies=${eligibleStrategyKeys.join(',')}`,
         outputSummary: `${output.decision}; strategy=${strategyKey}; confidence=${output.confidence}; ev=${output.expectedValue}`,
         confidence: output.confidence,
         opportunityScore: output.opportunityScore,

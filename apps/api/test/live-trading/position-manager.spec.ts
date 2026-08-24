@@ -63,6 +63,23 @@ describe("position manager", () => {
     expect(action).not.toHaveProperty("timeExit");
   });
 
+  it("does not take a partial after profit has retraced below one R", () => {
+    const action = evaluatePositionManagement({
+      side: "LONG",
+      entryPrice: 100,
+      markPrice: 100.5,
+      initialStopLoss: 98,
+      currentStopLoss: 98,
+      highestMark: 103,
+      openedAt: new Date("2026-08-08T00:00:00Z"),
+      partialTaken: false,
+      plan,
+    });
+    expect(action.peakR).toBe(1.5);
+    expect(action.currentR).toBe(0.25);
+    expect(action.takePartial).toBe(false);
+  });
+
   it("applies symmetric break-even logic to SHORT positions", () => {
     const action = evaluatePositionManagement({
       side: "SHORT",

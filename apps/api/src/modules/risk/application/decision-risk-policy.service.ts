@@ -3,6 +3,7 @@ import { adaptiveTradingPolicy, type AdaptivePolicyContext } from '../../pipelin
 
 export type DecisionRiskPolicyReason =
   | 'DATA_QUALITY_INSUFFICIENT'
+  | 'PARTIAL_DATA_CONVICTION_TOO_LOW'
   | 'HIGH_CONFLICT'
   | 'CONFIDENCE_BELOW_THRESHOLD'
   | 'EXPECTED_VALUE_NEGATIVE'
@@ -36,6 +37,16 @@ export class DecisionRiskPolicyService {
       return { actionable: false, decision: 'WAIT', reason: 'EXTREME_VOLATILITY' };
     }
     const thresholdFloor = Math.max(55, output.adaptiveThreshold - 5);
+    if (
+      output.dataQuality === 'PARTIAL' &&
+      (
+        output.confidence < output.adaptiveThreshold + 5 ||
+        output.agreementScore < 75 ||
+        output.expectedValue <= policy.minExpectedValue + 0.1
+      )
+    ) {
+      return { actionable: false, decision: 'WAIT', reason: 'PARTIAL_DATA_CONVICTION_TOO_LOW' };
+    }
     if (output.confidence < output.adaptiveThreshold && !strongConviction) {
       return { actionable: false, decision: 'WAIT', reason: 'CONFIDENCE_BELOW_THRESHOLD' };
     }

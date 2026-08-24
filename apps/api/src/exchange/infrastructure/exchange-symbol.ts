@@ -50,17 +50,17 @@ export function normalizeSymbol(
     }
   }
 
-  const compactMatch = withoutSwap.match(compactQuotePattern);
-  if (compactMatch) {
-    return `${compactMatch[1]}-${compactMatch[2]}`;
-  }
-
   const underscoreParts = withoutSwap.split("_");
   if (underscoreParts.length === 2 && underscoreParts[0] && underscoreParts[1]) {
     const candidate = `${underscoreParts[0]}-${underscoreParts[1]}`;
     if (normalizedPattern.test(candidate)) {
       return candidate;
     }
+  }
+
+  const compactMatch = withoutSwap.match(compactQuotePattern);
+  if (compactMatch) {
+    return `${compactMatch[1]}-${compactMatch[2]}`;
   }
 
   const candidate = withoutSwap.replace(/[/_.-]+/gu, "-");

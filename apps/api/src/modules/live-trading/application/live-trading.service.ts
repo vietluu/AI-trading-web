@@ -130,10 +130,14 @@ export class LiveTradingService {
     }
     const connection = await this.connections.get(userId, connectionId);
     const recentCutoff = new Date(Date.now() - 30 * 24 * 60 * 60_000);
-    const [setting, pipelineRuns, orders, positions] = await Promise.all([
+    const [setting, schedules, pipelineRuns, orders, positions] = await Promise.all([
       this.prisma.userSetting.findUnique({
         where: { userId },
         select: { preferredSymbols: true },
+      }),
+      this.prisma.pipelineSchedule.findMany({
+        where: { userId, enabled: true },
+        select: { symbols: true },
       }),
       this.prisma.pipelineRun.findMany({
         where: { userId, createdAt: { gte: recentCutoff } },
@@ -157,6 +161,7 @@ export class LiveTradingService {
       ...new Set(
         [
           ...(setting?.preferredSymbols ?? []),
+          ...schedules.flatMap((schedule) => schedule.symbols),
           ...pipelineRuns.map((item) => item.symbol),
           ...orders.map((item) => item.symbol),
           ...positions.map((item) => item.symbol),
