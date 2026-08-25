@@ -1,9 +1,16 @@
 name: ai-trading-platform
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-crypto_platform}
       POSTGRES_USER: ${POSTGRES_USER:-platform}
@@ -22,6 +29,7 @@ services:
   redis:
     image: redis:7.4-alpine
     restart: unless-stopped
+    logging: *default-logging
     command:
       [
         "redis-server",
@@ -43,6 +51,7 @@ services:
   adminer:
     image: adminer:4.8.1
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       postgres:
         condition: service_healthy
@@ -56,6 +65,7 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       postgres:
         condition: service_healthy
@@ -196,12 +206,6 @@ services:
       SELF_LEARNING_MAX_CANARY_DAYS: ${SELF_LEARNING_MAX_CANARY_DAYS:-14}
     ports:
       - "3001:3001"
-    command:
-      [
-        "sh",
-        "-c",
-        "pnpm --filter @platform/api db:migrate && pnpm --filter @platform/api start",
-      ]
     stop_grace_period: 30s
     healthcheck:
       test:
@@ -222,6 +226,7 @@ services:
       args:
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:3001}
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       api:
         condition: service_healthy

@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
+import { resolve } from "node:path";
 
 const nextConfig: NextConfig = {
+  output: "standalone",
+  outputFileTracingRoot: resolve(__dirname, "../.."),
   poweredByHeader: false,
   reactStrictMode: true,
   transpilePackages: ["@platform/shared"],

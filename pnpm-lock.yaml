@@ -93,6 +93,9 @@ importers:
       nodemailer:
         specifier: ^9.0.5
         version: 9.0.5
+      prisma:
+        specifier: ^6.12.0
+        version: 6.19.3(typescript@5.9.3)
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
@@ -124,9 +127,6 @@ importers:
       '@types/ws':
         specifier: ^8.5.10
         version: 8.18.1
-      prisma:
-        specifier: ^6.12.0
-        version: 6.19.3(typescript@5.9.3)
       source-map-support:
         specifier: ^0.5.21
         version: 0.5.21
