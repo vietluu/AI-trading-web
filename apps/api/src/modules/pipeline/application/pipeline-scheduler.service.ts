@@ -18,6 +18,7 @@ import { PipelineService } from "./pipeline.service";
 import { PipelineConfigService } from "./pipeline-config.service";
 import { DistributedTaskLockService } from "../../../redis/distributed-task-lock.service";
 import { MarketEventScannerService } from "./market-event-scanner.service";
+import { PortfolioService } from "../../portfolio/application/portfolio.service";
 
 @Injectable()
 export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
@@ -32,6 +33,7 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
     private readonly config: PipelineConfigService,
     @Optional() private readonly taskLock?: DistributedTaskLockService,
     @Optional() private readonly eventScanner?: MarketEventScannerService,
+    @Optional() private readonly portfolio?: PortfolioService,
   ) {}
   onModuleInit() {
     if (process.env.CLI_DISABLE_SCHEDULERS === 'true') return;
@@ -70,6 +72,11 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
         "NO_ELIGIBLE_EXCHANGE_CONNECTION: an enabled, verified connection is required",
       );
     }
+    await this.portfolio?.ensureRegisteredStrategies(
+      userId,
+      input.strategyIds,
+      input.symbols,
+    );
     const activeStrategyKeys = await this.activeStrategyKeys(userId, input.strategyIds);
     if (!activeStrategyKeys.length) {
       throw new ConflictException(
@@ -176,6 +183,11 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
             });
             continue;
           }
+          await this.portfolio?.ensureRegisteredStrategies(
+            schedule.userId,
+            schedule.strategyIds,
+            schedule.symbols,
+          );
           for (const symbol of schedule.symbols) {
             const eligibleStrategyKeys = await this.activeStrategyKeys(
               schedule.userId,

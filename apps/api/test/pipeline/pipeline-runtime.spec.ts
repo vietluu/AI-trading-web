@@ -585,4 +585,52 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     });
     expect(created).toEqual(expect.objectContaining({ symbols: ['SOL-USDT'] }));
   });
+
+  it('registers selected strategies for a new account before validating a schedule', async () => {
+    let registered = false;
+    const prisma = {
+      exchangeConnection: { findFirst: vi.fn().mockResolvedValue({ id: 'connection-1' }) },
+      portfolioStrategy: {
+        findMany: vi.fn().mockImplementation(() =>
+          registered ? [{ key: 'momentum-scalp' }] : [],
+        ),
+      },
+      pipelineSchedule: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockImplementation(({ data }: { data: unknown }) => Promise.resolve(data)),
+      },
+    };
+    const portfolio = {
+      ensureRegisteredStrategies: vi.fn().mockImplementation(() => {
+        registered = true;
+        return Promise.resolve();
+      }),
+    };
+    const service = new PipelineSchedulerService(
+      prisma as never,
+      {} as never,
+      { enabled: true } as never,
+      undefined,
+      undefined,
+      portfolio as never,
+    );
+
+    await expect(service.create('user-1', {
+      pipelineId: 'FULL_ANALYSIS_DECISION',
+      symbols: ['SOL-USDT'],
+      strategyIds: ['momentum-scalp'],
+      provider: 'OKX_FUTURES',
+      mode: 'INTERVAL',
+      intervalMs: 900_000,
+      enabled: true,
+      timezone: 'Asia/Saigon',
+      maxRunsPerHour: 12,
+    })).resolves.toEqual(expect.objectContaining({ strategyIds: ['momentum-scalp'] }));
+
+    expect(portfolio.ensureRegisteredStrategies).toHaveBeenCalledWith(
+      'user-1',
+      ['momentum-scalp'],
+      ['SOL-USDT'],
+    );
+  });
 });

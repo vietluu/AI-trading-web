@@ -34,6 +34,7 @@ import {
   evaluateMultiTimeframeDecision,
   selectPipelineTimeframes,
 } from "../domain/multi-timeframe-analysis";
+import { PortfolioService } from "../../portfolio/application/portfolio.service";
 
 class PipelineCancelledError extends Error {}
 class PipelineExecutionLockBusyError extends Error {}
@@ -58,6 +59,7 @@ export class PipelineRunnerService {
     @Optional() private readonly judge?: DecisionJudgeService,
     @Optional() private readonly settings?: SettingsService,
     @Optional() private readonly quantPolicy?: QuantExecutionPolicyService,
+    @Optional() private readonly portfolio?: PortfolioService,
   ) {}
 
   async run(job: PipelineJob): Promise<void> {
@@ -80,6 +82,11 @@ export class PipelineRunnerService {
         : typeof job.params?.strategyId === "string"
           ? [job.params.strategyId]
           : ["ai-core"];
+      await this.portfolio?.ensureRegisteredStrategies(
+        job.userId,
+        requestedStrategyKeys,
+        [symbol],
+      );
       const eligibleStrategyKeys = await this.repository.activeStrategyKeys(
         job.userId,
         requestedStrategyKeys,

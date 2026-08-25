@@ -40,6 +40,44 @@ describe("PortfolioService persistence", () => {
     }));
   });
 
+  it("registers pipeline strategies and symbols without reactivating an existing strategy", async () => {
+    const strategyUpsert = vi.fn().mockResolvedValue({ id: "strategy-momentum" });
+    const prisma = {
+      userSetting: {
+        findUnique: vi.fn().mockResolvedValue({ preferredSymbols: ["BTC-USDT"] }),
+      },
+      pipelineSchedule: {
+        findMany: vi.fn().mockResolvedValue([{ symbols: ["ETH-USDT"] }]),
+      },
+      portfolioStrategy: { upsert: strategyUpsert },
+      strategyPerformance: { upsert: vi.fn() },
+      strategyAllocation: { upsert: vi.fn() },
+    };
+    const service = new PortfolioService(
+      prisma as never,
+      { values: { maxStrategies: 5 } } as never,
+    );
+
+    await service.ensureRegisteredStrategies(
+      "user-1",
+      ["momentum-scalp"],
+      ["sol_usdt"],
+    );
+
+    expect(strategyUpsert).toHaveBeenCalledWith({
+      where: { userId_key: { userId: "user-1", key: "momentum-scalp" } },
+      update: { symbols: ["BTC-USDT", "ETH-USDT", "SOL-USDT"] },
+      create: {
+        userId: "user-1",
+        key: "momentum-scalp",
+        name: "Momentum Scalp",
+        type: StrategyType.HYBRID,
+        kind: StrategyKind.BREAKOUT,
+        symbols: ["BTC-USDT", "ETH-USDT", "SOL-USDT"],
+      },
+    });
+  });
+
   it("does not persist the calculated-only disabled allocation flag", async () => {
     const upsert = vi.fn().mockResolvedValue({});
     const transactionClient = {

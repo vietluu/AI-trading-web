@@ -65,6 +65,12 @@ const defaults: Array<{
     type: StrategyType.HYBRID,
     kind: StrategyKind.NEWS_DRIVEN,
   },
+  {
+    key: "momentum-scalp",
+    name: "Momentum Scalp",
+    type: StrategyType.HYBRID,
+    kind: StrategyKind.BREAKOUT,
+  },
 ];
 
 @Injectable()
@@ -79,6 +85,19 @@ export class PortfolioService {
   ) {}
 
   async ensureDefaults(userId: string): Promise<void> {
+    await this.ensureRegisteredStrategies(
+      userId,
+      defaults
+        .slice(0, this.config.values.maxStrategies)
+        .map((definition) => definition.key),
+    );
+  }
+
+  async ensureRegisteredStrategies(
+    userId: string,
+    requestedKeys: string[],
+    additionalSymbols: string[] = [],
+  ): Promise<void> {
     const [setting, schedules] = await Promise.all([
       this.prisma.userSetting.findUnique({
         where: { userId },
@@ -95,15 +114,14 @@ export class PortfolioService {
       ...new Set([
         ...(setting?.preferredSymbols ?? []),
         ...schedules.flatMap((schedule) => schedule.symbols),
+        ...additionalSymbols,
       ].map(normalize).filter((value) => /^[A-Z0-9]+-[A-Z0-9]+$/.test(value))),
     ];
     const symbols = registeredSymbols.length
       ? registeredSymbols
       : resolveDefaultSymbols();
-    for (const definition of defaults.slice(
-      0,
-      this.config.values.maxStrategies,
-    )) {
+    const requested = new Set(requestedKeys);
+    for (const definition of defaults.filter((item) => requested.has(item.key))) {
       const strategy = await this.prisma.portfolioStrategy.upsert({
         where: { userId_key: { userId, key: definition.key } },
         update: { symbols },
