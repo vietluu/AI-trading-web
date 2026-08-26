@@ -18,6 +18,8 @@ export class RiskConfigService {
     return {
       riskPerTrade: Math.min(this.config.get<number>("RISK_PER_TRADE") ?? 0.005, 0.02),
       maxPositions: this.config.get<number>("MAX_POSITIONS") ?? 3,
+      maxSameDirectionPositions:
+        this.config.get<number>("MAX_SAME_DIRECTION_POSITIONS") ?? 1,
       maxLeverage: this.config.get<number>("MAX_LEVERAGE") ?? 50,
       maxDrawdown: this.config.get<number>("MAX_DRAWDOWN") ?? 0.15,
       maxExposure: this.config.get<number>("MAX_EXPOSURE") ?? 0.6,

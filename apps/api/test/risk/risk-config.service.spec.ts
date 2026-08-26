@@ -9,6 +9,7 @@ describe("RiskConfigService user limits", () => {
     expect(service.values).toMatchObject({
       riskPerTrade: 0.005,
       maxPositions: 3,
+      maxSameDirectionPositions: 1,
     });
   });
 

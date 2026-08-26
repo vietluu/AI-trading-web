@@ -112,7 +112,13 @@ export class DecisionJudgeService {
       context?.requireCalibratedConfidence &&
       decision.decision !== 'WAIT' &&
       (!calibration || calibration.status !== 'CALIBRATED' || !hardGateCalibration) &&
-      decision.confidence < 75
+      decision.dataQuality === 'PARTIAL'
+    ) reasons.push('PARTIAL_DATA_UNCALIBRATED');
+    if (
+      context?.requireCalibratedConfidence &&
+      decision.decision !== 'WAIT' &&
+      (!calibration || calibration.status !== 'CALIBRATED' || !hardGateCalibration) &&
+      decision.confidence < 80
     ) reasons.push('UNCALIBRATED_CONFIDENCE_TOO_LOW');
     if (
       decision.decision !== 'WAIT' &&

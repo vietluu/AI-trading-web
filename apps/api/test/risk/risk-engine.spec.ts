@@ -359,6 +359,44 @@ describe("risk engine", () => {
     expect(result.reason).toBe("PYRAMIDING_NOT_ALLOWED");
   });
 
+  it("uses the explicit exchange position side for SHORT pyramiding", () => {
+    const result = evaluateRisk(input({
+      symbol: "XRP-USDT",
+      decision: decision({ decision: "SHORT" }),
+      currentPositions: [{
+        symbol: "XRP-USDT",
+        side: "SHORT",
+        size: 100,
+        markPrice: 1.45,
+      }],
+      marketData: { price: 1.45, volatility: 0.01 },
+    }), limits);
+
+    expect(result).toMatchObject({
+      approved: false,
+      reason: "PYRAMIDING_NOT_ALLOWED",
+    });
+  });
+
+  it("blocks stacking same-direction crypto positions across symbols", () => {
+    const result = evaluateRisk(input({
+      symbol: "BNB-USDT",
+      decision: decision({ decision: "SHORT" }),
+      currentPositions: [{
+        symbol: "XRP-USDT",
+        side: "SHORT",
+        size: 100,
+        markPrice: 1.45,
+      }],
+      marketData: { price: 690, volatility: 0.01 },
+    }), { ...limits, maxSameDirectionPositions: 1 });
+
+    expect(result).toMatchObject({
+      approved: false,
+      reason: "MAX_SAME_DIRECTION_POSITIONS_EXCEEDED",
+    });
+  });
+
   it.each([
     [
       "low confidence",

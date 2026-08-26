@@ -176,7 +176,8 @@ export function evaluateRisk(
     (position) => position.symbol === input.symbol,
   );
   if (sameSymbolPosition) {
-    const existingDirection = sameSymbolPosition.size >= 0 ? "LONG" : "SHORT";
+    const existingDirection = sameSymbolPosition.side ??
+      (sameSymbolPosition.size >= 0 ? "LONG" : "SHORT");
     const isSameDirection = existingDirection === decision.decision;
     // Execution intentionally does not pyramid. Reject at the authoritative
     // risk stage as well, so a candidate cannot be recorded as risk-approved
@@ -191,6 +192,15 @@ export function evaluateRisk(
   );
   if (retainedPositions.length >= limits.maxPositions)
     return reject("MAX_OPEN_POSITIONS_EXCEEDED");
+  const sameDirectionPositions = retainedPositions.filter(
+    (position) =>
+      (position.side ?? (position.size >= 0 ? "LONG" : "SHORT")) ===
+      decision.decision,
+  );
+  if (
+    sameDirectionPositions.length >=
+      (limits.maxSameDirectionPositions ?? 1)
+  ) return reject("MAX_SAME_DIRECTION_POSITIONS_EXCEEDED");
   const cooldownWindow = input.lastTrades?.find(
     (trade) =>
       trade.symbol === input.symbol && trade.direction === decision.decision &&

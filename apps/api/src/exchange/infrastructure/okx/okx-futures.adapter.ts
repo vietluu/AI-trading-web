@@ -603,7 +603,12 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         instId: query?.symbol ? toOkxSymbol(query.symbol) : undefined,
       }),
     );
-    return values.flatMap((item) => this.safeOrder(item, "open_orders"));
+    const instruments = await this.getInstruments({
+      environment: credentials.environment,
+    }).catch(() => []);
+    return values.flatMap((item) =>
+      this.safeOrder(item, "open_orders", instruments)
+    );
   }
 
   async getOrderHistory(
@@ -618,8 +623,13 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         limit: historyLimit,
       }),
     );
+    const instruments = await this.getInstruments({
+      environment: credentials.environment,
+    }).catch(() => []);
     return values
-      .flatMap((item) => this.safeOrder(item, "order_history"))
+      .flatMap((item) =>
+        this.safeOrder(item, "order_history", instruments)
+      )
       .slice(0, historyLimit);
   }
 
@@ -1629,6 +1639,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
   private order(
     item: z.infer<typeof orderSchema>,
     normalizedSymbol = fromOkxSymbol(item.instId),
+    contractSize?: string,
   ): ExchangeOrder {
     return {
       provider: this.provider,
@@ -1642,8 +1653,8 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       ...(item.px ? { price: item.px } : {}),
       ...(item.triggerPx ? { stopPrice: item.triggerPx } : {}),
       ...(item.avgPx ? { averagePrice: item.avgPx } : {}),
-      originalQuantity: item.sz,
-      executedQuantity: item.accFillSz,
+      originalQuantity: this.baseQuantity(item.sz, contractSize),
+      executedQuantity: this.baseQuantity(item.accFillSz, contractSize),
       ...(item.reduceOnly === undefined
         ? {}
         : {
@@ -1664,9 +1675,13 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
   private safeOrder(
     item: z.infer<typeof orderSchema>,
     source: string,
+    instruments: ExchangeInstrument[] = [],
   ): ExchangeOrder[] {
     const symbol = this.tryOkxSwapSymbol(item.instId, source);
-    return symbol ? [this.order(item, symbol)] : [];
+    const instrument = symbol
+      ? instruments.find((candidate) => candidate.symbol === symbol)
+      : undefined;
+    return symbol ? [this.order(item, symbol, instrument?.contractSize)] : [];
   }
 
   private tryOkxSwapSymbol(instId: string, source: string): string | undefined {

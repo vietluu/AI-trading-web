@@ -11,6 +11,7 @@ export interface RiskAccount {
 
 export interface RiskPosition {
   symbol: string;
+  side?: "LONG" | "SHORT";
   size: number;
   markPrice: number;
 }
@@ -46,6 +47,8 @@ export interface RiskInput {
 export interface RiskLimits {
   riskPerTrade: number;
   maxPositions: number;
+  /** Conservative crypto-beta proxy: cap simultaneous positions in one direction. */
+  maxSameDirectionPositions?: number;
   maxLeverage: number;
   maxDrawdown: number;
   maxExposure: number;

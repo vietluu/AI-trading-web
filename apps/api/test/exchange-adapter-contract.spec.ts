@@ -249,6 +249,40 @@ describe("exchange adapter normalization contract", () => {
     });
   });
 
+  it("normalizes OKX order-history contracts into base quantity", async () => {
+    const signedGet = vi.fn().mockResolvedValue([{
+      instId: "XRP-USDT-SWAP",
+      ordId: "filled-order",
+      side: "sell",
+      ordType: "market",
+      state: "filled",
+      sz: "8.97",
+      accFillSz: "8.97",
+    }]);
+    const publicGet = vi.fn().mockResolvedValue([{
+      instId: "XRP-USDT-SWAP",
+      instType: "SWAP",
+      state: "live",
+      settleCcy: "USDT",
+      ctVal: "100",
+      tickSz: "0.0001",
+      lotSz: "0.01",
+      minSz: "0.01",
+    }]);
+    const adapter = okxAdapter({ signedGet, publicGet });
+
+    const orders = await adapter.getOrderHistory({
+      apiKey: "demo-key",
+      apiSecret: "demo-secret",
+      environment: ExchangeEnvironment.DEMO,
+    });
+
+    expect(orders[0]).toMatchObject({
+      originalQuantity: "897",
+      executedQuantity: "897",
+    });
+  });
+
   it("adds the simulated-trading header to OKX Demo public requests", async () => {
     const request = vi.fn().mockResolvedValue({
       data: { code: "0", data: [] },
@@ -1313,7 +1347,12 @@ describe("exchange adapter normalization contract", () => {
     );
     expect(orderBodies[1]).toMatchObject({ ordType: "market", clOrdId: "makerentryfb" });
     expect(orderBodies[1]?.px).toBeUndefined();
-    expect(order).toMatchObject({ exchangeOrderId: "market-2", type: "MARKET", status: "NEW" });
+    expect(order).toMatchObject({
+      exchangeOrderId: "market-2",
+      clientOrderId: "makerentryfb",
+      type: "MARKET",
+      status: "NEW",
+    });
   });
 
   it("keeps a partially-filled maker entry without submitting excess market quantity", async () => {

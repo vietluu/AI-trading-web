@@ -24,6 +24,7 @@ export interface AssessRiskInput {
   };
   positions: Array<{
     symbol: string;
+    side?: "LONG" | "SHORT";
     size: Prisma.Decimal;
     markPrice: Prisma.Decimal;
   }>;
@@ -66,6 +67,7 @@ export class RiskManagementService {
         },
         currentPositions: input.positions.map((position): RiskPosition => ({
           symbol: position.symbol,
+          side: position.side,
           size: Number(position.size),
           markPrice: Number(position.markPrice),
         })),
@@ -361,6 +363,7 @@ export class RiskManagementService {
         riskPreference: userSetting?.riskPreference ?? "UNKNOWN",
         riskPerTrade: limits.riskPerTrade,
         maxPositions: limits.maxPositions,
+        maxSameDirectionPositions: limits.maxSameDirectionPositions ?? 1,
         maxLeverage: limits.maxLeverage,
         maxDrawdown: limits.maxDrawdown,
         maxExposure: limits.maxExposure,

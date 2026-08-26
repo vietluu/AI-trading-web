@@ -182,6 +182,47 @@ describe("independent strategy decisions", () => {
     expect(result.confidenceCalibration).toBeUndefined();
   });
 
+  it("cannot inflate partial-data confidence or analyst agreement above consensus", () => {
+    const partial = {
+      ...base,
+      decision: "WAIT" as const,
+      confidence: 48,
+      agreementScore: 40,
+      dataQuality: "PARTIAL" as const,
+    };
+    const neutralRsi = {
+      ...analyses,
+      technical: {
+        ...analyses.technical,
+        momentum: { ...analyses.technical.momentum, rsiState: "NEUTRAL" as const },
+      },
+    } as FusionInput;
+
+    expect(decisionForStrategy("trend", partial, neutralRsi)).toMatchObject({
+      decision: "LONG",
+      confidence: 48,
+      agreementScore: 40,
+    });
+  });
+
+  it("blocks trend and breakout entries that chase an exhausted move", () => {
+    const bearishOversold = {
+      ...analyses,
+      market: {
+        ...analyses.market,
+        trend: { direction: "DOWN" as const, strength: "STRONG" as const },
+      },
+      technical: {
+        ...analyses.technical,
+        trend: { direction: "DOWN" as const, strength: "STRONG" as const },
+        momentum: { ...analyses.technical.momentum, rsiState: "OVERSOLD" as const },
+      },
+    } as FusionInput;
+
+    expect(decisionForStrategy("trend", base, bearishOversold).decision).toBe("WAIT");
+    expect(decisionForStrategy("breakout", base, bearishOversold).decision).toBe("WAIT");
+  });
+
   it("selects one regime-compatible strategy from a shared ranging snapshot", () => {
     const rangingBase = {
       ...base,

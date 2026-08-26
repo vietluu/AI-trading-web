@@ -458,6 +458,7 @@ export class LiveTradingService {
           },
           positions: positions.map((position) => ({
             symbol: position.symbol,
+            side: position.side as "LONG" | "SHORT",
             size: position.quantity,
             markPrice: position.markPrice ?? position.entryPrice,
           })),
@@ -1302,6 +1303,7 @@ export class LiveTradingService {
         const updateData = {
           exchangeOrderId: order.exchangeOrderId,
           status: order.status,
+          quantity: order.originalQuantity,
           averagePrice: order.averagePrice,
           updatedAt: order.updatedAt ?? syncedAt,
         };
@@ -1328,6 +1330,11 @@ export class LiveTradingService {
           }
           return;
         }
+        const hasExecution = Number(order.executedQuantity) > 0;
+        if (
+          !hasExecution &&
+          ["CANCELED", "REJECTED", "EXPIRED"].includes(order.status)
+        ) return;
         await this.prisma.liveOrder.upsert({
           where: {
             connectionId_clientOrderId: { connectionId, clientOrderId },
@@ -1821,6 +1828,7 @@ export class LiveTradingService {
         where: { id: row.id },
         data: {
           exchangeOrderId: order.exchangeOrderId,
+          clientOrderId: order.clientOrderId ?? command.clientOrderId,
           quantity: order.originalQuantity,
           averagePrice: order.averagePrice,
           status: order.status,

@@ -261,6 +261,27 @@ export function decisionForStrategy(
       reasoning: `Unknown strategy '${key}'.`,
     };
 
+  // Strategy routing may specialize a shared decision, but partial evidence
+  // must never manufacture stronger conviction than the underlying consensus.
+  // This keeps an uncalibrated rule-based candidate from reaching the exact
+  // confidence boundary used by the automatic-execution Judge.
+  if (base.dataQuality === "PARTIAL") {
+    confidence = Math.min(confidence, base.confidence);
+  }
+
+  const rsiState = analyses.technical.momentum.rsiState;
+  const chasesExhaustedMove =
+    (decision === "SHORT" && rsiState === "OVERSOLD") ||
+    (decision === "LONG" && rsiState === "OVERBOUGHT");
+  if (
+    chasesExhaustedMove &&
+    (key === "trend" || key === "breakout" || key === "momentum-scalp")
+  ) {
+    decision = "WAIT";
+    confidence = 0;
+    explanation = `${key} entry rejected because it would chase an ${rsiState.toLowerCase()} move.`;
+  }
+
   if (analyses.market.volatility.level === "HIGH") confidence -= 10;
   if (base.dataQuality === "PARTIAL") confidence = Math.min(confidence, 75);
   if (base.dataQuality === "INSUFFICIENT") {
@@ -331,7 +352,9 @@ function strategyAdjustedEconomics(
     3,
   );
   return {
-    agreementScore: Math.max(base.agreementScore, confidence),
+    // Agreement describes independent analyst consensus. A strategy's own
+    // confidence is not another analyst vote and must not overwrite it.
+    agreementScore: base.agreementScore,
     opportunityScore: Math.round(opportunityScore),
     expectedWinProbability: Number(expectedWinProbability.toFixed(3)),
     expectedReward: Number(expectedReward.toFixed(3)),
