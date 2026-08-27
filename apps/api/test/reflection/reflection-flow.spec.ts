@@ -8,23 +8,67 @@ import type { ReflectionRepository } from '../../src/modules/reflection/infrastr
 describe('pipeline evaluation and reflection flow', () => {
   it('turns a completed pipeline decision into horizon records from public candles', async () => {
     const createRecord = vi.fn().mockResolvedValue({});
+    const startTimestamp = new Date('2026-08-01T00:00:00Z');
+    const candleAtOrBefore = vi.fn().mockResolvedValue({ close: new Prisma.Decimal(100), closeTime: startTimestamp });
+    const candleAtOrAfter = vi.fn().mockImplementation(
+      (_provider, _symbol, target: Date) => Promise.resolve({
+        close: new Prisma.Decimal(110),
+        closeTime: new Date(target.getTime() + 1_000),
+      }),
+    );
     const repository = {
       completedRuns: vi.fn().mockResolvedValue([{
         id: crypto.randomUUID(), userId: crypto.randomUUID(), symbol: 'BTC-USDT', provider: 'BINANCE_FUTURES',
         decision: 'LONG', confidence: 80, completedAt: new Date(Date.now() - 25 * 60 * 60_000),
         storedContext: { analyses: { market: { volatility: { level: 'HIGH' } } } }, performanceRecords: [],
       }]),
-      candleAtOrBefore: vi.fn().mockResolvedValue({ close: new Prisma.Decimal(100) }),
-      candleAtOrAfter: vi.fn().mockResolvedValue({ close: new Prisma.Decimal(110) }),
+      candleAtOrBefore,
+      candleAtOrAfter,
       createRecord,
     } as unknown as ReflectionRepository;
     const config = { get: <T>(_key: string, fallback: T) => fallback } as ConfigService;
     const result = await new PerformanceService(repository, config).evaluateDue();
     expect(result.evaluated).toBe(7);
+    expect(candleAtOrBefore).toHaveBeenCalledWith(
+      'BINANCE_FUTURES', 'BTC-USDT', expect.any(Date), 15 * 60_000,
+    );
+    expect(candleAtOrAfter).toHaveBeenCalledWith(
+      'BINANCE_FUTURES', 'BTC-USDT', expect.any(Date), 15 * 60_000,
+    );
     expect(createRecord).toHaveBeenCalledWith(expect.objectContaining({
       outcome: 'CORRECT', returnPct: 9.9, leverage: 1, netRoePct: 9.9,
       leverageSource: 'UNLEVERAGED', highVolatility: true,
+      actualStartTimestamp: startTimestamp,
+      timeDriftMs: 1_000,
     }));
+    const firstCreated = createRecord.mock.calls[0]?.[0] as {
+      actualTargetTimestamp?: unknown;
+    };
+    expect(firstCreated.actualTargetTimestamp).toBeInstanceOf(Date);
+  });
+
+  it('keeps an evaluation pending when no candle exists near the target horizon', async () => {
+    const createRecord = vi.fn();
+    const candleAtOrAfter = vi.fn().mockResolvedValue(null);
+    const repository = {
+      completedRuns: vi.fn().mockResolvedValue([{
+        id: crypto.randomUUID(), userId: crypto.randomUUID(), symbol: 'BTC-USDT', provider: 'BINANCE_FUTURES',
+        timeframe: '5m', decision: 'LONG', confidence: 80,
+        completedAt: new Date(Date.now() - 2 * 60 * 60_000), storedContext: {}, performanceRecords: [],
+      }]),
+      candleAtOrBefore: vi.fn().mockResolvedValue({ close: new Prisma.Decimal(100) }),
+      candleAtOrAfter,
+      createRecord,
+    } as unknown as ReflectionRepository;
+    const config = { get: <T>(_key: string, fallback: T) => fallback } as ConfigService;
+
+    const result = await new PerformanceService(repository, config).evaluateDue();
+
+    expect(result.skippedForMissingTargetPrice).toBeGreaterThan(0);
+    expect(createRecord).not.toHaveBeenCalled();
+    expect(candleAtOrAfter).toHaveBeenCalledWith(
+      'BINANCE_FUTURES', 'BTC-USDT', expect.any(Date), 5 * 60_000,
+    );
   });
 
   it('evaluates a blocked directional candidate in shadow instead of learning WAIT', async () => {

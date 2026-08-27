@@ -82,6 +82,7 @@ export class ReflectionRepository {
         marketRegime: true,
         configurationVersion: true,
         learningStage: true,
+        timeframe: true,
         completedAt: true,
         storedContext: true,
         result: true,
@@ -95,34 +96,59 @@ export class ReflectionRepository {
     provider: "BINANCE_FUTURES" | "OKX_FUTURES",
     symbol: string,
     at: Date,
+    toleranceMs: number,
   ) {
     return this.prisma.marketCandle.findFirst({
-      where: { provider, symbol, isClosed: true, closeTime: { lte: at } },
+      where: {
+        provider,
+        symbol,
+        isClosed: true,
+        closeTime: {
+          gte: new Date(at.getTime() - toleranceMs),
+          lte: at,
+        },
+      },
       orderBy: { closeTime: "desc" },
-      select: { close: true },
+      select: { close: true, closeTime: true },
     });
   }
   async candleAtOrAfter(
     provider: "BINANCE_FUTURES" | "OKX_FUTURES",
     symbol: string,
     at: Date,
+    toleranceMs: number,
   ) {
-    const direct = await this.prisma.marketCandle.findFirst({
-      where: { provider, symbol, isClosed: true, closeTime: { gte: at } },
-      orderBy: { closeTime: "asc" },
-      select: { close: true },
-    });
-    if (direct) return direct;
-    return this.prisma.marketCandle.findFirst({
-      where: {
-        provider,
-        symbol,
-        isClosed: true,
-        closeTime: { gte: new Date(at.getTime() - 600_000) },
-      },
-      orderBy: { closeTime: "desc" },
-      select: { close: true },
-    });
+    const common = { provider, symbol, isClosed: true } as const;
+    const [before, after] = await Promise.all([
+      this.prisma.marketCandle.findFirst({
+        where: {
+          ...common,
+          closeTime: {
+            gte: new Date(at.getTime() - toleranceMs),
+            lte: at,
+          },
+        },
+        orderBy: { closeTime: "desc" },
+        select: { close: true, closeTime: true },
+      }),
+      this.prisma.marketCandle.findFirst({
+        where: {
+          ...common,
+          closeTime: {
+            gte: at,
+            lte: new Date(at.getTime() + toleranceMs),
+          },
+        },
+        orderBy: { closeTime: "asc" },
+        select: { close: true, closeTime: true },
+      }),
+    ]);
+    if (!before) return after;
+    if (!after) return before;
+    return at.getTime() - before.closeTime.getTime() <=
+      after.closeTime.getTime() - at.getTime()
+      ? before
+      : after;
   }
   createRecord(data: Prisma.PerformanceRecordUncheckedCreateInput) {
     return this.prisma.performanceRecord.upsert({

@@ -258,6 +258,41 @@ describe("FusionService", () => {
     expect(FusionOutputSchema.safeParse(output).success).toBe(true);
   });
 
+  it("still evaluates secondary evidence while core price action is sideways", async () => {
+    const fixture = analysisFixture();
+    fixture.market.trend.direction = "SIDEWAYS";
+    fixture.technical.trend.direction = "SIDEWAYS";
+    const outputByType: Partial<Record<AgentType, unknown>> = {
+      [AgentType.MARKET_ANALYST]: fixture.market,
+      [AgentType.TECHNICAL_ANALYST]: fixture.technical,
+      [AgentType.NEWS_ANALYST]: fixture.news,
+      [AgentType.SENTIMENT_ANALYST]: fixture.sentiment,
+      [AgentType.MACRO_ANALYST]: fixture.macro,
+      [AgentType.ON_CHAIN_ANALYST]: fixture.onchain,
+    };
+    const executeSync = vi.fn(({ agentType }: { agentType: AgentType }) =>
+      Promise.resolve({ output: outputByType[agentType] }),
+    );
+    const service = new FusionService({ executeSync } as never);
+
+    await service.runDetailed({
+      input: {
+        symbol: "BTC-USDT",
+        provider: "BINANCE_FUTURES",
+        interval: "1m",
+        lookbackCandles: 150,
+        lookbackHours: 6,
+        maxItems: 20,
+      },
+      invocationSource: AgentInvocationSource.SYSTEM_TEST,
+    });
+
+    expect(executeSync).toHaveBeenCalledTimes(6);
+    expect(executeSync).toHaveBeenCalledWith(
+      expect.objectContaining({ agentType: AgentType.NEWS_ANALYST }),
+    );
+  });
+
   it("degrades failed agent runs instead of failing the fusion response", async () => {
     const service = new FusionService({
       executeSync: vi.fn().mockRejectedValue(new Error("unavailable")),
@@ -465,7 +500,7 @@ describe("FusionService", () => {
     expect(redis.setNx).toHaveBeenCalled();
   });
 
-  it("does not retry a failed agent load while holding the analysis lock", async () => {
+  it("does not retry any failed agent load while holding its analysis lock", async () => {
     const executeSync = vi.fn().mockRejectedValue(new Error("quota exceeded"));
     const locks = new Map<string, string>();
     const redis = {
@@ -496,6 +531,6 @@ describe("FusionService", () => {
     });
 
     expect(output.dataQuality).toBe("INSUFFICIENT");
-    expect(executeSync).toHaveBeenCalledTimes(2);
+    expect(executeSync).toHaveBeenCalledTimes(6);
   });
 });

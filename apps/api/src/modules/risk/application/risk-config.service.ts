@@ -26,6 +26,10 @@ export class RiskConfigService {
       cooldownMs: this.config.get<number>("TRADE_COOLDOWN_MS") ?? 60_000,
       lossReentryCooldownMs:
         this.config.get<number>("LOSS_REENTRY_COOLDOWN_MS") ?? 900_000,
+      maxConsecutiveLosses:
+        this.config.get<number>("MAX_CONSECUTIVE_LOSSES") ?? 3,
+      lossStreakPauseMs:
+        this.config.get<number>("LOSS_STREAK_PAUSE_MS") ?? 6 * 60 * 60_000,
       minimumConfidence: this.config.get<number>("MIN_CONFIDENCE") ?? 60,
       stopLossPct: this.config.get<number>("STOP_LOSS_PCT") ?? 0.02,
       riskRewardRatio: this.config.get<number>("RISK_REWARD_RATIO") ?? 1.5,

@@ -18,6 +18,11 @@ export interface StageTelemetryRecord {
   durationMs: number;
   tokenUsage: number;
   apiCost: number;
+  cacheHits?: Record<string, boolean>;
+  sourceDataAgeMs?: number;
+  decisionToExecutionMs?: number;
+  submissionLatencyMs?: number;
+  slippageBps?: number;
   createdAt: string;
 }
 
@@ -26,7 +31,7 @@ export class PipelineAnalyticsService {
   private readonly logger = new Logger(PipelineAnalyticsService.name);
 
   public recordStageTelemetry(record: StageTelemetryRecord): StageTelemetryRecord {
-    this.logger.debug({ event: 'pipeline_stage_telemetry', stage: record.stageName, decision: record.decision, confidence: record.confidence });
+    this.logger.debug({ event: 'pipeline_stage_telemetry', ...record });
     return record;
   }
 

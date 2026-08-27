@@ -9,6 +9,7 @@ import {
 } from "../domain/performance-calculator";
 import { ReflectionRepository } from "../infrastructure/reflection.repository";
 import { buildReliabilityCurve } from "../domain/confidence-calibration";
+import { timeframeMilliseconds } from "../../pipeline/domain/adaptive-trading-policy";
 
 const FIXED_HORIZONS: Array<{ horizon: EvaluationHorizon; ms: number }> = [
   { horizon: "M15", ms: 15 * 60_000 },
@@ -83,10 +84,12 @@ export class PerformanceService {
       const existing = new Set(
         run.performanceRecords.map((record) => record.horizon),
       );
+      const candleToleranceMs = timeframeMilliseconds(run.timeframe ?? "15m");
       const start = await this.repository.candleAtOrBefore(
         run.provider,
         run.symbol,
         run.completedAt,
+        candleToleranceMs,
       );
       const fallbackStartPrice = priceFromRun(run);
       const priceAtDecision = start ? Number(start.close) : fallbackStartPrice;
@@ -107,6 +110,7 @@ export class PerformanceService {
           run.provider,
           run.symbol,
           target,
+          candleToleranceMs,
         );
         if (!after) {
           skippedForMissingMarketData++;
@@ -114,6 +118,9 @@ export class PerformanceService {
           continue;
         }
         const priceAfter = Number(after.close);
+        const actualTargetTimestamp = after.closeTime instanceof Date
+          ? after.closeTime
+          : target;
         const result = evaluateDecision(
           evaluatedDecision as Decision,
           priceAtDecision,
@@ -131,6 +138,11 @@ export class PerformanceService {
           confidence: evaluatedConfidence,
           priceAtDecision,
           priceAfter,
+          actualStartTimestamp: start?.closeTime ?? run.completedAt,
+          actualTargetTimestamp,
+          timeDriftMs: Math.round(
+            actualTargetTimestamp.getTime() - target.getTime(),
+          ),
           ...result,
           leverage: leverage.value,
           netRoePct: round(result.returnPct * leverage.value),

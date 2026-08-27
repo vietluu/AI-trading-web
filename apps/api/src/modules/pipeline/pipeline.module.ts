@@ -33,6 +33,8 @@ import { MarketDataModule } from "../../market-data/market-data.module";
 import { RedisModule } from "../../redis/redis.module";
 import { SettingsModule } from "../../settings/settings.module";
 import { PortfolioModule } from "../portfolio/portfolio.module";
+import { ExternalDataModule } from "../external-data/external-data.module";
+import { HighImportanceNewsTriggerService } from "./application/high-importance-news-trigger.service";
 
 @Module({
   imports: [
@@ -45,6 +47,7 @@ import { PortfolioModule } from "../portfolio/portfolio.module";
     RedisModule,
     SettingsModule,
     PortfolioModule,
+    ExternalDataModule,
     BullModule.registerQueue(
       { name: PIPELINE_RUN_QUEUE_NAME },
       { name: PIPELINE_RETRY_QUEUE_NAME },
@@ -70,6 +73,7 @@ import { PortfolioModule } from "../portfolio/portfolio.module";
     PipelineQueueService,
     PipelineCancellationService,
     PipelineProcessor,
+    HighImportanceNewsTriggerService,
   ],
   exports: [PipelineService, PipelineHealthService],
 })

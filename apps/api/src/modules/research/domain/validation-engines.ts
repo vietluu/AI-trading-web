@@ -132,9 +132,15 @@ export interface MonteCarloRequest {
   slippageStdDev?: number;
   latencyMsStdDev?: number;
   fundingRatePct?: number;
+  /** Number of candle holding periods per funding settlement (default: 8). */
+  holdingPeriodsPerFundingInterval?: number;
+  /** Extra adverse price movement per second of simulated latency. */
+  latencySlippagePctPerSecond?: number;
+  seed?: number;
 }
 
 export interface MonteCarloEngineResult {
+  seed: number;
   simulationsCount: number;
   probabilityOfProfit: number;
   probabilityOfRuin: number;
@@ -150,6 +156,8 @@ export function runMonteCarloEngine(req: MonteCarloRequest): MonteCarloEngineRes
   const initial = req.initialBalance;
   if (req.trades.length === 0) throw new Error('INSUFFICIENT_REAL_TRADES_FOR_MONTE_CARLO');
   const trades = req.trades;
+  const seed = req.seed ?? deterministicTradeSeed(trades, 0x4d43);
+  const random = seededRandom(seed);
 
   const finalBalances: number[] = new Array<number>(simCount);
   const maxDrawdowns: number[] = new Array<number>(simCount);
@@ -163,13 +171,36 @@ export function runMonteCarloEngine(req: MonteCarloRequest): MonteCarloEngineRes
 
     // Reshuffle & add stochastic friction
     for (let i = 0; i < trades.length; i += 1) {
-      const randIdx = Math.floor(Math.random() * trades.length);
-      const basePnl = trades[randIdx]?.pnl ?? 0;
+      const randIdx = Math.floor(random() * trades.length);
+      const sampledTrade = trades[randIdx];
+      if (!sampledTrade) continue;
+      const historicalNotional = Math.max(
+        Number.EPSILON,
+        sampledTrade.notional ?? Math.abs(sampledTrade.pnl),
+      );
+      const exposureScale = initial > 0 ? Math.max(0, balance) / initial : 1;
+      const simulatedNotional = historicalNotional * exposureScale;
+      const basePnl = sampledTrade.returnPct !== undefined
+        ? sampledTrade.returnPct * simulatedNotional
+        : sampledTrade.pnl * exposureScale;
 
-      // Random noise for slippage, latency, funding friction
-      const randomSlippage = (Math.random() - 0.5) * (req.slippageStdDev ?? 0.002) * initial;
-      const fundingCost = (req.fundingRatePct ?? 0.0001) * balance;
-      const netPnl = basePnl - Math.abs(randomSlippage) - fundingCost;
+      // All stochastic friction scales with the sampled trade's notional, not
+      // the account balance. This avoids charging a tiny trade as if it used
+      // the entire portfolio.
+      const slippageCost = Math.abs((random() - 0.5) * 2) *
+        (req.slippageStdDev ?? 0.002) * simulatedNotional;
+      const latencySeconds = Math.abs((random() - 0.5) * 2) *
+        (req.latencyMsStdDev ?? 250) / 1000;
+      const latencyCost = latencySeconds *
+        (req.latencySlippagePctPerSecond ?? 0.00005) * simulatedNotional;
+      const fundingIntervals = Math.max(
+        0,
+        sampledTrade.holdingTime /
+          Math.max(1, req.holdingPeriodsPerFundingInterval ?? 8),
+      );
+      const fundingCost = (req.fundingRatePct ?? 0.0001) *
+        simulatedNotional * fundingIntervals;
+      const netPnl = basePnl - slippageCost - latencyCost - fundingCost;
 
       balance += netPnl;
       if (balance > peak) peak = balance;
@@ -204,6 +235,7 @@ export function runMonteCarloEngine(req: MonteCarloRequest): MonteCarloEngineRes
   );
 
   return {
+    seed,
     simulationsCount: simCount,
     probabilityOfProfit,
     probabilityOfRuin,
@@ -225,9 +257,11 @@ export function runMonteCarloEngine(req: MonteCarloRequest): MonteCarloEngineRes
 export interface BootstrapRequest {
   trades: BacktestTrade[];
   resamples?: number;
+  seed?: number;
 }
 
 export interface BootstrapEngineResult {
+  seed: number;
   profitFactorCI95: [number, number];
   expectancyCI95: [number, number];
   sharpeRatioCI95: [number, number];
@@ -238,6 +272,8 @@ export function runBootstrapEngine(req: BootstrapRequest): BootstrapEngineResult
   const samples = req.resamples ?? 2000;
   if (req.trades.length === 0) throw new Error('INSUFFICIENT_REAL_TRADES_FOR_BOOTSTRAP');
   const trades = req.trades;
+  const seed = req.seed ?? deterministicTradeSeed(trades, 0x4253);
+  const random = seededRandom(seed);
 
   const pfList: number[] = [];
   const expList: number[] = [];
@@ -248,10 +284,12 @@ export function runBootstrapEngine(req: BootstrapRequest): BootstrapEngineResult
     let wins = 0;
     let losses = 0;
     let totalPnl = 0;
+    const sampledPnls: number[] = [];
 
     for (let i = 0; i < trades.length; i += 1) {
-      const sampled = trades[Math.floor(Math.random() * trades.length)];
+      const sampled = trades[Math.floor(random() * trades.length)];
       const pnl = sampled?.pnl ?? 0;
+      sampledPnls.push(pnl);
       totalPnl += pnl;
       if (pnl > 0) wins += pnl;
       else losses += Math.abs(pnl);
@@ -259,7 +297,10 @@ export function runBootstrapEngine(req: BootstrapRequest): BootstrapEngineResult
 
     const pf = losses > 0 ? wins / losses : wins > 0 ? 5 : 1;
     const exp = totalPnl / trades.length;
-    const sharpe = exp / Math.max(10, Math.abs(exp) * 0.5);
+    const sampleDeviation = sampleStandardDeviation(sampledPnls);
+    const sharpe = sampleDeviation > 0
+      ? (exp / sampleDeviation) * Math.sqrt(sampledPnls.length)
+      : 0;
 
     pfList.push(pf);
     expList.push(exp);
@@ -276,6 +317,7 @@ export function runBootstrapEngine(req: BootstrapRequest): BootstrapEngineResult
   const i95 = Math.floor(samples * 0.95);
 
   return {
+    seed,
     profitFactorCI95: [
       Number((pfList[i5] ?? 0).toFixed(2)),
       Number((pfList[i95] ?? 0).toFixed(2)),
@@ -292,6 +334,39 @@ export function runBootstrapEngine(req: BootstrapRequest): BootstrapEngineResult
       Number((ddList[i5] ?? 0).toFixed(2)),
       Number((ddList[i95] ?? 0).toFixed(2)),
     ],
+  };
+}
+
+function deterministicTradeSeed(trades: BacktestTrade[], salt: number): number {
+  let hash = (2166136261 ^ salt) >>> 0;
+  for (const trade of trades) {
+    const value = `${trade.entryTime}|${trade.exitTime}|${trade.pnl.toFixed(8)}`;
+    for (let index = 0; index < value.length; index += 1) {
+      hash ^= value.charCodeAt(index);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+  }
+  return hash || 1;
+}
+
+function sampleStandardDeviation(values: number[]): number {
+  if (values.length < 2) return 0;
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const variance = values.reduce(
+    (sum, value) => sum + (value - mean) ** 2,
+    0,
+  ) / (values.length - 1);
+  return Math.sqrt(Math.max(0, variance));
+}
+
+function seededRandom(seed: number): () => number {
+  let state = seed >>> 0 || 1;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let value = state;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4_294_967_296;
   };
 }
 

@@ -109,6 +109,24 @@ describe('DecisionService', () => {
 
     expect(output.confidenceCalibration?.scope).toBe('USER_GLOBAL');
     expect(output.expectedWinProbability).toBe(0.5);
+    expect(output.expectedValue).toBe(0);
+    expect(output.profitFactorEstimate).toBe(1);
+  });
+
+  it('scores the canonical bearish LH_LL structure as directional structure evidence', () => {
+    const input = decisionInput();
+    input.market!.trend.direction = 'DOWN';
+    input.technical!.trend.direction = 'DOWN';
+    input.technical!.structure.marketStructure = 'LH_LL';
+    input.news!.impact.direction = 'NEGATIVE';
+    input.sentiment!.sentiment.overall = 'BEARISH';
+    input.macro!.macroTrend = 'RISK_OFF';
+    const service = new DecisionService({} as never);
+    const canonical = service.decide(input);
+    input.technical!.structure.marketStructure = 'LL_LH';
+    const legacy = service.decide(input);
+
+    expect(canonical.opportunityScore).toBe(legacy.opportunityScore);
   });
 
   it('detects a trending regime and increases technical weight', () => {

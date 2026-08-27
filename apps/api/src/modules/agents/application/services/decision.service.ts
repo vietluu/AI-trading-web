@@ -124,24 +124,27 @@ export class DecisionService {
     const empiricalProbability = this.exactEmpiricalProbability(
       confidenceCalibration,
     );
-    const expectedWinProbability = this.clamp(
-      empiricalProbability ?? 0.5,
-      0,
-      1,
-    );
-    const expectedValue = this.clamp(
-      expectedWinProbability * decision.expectedReward -
-        (1 - expectedWinProbability) * decision.expectedLoss -
-        decision.executionCost,
-      -3,
-      3,
-    );
-    const profitFactorEstimate = this.clamp(
-      (expectedWinProbability * decision.expectedReward) /
-        Math.max((1 - expectedWinProbability) * decision.expectedLoss, 0.05),
-      0.1,
-      10,
-    );
+    const expectedWinProbability = this.clamp(empiricalProbability ?? 0.5, 0, 1);
+    // A neutral prior is not empirical edge. Keep EV/PF neutral until an exact
+    // or governed blended calibration has enough evidence; downstream Judge
+    // and Risk gates will therefore reject cold-start automatic execution.
+    const expectedValue = empiricalProbability === undefined
+      ? 0
+      : this.clamp(
+          expectedWinProbability * decision.expectedReward -
+            (1 - expectedWinProbability) * decision.expectedLoss -
+            decision.executionCost,
+          -3,
+          3,
+        );
+    const profitFactorEstimate = empiricalProbability === undefined
+      ? 1
+      : this.clamp(
+          (expectedWinProbability * decision.expectedReward) /
+            Math.max((1 - expectedWinProbability) * decision.expectedLoss, 0.05),
+          0.1,
+          10,
+        );
     const calibratedDecision: DecisionOutput = {
       ...decision,
       confidenceCalibration,
@@ -243,28 +246,35 @@ export class DecisionService {
       0,
       1,
     );
+    const hasEmpiricalEdge = empiricalProbability !== undefined;
     return {
       ...decision,
       confidenceCalibration,
       expectedWinProbability: Number(expectedWinProbability.toFixed(3)),
       expectedValue: Number(
-        this.clamp(
-          expectedWinProbability * decision.expectedReward -
-            (1 - expectedWinProbability) * decision.expectedLoss -
-            decision.executionCost,
-          -3,
-          3,
+        (hasEmpiricalEdge
+          ? this.clamp(
+              expectedWinProbability * decision.expectedReward -
+                (1 - expectedWinProbability) * decision.expectedLoss -
+                decision.executionCost,
+              -3,
+              3,
+            )
+          : 0
         ).toFixed(3),
       ),
       profitFactorEstimate: Number(
-        this.clamp(
-          (expectedWinProbability * decision.expectedReward) /
-            Math.max(
-              (1 - expectedWinProbability) * decision.expectedLoss,
-              0.05,
-            ),
-          0.1,
-          10,
+        (hasEmpiricalEdge
+          ? this.clamp(
+              (expectedWinProbability * decision.expectedReward) /
+                Math.max(
+                  (1 - expectedWinProbability) * decision.expectedLoss,
+                  0.05,
+                ),
+              0.1,
+              10,
+            )
+          : 1
         ).toFixed(3),
       ),
     };
@@ -1034,6 +1044,7 @@ export class DecisionService {
     const openInterest = input.market?.derivatives?.openInterest ? 0.8 : 0.7;
     const structure =
       input.technical?.structure.marketStructure === "HH_HL" ||
+      input.technical?.structure.marketStructure === "LH_LL" ||
       input.technical?.structure.marketStructure === "LL_LH"
         ? 0.85
         : 0.7;
@@ -1062,7 +1073,7 @@ export class DecisionService {
           ? 0.6
           : 0.7;
     const patternSimilarity = Math.max(0.55, 0.7 + (votes.size / 10) * 0.05);
-    const historicalWinRate =
+    const evidenceQualityPrior =
       quality === "GOOD" ? 0.8 : quality === "PARTIAL" ? 0.65 : 0.5;
     const riskReward = input.market?.volatility.level === "LOW" ? 0.8 : 0.7;
     const executionCost = 0.72;
@@ -1085,7 +1096,7 @@ export class DecisionService {
       sentiment * 6 +
       macro * 6 +
       patternSimilarity * 7 +
-      historicalWinRate * 8 +
+      evidenceQualityPrior * 8 +
       riskReward * 8 +
       executionCost * 6 +
       confidence * 10;

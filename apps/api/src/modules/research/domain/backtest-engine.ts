@@ -34,6 +34,8 @@ export interface BacktestTrade {
   returnPct?: number;
   fees?: number;
   slippage?: number;
+  /** Position notional used to make execution friction scale with trade size. */
+  notional?: number;
 }
 
 export interface BacktestMetrics {
@@ -174,6 +176,7 @@ export function runHistoricalBacktest(request: BacktestRequest): BacktestSummary
         returnPct: netReturn,
         fees,
         slippage,
+        notional,
       });
       balance = Math.max(0, balance + pnl);
       equityCurve.push({ timestamp: exitCandle.closeTime.toISOString(), equity: balance });

@@ -55,6 +55,10 @@ export interface RiskLimits {
   cooldownMs: number;
   /** Base pause after one net losing trade; consecutive losses escalate to 4x. */
   lossReentryCooldownMs?: number;
+  /** Timed circuit breaker after this many newest-first consecutive losses. */
+  maxConsecutiveLosses?: number;
+  /** Pause duration for the consecutive-loss circuit breaker. */
+  lossStreakPauseMs?: number;
   minimumConfidence: number;
   stopLossPct: number;
   riskRewardRatio: number;

@@ -631,6 +631,9 @@ model PerformanceRecord {
   confidence      Float
   priceAtDecision Decimal            @db.Decimal(24, 8)
   priceAfter      Decimal            @db.Decimal(24, 8)
+  actualStartTimestamp  DateTime?
+  actualTargetTimestamp DateTime?
+  timeDriftMs           Int?
   outcome         PerformanceOutcome
   returnPct       Float
   leverage        Int                @default(1)

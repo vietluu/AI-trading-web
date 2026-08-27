@@ -130,6 +130,27 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /** Bounded SCAN-based invalidation for narrow application-owned prefixes. */
+  async deleteByPattern(pattern: string, maxKeys = 1_000): Promise<number> {
+    let cursor = "0";
+    let deleted = 0;
+    do {
+      const [nextCursor, keys] = await this.client.scan(
+        cursor,
+        "MATCH",
+        pattern,
+        "COUNT",
+        100,
+      );
+      cursor = nextCursor;
+      const remaining = Math.max(0, maxKeys - deleted);
+      const batch = keys.slice(0, remaining);
+      if (batch.length > 0) deleted += await this.client.del(...batch);
+      if (deleted >= maxKeys) break;
+    } while (cursor !== "0");
+    return deleted;
+  }
+
   async expire(key: string, ttlSeconds: number): Promise<boolean> {
     return (await this.client.expire(key, ttlSeconds)) === 1;
   }

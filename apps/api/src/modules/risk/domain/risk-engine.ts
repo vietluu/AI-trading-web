@@ -220,6 +220,20 @@ export function evaluateRisk(
     ? (input.recentClosedTrades?.length ?? 0)
     : consecutiveLosses;
   const latestLoss = input.recentClosedTrades?.[0];
+  const maxConsecutiveLosses = Math.max(
+    1,
+    limits.maxConsecutiveLosses ?? 3,
+  );
+  const lossStreakPauseMs = Math.max(
+    limits.lossReentryCooldownMs ?? 15 * 60_000,
+    limits.lossStreakPauseMs ?? 6 * 60 * 60_000,
+  );
+  if (
+    lossCount >= maxConsecutiveLosses &&
+    latestLoss &&
+    (input.now ?? new Date()).getTime() - latestLoss.closedAt.getTime() <
+      lossStreakPauseMs
+  ) return reject("LOSS_STREAK_CIRCUIT_BREAKER_ACTIVE");
   const baseLossCooldownMs = limits.lossReentryCooldownMs ?? 15 * 60_000;
   const lossCooldownMs = baseLossCooldownMs * Math.min(
     4,

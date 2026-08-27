@@ -33,6 +33,7 @@ export interface RunFusionOptions {
 export interface FusionAnalysisResult {
   analyses: FusionInput;
   fusionOutput: FusionOutput;
+  cacheHits: Record<AnalysisName, boolean>;
 }
 
 export function deriveAssetSymbol(symbol: string): string {
@@ -48,16 +49,21 @@ export function deriveAssetSymbol(symbol: string): string {
 import { RedisService } from "../../../../redis/redis.service";
 import { PrismaService } from "../../../../database/prisma.service";
 
-const ANALYSIS_TTL_SECONDS: Record<AnalysisName, number> = {
-  market: 300,
-  technical: 300,
-  news: 1800,
-  sentiment: 1800,
-  macro: 3600,
-  onchain: 3600,
+const SECONDARY_ANALYSIS_TTL_SECONDS: Record<
+  Exclude<AnalysisName, "market" | "technical">,
+  number
+> = {
+  // Breaking news must become visible to a new pipeline quickly. Longer-lived
+  // source-level deduplication belongs in the ingestion pipeline, not here.
+  news: 60,
+  sentiment: 300,
+  macro: 300,
+  onchain: 300,
 };
 const ANALYSIS_LOCK_TTL_SECONDS = 45;
-const ANALYSIS_LOCK_WAIT_MS = 35_000;
+// A stuck cross-instance cache fill must not hold a fast-entry pipeline for
+// tens of seconds. After this short coalescing window, load independently.
+const ANALYSIS_LOCK_WAIT_MS = 3_000;
 const ANALYSIS_LOCK_POLL_MS = 100;
 
 @Injectable()
@@ -113,9 +119,19 @@ export class FusionService {
     key: string,
     ttlSeconds: number,
     load: () => Promise<T>,
+    bypassCache = false,
+    observeCache?: (hit: boolean) => void,
   ): Promise<T> {
+    if (bypassCache) {
+      observeCache?.(false);
+      return load();
+    }
     const cached = await this.getAnalysisCache<T>(key);
-    if (cached !== null) return cached;
+    if (cached !== null) {
+      observeCache?.(true);
+      return cached;
+    }
+    observeCache?.(false);
 
     const existing = this.inFlightAnalyses.get(key) as Promise<T> | undefined;
     if (existing) return existing;
@@ -129,6 +145,20 @@ export class FusionService {
         this.inFlightAnalyses.delete(key);
       }
     }
+  }
+
+  private analysisTtlSeconds(name: AnalysisName, interval: string): number {
+    if (name !== "market" && name !== "technical") {
+      return SECONDARY_ANALYSIS_TTL_SECONDS[name];
+    }
+    const match = /^(\d+)([mhd])$/i.exec(interval);
+    const amount = Number(match?.[1] ?? 15);
+    const unit = match?.[2]?.toLowerCase();
+    const timeframeSeconds = amount *
+      (unit === "d" ? 86_400 : unit === "h" ? 3_600 : 60);
+    // Never let an analyst cache outlive half of a candle. Short timeframes
+    // need a much tighter cap so the Judge does not receive stale core data.
+    return Math.max(10, Math.min(300, Math.floor(timeframeSeconds / 2)));
   }
 
   private async loadWithDistributedLock<T>(
@@ -193,6 +223,8 @@ export class FusionService {
       invocationSource: options.invocationSource,
       correlationId,
     };
+    const bypassCache =
+      options.invocationSource === AgentInvocationSource.FUTURE_EVENT_DRIVEN;
     const macroEvidenceAvailable = await this.hasImportedMacroEvidence(
       input.lookbackHours,
     );
@@ -259,9 +291,17 @@ export class FusionService {
     ];
 
     const analyses: Partial<FusionInput> = {};
+    const cacheHits: Record<AnalysisName, boolean> = {
+      market: false,
+      technical: false,
+      news: false,
+      sentiment: false,
+      macro: false,
+      onchain: false,
+    };
 
     // Execute Stage 1
-    const stage1Results = await Promise.allSettled(
+    const stage1ResultsPromise = Promise.allSettled(
       stage1Requests.map(async (request) => {
         const cacheKey = this.analysisCacheKey(
           request.name,
@@ -271,7 +311,7 @@ export class FusionService {
         );
         const data = await this.rememberAnalysis(
           cacheKey,
-          ANALYSIS_TTL_SECONDS[request.name],
+          this.analysisTtlSeconds(request.name, input.interval),
           async () => {
             const run = await this.agentExecutionService.executeSync({
               ...common,
@@ -283,6 +323,8 @@ export class FusionService {
               throw new Error(`Invalid output from ${request.name}`);
             return parsed.data;
           },
+          bypassCache,
+          (hit) => { cacheHits[request.name] = hit; },
         );
         const parsed = request.schema.safeParse(data);
         if (!parsed.success)
@@ -298,34 +340,10 @@ export class FusionService {
       }),
     );
 
-    for (let i = 0; i < stage1Results.length; i++) {
-      const result = stage1Results[i]!;
-      const request = stage1Requests[i]!;
-      if (result.status === "fulfilled") {
-        Object.assign(analyses, { [result.value.name]: result.value.data });
-      } else {
-        Object.assign(analyses, {
-          [request.name]: this.unavailableAnalysis(request.name),
-        });
-      }
-    }
-
-    // Check if Stage 1 produces a directional market signal
-    const marketDir =
-      analyses.market && "trend" in analyses.market
-        ? analyses.market.trend?.direction
-        : undefined;
-    const techDir =
-      analyses.technical && "trend" in analyses.technical
-        ? analyses.technical.trend?.direction
-        : undefined;
-    const hasDirectionalSignal =
-      (marketDir && marketDir !== "SIDEWAYS") ||
-      (techDir && techDir !== "SIDEWAYS");
-
-    // --- STAGE 2: Secondary Analysis (News, Sentiment, Macro, On-chain) ---
-    // If Stage 1 is SIDEWAYS/NEUTRAL, reuse cache if present or default to neutral observation to avoid extra AI calls
-    const stage2Results = await Promise.allSettled(
+    // Secondary evidence is independent of the current technical direction.
+    // Start it immediately so news/macro checks do not add a serial stage and
+    // so a flat pre-news market cannot suppress the event that moves it.
+    const stage2ResultsPromise = Promise.allSettled(
       stage2Requests.map(async (request) => {
         if (request.name === "macro" && !macroEvidenceAvailable) {
           return {
@@ -339,32 +357,9 @@ export class FusionService {
           assetSymbol,
           options.userId,
         );
-
-        // If no directional signal and not in cache, skip live AI call and fallback to neutral analysis
-        if (!hasDirectionalSignal) {
-          const cached = await this.getAnalysisCache(cacheKey);
-          if (cached !== null) {
-            const parsed = request.schema.safeParse(cached);
-            if (parsed.success) {
-              return {
-                name: request.name,
-                data: this.normalizeValidObservation(
-                  request.name,
-                  parsed.data,
-                  input.symbol,
-                ),
-              };
-            }
-          }
-          return {
-            name: request.name,
-            data: this.unavailableAnalysis(request.name),
-          };
-        }
-
         const data = await this.rememberAnalysis(
           cacheKey,
-          ANALYSIS_TTL_SECONDS[request.name],
+          this.analysisTtlSeconds(request.name, input.interval),
           async () => {
             const run = await this.agentExecutionService.executeSync({
               ...common,
@@ -376,6 +371,8 @@ export class FusionService {
               throw new Error(`Invalid output from ${request.name}`);
             return parsed.data;
           },
+          bypassCache,
+          (hit) => { cacheHits[request.name] = hit; },
         );
         const parsed = request.schema.safeParse(data);
         if (!parsed.success)
@@ -390,6 +387,22 @@ export class FusionService {
         };
       }),
     );
+
+    const stage1Results = await stage1ResultsPromise;
+
+    for (let i = 0; i < stage1Results.length; i++) {
+      const result = stage1Results[i]!;
+      const request = stage1Requests[i]!;
+      if (result.status === "fulfilled") {
+        Object.assign(analyses, { [result.value.name]: result.value.data });
+      } else {
+        Object.assign(analyses, {
+          [request.name]: this.unavailableAnalysis(request.name),
+        });
+      }
+    }
+
+    const stage2Results = await stage2ResultsPromise;
 
     for (let i = 0; i < stage2Results.length; i++) {
       const result = stage2Results[i]!;
@@ -407,6 +420,7 @@ export class FusionService {
     return {
       analyses: parsedAnalyses,
       fusionOutput: this.fuse(parsedAnalyses),
+      cacheHits,
     };
   }
 

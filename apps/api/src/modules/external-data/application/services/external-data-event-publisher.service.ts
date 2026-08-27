@@ -1,5 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ImportanceAssessment } from '../../domain/scoring/importance-scoring.types';
+import { RedisService } from '../../../../redis/redis.service';
+import { ExternalDataEventBus } from './external-data-event-bus.service';
 
 export interface ExternalDataEventPublisherGateway {
   broadcastToChannel(channel: string, event: string, data: any): void;
@@ -9,6 +11,11 @@ export interface ExternalDataEventPublisherGateway {
 export class ExternalDataEventPublisher {
   private readonly logger = new Logger(ExternalDataEventPublisher.name);
   private gateway?: ExternalDataEventPublisherGateway;
+
+  constructor(
+    @Optional() private readonly eventBus?: ExternalDataEventBus,
+    @Optional() private readonly redis?: RedisService,
+  ) {}
 
   setGateway(gateway: ExternalDataEventPublisherGateway) {
     this.gateway = gateway;
@@ -33,10 +40,33 @@ export class ExternalDataEventPublisher {
       topics,
     };
 
+    // A newly accepted article supersedes every per-user fusion cache for its
+    // assets. Invalidation is best-effort; the short TTL remains the fallback.
+    const redis = this.redis;
+    if (redis) {
+      await Promise.all(
+        symbols.map((symbol) =>
+          redis
+            .deleteByPattern(`fusion:analysis:*:news:${symbol}:*`, 500)
+            .catch(() => 0),
+        ),
+      );
+    }
+
+    if (assessment.score >= 80) {
+      this.eventBus?.emitHighImportanceNews({
+        id: article.id,
+        title: article.title,
+        importanceScore: assessment.score,
+        symbols,
+        publishedAt: article.publishedAt.toISOString(),
+      });
+    }
+
     if (this.gateway) {
       this.gateway.broadcastToChannel('news', 'NEWS_ARTICLE_CREATED', payload);
 
-      if (assessment.score >= 70) {
+      if (assessment.score >= 80) {
         this.gateway.broadcastToChannel(
           'high-importance-news',
           'HIGH_IMPORTANCE_NEWS_DETECTED',

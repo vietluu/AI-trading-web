@@ -20,7 +20,7 @@ export class PipelineService {
     @Optional() private readonly redis?: RedisService,
   ) {}
 
-  async trigger(userId: string, raw: unknown, trigger: PipelineTrigger = 'MANUAL', options: { replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; useStoredContext?: boolean; maxRunsPerHour?: number } = {}) {
+  async trigger(userId: string, raw: unknown, trigger: PipelineTrigger = 'MANUAL', options: { replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; useStoredContext?: boolean; maxRunsPerHour?: number; bypassCooldown?: boolean } = {}) {
     if (!this.config.enabled) throw new ConflictException('Pipeline automation is disabled');
     const input = PipelineRunRequestSchema.parse(raw);
     const definition = resolvePipelineDefinition(input.pipelineId);
@@ -120,7 +120,7 @@ export class PipelineService {
     definition: NonNullable<ReturnType<typeof resolvePipelineDefinition>>,
     symbol: PipelineSymbol,
     trigger: PipelineTrigger,
-    options: { replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; useStoredContext?: boolean; maxRunsPerHour?: number },
+    options: { replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; useStoredContext?: boolean; maxRunsPerHour?: number; bypassCooldown?: boolean },
     provider: ExchangeProvider,
     enqueue: (run: Awaited<ReturnType<PipelineRepository['createRun']>> & { symbol: PipelineSymbol }) => Promise<unknown>,
   ) {
@@ -133,7 +133,7 @@ export class PipelineService {
       const quotaKey = `pipeline:quota:${userId}:${hourBucket}`;
       const hourlyCount = await this.redis.incrementWithTtl(quotaKey, 3_700);
       const cooldownSeconds = Math.max(1, Math.ceil(this.config.cooldownMs / 1000));
-      const cooldownAcquired = await this.redis.setNx(
+      const cooldownAcquired = options.bypassCooldown || await this.redis.setNx(
         `pipeline:cooldown:${userId}:${provider}:${symbol}`,
         id,
         cooldownSeconds,
@@ -147,7 +147,7 @@ export class PipelineService {
         this.repository.countRecent(userId, new Date(Date.now() - 60 * 60_000), { status: { not: 'SKIPPED' } }),
         this.repository.latestForSymbol(userId, symbol, provider),
       ]);
-      skippedReason = pipelineSkipReason({ hourlyCount, hourlyLimit, latestCreatedAt: latest?.createdAt, now, cooldownMs: this.config.cooldownMs, isScheduled: trigger === 'SCHEDULE', replay: trigger === 'REPLAY' });
+      skippedReason = pipelineSkipReason({ hourlyCount, hourlyLimit, latestCreatedAt: options.bypassCooldown ? undefined : latest?.createdAt, now, cooldownMs: this.config.cooldownMs, isScheduled: trigger === 'SCHEDULE', replay: trigger === 'REPLAY' });
     }
     const run = await this.repository.createRun({ id, userId, pipelineId: input.pipelineId, symbol, provider, trigger, params: input.params, traceId, correlationId, replayOfRunId: options.replayOfRunId, scheduleId: options.scheduleId, storedContext: options.storedContext });
     await this.repository.createSteps(id, definition.steps);

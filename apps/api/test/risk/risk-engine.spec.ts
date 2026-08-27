@@ -333,6 +333,33 @@ describe("risk engine", () => {
     expect(released.positionSize).toBeCloseTo((200 / 1040) * 0.5, 8);
   });
 
+  it("opens a timed circuit breaker after three consecutive losses", () => {
+    const recentClosedTrades = [
+      { netPnl: -10, closedAt: new Date("2026-08-02T00:00:00Z") },
+      { netPnl: -8, closedAt: new Date("2026-08-01T23:30:00Z") },
+      { netPnl: -6, closedAt: new Date("2026-08-01T23:00:00Z") },
+    ];
+
+    const result = evaluateRisk(
+      input({
+        now: new Date("2026-08-02T02:00:00Z"),
+        recentClosedTrades,
+      }),
+      {
+        ...limits,
+        cooldownMs: 0,
+        lossReentryCooldownMs: 15 * 60_000,
+        maxConsecutiveLosses: 3,
+        lossStreakPauseMs: 6 * 60 * 60_000,
+      },
+    );
+
+    expect(result).toMatchObject({
+      approved: false,
+      reason: "LOSS_STREAK_CIRCUIT_BREAKER_ACTIVE",
+    });
+  });
+
   it("rejects pyramiding when the existing position is not yet profitable", () => {
     const result = evaluateRisk(
       input({

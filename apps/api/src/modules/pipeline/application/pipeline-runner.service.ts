@@ -114,6 +114,7 @@ export class PipelineRunnerService {
       }
       let analyses: FusionInput;
       let fusionOutput: FusionOutput;
+      let analysisCacheHits: Record<string, boolean> | undefined;
       const preferredTimeframes = this.settings
         ? await this.settings
             .get(job.userId)
@@ -332,6 +333,7 @@ export class PipelineRunnerService {
         );
         analyses = result.analyses;
         fusionOutput = result.fusionOutput;
+        analysisCacheHits = result.cacheHits;
         const completedAt = new Date();
         for (const step of definition.steps.filter(
           (item) => item.type === "AGENT",
@@ -495,6 +497,11 @@ export class PipelineRunnerService {
         gateAttempts,
       };
       const decisionCompletedAt = new Date();
+      const sourceTimestamp = indicatorSnapshot?.candleCloseTime ??
+        recentCandles[0]?.closeTime;
+      const sourceDataAgeMs = sourceTimestamp
+        ? Math.max(0, decisionCompletedAt.getTime() - new Date(sourceTimestamp).getTime())
+        : undefined;
       const quantBlockReason = quant.allowed ? undefined : quant.reason;
       const reason = filter.reason ?? judge.reasons[0] ?? quantBlockReason ?? multiTimeframeFilter.reason;
       const blockedReasons = [
@@ -533,6 +540,8 @@ export class PipelineRunnerService {
         durationMs: decisionCompletedAt.getTime() - startedAt.getTime(),
         tokenUsage: 0,
         apiCost: 0,
+        cacheHits: analysisCacheHits,
+        sourceDataAgeMs,
         createdAt: decisionCompletedAt.toISOString(),
       });
       const executionDecision = actionable
@@ -544,6 +553,7 @@ export class PipelineRunnerService {
       );
       let riskAssessment: Awaited<ReturnType<LiveTradingService["assessPipelineDecision"]>> | undefined;
       let liveExecution: Awaited<ReturnType<LiveTradingService["executePipeline"]>> | undefined;
+      let submissionStartedAt: Date | undefined;
       if (actionable) {
         // ─── Distributed Execution Lock ───────────────────────────────────────
         // Prevent race condition: multiple concurrent pipelines for the same user
@@ -619,6 +629,7 @@ export class PipelineRunnerService {
             throw new Error("NO_ELIGIBLE_EXCHANGE_CONNECTION: Active verified exchange connection is required to run live risk assessment.");
           }
           if (riskAssessment.outcome === "RISK_APPROVED") {
+            submissionStartedAt = new Date();
             liveExecution = await this.liveTrading.executePipeline(
               job.userId,
               runId,
@@ -638,6 +649,16 @@ export class PipelineRunnerService {
       const risk = riskAssessment?.risk;
       const riskApproved = Boolean(risk?.approved);
       const orderSubmitted = liveExecution?.outcome === "ORDER_SUBMITTED";
+      const submittedOrder = orderSubmitted && liveExecution && "order" in liveExecution
+        ? liveExecution.order
+        : undefined;
+      const actualPrice = submittedOrder?.status === "FILLED" && submittedOrder.price
+        ? Number(submittedOrder.price)
+        : undefined;
+      const referencePrice = Number(lastPrice);
+      const slippageBps = actualPrice && referencePrice > 0
+        ? Math.abs(actualPrice - referencePrice) / referencePrice * 10_000
+        : undefined;
       const finalSkippedReason = !actionable
         ? reason
         : !riskApproved
@@ -663,6 +684,12 @@ export class PipelineRunnerService {
         durationMs: completedAt.getTime() - startedAt.getTime(),
         tokenUsage: 0,
         apiCost: 0,
+        sourceDataAgeMs,
+        decisionToExecutionMs: completedAt.getTime() - decisionCompletedAt.getTime(),
+        submissionLatencyMs: submissionStartedAt
+          ? completedAt.getTime() - submissionStartedAt.getTime()
+          : undefined,
+        slippageBps,
         createdAt: completedAt.toISOString(),
       });
       await this.repository.updateRun(runId, {

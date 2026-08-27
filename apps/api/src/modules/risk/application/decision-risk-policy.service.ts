@@ -35,8 +35,6 @@ export class DecisionRiskPolicyService {
     const directionalAgreement = output.directionalAgreement ?? output.agreementScore;
     const evidenceCoverage = output.evidenceCoverage ?? 100;
     const coreEvidenceGood = output.coreDataQuality === 'GOOD';
-    const strongConviction = coreEvidenceGood && directionalAgreement >= 80 &&
-      evidenceCoverage >= 60 && output.opportunityScore >= 68 && output.expectedValue > 0.2;
     if (output.volatilityAdjustment <= -30 || output.riskScore >= 90) {
       return { actionable: false, decision: 'WAIT', reason: 'EXTREME_VOLATILITY' };
     }
@@ -57,16 +55,16 @@ export class DecisionRiskPolicyService {
     ) {
       return { actionable: false, decision: 'WAIT', reason: 'PARTIAL_DATA_CONVICTION_TOO_LOW' };
     }
-    if (output.confidence < output.adaptiveThreshold && !strongConviction) {
+    if (output.confidence < output.adaptiveThreshold) {
       return { actionable: false, decision: 'WAIT', reason: 'CONFIDENCE_BELOW_THRESHOLD' };
     }
-    if (output.expectedValue <= policy.minExpectedValue && !strongConviction) {
+    if (output.expectedValue <= policy.minExpectedValue) {
       return { actionable: false, decision: 'WAIT', reason: 'EXPECTED_VALUE_NEGATIVE' };
     }
-    if (output.opportunityScore < thresholdFloor && !strongConviction) {
+    if (output.opportunityScore < thresholdFloor) {
       return { actionable: false, decision: 'WAIT', reason: 'OPPORTUNITY_BELOW_THRESHOLD' };
     }
-    if (output.riskScore > policy.maxRiskScore && !strongConviction) {
+    if (output.riskScore > policy.maxRiskScore) {
       return { actionable: false, decision: 'WAIT', reason: 'RISK_SCORE_TOO_HIGH' };
     }
     return { actionable: true, decision: output.decision };

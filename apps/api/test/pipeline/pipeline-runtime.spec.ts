@@ -54,6 +54,18 @@ describe('Phase 6.6 pipeline runtime policies', () => {
       confidence: 65,
     } as never, context)).toEqual({ actionable: true, decision: 'LONG' });
     expect(service.evaluate({ ...output, conflictLevel: 'HIGH' } as never, context)).toEqual({ actionable: false, decision: 'WAIT', reason: 'HIGH_CONFLICT' });
+    expect(service.evaluate({
+      ...output,
+      confidence: 55,
+      coreDataQuality: 'GOOD',
+      directionalAgreement: 100,
+      evidenceCoverage: 100,
+      expectedValue: 0.8,
+    } as never, context)).toEqual({
+      actionable: false,
+      decision: 'WAIT',
+      reason: 'CONFIDENCE_BELOW_THRESHOLD',
+    });
   });
 
   it('uses bounded exponential retry settings for safe research jobs', () => {

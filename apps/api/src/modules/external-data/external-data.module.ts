@@ -30,10 +30,13 @@ import { MacroController } from "./presentation/controllers/macro.controller";
 import { ProvidersController } from "./presentation/controllers/providers.controller";
 import { SourcesController } from "./presentation/controllers/sources.controller";
 import { ExternalDataGateway } from "./presentation/gateways/external-data.gateway";
+import { RedisModule } from "../../redis/redis.module";
+import { ExternalDataEventBus } from "./application/services/external-data-event-bus.service";
 
 @Module({
   imports: [
     DatabaseModule,
+    RedisModule,
     BullModule.registerQueue({
       name: EXTERNAL_DATA_QUEUE_NAME,
     }),
@@ -66,6 +69,7 @@ import { ExternalDataGateway } from "./presentation/gateways/external-data.gatew
     ProviderHealthService,
     MacroImportService,
     ExternalDataEventPublisher,
+    ExternalDataEventBus,
     ExternalDataIngestionProcessor,
     ExternalDataSchedulerService,
     ExternalDataGateway,
@@ -78,6 +82,7 @@ import { ExternalDataGateway } from "./presentation/gateways/external-data.gatew
     ProviderHealthService,
     MacroImportService,
     ExternalDataEventPublisher,
+    ExternalDataEventBus,
   ],
 })
 export class ExternalDataModule {}

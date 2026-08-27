@@ -91,6 +91,21 @@ describe('Phase 10.3A Quantitative Research Validation Engines', () => {
     expect(result.sharpeRatioCI95.length).toBe(2);
   });
 
+  it('reproduces Monte Carlo and bootstrap results for identical trade evidence', () => {
+    const trades = [
+      { entryTime: '1', exitTime: '2', entryPrice: 100, exitPrice: 110, pnl: 100, holdingTime: 1, maxFavorableExcursion: 10, maxAdverseExcursion: -2, riskReward: 2, expectedValue: 50, tradeQualityScore: 80 },
+      { entryTime: '3', exitTime: '4', entryPrice: 100, exitPrice: 95, pnl: -50, holdingTime: 1, maxFavorableExcursion: 2, maxAdverseExcursion: -5, riskReward: 0.5, expectedValue: -25, tradeQualityScore: 40 },
+    ];
+
+    const monteCarloA = runMonteCarloEngine({ trades, initialBalance: 10_000, simulations: 500 });
+    const monteCarloB = runMonteCarloEngine({ trades, initialBalance: 10_000, simulations: 500 });
+    const bootstrapA = runBootstrapEngine({ trades, resamples: 200 });
+    const bootstrapB = runBootstrapEngine({ trades, resamples: 200 });
+
+    expect(monteCarloA).toEqual(monteCarloB);
+    expect(bootstrapA).toEqual(bootstrapB);
+  });
+
   it('runs Parameter Sensitivity Engine & Stability Analyzer', () => {
     const result = runSensitivityEngine({
       candles,
