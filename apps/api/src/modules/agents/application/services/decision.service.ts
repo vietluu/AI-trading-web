@@ -483,6 +483,7 @@ export class DecisionService {
     const bullishWeight = voteWeight("BULLISH");
     const bearishWeight = voteWeight("BEARISH");
     const neutralWeight = voteWeight("NEUTRAL");
+    const directionalWeight = bullishWeight + bearishWeight;
     const bullishCount = active.filter(
       (name) => votes.get(name) === "BULLISH",
     ).length;
@@ -490,8 +491,12 @@ export class DecisionService {
       (name) => votes.get(name) === "BEARISH",
     ).length;
     const directionalCount = bullishCount + bearishCount;
-    const rawDirectionalBias = activeWeight
-      ? ((bullishWeight - bearishWeight) / activeWeight) * 100
+    // Neutral observations describe coverage/context; they are not votes
+    // against a directional setup. Normalize direction only over agents that
+    // actually expressed a direction, then account for sparse coverage via the
+    // separate evidenceCoverage and data-quality controls below.
+    const rawDirectionalBias = directionalWeight
+      ? ((bullishWeight - bearishWeight) / directionalWeight) * 100
       : 0;
     const overrides: string[] = [];
     const newsShock = this.newsShock(input, overrides);
@@ -566,7 +571,12 @@ export class DecisionService {
         : candidate === "SHORT"
           ? bearishWeight
           : Math.max(bullishWeight, bearishWeight, neutralWeight);
-    const baseScore = activeWeight ? (alignedWeight / activeWeight) * 100 : 0;
+    const alignmentDenominator = candidate === "WAIT"
+      ? activeWeight
+      : directionalWeight;
+    const baseScore = alignmentDenominator
+      ? (alignedWeight / alignmentDenominator) * 100
+      : 0;
     const dataQuality = this.dataQuality(input, active);
     const coreDataQuality = this.coreDataQuality(input);
     const { adjustment: volatilityAdjustment, extreme } = this.volatilityFilter(
@@ -1162,16 +1172,21 @@ export class DecisionService {
     votes: Map<AnalystName, Bias>,
     weighting: Weighting,
   ): number {
-    const directionalWeight = [...votes.entries()].reduce(
-      (sum, [name, vote]) => sum + (vote === "NEUTRAL" ? 0 : weighting[name]),
+    const bullishWeight = [...votes.entries()].reduce(
+      (sum, [name, vote]) => sum + (vote === "BULLISH" ? weighting[name] : 0),
       0,
     );
-    const activeWeight = [...votes.keys()].reduce(
-      (sum, name) => sum + weighting[name],
+    const bearishWeight = [...votes.entries()].reduce(
+      (sum, [name, vote]) => sum + (vote === "BEARISH" ? weighting[name] : 0),
       0,
     );
-    return activeWeight > 0
-      ? this.clamp((directionalWeight / activeWeight) * 100, 0, 100)
+    const directionalWeight = bullishWeight + bearishWeight;
+    return directionalWeight > 0
+      ? this.clamp(
+          (Math.max(bullishWeight, bearishWeight) / directionalWeight) * 100,
+          0,
+          100,
+        )
       : 0;
   }
 

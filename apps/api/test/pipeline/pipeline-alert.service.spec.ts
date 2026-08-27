@@ -47,4 +47,32 @@ describe("PipelineAlertService blocked opportunity telemetry", () => {
 
     expect(prisma.pipelineAlert.create).not.toHaveBeenCalled();
   });
+
+  it("tracks aligned signals blocked by calibration and includes the observed move", async () => {
+    const create = vi.fn<(input: unknown) => Promise<{ id: string }>>()
+      .mockResolvedValue({ id: "alert" });
+    const prisma = {
+      pipelineAlert: {
+        create,
+        count: vi.fn().mockResolvedValue(5),
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
+    };
+    const service = new PipelineAlertService(prisma as never, {} as never);
+
+    await service.blockedOpportunity({
+      runId: "run-5", userId: "user-1", symbol: "SOL-USDT",
+      decision: "LONG", confidence: 75,
+      blockedReasons: ["UNCALIBRATED_CONFIDENCE_TOO_LOW"],
+      analyses: analyses("UP"), multiTimeframeConfirmation: 100,
+      priceChangePercent: 9.09,
+    });
+
+    expect(create).toHaveBeenCalledTimes(2);
+    const incident = create.mock.calls.at(-1)?.[0] as
+      | { data: { kind: string; reasoningSummary: string } }
+      | undefined;
+    expect(incident?.data.kind).toBe("MISSED_OPPORTUNITY");
+    expect(incident?.data.reasoningSummary).toContain("9.09%");
+  });
 });

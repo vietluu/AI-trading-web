@@ -20,12 +20,16 @@ const createPrisma = () => ({
   liveOrder: {
     findUnique: vi.fn(),
     findFirst: vi.fn(),
+    findMany: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
   },
   livePosition: {
     findMany: vi.fn(),
     findFirst: vi.fn(),
+  },
+  exchangeFill: {
+    updateMany: vi.fn(),
   },
   closedTrade: {
     findMany: vi.fn().mockResolvedValue([]),
@@ -344,6 +348,221 @@ describe("live trading duplicate order protection", () => {
       data: expect.objectContaining({ status: "SUBMITTING", clientOrderId: "stable1" }) as unknown,
     }));
     expect(connections.placeOrder).toHaveBeenCalledTimes(1);
+  });
+
+  it("promotes an already-imported maker fallback without losing risk linkage", async () => {
+    const prisma = createPrisma();
+    const timestamp = new Date();
+    prisma.liveOrder.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "fallback-order", status: "FILLED" });
+    prisma.liveOrder.create.mockResolvedValue({
+      id: "reserved-order",
+      connectionId: "conn-1",
+      status: "SUBMITTING",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    prisma.liveOrder.update
+      .mockResolvedValueOnce({ id: "reserved-order", purpose: "MAKER_ATTEMPT" })
+      .mockResolvedValueOnce({
+        id: "fallback-order",
+        exchangeOrderId: "market-2",
+        clientOrderId: "stableentryfb",
+        symbol: "ETH-USDT",
+        side: "BUY",
+        quantity: "0.1",
+        leverage: 2,
+        status: "FILLED",
+        purpose: "OPEN",
+        reduceOnly: false,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    prisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+    const connections = {
+      placeOrder: vi.fn().mockResolvedValue({
+        exchangeOrderId: "market-2",
+        clientOrderId: "stableentryfb",
+        originalQuantity: "0.1",
+        executedQuantity: "0.1",
+        status: "FILLED",
+      }),
+    };
+    const service = new LiveTradingService(
+      prisma as never, connections as never, {} as never,
+      { record: vi.fn() } as never,
+      {} as never, {} as never, {} as never, {} as never,
+    );
+
+    await (service as unknown as {
+      submit: (...args: unknown[]) => Promise<unknown>;
+    }).submit(
+      "user-1",
+      { id: "conn-1", provider: "OKX_FUTURES", environment: "DEMO" },
+      { symbol: "ETH-USDT", side: "BUY", quantity: "0.1", leverage: 2, clientOrderId: "stable-entry" },
+      "OPEN",
+      { id: "risk-1", stopLoss: 95, takeProfit: 110, tradePlan: null },
+      "strategy-1",
+      {},
+    );
+
+    expect(prisma.liveOrder.update).toHaveBeenNthCalledWith(1, {
+      where: { id: "reserved-order" },
+      data: { riskAssessmentId: null, purpose: "MAKER_ATTEMPT" },
+    });
+    expect(prisma.liveOrder.update).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: { id: "fallback-order" },
+      data: expect.objectContaining({
+        riskAssessmentId: "risk-1",
+        strategyId: "strategy-1",
+        purpose: "OPEN",
+      }) as unknown,
+    }));
+    expect(prisma.exchangeFill.updateMany).toHaveBeenCalledWith({
+      where: { liveOrderId: "fallback-order" },
+      data: { strategyId: "strategy-1" },
+    });
+  });
+
+  it("repairs legacy imported fallback rows during reconciliation", async () => {
+    const prisma = createPrisma();
+    const fallback = {
+      id: "fallback-order",
+      clientOrderId: "stableentryfb",
+      purpose: "IMPORTED",
+    };
+    const source = {
+      id: "maker-order",
+      clientOrderId: "stableentrylongid",
+      riskAssessmentId: "risk-1",
+      strategyId: "strategy-1",
+      purpose: "OPEN",
+      leverage: 2,
+      reduceOnly: false,
+      stopLoss: 95,
+      takeProfit: 110,
+      initialStopLoss: 95,
+      protectiveClientOrderId: "stableentrypm",
+      tradePlan: { strategy: "TREND_PULLBACK" },
+    };
+    prisma.liveOrder.findMany.mockResolvedValue([fallback]);
+    prisma.liveOrder.findFirst.mockResolvedValue(source);
+    prisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+    const service = new LiveTradingService(
+      prisma as never, {} as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never,
+    );
+
+    await (service as unknown as {
+      relinkOkxMakerFallbackOrders: (userId: string, connectionId: string) => Promise<void>;
+    }).relinkOkxMakerFallbackOrders("user-1", "conn-1");
+
+    expect(prisma.liveOrder.update).toHaveBeenNthCalledWith(1, {
+      where: { id: "maker-order" },
+      data: { riskAssessmentId: null, purpose: "MAKER_ATTEMPT" },
+    });
+    expect(prisma.liveOrder.update).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: { id: "fallback-order" },
+      data: expect.objectContaining({
+        riskAssessmentId: "risk-1",
+        strategyId: "strategy-1",
+        purpose: "OPEN",
+      }) as unknown,
+    }));
+  });
+
+  it("reconciles an accepted fallback after an ambiguous exchange timeout", async () => {
+    const prisma = createPrisma();
+    const timestamp = new Date();
+    prisma.liveOrder.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
+    prisma.liveOrder.create.mockResolvedValue({
+      id: "reserved-order",
+      connectionId: "conn-1",
+      status: "SUBMITTING",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    prisma.liveOrder.update.mockResolvedValue({
+      id: "reserved-order",
+      exchangeOrderId: "market-2",
+      clientOrderId: "stableentryfb",
+      symbol: "ETH-USDT",
+      side: "BUY",
+      quantity: "0.1",
+      leverage: 2,
+      status: "FILLED",
+      purpose: "OPEN",
+      reduceOnly: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    const notFound = new ExchangeError(
+      ExchangeErrorCode.RESOURCE_NOT_FOUND,
+      ExchangeProvider.OKX_FUTURES,
+      false,
+      404,
+      "not found",
+    );
+    const connections = {
+      placeOrder: vi.fn().mockRejectedValue(new ExchangeError(
+        ExchangeErrorCode.TIMEOUT,
+        ExchangeProvider.OKX_FUTURES,
+        true,
+        504,
+        "request timed out",
+      )),
+      orderByClientOrderId: vi.fn()
+        .mockRejectedValueOnce(notFound)
+        .mockResolvedValueOnce({
+          exchangeOrderId: "market-2",
+          clientOrderId: "stableentryfb",
+          symbol: "ETH-USDT",
+          side: "BUY",
+          type: "MARKET",
+          originalQuantity: "0.1",
+          executedQuantity: "0.1",
+          status: "FILLED",
+        }),
+    };
+    const service = new LiveTradingService(
+      prisma as never, connections as never, {} as never,
+      { record: vi.fn() } as never,
+      {} as never, {} as never, {} as never, {} as never,
+    );
+
+    await expect((service as unknown as {
+      submit: (...args: unknown[]) => Promise<unknown>;
+    }).submit(
+      "user-1",
+      { id: "conn-1", provider: ExchangeProvider.OKX_FUTURES, environment: "DEMO" },
+      { symbol: "ETH-USDT", side: "BUY", quantity: "0.1", leverage: 2, clientOrderId: "stable-entry" },
+      "OPEN",
+      { id: "risk-1", stopLoss: 95, takeProfit: 110, tradePlan: null },
+      "strategy-1",
+      {},
+    )).resolves.toMatchObject({
+      id: "reserved-order",
+      orderId: "market-2",
+      status: "FILLED",
+    });
+
+    expect(connections.placeOrder).toHaveBeenCalledTimes(1);
+    expect(connections.orderByClientOrderId).toHaveBeenNthCalledWith(
+      1, "user-1", "conn-1", "stableentry", "ETH-USDT", {},
+    );
+    expect(connections.orderByClientOrderId).toHaveBeenNthCalledWith(
+      2, "user-1", "conn-1", "stableentryfb", "ETH-USDT", {},
+    );
+    expect(prisma.liveOrder.update).not.toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "FAILED" }) as unknown,
+    }));
   });
 
   it("checks environment-specific instrument support before creating an order row", async () => {

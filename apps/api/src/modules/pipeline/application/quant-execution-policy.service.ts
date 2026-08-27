@@ -43,7 +43,8 @@ export class QuantExecutionPolicyService {
     decision: Pick<DecisionOutput,
       "decision" | "regime" | "confidence" | "opportunityScore" |
       "expectedValue" | "riskScore" | "volatilityAdjustment" |
-      "dataQuality" | "conflictLevel"
+      "dataQuality" | "coreDataQuality" | "directionalAgreement" |
+      "evidenceCoverage" | "conflictLevel"
     >;
     multiTimeframeConfirmation?: number;
     primaryRsi?: number;
@@ -116,19 +117,10 @@ export class QuantExecutionPolicyService {
     const maxAge = Math.max(36 * 3_600_000, timeframeMilliseconds(input.timeframe) * 12);
     if (now.getTime() - validation.createdAt.getTime() > maxAge)
       return { ...this.insufficientEvidence("QUANT_VALIDATION_STALE", input), validation: evidence };
-    // Fresh negative evidence is actionable even when the sample is immature.
-    // Once evidence has expired it can only authorize a bounded canary; it no
-    // longer has enough authority to veto a strong realtime setup by itself.
-    if (!validation.walkForwardStable)
-      return { allowed: false, reason: "QUANT_WALK_FORWARD_UNSTABLE", validation: evidence };
-    if (validation.probabilityOfProfit < 52)
-      return { allowed: false, reason: "QUANT_PROBABILITY_TOO_LOW", validation: evidence };
-    if (validation.probabilityOfRuin > 5)
-      return { allowed: false, reason: "QUANT_RUIN_RISK_TOO_HIGH", validation: evidence };
-    if (validation.outOfSampleSharpe <= 0.3)
-      return { allowed: false, reason: "QUANT_OUT_OF_SAMPLE_EDGE_MISSING", validation: evidence };
-    if (calibration?.evidenceSufficient === true && validation.confidenceBrierScore > 0.3)
-      return { allowed: false, reason: "QUANT_CALIBRATION_UNRELIABLE", validation: evidence };
+    // A validation produced under different execution limits is not negative
+    // evidence about the live setup. Classify it as unavailable before looking
+    // at its performance metrics so a mismatched high-leverage simulation
+    // cannot veto an otherwise governed, bounded realtime candidate.
     const liveLimits = await this.riskConfig?.getUserLimits(input.userId);
     if (!assumptions || (liveLimits && (
       Number(assumptions.leverage) !== liveLimits.maxLeverage ||
@@ -140,6 +132,19 @@ export class QuantExecutionPolicyService {
       Number(sampleEvidence.outOfSampleTrades ?? outOfSample.outOfSampleTrades ?? 0) < 10 ||
       Number(sampleEvidence.walkForwardWindows ?? windows) < 5
     ) return { ...this.insufficientEvidence("QUANT_SAMPLE_TOO_SMALL", input), validation: evidence };
+    // Fresh, scope-compatible and statistically eligible negative evidence is
+    // actionable. Once evidence expires it can only authorize a bounded canary;
+    // it no longer has enough authority to veto a strong realtime setup alone.
+    if (!validation.walkForwardStable)
+      return { allowed: false, reason: "QUANT_WALK_FORWARD_UNSTABLE", validation: evidence };
+    if (validation.probabilityOfProfit < 52)
+      return { allowed: false, reason: "QUANT_PROBABILITY_TOO_LOW", validation: evidence };
+    if (validation.probabilityOfRuin > 5)
+      return { allowed: false, reason: "QUANT_RUIN_RISK_TOO_HIGH", validation: evidence };
+    if (validation.outOfSampleSharpe <= 0.3)
+      return { allowed: false, reason: "QUANT_OUT_OF_SAMPLE_EDGE_MISSING", validation: evidence };
+    if (calibration?.evidenceSufficient === true && validation.confidenceBrierScore > 0.3)
+      return { allowed: false, reason: "QUANT_CALIBRATION_UNRELIABLE", validation: evidence };
 
     return {
       allowed: true,
@@ -157,7 +162,8 @@ export class QuantExecutionPolicyService {
       decision: Pick<DecisionOutput,
         "decision" | "regime" | "confidence" | "opportunityScore" |
         "expectedValue" | "riskScore" | "volatilityAdjustment" |
-        "dataQuality" | "conflictLevel"
+        "dataQuality" | "coreDataQuality" | "directionalAgreement" |
+        "evidenceCoverage" | "conflictLevel"
       >;
       multiTimeframeConfirmation?: number;
       primaryRsi?: number;
@@ -182,7 +188,8 @@ export class QuantExecutionPolicyService {
     decision: Pick<DecisionOutput,
       "decision" | "regime" | "confidence" | "opportunityScore" |
       "expectedValue" | "riskScore" | "volatilityAdjustment" |
-      "dataQuality" | "conflictLevel"
+      "dataQuality" | "coreDataQuality" | "directionalAgreement" |
+      "evidenceCoverage" | "conflictLevel"
     >;
     multiTimeframeConfirmation?: number;
     primaryRsi?: number;
@@ -212,7 +219,12 @@ export class QuantExecutionPolicyService {
   private hasFreshRegimeConflict(
     input: {
       timeframe: string;
-      decision: Pick<DecisionOutput, "decision" | "regime">;
+      decision: Pick<DecisionOutput,
+        "decision" | "regime" | "confidence" | "coreDataQuality" |
+        "directionalAgreement" | "evidenceCoverage" | "dataQuality" |
+        "conflictLevel" | "volatilityAdjustment"
+      >;
+      multiTimeframeConfirmation?: number;
     },
     regime: { regime: string; confidence: number; detectedAt: Date } | null,
     now: Date,
@@ -220,9 +232,24 @@ export class QuantExecutionPolicyService {
     const fresh = regime && now.getTime() - regime.detectedAt.getTime() <=
       Math.max(30 * 60_000, timeframeMilliseconds(input.timeframe) * 2);
     if (!fresh || regime.confidence < 65) return false;
-    return (regime.regime === "BULL" && input.decision.decision === "SHORT") ||
+    const conflicts = (regime.regime === "BULL" && input.decision.decision === "SHORT") ||
       (regime.regime === "BEAR" && input.decision.decision === "LONG") ||
       (regime.regime === "SIDEWAYS" && input.decision.regime.type !== "RANGING") ||
       (regime.regime === "HIGH_VOLATILITY" && input.decision.regime.type !== "HIGH_VOLATILITY");
+    if (!conflicts) return false;
+    // Regime classifiers intentionally use a slower window. During a genuine
+    // transition, fresh aligned core/MTF evidence is allowed to continue to the
+    // strategy validation gate; it does not bypass negative validation, risk,
+    // spread, or volatility checks.
+    const realtimeTransition = regime.regime !== "HIGH_VOLATILITY" &&
+      input.decision.coreDataQuality === "GOOD" &&
+      (input.decision.directionalAgreement ?? 0) >= 80 &&
+      (input.decision.evidenceCoverage ?? 0) >= 60 &&
+      input.decision.confidence >= 65 &&
+      input.decision.dataQuality !== "INSUFFICIENT" &&
+      input.decision.conflictLevel !== "HIGH" &&
+      input.decision.volatilityAdjustment > -30 &&
+      (input.multiTimeframeConfirmation ?? 0) >= 80;
+    return !realtimeTransition;
   }
 }

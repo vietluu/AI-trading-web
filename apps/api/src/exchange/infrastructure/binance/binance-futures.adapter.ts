@@ -586,6 +586,7 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
         await this.client.signedGet("/fapi/v1/order", credentials, {
           symbol: toBinanceSymbol(query.symbol),
           orderId: query.orderId,
+          origClientOrderId: query.clientOrderId,
         }),
       ),
     );

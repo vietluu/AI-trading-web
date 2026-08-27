@@ -750,6 +750,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         await this.client.signedGet("/api/v5/trade/order", credentials, {
           instId: toOkxSymbol(query.symbol),
           ordId: query.orderId,
+          clOrdId: query.clientOrderId,
         }),
       )[0]!;
     return this.order(value);
@@ -876,6 +877,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     if (!command.reduceOnly) {
       try {
         const ticker = await this.bestBidAsk(command.symbol);
+        this.assertEntryPriceDrift(command, ticker.askPrice, ticker.bidPrice);
         const selectedPrice = makerFirst
           ? command.side.toUpperCase() === "BUY"
             ? ticker.bidPrice
@@ -889,6 +891,24 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
           ordType = makerFirst ? "post_only" : "limit";
         }
       } catch (error) {
+        if (
+          error instanceof ExchangeError &&
+          error.exchangeCode === "ENTRY_PRICE_DRIFT"
+        ) throw error;
+        if (
+          Number.isFinite(Number(command.referencePrice)) &&
+          Number(command.referencePrice) > 0 &&
+          Number.isFinite(Number(command.maxAdverseDriftBps))
+        ) {
+          if (error instanceof ExchangeError) throw error;
+          throw new ExchangeError(
+            ExchangeErrorCode.UNAVAILABLE,
+            this.provider,
+            true,
+            503,
+            "Entry price preflight is unavailable",
+          );
+        }
         this.logger.warn({
           event: "okx_order_price_lookup_failed",
           exchange: this.provider,
@@ -1161,6 +1181,35 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       createdAt: new Date(),
       updatedAt: new Date(),
     };
+  }
+
+  private assertEntryPriceDrift(
+    command: PlaceOrderCommand,
+    askPrice: string,
+    bidPrice: string,
+  ): void {
+    const referencePrice = Number(command.referencePrice);
+    const maximumBps = Number(command.maxAdverseDriftBps);
+    if (
+      !Number.isFinite(referencePrice) ||
+      referencePrice <= 0 ||
+      !Number.isFinite(maximumBps) ||
+      maximumBps < 0
+    ) return;
+    const executablePrice = Number(command.side === "BUY" ? askPrice : bidPrice);
+    if (!Number.isFinite(executablePrice) || executablePrice <= 0) return;
+    const adverseBps = command.side === "BUY"
+      ? ((executablePrice - referencePrice) / referencePrice) * 10_000
+      : ((referencePrice - executablePrice) / referencePrice) * 10_000;
+    if (adverseBps <= maximumBps + 1e-8) return;
+    throw new ExchangeError(
+      ExchangeErrorCode.INVALID_REQUEST,
+      this.provider,
+      false,
+      400,
+      `Entry price drift ${adverseBps.toFixed(2)}bps exceeds ${maximumBps.toFixed(2)}bps limit`,
+      "ENTRY_PRICE_DRIFT",
+    );
   }
 
   private async maximumOrderContracts(

@@ -712,6 +712,9 @@ export class PipelineRunnerService {
           blockedReasons: candidateDecision.blockedReasons,
           analyses,
           multiTimeframeConfirmation: multiTimeframeFilter.confirmation,
+          priceChangePercent: Number.isFinite(Number(indicatorSnapshot?.values.priceChangePercent))
+            ? Number(indicatorSnapshot?.values.priceChangePercent)
+            : undefined,
         }).catch((error: unknown) => this.logger.warn({
           event: 'pipeline_blocked_opportunity_alert_failed',
           runId,

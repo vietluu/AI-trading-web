@@ -1355,6 +1355,38 @@ describe("exchange adapter normalization contract", () => {
     });
   });
 
+  it("rejects an OKX entry when the executable price has moved beyond approval", async () => {
+    const signedPost = vi.fn().mockResolvedValueOnce([{ lever: "3" }]);
+    const publicGet = vi
+      .fn()
+      .mockResolvedValueOnce([{
+        instId: "BTC-USDT-SWAP", instType: "SWAP", state: "live",
+        settleCcy: "USDT", ctVal: "0.01", tickSz: "0.1", lotSz: "1", minSz: "1",
+      }])
+      .mockResolvedValueOnce([{
+        instId: "BTC-USDT-SWAP", last: "101", bidPx: "100.9", askPx: "101.1",
+        high24h: "105", low24h: "95", vol24h: "100", volCcy24h: "1000",
+        open24h: "100", ts: "1700000000000",
+      }]);
+    const adapter = okxAdapter({ publicGet, signedPost });
+
+    await expect(adapter.placeOrder(
+      {
+        apiKey: "demo-key", apiSecret: "demo-secret", passphrase: "demo-passphrase",
+        environment: ExchangeEnvironment.DEMO,
+      },
+      {
+        symbol: "BTC-USDT", side: "BUY", quantity: "0.03", leverage: 3,
+        clientOrderId: "drift-entry", referencePrice: "100", maxAdverseDriftBps: 10,
+      },
+    )).rejects.toMatchObject({
+      code: ExchangeErrorCode.INVALID_REQUEST,
+      exchangeCode: "ENTRY_PRICE_DRIFT",
+      retryable: false,
+    });
+    expect(signedPost).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps a partially-filled maker entry without submitting excess market quantity", async () => {
     let canceled = false;
     const signedPost = vi.fn().mockImplementation(

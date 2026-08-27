@@ -522,6 +522,26 @@ export class ExchangeConnectionService {
     );
   }
 
+  orderByClientOrderId(
+    userId: string,
+    id: string,
+    clientOrderId: string,
+    symbol: string,
+    context: RequestMetadata,
+  ): Promise<ExchangeOrder> {
+    return this.privateCall(
+      userId,
+      id,
+      "ORDER_LOOKUP",
+      context,
+      (adapter, credentials) =>
+        adapter.getOrder(credentials, {
+          clientOrderId,
+          symbol: normalizeSymbol(symbol),
+        }),
+    );
+  }
+
   configuration(
     userId: string,
     id: string,

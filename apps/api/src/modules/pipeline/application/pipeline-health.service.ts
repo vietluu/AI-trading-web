@@ -59,7 +59,7 @@ export class PipelineHealthService {
   async metrics() {
     const since = new Date(Date.now() - 24 * 60 * 60_000);
     const where = { createdAt: { gte: since } };
-    const [statuses, decisions, skipped] = await Promise.all([
+    const [statuses, decisions, skipped, funnelRuns, riskAssessed, riskApproved, liveOrders] = await Promise.all([
       this.prisma.pipelineRun.groupBy({
         by: ["status"],
         where,
@@ -74,6 +74,15 @@ export class PipelineHealthService {
       this.prisma.pipelineRun.count({
         where: { ...where, skippedReason: { not: null } },
       }),
+      this.prisma.pipelineRun.findMany({
+        where,
+        select: { result: true, skippedReason: true },
+        orderBy: { createdAt: "desc" },
+        take: 5_000,
+      }),
+      this.prisma.riskAssessment.count({ where }),
+      this.prisma.riskAssessment.count({ where: { ...where, approved: true } }),
+      this.prisma.liveOrder.count({ where }),
     ]);
     const count = (status: string) =>
       statuses.find((row) => row.status === status)?._count._all ?? 0;
@@ -83,6 +92,28 @@ export class PipelineHealthService {
     const completed = statuses.find((row) => row.status === "COMPLETED");
     const decisionCount = (decision: string) =>
       decisions.find((row) => row.decision === decision)?._count._all ?? 0;
+    const resultOf = (value: unknown): Record<string, unknown> =>
+      value && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : {};
+    const directionalCandidates = funnelRuns.filter((run) => {
+      const candidate = resultOf(resultOf(run.result).candidateDecision);
+      return candidate.decision === "LONG" || candidate.decision === "SHORT";
+    }).length;
+    const judgePassed = funnelRuns.filter((run) =>
+      resultOf(resultOf(run.result).judge).approved === true,
+    ).length;
+    const quantPassed = funnelRuns.filter((run) =>
+      resultOf(resultOf(run.result).quant).allowed === true,
+    ).length;
+    const rejectionCounts = new Map<string, number>();
+    for (const run of funnelRuns) {
+      if (!run.skippedReason) continue;
+      rejectionCounts.set(
+        run.skippedReason,
+        (rejectionCounts.get(run.skippedReason) ?? 0) + 1,
+      );
+    }
     return {
       window_hours: 24,
       pipeline_run_total: total,
@@ -96,6 +127,19 @@ export class PipelineHealthService {
       },
       average_confidence: completed?._avg.confidence ?? 0,
       skipped_decisions: skipped,
+      execution_funnel: {
+        runs: funnelRuns.length,
+        directional_candidates: directionalCandidates,
+        judge_passed: judgePassed,
+        quant_passed: quantPassed,
+        risk_assessed: riskAssessed,
+        risk_approved: riskApproved,
+        live_orders: liveOrders,
+      },
+      top_blocking_reasons: [...rejectionCounts.entries()]
+        .sort((left, right) => right[1] - left[1])
+        .slice(0, 10)
+        .map(([reason, count]) => ({ reason, count })),
       error_rate: total ? failures / total : 0,
     };
   }

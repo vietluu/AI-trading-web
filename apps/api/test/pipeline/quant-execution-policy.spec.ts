@@ -11,6 +11,9 @@ const strongDecision = (overrides: Record<string, unknown> = {}) => ({
   riskScore: 55,
   volatilityAdjustment: 0,
   dataQuality: "GOOD",
+  coreDataQuality: "GOOD",
+  directionalAgreement: 100,
+  evidenceCoverage: 100,
   conflictLevel: "LOW",
   ...overrides,
 });
@@ -128,7 +131,7 @@ describe("QuantExecutionPolicyService", () => {
     expect(result).toMatchObject({ allowed: false, reason: "QUANT_VALIDATION_MISSING" });
   });
 
-  it("keeps a fresh bearish quant regime as a hard block when validation is missing", async () => {
+  it("treats a slower bearish regime as advisory during a strong fresh core transition", async () => {
     const result = await service(null, {
       regime: "BEAR",
       confidence: 82,
@@ -141,9 +144,26 @@ describe("QuantExecutionPolicyService", () => {
     });
 
     expect(result).toMatchObject({
-      allowed: false,
-      reason: "QUANT_REGIME_CONFLICT",
+      allowed: true,
+      advisory: true,
+      reason: "QUANT_VALIDATION_MISSING",
+      sizeFactor: 0.25,
     });
+  });
+
+  it("keeps a fresh bearish quant regime as a hard block without strong core evidence", async () => {
+    const result = await service(null, {
+      regime: "BEAR",
+      confidence: 82,
+      detectedAt: new Date("2026-08-12T00:55:00Z"),
+    }).policy.evaluate({
+      ...input,
+      decision: strongDecision({ coreDataQuality: "PARTIAL" }) as never,
+      multiTimeframeConfirmation: 100,
+      primaryRsi: 75,
+    });
+
+    expect(result).toMatchObject({ allowed: false, reason: "QUANT_REGIME_CONFLICT" });
   });
 
   it("treats expired evidence as advisory while preserving fresh negative evidence as a hard block", async () => {
@@ -222,7 +242,7 @@ describe("QuantExecutionPolicyService", () => {
     expect(result).toMatchObject({ allowed: false, evaluated: false, reason: "QUANT_ASSUMPTION_MISMATCH" });
   });
 
-  it("does not let a small sample hide explicit negative validation evidence", async () => {
+  it("does not grant statistically ineligible negative evidence hard-gate authority", async () => {
     const result = await service(valid({
       probabilityOfProfit: 3,
       probabilityOfRuin: 100,
@@ -238,7 +258,8 @@ describe("QuantExecutionPolicyService", () => {
 
     expect(result).toMatchObject({
       allowed: false,
-      reason: "QUANT_WALK_FORWARD_UNSTABLE",
+      evaluated: false,
+      reason: "QUANT_SAMPLE_TOO_SMALL",
     });
   });
 

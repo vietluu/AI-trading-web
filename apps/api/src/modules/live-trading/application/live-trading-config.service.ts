@@ -32,6 +32,8 @@ export class LiveTradingConfigService {
       cooldownMs: this.config.get<number>("TRADE_COOLDOWN_MS") ?? 60_000,
       approvalTtlMs:
         this.config.get<number>("LIVE_RISK_APPROVAL_TTL_MS") ?? 300_000,
+      maxEntryDriftBps:
+        this.config.get<number>("LIVE_MAX_ENTRY_DRIFT_BPS") ?? 10,
       runtimeEnabled: this.runtimeEnabled,
       symbolExecutionPolicy: {
         cautionSymbols,

@@ -200,15 +200,32 @@ describe('DecisionService', () => {
     input.onchain!.signals = ['Coin Metrics returned no verified coverage for this asset.'];
     const output = new DecisionService({} as never).decide(input);
 
-    // The adaptive confidence threshold can still keep this synthetic setup at
-    // WAIT. This regression checks that neutral auxiliary agents no longer
-    // count as directional disagreement against the aligned core agents.
-    expect(output.decision).toBe('WAIT');
+    expect(output.decision).toBe('LONG');
+    expect(output.confidence).toBe(75);
     expect(output.dataQuality).toBe('PARTIAL');
     expect(output.coreDataQuality).toBe('GOOD');
     expect(output.agreementScore).toBe(40);
     expect(output.directionalAgreement).toBe(100);
     expect(output.evidenceCoverage).toBe(100);
+  });
+
+  it('still blocks aligned core evidence when directional coverage is too sparse', () => {
+    const input = decisionInput();
+    input.fusionOutput.dataQuality = 'PARTIAL';
+    input.technical!.dataQuality = 'INSUFFICIENT';
+    input.news!.impact.direction = 'NEUTRAL';
+    input.news!.dataQuality = 'INSUFFICIENT';
+    input.sentiment!.sentiment.overall = 'NEUTRAL';
+    input.sentiment!.dataQuality = 'INSUFFICIENT';
+    input.macro!.dataQuality = 'INSUFFICIENT';
+    input.onchain!.dataQuality = 'INSUFFICIENT';
+    input.onchain!.signals = ['Coin Metrics returned no verified coverage for this asset.'];
+
+    const output = new DecisionService({} as never).decide(input);
+
+    expect(output.decision).toBe('WAIT');
+    expect(output.coreDataQuality).toBe('INSUFFICIENT');
+    expect(output.evidenceCoverage).toBeLessThan(60);
   });
 
   it('does not let strong conviction bypass a high-volatility guardrail', () => {

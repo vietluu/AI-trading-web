@@ -36,15 +36,19 @@ export class PipelineAlertService {
     blockedReasons: string[];
     analyses: FusionInput;
     multiTimeframeConfirmation: number;
+    priceChangePercent?: number;
   }): Promise<void> {
     if (!['LONG', 'SHORT'].includes(input.decision)) return;
     const direction = input.decision === 'LONG' ? 'UP' : 'DOWN';
     const aligned = input.analyses.market.trend.direction === direction &&
       input.analyses.technical.trend.direction === direction &&
       input.multiTimeframeConfirmation >= 80;
-    const quantEvidenceUnavailable = input.blockedReasons.some((reason) =>
-      reason === 'QUANT_VALIDATION_STALE' || reason === 'QUANT_VALIDATION_MISSING');
-    if (!aligned || !quantEvidenceUnavailable) return;
+    const systematicExecutionBlock = input.blockedReasons.some((reason) =>
+      reason.startsWith('QUANT_') ||
+      reason.includes('CALIBRAT') ||
+      reason === 'PARTIAL_DATA_CONVICTION_TOO_LOW' ||
+      reason === 'CONFIDENCE_BELOW_THRESHOLD');
+    if (!aligned || !systematicExecutionBlock) return;
 
     const since = new Date(Date.now() - 60 * 60_000);
     await this.prisma.pipelineAlert.create({
@@ -67,6 +71,10 @@ export class PipelineAlertService {
       }),
     ]);
     if (blockedCount < 5 || existingIncident) return;
+    const observedMove = typeof input.priceChangePercent === 'number' &&
+      Number.isFinite(input.priceChangePercent)
+        ? input.priceChangePercent
+        : undefined;
     await this.prisma.pipelineAlert.create({
       data: {
         runId: input.runId,
@@ -74,13 +82,16 @@ export class PipelineAlertService {
         symbol: input.symbol,
         decision: input.decision,
         confidence: input.confidence,
-        reasoningSummary: `${blockedCount} aligned directional signals were blocked by stale or missing Quant evidence during the last hour.`,
+        reasoningSummary: `${blockedCount} aligned directional signals were blocked by execution gates during the last hour. Top current reasons: ${input.blockedReasons.join(', ')}.${observedMove !== undefined ? ` Observed market move: ${observedMove.toFixed(2)}%.` : ''}`,
         delivered: true,
       },
     });
     this.logger.error({
       event: 'pipeline_missed_opportunity', userId: input.userId,
-      blockedSignals: blockedCount, windowMinutes: 60,
+      symbol: input.symbol, blockedSignals: blockedCount,
+      blockedReasons: input.blockedReasons,
+      priceChangePercent: input.priceChangePercent,
+      windowMinutes: 60,
     });
   }
 }

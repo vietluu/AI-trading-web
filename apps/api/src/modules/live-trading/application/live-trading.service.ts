@@ -842,6 +842,7 @@ export class LiveTradingService {
         null,
         opposite.strategyId,
         context,
+        { skipInstrumentCheck: true },
       );
     }
 
@@ -875,11 +876,14 @@ export class LiveTradingService {
         ...(assessment.takeProfit
           ? { takeProfit: String(assessment.takeProfit) }
           : {}),
+        referencePrice: String(assessment.referencePrice),
+        maxAdverseDriftBps: this.config.values.maxEntryDriftBps,
       },
       opposite ? "REVERSE" : "OPEN",
       assessment,
       assessment.strategyId,
       context,
+      { skipInstrumentCheck: true },
     );
     await this.sync(userId, dto.connectionId, context).catch((error) =>
       this.logger.warn({
@@ -1383,6 +1387,9 @@ export class LiveTradingService {
           },
         }),
     );
+    if (connection.provider === ExchangeProvider.OKX_FUTURES) {
+      await this.relinkOkxMakerFallbackOrders(userId, connectionId);
+    }
     const ledgerSummary = this.tradeLedger
       ? await this.tradeLedger.ingest(userId, connection, tradeFills)
       : { fills: 0, closedTrades: 0 };
@@ -1755,11 +1762,15 @@ export class LiveTradingService {
     } | null,
     strategyId: string | null | undefined,
     context: RequestMetadata,
+    options: { skipInstrumentCheck?: boolean } = {},
   ) {
     // Validate against the connection's actual environment before reserving a
     // risk approval or creating a SUBMITTING row. OKX Demo exposes a smaller
     // instrument set than production (for example OKB-USDT-SWAP).
-    if (typeof this.connections.instrument === "function") {
+    if (
+      !options.skipInstrumentCheck &&
+      typeof this.connections.instrument === "function"
+    ) {
       await this.connections.instrument(
         userId,
         connection.id,
@@ -1824,17 +1835,15 @@ export class LiveTradingService {
         command,
         context,
       );
-      const updated = await this.prisma.liveOrder.update({
-        where: { id: row.id },
-        data: {
-          exchangeOrderId: order.exchangeOrderId,
-          clientOrderId: order.clientOrderId ?? command.clientOrderId,
-          quantity: order.originalQuantity,
-          averagePrice: order.averagePrice,
-          status: order.status,
-          protectiveClientOrderId: order.protectiveClientOrderId,
-        },
-      });
+      const updated = await this.finalizeSubmittedOrder(
+        row,
+        connection.id,
+        order,
+        command.clientOrderId,
+        assessment,
+        strategyId,
+        purpose,
+      );
       await this.audit.record("LIVE_ORDER_EXECUTED", userId, context, {
         orderId: updated.id,
         exchangeOrderId: order.exchangeOrderId,
@@ -1861,6 +1870,39 @@ export class LiveTradingService {
       return this.orderView(updated);
     } catch (error) {
       const safe = this.safeError(error);
+      const recovered = await this.reconcileAmbiguousSubmission(
+        userId,
+        connection,
+        command,
+        context,
+        error,
+      );
+      if (recovered) {
+        const updated = await this.finalizeSubmittedOrder(
+          row,
+          connection.id,
+          recovered,
+          command.clientOrderId,
+          assessment,
+          strategyId,
+          purpose,
+        );
+        await this.audit.record("LIVE_ORDER_RECONCILED", userId, context, {
+          orderId: updated.id,
+          exchangeOrderId: recovered.exchangeOrderId,
+          connectionId: connection.id,
+          clientOrderId: recovered.clientOrderId ?? command.clientOrderId,
+          symbol: command.symbol,
+          purpose,
+        });
+        this.logger.warn({
+          event: "ambiguous_order_submission_reconciled",
+          orderId: updated.id,
+          exchangeOrderId: recovered.exchangeOrderId,
+          symbol: command.symbol,
+        });
+        return this.orderView(updated);
+      }
       await this.prisma.liveOrder.update({
         where: { id: row.id },
         data: {
@@ -1885,6 +1927,194 @@ export class LiveTradingService {
           error instanceof ExchangeError ? error.exchangeCode : undefined,
       });
       throw error;
+    }
+  }
+
+  private async reconcileAmbiguousSubmission(
+    userId: string,
+    connection: Awaited<ReturnType<ExchangeConnectionService["get"]>>,
+    command: Parameters<ExchangeConnectionService["placeOrder"]>[2],
+    context: RequestMetadata,
+    error: unknown,
+  ): Promise<ExchangeOrder | null> {
+    if (
+      !(error instanceof ExchangeError) ||
+      ![
+        ExchangeErrorCode.TIMEOUT,
+        ExchangeErrorCode.UNAVAILABLE,
+      ].includes(error.code)
+    ) return null;
+    const normalized = this.normalizeClientOrderId(command.clientOrderId);
+    const clientOrderIds = [normalized];
+    if (connection.provider === ExchangeProvider.OKX_FUTURES) {
+      clientOrderIds.push(
+        this.normalizeClientOrderId(`${normalized.slice(0, 28)}fb`),
+      );
+    }
+    for (const clientOrderId of [...new Set(clientOrderIds)]) {
+      try {
+        return await this.connections.orderByClientOrderId(
+          userId,
+          connection.id,
+          clientOrderId,
+          command.symbol,
+          context,
+        );
+      } catch (lookupError) {
+        if (
+          lookupError instanceof ExchangeError &&
+          [
+            ExchangeErrorCode.RESOURCE_NOT_FOUND,
+            ExchangeErrorCode.INVALID_REQUEST,
+          ].includes(lookupError.code)
+        ) continue;
+        this.logger.warn({
+          event: "ambiguous_order_reconciliation_failed",
+          connectionId: connection.id,
+          symbol: command.symbol,
+          clientOrderId,
+          error: this.safeError(lookupError),
+        });
+      }
+    }
+    return null;
+  }
+
+  private async finalizeSubmittedOrder(
+    row: { id: string },
+    connectionId: string,
+    order: ExchangeOrder,
+    requestedClientOrderId: string,
+    assessment: {
+      id: string;
+      stopLoss: Prisma.Decimal | null;
+      takeProfit: Prisma.Decimal | null;
+      tradePlan?: Prisma.JsonValue | null;
+    } | null,
+    strategyId: string | null | undefined,
+    purpose: "OPEN" | "CLOSE" | "REVERSE" | "STOP_LOSS" | "TAKE_PROFIT",
+  ) {
+    const clientOrderId = order.clientOrderId ?? requestedClientOrderId;
+    const orderData = {
+      exchangeOrderId: order.exchangeOrderId,
+      clientOrderId,
+      quantity: order.originalQuantity,
+      averagePrice: order.averagePrice,
+      status: order.status,
+      protectiveClientOrderId: order.protectiveClientOrderId,
+    };
+    if (clientOrderId === requestedClientOrderId) {
+      return this.prisma.liveOrder.update({
+        where: { id: row.id },
+        data: orderData,
+      });
+    }
+    const collision = await this.prisma.liveOrder.findUnique({
+      where: {
+        connectionId_clientOrderId: {
+          connectionId,
+          clientOrderId,
+        },
+      },
+    });
+    if (!collision || collision.id === row.id) {
+      return this.prisma.liveOrder.update({
+        where: { id: row.id },
+        data: orderData,
+      });
+    }
+    return this.prisma.$transaction(async (tx) => {
+      await tx.liveOrder.update({
+        where: { id: row.id },
+        data: { riskAssessmentId: null, purpose: "MAKER_ATTEMPT" },
+      });
+      const promoted = await tx.liveOrder.update({
+        where: { id: collision.id },
+        data: {
+          ...orderData,
+          riskAssessmentId: assessment?.id,
+          strategyId,
+          purpose,
+          stopLoss: assessment?.stopLoss,
+          takeProfit: assessment?.takeProfit,
+          initialStopLoss: assessment?.stopLoss,
+          tradePlan:
+            assessment?.tradePlan === null || assessment?.tradePlan === undefined
+              ? Prisma.JsonNull
+              : (assessment.tradePlan as Prisma.InputJsonValue),
+        },
+      });
+      await tx.exchangeFill.updateMany({
+        where: { liveOrderId: collision.id },
+        data: { strategyId },
+      });
+      return promoted;
+    });
+  }
+
+  private async relinkOkxMakerFallbackOrders(
+    userId: string,
+    connectionId: string,
+  ): Promise<void> {
+    const fallbacks = await this.prisma.liveOrder.findMany({
+      where: {
+        userId,
+        connectionId,
+        purpose: "IMPORTED",
+        clientOrderId: { endsWith: "fb" },
+      },
+      orderBy: { createdAt: "desc" },
+      take: ORDER_RECONCILIATION_LIMIT,
+    });
+    for (const fallback of fallbacks) {
+      const prefix = fallback.clientOrderId.slice(0, -2);
+      if (!prefix) continue;
+      const source = await this.prisma.liveOrder.findFirst({
+        where: {
+          userId,
+          connectionId,
+          id: { not: fallback.id },
+          clientOrderId: { startsWith: prefix },
+          purpose: { in: ["OPEN", "REVERSE"] },
+          riskAssessmentId: { not: null },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      if (!source?.riskAssessmentId) continue;
+      await this.prisma.$transaction(async (tx) => {
+        await tx.liveOrder.update({
+          where: { id: source.id },
+          data: { riskAssessmentId: null, purpose: "MAKER_ATTEMPT" },
+        });
+        await tx.liveOrder.update({
+          where: { id: fallback.id },
+          data: {
+            riskAssessmentId: source.riskAssessmentId,
+            strategyId: source.strategyId,
+            purpose: source.purpose,
+            leverage: source.leverage,
+            reduceOnly: source.reduceOnly,
+            stopLoss: source.stopLoss,
+            takeProfit: source.takeProfit,
+            initialStopLoss: source.initialStopLoss,
+            protectiveClientOrderId: source.protectiveClientOrderId,
+            tradePlan:
+              source.tradePlan === null || source.tradePlan === undefined
+                ? Prisma.JsonNull
+                : (source.tradePlan as Prisma.InputJsonValue),
+          },
+        });
+        await tx.exchangeFill.updateMany({
+          where: { liveOrderId: fallback.id },
+          data: { strategyId: source.strategyId },
+        });
+      });
+      this.logger.warn({
+        event: "okx_maker_fallback_relinked",
+        connectionId,
+        sourceOrderId: source.id,
+        fallbackOrderId: fallback.id,
+      });
     }
   }
 

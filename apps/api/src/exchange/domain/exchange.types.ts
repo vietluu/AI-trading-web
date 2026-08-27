@@ -304,6 +304,10 @@ export interface PlaceOrderCommand {
   positionSide?: "LONG" | "SHORT";
   stopLoss?: string;
   takeProfit?: string;
+  /** Risk-approved reference used to reject an entry after adverse price drift. */
+  referencePrice?: string;
+  /** Maximum adverse movement from referencePrice before the order is rejected. */
+  maxAdverseDriftBps?: number;
 }
 
 export interface CancelOrderCommand {
@@ -333,5 +337,6 @@ export interface PlaceProtectiveOrderCommand {
 export type ProtectiveOrderStatus = "ACTIVE" | "TERMINAL" | "MISSING";
 export interface GetOrderQuery {
   symbol: string;
-  orderId: string;
+  orderId?: string;
+  clientOrderId?: string;
 }
