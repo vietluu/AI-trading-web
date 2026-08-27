@@ -71,6 +71,16 @@ export class DecisionJudgeService {
       const generatedAt = Date.parse(analysis.generatedAt);
       return !Number.isFinite(generatedAt) || now - generatedAt > policy.staleAfterMs;
     });
+    const targetDirection = decision.decision === 'LONG' ? 'UP' : decision.decision === 'SHORT' ? 'DOWN' : undefined;
+    const executionCoreGood = Boolean(
+      targetDirection &&
+      decision.coreDataQuality === 'GOOD' &&
+      analyses.market.dataQuality === 'GOOD' &&
+      analyses.technical.dataQuality === 'GOOD' &&
+      analyses.market.trend.direction === targetDirection &&
+      analyses.technical.trend.direction === targetDirection &&
+      freshUsable.length >= minimumUsable,
+    );
     // Optional observations age at different cadences. Exclude stale optional
     // evidence from the quorum instead of letting one old social/macro/on-chain
     // result veto otherwise fresh Market + Technical evidence.
@@ -112,13 +122,14 @@ export class DecisionJudgeService {
       context?.requireCalibratedConfidence &&
       decision.decision !== 'WAIT' &&
       (!calibration || calibration.status !== 'CALIBRATED' || !hardGateCalibration) &&
-      decision.dataQuality === 'PARTIAL'
+      decision.dataQuality === 'PARTIAL' &&
+      !executionCoreGood
     ) reasons.push('PARTIAL_DATA_UNCALIBRATED');
     if (
       context?.requireCalibratedConfidence &&
       decision.decision !== 'WAIT' &&
       (!calibration || calibration.status !== 'CALIBRATED' || !hardGateCalibration) &&
-      decision.confidence < 80
+      decision.confidence < (executionCoreGood ? Math.max(65, decision.adaptiveThreshold) : 80)
     ) reasons.push('UNCALIBRATED_CONFIDENCE_TOO_LOW');
     if (
       decision.decision !== 'WAIT' &&

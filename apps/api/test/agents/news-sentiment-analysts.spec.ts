@@ -160,6 +160,10 @@ describe("News and Sentiment Analyst Agents", () => {
               title: "ETF approval drives institutional inflow",
               importance: 90,
               topics: ["ETF"],
+              kind: "NEWS_ARTICLE",
+              symbols: ["BTC"],
+              sourceId: "source-1",
+              corroboratingSourceIds: ["source-1", "source-2", "source-3"],
             },
           ],
         },
@@ -169,7 +173,7 @@ describe("News and Sentiment Analyst Agents", () => {
 
     expect(NewsAgentOutputSchema.safeParse(output).success).toBe(true);
     expect(output?.impact).toEqual({ level: "HIGH", direction: "POSITIVE" });
-    expect(output?.dataQuality).toBe("PARTIAL");
+    expect(output?.dataQuality).toBe("GOOD");
   });
 
   it("raises a corroborated systemic policy cluster to high impact", () => {
@@ -178,7 +182,11 @@ describe("News and Sentiment Analyst Agents", () => {
       ["n2", "White House crypto event urges Senate action", 70],
       ["n3", "Trump teases more Bitcoin buys after crypto meeting", 70],
       ["n4", "CFTC crypto access discussed at Trump White House event", 70],
-    ].map(([id, title, importance]) => ({ id, title, importance, topics: ["regulation"] }));
+    ].map(([id, title, importance], index) => ({
+      id, title, importance, topics: ["regulation"], kind: "MARKET_WIDE_NEWS",
+      relevance: "MARKET_WIDE_CONTEXT", sourceId: `source-${index + 1}`,
+      corroboratingSourceIds: [`source-${index + 1}`],
+    }));
     const output = NEWS_ANALYST_DEFINITION.buildDeterministicOutput?.(
       { "news.articles.list": { articles } },
       ["news.articles.list"],
@@ -186,6 +194,19 @@ describe("News and Sentiment Analyst Agents", () => {
 
     expect(output?.impact.level).toBe("HIGH");
     expect(output?.impact.direction).toBe("POSITIVE");
+  });
+
+  it('keeps a single broad market headline neutral for an unrelated asset', () => {
+    const output = NEWS_ANALYST_DEFINITION.buildDeterministicOutput?.({
+      'news.articles.list': { articles: [{
+        id: 'n1', title: 'U.S. banks launch nationwide blockchain network',
+        importance: 75, topics: ['institutional_adoption'], kind: 'MARKET_WIDE_NEWS',
+        relevance: 'MARKET_WIDE_CONTEXT', sourceId: 'source-1', symbols: [],
+      }] },
+    }, ['news.articles.list']);
+
+    expect(output?.impact.direction).toBe('NEUTRAL');
+    expect(output?.riskSignals).toEqual([]);
   });
 
   it("uses current Fear and Greed as partial context when social coverage is empty", () => {

@@ -45,9 +45,9 @@ function deterministicNews(
     ).values(),
   ];
   const positive =
-    /surge|rally|approval|adoption|upgrade|inflow|launch|partnership|record|teases? more (?:bitcoin|crypto) buys?|working to bring|push(?:es)? (?:congress|senate).*pass|urges? (?:congress|senate).*pass/i;
+    /surge|rally|approv(?:al|es?|ed)|adoption|upgrade|inflow|partnership|record|teases? more (?:bitcoin|crypto) buys?|working to bring|push(?:es)? (?:congress|senate).*pass|urges? (?:congress|senate).*pass/i;
   const negative =
-    /hack|exploit|lawsuit|ban|outflow|liquidation|delist|crash|breach/i;
+    /hack|exploit|lawsuit|ban(?:s|ned)?|outflow|liquidation|delist|crash|breach|reject(?:s|ed|ion)?|charges? .*fraud/i;
   const eventKey = (item: Record<string, unknown>): string | undefined => {
     const text = `${safeText(item.title)} ${safeText(item.summary)}`;
     if (/trump|white house/i.test(text) && /crypto|bitcoin|clarity act|cftc/i.test(text)) return "US_CRYPTO_POLICY";
@@ -56,22 +56,46 @@ function deterministicNews(
     if (/hack|exploit|security breach/i.test(text)) return "SECURITY_INCIDENT";
     return undefined;
   };
-  const clusterCounts = new Map<string, number>();
+  const sourceIds = (item: Record<string, unknown>): string[] => {
+    const corroborating = Array.isArray(item.corroboratingSourceIds)
+      ? item.corroboratingSourceIds.filter((value): value is string => typeof value === "string")
+      : [];
+    const sourceId = safeText(item.sourceId);
+    return [...new Set([...(sourceId ? [sourceId] : []), ...corroborating])];
+  };
+  const clusterSources = new Map<string, Set<string>>();
   for (const item of unique) {
     const key = eventKey(item);
-    if (key) clusterCounts.set(key, (clusterCounts.get(key) ?? 0) + 1);
+    if (!key) continue;
+    const sources = clusterSources.get(key) ?? new Set<string>();
+    sourceIds(item).forEach((source) => sources.add(source));
+    clusterSources.set(key, sources);
   }
   const scored = unique
     .map((item) => {
       const text = `${safeText(item.title)} ${safeText(item.summary)}`;
-      const direction = negative.test(text)
+      const rawDirection = negative.test(text)
         ? ("NEGATIVE" as const)
         : positive.test(text)
           ? ("POSITIVE" as const)
           : ("NEUTRAL" as const);
       const key = eventKey(item);
+      const independentSources = key ? clusterSources.get(key)?.size ?? 0 : 0;
+      const symbols = Array.isArray(item.symbols)
+        ? item.symbols.filter((value): value is string => typeof value === "string")
+        : [];
+      const directlyRelevant = item.kind === "EXCHANGE_ANNOUNCEMENT" ||
+        (item.relevance !== "MARKET_WIDE_CONTEXT" && symbols.length > 0);
+      const corroboratedSystemic = item.relevance === "MARKET_WIDE_CONTEXT" &&
+        Boolean(key) && independentSources >= 2;
+      // Broad finance/regulatory headlines are useful context but may not
+      // manufacture an asset direction without direct relevance or independent
+      // corroboration of a genuinely systemic crypto event.
+      const direction = directlyRelevant || corroboratedSystemic
+        ? rawDirection
+        : ("NEUTRAL" as const);
       const corroborationBonus = key
-        ? Math.min(Math.max((clusterCounts.get(key) ?? 1) - 1, 0) * 5, 20)
+        ? Math.min(Math.max(independentSources - 1, 0) * 5, 20)
         : 0;
       return {
         item,
@@ -103,8 +127,9 @@ function deterministicNews(
         ? ("POSITIVE" as const)
         : ("NEGATIVE" as const);
   const maximumImportance = Math.max(...top.map((item) => item.importance));
+  const trustedSourceCount = new Set(unique.flatMap(sourceIds)).size;
   return {
-    summary: `${unique.length} trusted recent article(s) were evaluated deterministically; top market impact is ${direction.toLowerCase()}.`,
+    summary: `${unique.length} trusted recent article(s) from ${trustedSourceCount} independent source(s) were evaluated deterministically; verified market impact is ${direction.toLowerCase()}.`,
     impact: {
       level:
         maximumImportance >= 85
@@ -131,7 +156,7 @@ function deterministicNews(
     riskSignals: top
       .filter((item) => item.direction === "NEGATIVE")
       .map(({ item }) => safeText(item.title, "Negative market event")),
-    dataQuality: "PARTIAL",
+    dataQuality: trustedSourceCount >= 3 ? "GOOD" : "PARTIAL",
     usedTools: usedTools as NewsAgentOutput["usedTools"],
     generatedAt: new Date().toISOString(),
   };

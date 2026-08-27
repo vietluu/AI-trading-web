@@ -45,6 +45,14 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     expect(service.evaluate({ ...output, opportunityScore: 56 } as never, context)).toEqual({ actionable: false, decision: 'WAIT', reason: 'OPPORTUNITY_BELOW_THRESHOLD' });
     expect(service.evaluate({ ...output, dataQuality: 'INSUFFICIENT' } as never, context)).toEqual({ actionable: false, decision: 'WAIT', reason: 'DATA_QUALITY_INSUFFICIENT' });
     expect(service.evaluate({ ...output, dataQuality: 'PARTIAL', confidence: 62 } as never, context)).toEqual({ actionable: false, decision: 'WAIT', reason: 'PARTIAL_DATA_CONVICTION_TOO_LOW' });
+    expect(service.evaluate({
+      ...output,
+      dataQuality: 'PARTIAL',
+      coreDataQuality: 'GOOD',
+      directionalAgreement: 100,
+      evidenceCoverage: 100,
+      confidence: 65,
+    } as never, context)).toEqual({ actionable: true, decision: 'LONG' });
     expect(service.evaluate({ ...output, conflictLevel: 'HIGH' } as never, context)).toEqual({ actionable: false, decision: 'WAIT', reason: 'HIGH_CONFLICT' });
   });
 

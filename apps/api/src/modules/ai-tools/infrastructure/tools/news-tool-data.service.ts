@@ -123,6 +123,14 @@ export class NewsToolDataService {
           symbols: article.symbols.map((item) => item.symbol),
           topics: article.topics.map((item) => item.topic),
           duplicateCount: article.sourceReferences.length,
+          corroboratingSourceIds: [
+            ...new Set([
+              article.sourceId,
+              ...article.sourceReferences
+                .map((reference) => reference.sourceId)
+                .filter((sourceId): sourceId is string => Boolean(sourceId)),
+            ]),
+          ],
         };
       });
 
@@ -149,7 +157,8 @@ export class NewsToolDataService {
         reliability: announcement.sourceReliabilityScore,
         symbols: announcement.relatedSymbols,
         topics: [announcement.category],
-        duplicateCount: 1,
+          duplicateCount: 1,
+          corroboratingSourceIds: [announcement.provider],
       }));
 
     // Systemic crypto events must accompany symbol-specific news instead of
@@ -193,6 +202,14 @@ export class NewsToolDataService {
           symbols: article.symbols.map((item) => item.symbol),
           topics: article.topics.map((item) => item.topic),
           duplicateCount: article.sourceReferences.length,
+          corroboratingSourceIds: [
+            ...new Set([
+              article.sourceId,
+              ...article.sourceReferences
+                .map((reference) => reference.sourceId)
+                .filter((sourceId): sourceId is string => Boolean(sourceId)),
+            ]),
+          ],
           relevance: "MARKET_WIDE_CONTEXT",
           };
         })
@@ -251,6 +268,14 @@ export class NewsToolDataService {
           topics: article.topics.map((item) => item.topic),
           entities: article.entities.map((item) => item.entity),
           duplicateCount: article.sourceReferences.length,
+          corroboratingSourceIds: [
+            ...new Set([
+              article.sourceId,
+              ...article.sourceReferences
+                .map((reference) => reference.sourceId)
+                .filter((sourceId): sourceId is string => Boolean(sourceId)),
+            ]),
+          ],
         };
       }
     }

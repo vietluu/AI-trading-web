@@ -93,6 +93,25 @@ describe('Market Analyst Agent', () => {
     expect(calls?.[1]?.arguments).toMatchObject({ limit: 100, interval: '1h' });
   });
 
+  it('builds a deterministic market observation without an AI provider', () => {
+    const output = MARKET_ANALYST_DEFINITION.buildDeterministicOutput?.({
+      'market.ticker.get': { price: '102.00' },
+      'market.candles.list': {
+        candles: Array.from({ length: 30 }, (_, index) => ({
+          close: String(96 + index * 0.2), high: String(96.2 + index * 0.2),
+          low: String(95.8 + index * 0.2), volume: '1000',
+        })),
+      },
+      'market.indicators.get': { ema20: '100', ema50: '98', rsi: '68', macdHistogram: '0.2', atr: '0.5' },
+      'market.order_book.get': { bids: [['101.99', '20']], asks: [['102.01', '10']] },
+    }, ['market.ticker.get', 'market.candles.list', 'market.indicators.get', 'market.order_book.get']);
+
+    expect(MarketAgentOutputSchema.safeParse(output).success).toBe(true);
+    expect(output?.trend.direction).toBe('UP');
+    expect(output?.liquidity.depthImbalance).toBe('BUY_HEAVY');
+    expect(output?.dataQuality).toBe('GOOD');
+  });
+
   it('registers the non-trading market_analyst_v1 prompt', () => {
     const prompt = new PromptRegistry().getVersion('market_analyst_v1', 1);
     expect(prompt?.userTemplate).toBe(

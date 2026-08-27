@@ -12,6 +12,7 @@ import {
   AgentStatus,
   AgentType,
 } from '../enums';
+import { deterministicTechnicalAnalysis } from '../analysis/deterministic-core-analysis';
 
 export const TECHNICAL_ANALYST_ALLOWED_TOOLS = [
   'market.indicators.get',
@@ -80,6 +81,7 @@ export const TECHNICAL_ANALYST_DEFINITION: AgentDefinition<
   requiresUserContext: false,
   allowsPublicSystemRun: true,
   includeUsedToolsInOutput: true,
+  buildDeterministicOutput: deterministicTechnicalAnalysis,
   buildToolCalls: (input) => [
     {
       toolName: 'market.indicators.get',

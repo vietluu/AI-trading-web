@@ -127,6 +127,24 @@ describe('Technical Analyst Agent', () => {
     expect(new Set(calls?.map((call) => call.toolName)).size).toBe(2);
   });
 
+  it('builds deterministic bullish technical evidence when the LLM is unavailable', () => {
+    const candles = Array.from({ length: 30 }, (_, index) => ({
+      close: String(95 + index * 0.2), high: String(95.1 + index * 0.2),
+      low: String(94.9 + index * 0.2), volume: String(1000 + index),
+    }));
+    const output = TECHNICAL_ANALYST_DEFINITION.buildDeterministicOutput?.({
+      'market.indicators.get': {
+        rsi: '69.13', ema20: '99.5', ema50: '98.8', macdHistogram: '0.1466', atr: '0.4',
+      },
+      'market.candles.list': { candles: [...candles, { close: '101', high: '101.1', low: '100.8', volume: '2000' }] },
+    }, ['market.indicators.get', 'market.candles.list']);
+
+    expect(TechnicalAgentOutputSchema.safeParse(output).success).toBe(true);
+    expect(output?.trend.direction).toBe('UP');
+    expect(output?.momentum.macd.trend).toBe('BULLISH');
+    expect(output?.dataQuality).toBe('GOOD');
+  });
+
   it('registers the strict non-trading prompt', () => {
     const prompt = new PromptRegistry().getVersion('technical_analyst_v1', 1);
     expect(prompt?.userTemplate).toBe(

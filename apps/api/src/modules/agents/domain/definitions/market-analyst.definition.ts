@@ -12,6 +12,7 @@ import {
   AgentStatus,
   AgentType,
 } from '../enums';
+import { deterministicMarketAnalysis } from '../analysis/deterministic-core-analysis';
 
 export const MARKET_ANALYST_ALLOWED_TOOLS = [
   'market.ticker.get',
@@ -89,6 +90,7 @@ export const MARKET_ANALYST_DEFINITION: AgentDefinition<
   requiresUserContext: false,
   allowsPublicSystemRun: true,
   includeUsedToolsInOutput: true,
+  buildDeterministicOutput: deterministicMarketAnalysis,
   buildToolCalls: (input) => [
     {
       toolName: 'market.ticker.get',

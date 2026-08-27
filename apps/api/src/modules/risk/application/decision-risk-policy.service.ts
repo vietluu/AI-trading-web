@@ -20,7 +20,7 @@ export interface DecisionRiskPolicyResult {
 }
 
 export class DecisionRiskPolicyService {
-  evaluate(output: Pick<DecisionOutput, 'decision' | 'confidence' | 'dataQuality' | 'conflictLevel' | 'opportunityScore' | 'expectedValue' | 'adaptiveThreshold' | 'riskScore' | 'volatilityAdjustment' | 'agreementScore' | 'regime'>, context?: AdaptivePolicyContext): DecisionRiskPolicyResult {
+  evaluate(output: Pick<DecisionOutput, 'decision' | 'confidence' | 'dataQuality' | 'coreDataQuality' | 'directionalAgreement' | 'evidenceCoverage' | 'conflictLevel' | 'opportunityScore' | 'expectedValue' | 'adaptiveThreshold' | 'riskScore' | 'volatilityAdjustment' | 'agreementScore' | 'regime'>, context?: AdaptivePolicyContext): DecisionRiskPolicyResult {
     if (!context?.symbol) return { actionable: false, decision: 'WAIT', reason: 'SYMBOL_REQUIRED' };
     const policy = adaptiveTradingPolicy({ ...context, symbol: context.symbol, regime: output.regime?.type ?? context.regime ?? 'RANGING' });
     if (output.decision === 'WAIT') {
@@ -32,18 +32,28 @@ export class DecisionRiskPolicyService {
     if (output.conflictLevel === 'HIGH') {
       return { actionable: false, decision: 'WAIT', reason: 'HIGH_CONFLICT' };
     }
-    const strongConviction = output.agreementScore >= 80 && output.opportunityScore >= 68 && output.expectedValue > 0.2;
+    const directionalAgreement = output.directionalAgreement ?? output.agreementScore;
+    const evidenceCoverage = output.evidenceCoverage ?? 100;
+    const coreEvidenceGood = output.coreDataQuality === 'GOOD';
+    const strongConviction = coreEvidenceGood && directionalAgreement >= 80 &&
+      evidenceCoverage >= 60 && output.opportunityScore >= 68 && output.expectedValue > 0.2;
     if (output.volatilityAdjustment <= -30 || output.riskScore >= 90) {
       return { actionable: false, decision: 'WAIT', reason: 'EXTREME_VOLATILITY' };
     }
     const thresholdFloor = Math.max(55, output.adaptiveThreshold - 5);
     if (
-      output.dataQuality === 'PARTIAL' &&
+      output.dataQuality === 'PARTIAL' && !coreEvidenceGood &&
       (
         output.confidence < output.adaptiveThreshold + 5 ||
-        output.agreementScore < 75 ||
+        directionalAgreement < 75 ||
         output.expectedValue <= policy.minExpectedValue + 0.1
       )
+    ) {
+      return { actionable: false, decision: 'WAIT', reason: 'PARTIAL_DATA_CONVICTION_TOO_LOW' };
+    }
+    if (
+      output.dataQuality === 'PARTIAL' && coreEvidenceGood &&
+      (directionalAgreement < 75 || evidenceCoverage < 60)
     ) {
       return { actionable: false, decision: 'WAIT', reason: 'PARTIAL_DATA_CONVICTION_TOO_LOW' };
     }

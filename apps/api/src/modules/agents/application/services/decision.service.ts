@@ -489,6 +489,7 @@ export class DecisionService {
     const bearishCount = active.filter(
       (name) => votes.get(name) === "BEARISH",
     ).length;
+    const directionalCount = bullishCount + bearishCount;
     const rawDirectionalBias = activeWeight
       ? ((bullishWeight - bearishWeight) / activeWeight) * 100
       : 0;
@@ -548,6 +549,17 @@ export class DecisionService {
     const agreementScore = active.length
       ? Math.round((alignedCount / active.length) * 100)
       : 0;
+    // Neutral context is coverage, not directional opposition. Keep the legacy
+    // all-agent agreement score for telemetry, while execution policies use
+    // directional agreement together with an explicit coverage score.
+    const directionalAgreement = candidate === "LONG"
+      ? (directionalCount ? Math.round((bullishCount / directionalCount) * 100) : 0)
+      : candidate === "SHORT"
+        ? (directionalCount ? Math.round((bearishCount / directionalCount) * 100) : 0)
+        : agreementScore;
+    const evidenceCoverage = Math.round(
+      (active.length / Math.max(this.expectedAnalystCount(input), 1)) * 100,
+    );
     const alignedWeight =
       candidate === "LONG"
         ? bullishWeight
@@ -556,6 +568,7 @@ export class DecisionService {
           : Math.max(bullishWeight, bearishWeight, neutralWeight);
     const baseScore = activeWeight ? (alignedWeight / activeWeight) * 100 : 0;
     const dataQuality = this.dataQuality(input, active);
+    const coreDataQuality = this.coreDataQuality(input);
     const { adjustment: volatilityAdjustment, extreme } = this.volatilityFilter(
       input,
       customOptions?.volatilityPenalty,
@@ -612,9 +625,9 @@ export class DecisionService {
       ? DECISION_THRESHOLDS.CORE_TREND_ALIGNMENT_BONUS
       : 0;
     const convictionBonus =
-      agreementScore >= 80 && baseScore >= 70
+      directionalAgreement >= 80 && evidenceCoverage >= 60 && baseScore >= 70
         ? 8
-        : agreementScore >= 70 && baseScore >= 60
+        : directionalAgreement >= 70 && evidenceCoverage >= 60 && baseScore >= 60
           ? 4
           : 0;
 
@@ -706,7 +719,11 @@ export class DecisionService {
     );
     const expectedValue = this.clamp(grossExpectedValue - executionCost, -3, 3);
     const strongConviction =
-      agreementScore >= 80 && opportunityScore >= 68 && expectedValue > 0.2;
+      coreDataQuality === "GOOD" &&
+      directionalAgreement >= 80 &&
+      evidenceCoverage >= 60 &&
+      opportunityScore >= 68 &&
+      expectedValue > 0.2;
     // A learned threshold may make the system more conservative, but must not
     // weaken the regime-specific safety threshold.
     const adaptiveThresholdValue = Math.max(
@@ -739,10 +756,13 @@ export class DecisionService {
       decision: finalDecision,
       confidence: Math.round(calibratedConfidence),
       confidenceKind: "COMPOSITE_SCORE",
-      reasoning: `${active.length} of ${this.expectedAnalystCount(input)} configured analysts supplied usable data. The ${regime.type.toLowerCase().replace("_", " ")} regime produced a normalized ${weightedBias} bias of ${Math.round(directionalBias)}, ${agreementScore}% analyst agreement, and ${Math.round(baseScore)}% weighted alignment. The composite confidence score is ${Math.round(calibratedConfidence)} with ${dataQuality} data and ${conflictLevel} conflict; it is not a win probability.`,
+      reasoning: `${active.length} of ${this.expectedAnalystCount(input)} configured analysts supplied usable data. The ${regime.type.toLowerCase().replace("_", " ")} regime produced a normalized ${weightedBias} bias of ${Math.round(directionalBias)}, ${directionalAgreement}% directional agreement, ${evidenceCoverage}% evidence coverage, and ${Math.round(baseScore)}% weighted alignment. The composite confidence score is ${Math.round(calibratedConfidence)} with ${dataQuality} overall data, ${coreDataQuality} core data, and ${conflictLevel} conflict; it is not a win probability.`,
       signals,
       risks,
       agreementScore,
+      directionalAgreement,
+      evidenceCoverage,
+      coreDataQuality,
       dataQuality,
       regime,
       weighting,
@@ -947,6 +967,15 @@ export class DecisionService {
       active.every((name) => input[name]?.dataQuality === "GOOD")
     )
       return "GOOD";
+    return "PARTIAL";
+  }
+
+  private coreDataQuality(input: DecisionInput): AgentDataQuality {
+    const qualities = [input.market?.dataQuality, input.technical?.dataQuality];
+    if (qualities.every((quality) => quality === "GOOD")) return "GOOD";
+    if (qualities.some((quality) => quality === "INSUFFICIENT" || quality === undefined)) {
+      return "INSUFFICIENT";
+    }
     return "PARTIAL";
   }
 

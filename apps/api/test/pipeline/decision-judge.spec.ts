@@ -84,6 +84,24 @@ describe('DecisionJudgeService', () => {
     expect(result.reasons).toContain('PARTIAL_DATA_UNCALIBRATED');
   });
 
+  it('lets fresh aligned core evidence continue to the mandatory quant gate', () => {
+    const generatedAt = new Date().toISOString();
+    const market = { dataQuality: 'GOOD', generatedAt, trend: { direction: 'UP' } };
+    const technical = { dataQuality: 'GOOD', generatedAt, trend: { direction: 'UP' } };
+    const partial = { dataQuality: 'PARTIAL', generatedAt };
+    const result = judge.evaluate({
+      decision: 'LONG', dataQuality: 'PARTIAL', coreDataQuality: 'GOOD',
+      conflictLevel: 'LOW', confidence: 65, adaptiveThreshold: 60,
+      expectedValue: 0.8, profitFactorEstimate: 1.8, riskScore: 30,
+      confidenceCalibration: { status: 'INSUFFICIENT_HISTORY', sampleSize: 0 },
+    } as never, {
+      market, technical, news: partial, sentiment: partial, macro: partial,
+      onchain: { dataQuality: 'INSUFFICIENT', generatedAt, signals: ['No verified on-chain provider is configured.'] },
+    } as never, { symbol: 'SOL-USDT', timeframe: '15m', requireCalibratedConfidence: true });
+
+    expect(result).toEqual({ approved: true, verdict: 'APPROVE', reasons: [] });
+  });
+
   it('requires stronger raw confidence for uncalibrated automatic execution', () => {
     const generatedAt = new Date().toISOString();
     const good = { dataQuality: 'GOOD', generatedAt };

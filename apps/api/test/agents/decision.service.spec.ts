@@ -188,6 +188,29 @@ describe('DecisionService', () => {
     expect(output.expectedWinProbability).toBe(0.5);
   });
 
+  it('separates neutral auxiliary coverage from directional disagreement', () => {
+    const input = decisionInput();
+    input.fusionOutput.dataQuality = 'PARTIAL';
+    input.news!.impact = { level: 'MEDIUM', direction: 'NEUTRAL' };
+    input.news!.dataQuality = 'PARTIAL';
+    input.sentiment!.sentiment.overall = 'NEUTRAL';
+    input.sentiment!.dataQuality = 'PARTIAL';
+    input.macro!.macroTrend = 'NEUTRAL';
+    input.onchain!.dataQuality = 'INSUFFICIENT';
+    input.onchain!.signals = ['Coin Metrics returned no verified coverage for this asset.'];
+    const output = new DecisionService({} as never).decide(input);
+
+    // The adaptive confidence threshold can still keep this synthetic setup at
+    // WAIT. This regression checks that neutral auxiliary agents no longer
+    // count as directional disagreement against the aligned core agents.
+    expect(output.decision).toBe('WAIT');
+    expect(output.dataQuality).toBe('PARTIAL');
+    expect(output.coreDataQuality).toBe('GOOD');
+    expect(output.agreementScore).toBe(40);
+    expect(output.directionalAgreement).toBe(100);
+    expect(output.evidenceCoverage).toBe(100);
+  });
+
   it('does not let strong conviction bypass a high-volatility guardrail', () => {
     const input = decisionInput();
     input.market!.volatility.level = 'HIGH';
