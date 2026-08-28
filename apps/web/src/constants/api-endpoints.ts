@@ -64,6 +64,7 @@ export const API_ENDPOINTS = {
     reflectionProposals: "/ai/reflection/proposals",
     reflectionRun: "/ai/reflection/run",
     selfLearningLifecycle: "/ai/self-learning/lifecycle",
+    selfLearningLiveEligibilityReview: "/ai/self-learning/live-eligibility/review",
     risk: "/ai/risk",
   },
   pipeline: {

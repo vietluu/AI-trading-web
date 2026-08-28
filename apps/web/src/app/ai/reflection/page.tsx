@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { ROUTES } from "@/constants/routes";
 import {
+  useLiveEligibilityReview,
   useReflectionActions,
   useReflectionData,
   useSelfLearningLifecycle,
@@ -13,6 +15,11 @@ export default function ReflectionPage() {
   const { t } = useTranslation();
   const reflection = useReflectionData();
   const lifecycle = useSelfLearningLifecycle();
+  const liveReviewMutation = useLiveEligibilityReview();
+  const [confirmed, setConfirmed] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
   const {
     insights,
     proposals,
@@ -21,6 +28,46 @@ export default function ReflectionPage() {
     reviewProposalMutation,
   } = useReflectionActions();
   const data = reflection.data;
+  const candidate = lifecycle.data?.eligibleCandidate;
+
+  const handleApprove = async () => {
+    if (!candidate) return;
+    setErrorMessage(null);
+    try {
+      await liveReviewMutation.mutateAsync({
+        action: "APPROVE",
+        version: candidate.version,
+        configurationHash: candidate.configurationHash,
+        confirmed: true,
+      });
+      setConfirmed(false);
+    } catch (err: unknown) {
+      setErrorMessage(
+        err instanceof Error ? err.message : "Failed to approve strategy version",
+      );
+    }
+  };
+
+  const handleReject = async () => {
+    if (!candidate) return;
+    setErrorMessage(null);
+    try {
+      await liveReviewMutation.mutateAsync({
+        action: "REJECT",
+        version: candidate.version,
+        configurationHash: candidate.configurationHash,
+        confirmed: true,
+        reason: rejectReason.trim() || undefined,
+      });
+      setConfirmed(false);
+      setRejectReason("");
+    } catch (err: unknown) {
+      setErrorMessage(
+        err instanceof Error ? err.message : "Failed to reject candidate",
+      );
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -60,6 +107,143 @@ export default function ReflectionPage() {
           </p>
         )}
       </div>
+
+      {candidate && (
+        <div className="rounded-lg border border-emerald-500/40 bg-card p-6 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold text-emerald-400">
+                LIVE Promotion Candidate Review
+              </h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Version {candidate.version} · Hash:{" "}
+                <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
+                  {candidate.configurationHash.slice(0, 16)}...
+                </code>
+              </p>
+            </div>
+            <span className="rounded-full bg-emerald-500/20 px-3 py-1 text-xs font-bold text-emerald-300">
+              LIVE_ELIGIBLE
+            </span>
+          </div>
+
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-border text-muted-foreground">
+                  <th className="pb-2">Eligibility Gate Metric</th>
+                  <th className="pb-2">Observed Value</th>
+                  <th className="pb-2">Threshold</th>
+                  <th className="pb-2">Gate Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/50">
+                <tr>
+                  <td className="py-2 font-medium">Out-of-Sample Accuracy</td>
+                  <td className="py-2">{(candidate.metrics.outOfSampleAccuracy * 100).toFixed(1)}%</td>
+                  <td className="py-2 text-muted-foreground">&ge; 55.0%</td>
+                  <td className="py-2 font-semibold text-emerald-400">
+                    {candidate.metrics.outOfSampleAccuracy >= 0.55 ? "PASS" : "FAIL"}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="py-2 font-medium">Expectancy</td>
+                  <td className="py-2">{candidate.metrics.expectancy.toFixed(4)}</td>
+                  <td className="py-2 text-muted-foreground">&gt; 0.0000</td>
+                  <td className="py-2 font-semibold text-emerald-400">
+                    {candidate.metrics.expectancy > 0 ? "PASS" : "FAIL"}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="py-2 font-medium">Profit Factor</td>
+                  <td className="py-2">{candidate.metrics.profitFactor.toFixed(2)}</td>
+                  <td className="py-2 text-muted-foreground">&ge; 1.30</td>
+                  <td className="py-2 font-semibold text-emerald-400">
+                    {candidate.metrics.profitFactor >= 1.3 ? "PASS" : "FAIL"}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="py-2 font-medium">Sharpe Ratio</td>
+                  <td className="py-2">{candidate.metrics.sharpeRatio.toFixed(2)}</td>
+                  <td className="py-2 text-muted-foreground">&ge; 0.50</td>
+                  <td className="py-2 font-semibold text-emerald-400">
+                    {candidate.metrics.sharpeRatio >= 0.5 ? "PASS" : "FAIL"}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="py-2 font-medium">Maximum Drawdown</td>
+                  <td className="py-2">{candidate.metrics.maxDrawdownPct.toFixed(1)}%</td>
+                  <td className="py-2 text-muted-foreground">&le; 10.0%</td>
+                  <td className="py-2 font-semibold text-emerald-400">
+                    {candidate.metrics.maxDrawdownPct <= 10.0 ? "PASS" : "FAIL"}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="py-2 font-medium">Completed Shadow Trades</td>
+                  <td className="py-2">{candidate.metrics.shadowTrades}</td>
+                  <td className="py-2 text-muted-foreground">&ge; 100</td>
+                  <td className="py-2 font-semibold text-emerald-400">
+                    {candidate.metrics.shadowTrades >= 100 ? "PASS" : "FAIL"}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="py-2 font-medium">Completed Canary Trades</td>
+                  <td className="py-2">{candidate.metrics.canaryTrades}</td>
+                  <td className="py-2 text-muted-foreground">&ge; 100</td>
+                  <td className="py-2 font-semibold text-emerald-400">
+                    {candidate.metrics.canaryTrades >= 100 ? "PASS" : "FAIL"}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mt-4 rounded bg-muted/40 p-3">
+            <label className="flex items-center gap-2.5 text-xs font-medium cursor-pointer">
+              <input
+                type="checkbox"
+                className="rounded border-border text-primary focus:ring-primary"
+                checked={confirmed}
+                onChange={(e) => setConfirmed(e.target.checked)}
+              />
+              <span>
+                I confirm promoting strategy version <strong>v{candidate.version}</strong> (hash: {candidate.configurationHash.slice(0, 10)}...) to LIVE trading.
+              </span>
+            </label>
+          </div>
+
+          {errorMessage && (
+            <p className="mt-3 text-xs font-medium text-red-400">
+              Error: {errorMessage}
+            </p>
+          )}
+
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <button
+              className="rounded bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={!confirmed || liveReviewMutation.isPending}
+              onClick={handleApprove}
+            >
+              {liveReviewMutation.isPending ? "Promoting..." : `Approve Version ${candidate.version} for LIVE`}
+            </button>
+            <input
+              type="text"
+              className="rounded border border-border bg-background px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+              placeholder="Rejection reason (optional)"
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+            />
+            <button
+              className="rounded border border-red-500/50 bg-red-500/10 px-4 py-2 text-xs font-semibold text-red-400 hover:bg-red-500/20 disabled:opacity-40"
+              disabled={liveReviewMutation.isPending}
+              onClick={handleReject}
+            >
+              Reject Candidate
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="rounded-lg border bg-card p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>

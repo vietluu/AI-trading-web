@@ -40,6 +40,7 @@ import {
   getRiskDashboard,
   killLiveTrading,
   replayPipelineRun,
+  reviewLiveEligibility,
   reviewReflectionProposal,
   runDecision,
   runPipeline,
@@ -251,6 +252,21 @@ export function useSelfLearningLifecycle() {
     queryKey: queryKeys.ai.selfLearningLifecycle(),
     queryFn: getSelfLearningLifecycle,
     refetchInterval: 60_000,
+  });
+}
+
+export function useLiveEligibilityReview() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: reviewLiveEligibility,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.ai.selfLearningLifecycle(),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["quant-recommendations"],
+      });
+    },
   });
 }
 

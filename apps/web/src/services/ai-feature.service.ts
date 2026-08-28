@@ -281,7 +281,7 @@ export interface ReflectionSummary {
 }
 
 export interface SelfLearningLifecycle {
-  stage: "LIVE" | "SHADOW" | "CANARY";
+  stage: "LIVE" | "SHADOW" | "CANARY" | "LIVE_ELIGIBLE";
   isEnabled: boolean;
   liveVersion: number;
   candidateVersion: number | null;
@@ -303,6 +303,27 @@ export interface SelfLearningLifecycle {
   };
   startedAt: string | null;
   lastPromotionAt: string | null;
+  eligibleCandidate?: null | {
+    version: number;
+    weights: Record<string, number>;
+    threshold: number;
+    metrics: {
+      outOfSampleAccuracy: number;
+      expectancy: number;
+      profitFactor: number;
+      sharpeRatio: number;
+      maxDrawdownPct: number;
+      shadowTrades: number;
+      canaryTrades: number;
+    };
+    configurationHash: string;
+    eligibleAt: string;
+  };
+  approvedCandidate?: null | {
+    version: number;
+    configurationHash: string;
+    approvedAt: string;
+  };
   experiment: null | {
     version: number;
     recommendation: null | { id: string; status: string; title: string };
@@ -603,6 +624,22 @@ export async function getReflectionData() {
 export async function getSelfLearningLifecycle() {
   return apiRequest<SelfLearningLifecycle>(
     API_ENDPOINTS.ai.selfLearningLifecycle,
+  );
+}
+
+export async function reviewLiveEligibility(input: {
+  action: "APPROVE" | "REJECT";
+  version: number;
+  configurationHash: string;
+  confirmed: true;
+  reason?: string;
+}) {
+  return apiRequest<SelfLearningLifecycle>(
+    API_ENDPOINTS.ai.selfLearningLiveEligibilityReview,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
   );
 }
 
