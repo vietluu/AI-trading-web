@@ -642,6 +642,7 @@ model PerformanceRecord {
   highVolatility  Boolean            @default(false)
   marketRegime    String?
   majorNews       Boolean            @default(false)
+  provenanceEligible Boolean           @default(false)
   evaluatedAt     DateTime           @default(now())
   user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   run             PipelineRun        @relation(fields: [runId], references: [id], onDelete: Cascade)
@@ -2273,6 +2274,16 @@ model SelfLearningConfiguration {
   canaryWeightsJson     Json?
   canaryThreshold       Float?
   canaryStartedAt       DateTime?
+  candidateShadowTrades Int       @default(0)
+  eligibleVersion       Int?
+  eligibleWeightsJson   Json?
+  eligibleThreshold     Float?
+  eligibleMetricsJson   Json?
+  eligibleConfigurationHash String?
+  eligibleAt            DateTime?
+  approvedVersion       Int?
+  approvedConfigurationHash String?
+  approvedAt            DateTime?
   previousWeightsJson   Json?
   previousThreshold     Float?
   previousVersion       Int?

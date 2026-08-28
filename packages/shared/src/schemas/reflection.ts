@@ -69,6 +69,70 @@ export const ImprovementProposalReviewSchema = z.object({
   confirmed: z.literal(true),
 }).strict();
 
+export const SelfLearningLifecycleStageSchema = z.enum([
+  'LIVE',
+  'SHADOW',
+  'CANARY',
+  'LIVE_ELIGIBLE',
+]);
+export type SelfLearningLifecycleStage = z.infer<typeof SelfLearningLifecycleStageSchema>;
+
+export const LiveEligibilityMetricsSchema = z.object({
+  outOfSampleAccuracy: z.number(),
+  expectancy: z.number(),
+  profitFactor: z.number(),
+  sharpeRatio: z.number(),
+  maxDrawdownPct: z.number(),
+  shadowTrades: z.number().int().nonnegative(),
+  canaryTrades: z.number().int().nonnegative(),
+});
+export type LiveEligibilityMetrics = z.infer<typeof LiveEligibilityMetricsSchema>;
+
+export const LiveEligibilityCandidateSchema = z.object({
+  version: z.number().int().positive(),
+  weights: z.record(z.string(), z.number()),
+  threshold: z.number(),
+  metrics: LiveEligibilityMetricsSchema,
+  configurationHash: z.string().regex(/^[a-f0-9]{64}$/),
+  eligibleAt: z.string().datetime(),
+});
+export type LiveEligibilityCandidate = z.infer<typeof LiveEligibilityCandidateSchema>;
+
+export const LiveEligibilityReviewInputSchema = z.object({
+  action: z.enum(['APPROVE', 'REJECT']),
+  version: z.number().int().positive(),
+  configurationHash: z.string().regex(/^[a-f0-9]{64}$/),
+  confirmed: z.literal(true),
+  reason: z.string().trim().min(3).max(500).optional(),
+}).strict();
+export type LiveEligibilityReviewInput = z.infer<typeof LiveEligibilityReviewInputSchema>;
+
+export const SelfLearningLifecycleDtoSchema = z.object({
+  stage: SelfLearningLifecycleStageSchema,
+  isEnabled: z.boolean(),
+  liveVersion: z.number().int().positive(),
+  candidateVersion: z.number().int().positive().nullable(),
+  liveImpactPct: z.number(),
+  candidateImpactPct: z.number(),
+  shadowPerformance: z.any().nullable().optional(),
+  evidence: z.object({
+    pendingShadowSignals: z.number().int().nonnegative(),
+    evaluatedShadowSignals: z.number().int().nonnegative(),
+    canaryRecords: z.number().int().nonnegative(),
+    liveRecords: z.number().int().nonnegative(),
+  }),
+  startedAt: z.string().datetime().nullable().optional(),
+  lastPromotionAt: z.string().datetime().nullable().optional(),
+  eligibleCandidate: LiveEligibilityCandidateSchema.nullable().optional(),
+  approvedCandidate: z.object({
+    version: z.number().int().positive(),
+    configurationHash: z.string().regex(/^[a-f0-9]{64}$/),
+    approvedAt: z.string().datetime(),
+  }).nullable().optional(),
+  experiment: z.any().nullable().optional(),
+});
+export type SelfLearningLifecycleDto = z.infer<typeof SelfLearningLifecycleDtoSchema>;
+
 export interface PerformanceMetrics {
   total: number;
   directionalDecisions: number;
@@ -80,3 +144,4 @@ export interface PerformanceMetrics {
   decisionDistribution: { LONG: number; SHORT: number; WAIT: number };
   horizonDistribution: { M15: number; M30: number; SHORT: number; MID: number; H2: number; H4: number; LONG: number };
 }
+
