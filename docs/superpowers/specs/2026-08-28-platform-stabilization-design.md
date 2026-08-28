@@ -1,6 +1,6 @@
 # Trading Platform Stabilization Design
 
-**Status:** Design review
+**Status:** Approved
 **Created:** 2026-08-28
 **Canonical tracker:** This file is the source of truth for scope, decisions, sequencing, and continuation across model or session changes.
 
@@ -328,7 +328,7 @@ On continuation, the agent must perform these steps before editing code:
 
 | Wave | State | Evidence |
 |---|---|---|
-| Design | REVIEW_REQUIRED | This document created; awaiting user review |
+| Design | COMPLETE | User approved the design on 2026-08-28 |
 | 1. Deterministic safety and LIVE eligibility | NOT_STARTED | Blocked by design approval and implementation plan |
 | 2. Agent data quality and registration | NOT_STARTED | Starts only after Wave 1 verification |
 | 3. Bounded LLM advisory | NOT_STARTED | Starts only after Wave 2 verification |
@@ -343,3 +343,4 @@ Allowed states are `NOT_STARTED`, `IN_PROGRESS`, `BLOCKED`, `VERIFICATION`, and 
 | Date | Wave | Commit | Verification | Notes |
 |---|---|---|---|---|
 | 2026-08-28 | Design | Design document | Placeholder, consistency, scope, and ambiguity review passed | Initial stabilization architecture and continuation protocol |
+| 2026-08-28 | Design | User approval | Approved in conversation | Wave 1 implementation planning authorized |
