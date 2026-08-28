@@ -40,4 +40,27 @@ describe("ToolPolicyEngine", () => {
     expect(decision.status).toBe("DENY");
     expect(decision.reasons[0]).toContain("missing required capability");
   });
+
+  it("should strictly DENY execution for any FINANCIAL_WRITE, USER_STATE_WRITE, or SYSTEM_WRITE tools", () => {
+    const context: ToolExecutionContext = {
+      invocationId: "inv-1",
+      traceId: "tr-1",
+      correlationId: "cr-1",
+      requestedAt: new Date(),
+      deadlineAt: new Date(Date.now() + 5000),
+      source: "AI_PROVIDER",
+      capabilities: ["*"],
+      safeMetadata: {},
+      userId: "user-1",
+    };
+
+    const syntheticOrderTool = {
+      ...tickerTool,
+      name: "exchange.order.create",
+      sideEffect: "FINANCIAL_WRITE" as const,
+    };
+    const decision = policyEngine.evaluate(syntheticOrderTool, context);
+    expect(decision.status).toBe("DENY");
+    expect(decision.reasons.some((r) => r.includes("prohibited side effect level 'FINANCIAL_WRITE'"))).toBe(true);
+  });
 });
