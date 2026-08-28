@@ -40,6 +40,7 @@ export class QuantExecutionPolicyService {
     provider: string;
     timeframe: string;
     strategyKey?: string;
+    mode?: "DEMO" | "LIVE";
     decision: Pick<DecisionOutput,
       "decision" | "regime" | "confidence" | "opportunityScore" |
       "expectedValue" | "riskScore" | "volatilityAdjustment" |
@@ -159,6 +160,7 @@ export class QuantExecutionPolicyService {
     reason: "QUANT_VALIDATION_MISSING" | "QUANT_SAMPLE_TOO_SMALL" |
       "QUANT_ASSUMPTION_MISMATCH" | "QUANT_VALIDATION_STALE",
     input: {
+      mode?: "DEMO" | "LIVE";
       decision: Pick<DecisionOutput,
         "decision" | "regime" | "confidence" | "opportunityScore" |
         "expectedValue" | "riskScore" | "volatilityAdjustment" |
@@ -171,6 +173,9 @@ export class QuantExecutionPolicyService {
       marketEventDirection?: "POSITIVE" | "NEGATIVE" | "NEUTRAL";
     },
   ): QuantExecutionPolicyResult {
+    if (input.mode === "LIVE") {
+      return { allowed: false, evaluated: false, reason };
+    }
     const sizeFactor = this.boundedCanarySizeFactor(input);
     if (sizeFactor !== undefined) {
       return {

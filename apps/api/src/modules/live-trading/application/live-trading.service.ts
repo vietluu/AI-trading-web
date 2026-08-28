@@ -507,6 +507,33 @@ export class LiveTradingService {
           lastTradeAt: latestOrder?.createdAt,
           recentClosedTrades,
         });
+        if (settings.mode === "LIVE") {
+          const selfLearning = await tx.selfLearningConfiguration.findUnique({
+            where: { userId: input.userId },
+          });
+          if (
+            !selfLearning ||
+            !selfLearning.approvedVersion ||
+            !selfLearning.approvedConfigurationHash
+          ) {
+            risk = {
+              approved: false,
+              reason: "STRATEGY_VERSION_NOT_APPROVED_FOR_LIVE",
+              riskScore: 100,
+            };
+            await tx.riskAssessment.update({
+              where: { pipelineRunId: input.pipelineRunId },
+              data: {
+                approved: false,
+                reason: risk.reason,
+                positionSize: null,
+                leverage: null,
+                stopLoss: null,
+                takeProfit: null,
+              },
+            });
+          }
+        }
         if (
           risk.approved &&
           risk.positionSize &&
@@ -935,6 +962,20 @@ export class LiveTradingService {
       return { outcome: "RISK_ASSESSMENT_MISSING" };
     if (!assessment.approved)
       return { outcome: "RISK_REJECTED", reason: assessment.reason };
+
+    if (settings.mode === "LIVE") {
+      const selfLearning =
+        await this.prisma.selfLearningConfiguration.findUnique({
+          where: { userId },
+        });
+      if (
+        !selfLearning ||
+        !selfLearning.approvedVersion ||
+        !selfLearning.approvedConfigurationHash
+      ) {
+        return { outcome: "STRATEGY_VERSION_NOT_APPROVED_FOR_LIVE" };
+      }
+    }
 
     // Use the connection that was pinned during risk assessment, falling back
     // to any eligible connection if the pinned one is unavailable.

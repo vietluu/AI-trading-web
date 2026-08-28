@@ -285,4 +285,36 @@ describe("QuantExecutionPolicyService", () => {
       where: expect.objectContaining({ strategyKey: "trend" }) as unknown,
     }));
   });
+
+  it("fails closed in LIVE mode without granting advisory canary", async () => {
+    const { policy } = service(null);
+    const result = await policy.evaluate({
+      ...input,
+      mode: "LIVE",
+      decision: strongDecision() as never,
+      multiTimeframeConfirmation: 90,
+    });
+    expect(result).toEqual({
+      allowed: false,
+      evaluated: false,
+      reason: "QUANT_VALIDATION_MISSING",
+    });
+  });
+
+  it("grants advisory canary in DEMO mode when strong realtime setup exists without validation", async () => {
+    const { policy } = service(null);
+    const result = await policy.evaluate({
+      ...input,
+      mode: "DEMO",
+      decision: strongDecision() as never,
+      multiTimeframeConfirmation: 90,
+    });
+    expect(result).toMatchObject({
+      allowed: true,
+      evaluated: false,
+      advisory: true,
+      reason: "QUANT_VALIDATION_MISSING",
+      sizeFactor: 0.25,
+    });
+  });
 });
