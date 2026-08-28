@@ -49,7 +49,7 @@ describe("ToolPolicyEngine", () => {
       requestedAt: new Date(),
       deadlineAt: new Date(Date.now() + 5000),
       source: "AI_PROVIDER",
-      capabilities: ["*"],
+      capabilities: ["READ_MARKET_DATA"],
       safeMetadata: {},
       userId: "user-1",
     };
@@ -58,6 +58,7 @@ describe("ToolPolicyEngine", () => {
       ...tickerTool,
       name: "exchange.order.create",
       sideEffect: "FINANCIAL_WRITE" as const,
+      execute: () => Promise.resolve({ success: true }),
     };
     const decision = policyEngine.evaluate(syntheticOrderTool, context);
     expect(decision.status).toBe("DENY");

@@ -331,7 +331,7 @@ On continuation, the agent must perform these steps before editing code:
 | Design | COMPLETE | User approved the design on 2026-08-28 |
 | 1. Deterministic safety and LIVE eligibility | COMPLETE | 8 commits, 122 API test files (628 tests) + 16 web test files (37 tests) passed, lint passed, typecheck passed, production build passed |
 | 2. Agent data quality and registration | COMPLETE | 5 commits, 125 API test files (644 tests) + 16 web test files (37 tests) passed, lint passed, typecheck passed, Next.js 15 48/48 pages built cleanly |
-| 3. Bounded LLM advisory | NOT_STARTED | Starts only after Wave 2 verification |
+| 3. Bounded LLM advisory | COMPLETE | 4 commits, 127 API test files (653 tests) + 16 web test files (37 tests) passed, lint passed, typecheck passed, Next.js 15 48/48 pages built cleanly |
 | 4. Memory, reflection, and reporting | NOT_STARTED | Starts only after Wave 3 verification |
 | 5. Quant lifecycle and data hygiene | NOT_STARTED | Starts only after Wave 4 verification |
 | 6. Observability and release verification | NOT_STARTED | Starts only after Wave 5 verification |
@@ -360,4 +360,10 @@ Allowed states are `NOT_STARTED`, `IN_PROGRESS`, `BLOCKED`, `VERIFICATION`, and 
 | 2026-08-28 | Wave 2 | `d5cbb57` | `sentiment-analyst-provenance.spec.ts` | Tasks 5 & 6: Normalize free social source health with structured provenance |
 | 2026-08-28 | Wave 2 | `fe97942` | `decision-data-quality.spec.ts` | Tasks 7 & 8: Enforce data-quality contribution policy (GOOD=1, PARTIAL=0.5, INSUFFICIENT=0) |
 | 2026-08-28 | Wave 2 | `f7c45dd` | `agent-registration.spec.ts` | Tasks 9 & 10: Synchronize runtime agent registrations to database idempotently |
-| 2026-08-28 | Wave 2 | Verification | `pnpm lint`, `pnpm typecheck`, `pnpm test` (125 API / 16 Web files), `pnpm build` (48/48 pages) | Task 11: Full verification pass and Wave 2 closure |
+| 2026-08-28 | Wave 2 | `7efa613` | `pnpm lint`, `pnpm typecheck`, `pnpm test` (125 API / 16 Web files), `pnpm build` (48/48 pages) | Task 11: Full verification pass and Wave 2 closure |
+| 2026-08-28 | Wave 3 | Implementation plan | Four task pairs, spend caps ($10/day, $100/mo), tool isolation, circuit breaker fallback, version bumps | User-approved in conversation |
+| 2026-08-28 | Wave 3 | `ce1aeb2` | `ai-budget-and-cache.spec.ts` | Tasks 1 & 2: Enforce daily and monthly AI spend caps and cached advisory calls |
+| 2026-08-28 | Wave 3 | `a86ece2` | `tool-policy.spec.ts` | Tasks 3 & 4: Strictly prohibit financial and state-write mutations from tool execution |
+| 2026-08-28 | Wave 3 | `b3ad68c` | `unified-analyst.spec.ts` | Tasks 5 & 6: Safely bypass advisory and return neutral INSUFFICIENT output under failure/circuit-breaker |
+| 2026-08-28 | Wave 3 | `9aec16d` | `prompt-versioning.spec.ts` | Tasks 7 & 8: Require deterministic version bump and hash update on prompt/model changes |
+| 2026-08-28 | Wave 3 | Verification | `pnpm lint`, `pnpm typecheck`, `pnpm test` (127 API / 16 Web files), `pnpm build` (48/48 pages) | Task 9: Full verification pass and Wave 3 closure |
