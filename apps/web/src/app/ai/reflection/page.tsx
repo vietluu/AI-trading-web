@@ -77,19 +77,19 @@ export default function ReflectionPage() {
             {t.ai.reflectionSubtitle}
           </p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           <Link
-            className="text-nowrap rounded bg-primary px-4 py-2 font-medium text-primary-foreground hover:bg-primary/90"
+            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl border border-primary/40 bg-primary/15 px-3.5 py-2 text-xs font-semibold text-primary transition-all hover:bg-primary/25"
             href={ROUTES.ai.performance}
           >
-            {t.ai.reflectionLink}
+            <span>{t.ai.reflectionLink}</span>
           </Link>
           <button
-            className="rounded-lg bg-muted-foreground px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl border border-border bg-card/60 px-3.5 py-2 text-xs font-semibold text-foreground transition hover:border-primary/40 hover:bg-muted disabled:opacity-50"
             disabled={runMutation.isPending || !data?.ready}
             onClick={() => runMutation.mutate()}
           >
-            {t.ai.generateReflection}
+            <span>{t.ai.generateReflection}</span>
           </button>
         </div>
       </div>

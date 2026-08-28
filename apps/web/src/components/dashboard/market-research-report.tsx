@@ -38,6 +38,7 @@ export interface MarketResearchSummary {
 
 export function buildMarketResearchSummary(
   runs: PipelineRun[],
+  lang: "en" | "vi" = "vi",
 ): MarketResearchSummary {
   const latestBySymbol = new Map<string, SymbolResearch>();
   for (const run of runs) {
@@ -76,9 +77,11 @@ export function buildMarketResearchSummary(
   if (!research.length) {
     return {
       conclusion: "INSUFFICIENT_DATA",
-      headline: "Chưa đủ dữ liệu để kết luận thị trường",
+      headline: lang === "vi" ? "Chưa đủ dữ liệu để kết luận thị trường" : "Insufficient data for market conclusion",
       guidance:
-        "Chờ pipeline agent hoàn tất phân tích trước khi xây dựng kế hoạch giao dịch.",
+        lang === "vi"
+          ? "Chờ pipeline agent hoàn tất phân tích trước khi xây dựng kế hoạch giao dịch."
+          : "Wait for pipeline agents to complete analysis before formulating trade plans.",
       longCount,
       shortCount,
       waitCount,
@@ -96,9 +99,11 @@ export function buildMarketResearchSummary(
   ) {
     return {
       conclusion: "BULLISH_BIAS",
-      headline: "AI đang nghiêng về kịch bản tăng giá có chọn lọc",
+      headline: lang === "vi" ? "AI đang nghiêng về kịch bản tăng giá có chọn lọc" : "AI leaning towards selective bullish bias",
       guidance:
-        "Ưu tiên theo dõi setup LONG đã được Risk/Judge phê duyệt; không mua đuổi coin chỉ vì momentum cao.",
+        lang === "vi"
+          ? "Ưu tiên theo dõi setup LONG đã được Risk/Judge phê duyệt; không mua đuổi coin chỉ vì momentum cao."
+          : "Prioritize approved LONG setups with valid risk clearance; avoid chasing unconfirmed momentum.",
       longCount,
       shortCount,
       waitCount,
@@ -117,9 +122,11 @@ export function buildMarketResearchSummary(
   ) {
     return {
       conclusion: "BEARISH_BIAS",
-      headline: "AI đang nghiêng về phòng thủ hoặc kịch bản giảm giá",
+      headline: lang === "vi" ? "AI đang nghiêng về phòng thủ hoặc kịch bản giảm giá" : "AI leaning defensive or bearish scenario",
       guidance:
-        "Hạn chế mở LONG mới; chỉ cân nhắc SHORT khi cấu trúc, R:R và Risk Engine cùng xác nhận.",
+        lang === "vi"
+          ? "Hạn chế mở LONG mới; chỉ cân nhắc SHORT khi cấu trúc, R:R và Risk Engine cùng xác nhận."
+          : "Restrict new LONG entries; consider SHORT only when price structure, R:R, and Risk Engine align.",
       longCount,
       shortCount,
       waitCount,
@@ -132,9 +139,11 @@ export function buildMarketResearchSummary(
   }
   return {
     conclusion: "CAUTIOUS",
-    headline: "Tín hiệu đang phân hóa — ưu tiên quan sát",
+    headline: lang === "vi" ? "Tín hiệu đang phân hóa — ưu tiên quan sát" : "Diverging signals — observation recommended",
     guidance:
-      "Giữ quy mô nhỏ hoặc WAIT cho đến khi agent đồng thuận hơn và xuất hiện setup có reward/risk đạt chuẩn.",
+      lang === "vi"
+        ? "Giữ quy mô nhỏ hoặc WAIT cho đến khi agent đồng thuận hơn và xuất hiện setup có reward/risk đạt chuẩn."
+        : "Maintain small sizes or WAIT until multi-agent consensus strengthens and high R:R setups emerge.",
     longCount,
     shortCount,
     waitCount,
@@ -146,6 +155,8 @@ export function buildMarketResearchSummary(
   };
 }
 
+import { useTranslation } from "@/lib/i18n/i18n-context";
+
 export function MarketResearchReport({
   runs,
   opportunities,
@@ -155,18 +166,19 @@ export function MarketResearchReport({
   opportunities: SymbolOpportunity[];
   loading: boolean;
 }): React.JSX.Element {
-  const report = buildMarketResearchSummary(runs);
+  const { language } = useTranslation();
+  const report = buildMarketResearchSummary(runs, language);
   const conclusionStyle = {
     BULLISH_BIAS: "border-emerald-400/30 bg-emerald-400/10 text-emerald-200",
-    BEARISH_BIAS: "border-red-400/30 bg-red-400/10 text-red-200",
+    BEARISH_BIAS: "border-rose-400/30 bg-rose-400/10 text-rose-200",
     CAUTIOUS: "border-amber-400/30 bg-amber-400/10 text-amber-100",
     INSUFFICIENT_DATA: "border-sky-400/30 bg-sky-400/10 text-sky-100",
   }[report.conclusion];
 
   return (
     <section className="space-y-4">
-      <Card className="overflow-hidden">
-        <div className="border-b border-border bg-gradient-to-r from-primary/10 via-card to-card p-5 sm:p-6">
+      <Card className="overflow-hidden border-border/80">
+        <div className="border-b border-border/80 bg-gradient-to-r from-primary/10 via-card to-card p-5 sm:p-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex gap-3">
               <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/15 text-primary">
@@ -174,22 +186,23 @@ export function MarketResearchReport({
               </div>
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">
-                  AI multi-agent market research
+                  {language === "vi" ? "AI multi-agent market research" : "AI Multi-Agent Market Research"}
                 </p>
                 <h2 className="mt-1 text-xl font-bold">
-                  Báo cáo nhận định thị trường
+                  {language === "vi" ? "Báo cáo nhận định thị trường" : "Market Intelligence Report"}
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Tổng hợp kết luận mới nhất từ Decision, Judge, Market,
-                  Technical, News và Sentiment pipeline.
+                  {language === "vi"
+                    ? "Tổng hợp kết luận mới nhất từ Decision, Judge, Market, Technical, News và Sentiment pipeline."
+                    : "Latest synthesized findings from Decision, Judge, Market, Technical, News, and Sentiment agents."}
                 </p>
               </div>
             </div>
             <Link
-              className="text-xs font-semibold text-primary"
+              className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline"
               href={ROUTES.ai.pipelineRuns}
             >
-              Xem bằng chứng pipeline
+              <span>{language === "vi" ? "Xem bằng chứng pipeline" : "View Pipeline Evidence"}</span>
             </Link>
           </div>
         </div>
@@ -198,7 +211,7 @@ export function MarketResearchReport({
           <div>
             <div className={`rounded-xl border p-4 ${conclusionStyle}`}>
               <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider">
-                <Sparkles className="h-4 w-4" /> Kết luận tổng hợp
+                <Sparkles className="h-4 w-4" /> {language === "vi" ? "Kết luận tổng hợp" : "Synthesized Conclusion"}
               </div>
               <h3 className="mt-2 text-lg font-bold">{report.headline}</h3>
               <p className="mt-2 text-sm leading-6 opacity-90">
@@ -209,21 +222,21 @@ export function MarketResearchReport({
             <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
               <ReportMetric
                 label="LONG"
-                value={String(report.longCount)}
                 tone="positive"
+                value={String(report.longCount)}
               />
               <ReportMetric
                 label="SHORT"
-                value={String(report.shortCount)}
                 tone="negative"
+                value={String(report.shortCount)}
               />
               <ReportMetric
                 label="WAIT"
-                value={String(report.waitCount)}
                 tone="warning"
+                value={String(report.waitCount)}
               />
               <ReportMetric
-                label="Confidence TB"
+                label={language === "vi" ? "Confidence TB" : "Avg Confidence"}
                 value={
                   report.averageConfidence === undefined
                     ? "—"
@@ -234,39 +247,39 @@ export function MarketResearchReport({
 
             <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted-foreground">
               <span className="flex items-center gap-1.5">
-                <BarChart3 className="h-3.5 w-3.5" /> Regime chính:{" "}
+                <BarChart3 className="h-3.5 w-3.5" /> {language === "vi" ? "Regime chính:" : "Dominant Regime:"}{" "}
                 {report.dominantRegime ?? "—"}
               </span>
               <span className="flex items-center gap-1.5">
                 <SearchCheck className="h-3.5 w-3.5" /> {report.research.length}{" "}
-                coin có báo cáo agent
+                {language === "vi" ? "coin có báo cáo agent" : "researched symbols"}
               </span>
               <span className="flex items-center gap-1.5">
                 <Clock3 className="h-3.5 w-3.5" />
                 {report.latestAt
-                  ? `Cập nhật ${new Date(report.latestAt).toLocaleString()}`
-                  : "Chưa có thời điểm cập nhật"}
+                  ? `${language === "vi" ? "Cập nhật" : "Updated"} ${new Date(report.latestAt).toLocaleString(language === "vi" ? "vi-VN" : "en-US")}`
+                  : (language === "vi" ? "Chưa có thời điểm cập nhật" : "No updates yet")}
               </span>
             </div>
           </div>
 
           <div>
             <h3 className="text-sm font-semibold">
-              Luận điểm mới nhất của agent
+              {language === "vi" ? "Luận điểm mới nhất của agent" : "Latest Agent Theses"}
             </h3>
             <div className="mt-3 space-y-3">
               {report.research
                 .slice(0, 3)
                 .map(({ run, decision, confidence }) => (
                   <article
-                    className="rounded-xl border border-border p-3"
+                    className="rounded-xl border border-border/80 bg-card/60 p-3"
                     key={run.id}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-semibold">{run.symbol}</span>
                       <DecisionPill
-                        decision={decision}
                         confidence={confidence}
+                        decision={decision}
                       />
                     </div>
                     <p className="mt-2 line-clamp-3 text-xs leading-5 text-muted-foreground">
@@ -293,8 +306,8 @@ export function MarketResearchReport({
               {!report.research.length && (
                 <p className="rounded-xl border border-dashed border-border p-5 text-center text-sm text-muted-foreground">
                   {loading
-                    ? "Agent đang tổng hợp dữ liệu…"
-                    : "Chưa có pipeline result đủ dữ liệu để lập báo cáo."}
+                    ? (language === "vi" ? "Agent đang tổng hợp dữ liệu…" : "Agents synthesizing data...")
+                    : (language === "vi" ? "Chưa có pipeline result đủ dữ liệu để lập báo cáo." : "No pipeline results with sufficient data.")}
                 </p>
               )}
             </div>
@@ -302,12 +315,12 @@ export function MarketResearchReport({
         </div>
 
         {report.risks.length > 0 && (
-          <div className="border-t border-border bg-amber-400/5 px-5 py-4 sm:px-6">
+          <div className="border-t border-border/80 bg-amber-400/5 px-5 py-4 sm:px-6">
             <div className="flex gap-2 text-sm">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
               <div>
                 <span className="font-semibold text-amber-200">
-                  Rủi ro agent ghi nhận:{" "}
+                  {language === "vi" ? "Rủi ro agent ghi nhận: " : "Identified Agent Risks: "}
                 </span>
                 <span className="text-muted-foreground">
                   {report.risks.join(" · ")}
@@ -321,17 +334,18 @@ export function MarketResearchReport({
       <div>
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold">Coin đáng theo dõi</h2>
+            <h2 className="text-lg font-semibold">{language === "vi" ? "Coin đáng theo dõi" : "Symbols to Watch"}</h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              Xếp hạng thanh khoản/momentum từ sàn; LONG/SHORT chỉ hiển thị khi
-              có kết luận agent tương ứng.
+              {language === "vi"
+                ? "Xếp hạng thanh khoản/momentum từ sàn; LONG/SHORT chỉ hiển thị khi có kết luận agent tương ứng."
+                : "Liquidity and momentum ranking; LONG/SHORT displayed only when verified by agent consensus."}
             </p>
           </div>
           <Link
-            className="text-xs font-semibold text-primary"
+            className="text-xs font-semibold text-primary hover:underline"
             href={ROUTES.recommendations}
           >
-            Xem toàn bộ cơ hội
+            {language === "vi" ? "Xem toàn bộ cơ hội" : "View All Opportunities"}
           </Link>
         </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -341,7 +355,7 @@ export function MarketResearchReport({
             );
             return (
               <article
-                className="rounded-2xl border border-border bg-card p-4"
+                className="rounded-2xl border border-border/80 bg-card/70 p-4 transition-all hover:border-primary/40"
                 key={opportunity.symbol}
               >
                 <div className="flex items-start justify-between gap-3">
@@ -356,36 +370,36 @@ export function MarketResearchReport({
                   </span>
                 </div>
                 <div className="mt-3 flex items-end justify-between">
-                  <span className="font-mono text-sm">
+                  <span className="font-mono text-sm font-semibold">
                     ${formatPrice(opportunity.price)}
                   </span>
                   <span
-                    className={`text-sm font-semibold ${opportunity.change24hPct >= 0 ? "text-emerald-400" : "text-red-400"}`}
+                    className={`text-sm font-semibold ${opportunity.change24hPct >= 0 ? "text-emerald-400" : "text-rose-400"}`}
                   >
                     {opportunity.change24hPct >= 0 ? "+" : ""}
                     {opportunity.change24hPct.toFixed(2)}%
                   </span>
                 </div>
-                <div className="mt-3 border-t border-border pt-3">
+                <div className="mt-3 border-t border-border/80 pt-3">
                   {evidence ? (
                     <div className="flex items-center justify-between gap-2">
                       <DecisionPill
-                        decision={evidence.decision}
                         confidence={evidence.confidence}
+                        decision={evidence.decision}
                       />
-                      <span className="text-[11px] text-muted-foreground">
+                      <span className="text-[11px] text-muted-foreground font-mono">
                         EV{" "}
                         {evidence.run.result?.expectedValue?.toFixed(2) ?? "—"}
                       </span>
                     </div>
                   ) : (
                     <span className="text-xs text-muted-foreground">
-                      Chưa có kết luận agent — chỉ theo dõi
+                      {language === "vi" ? "Chưa có kết luận agent — chỉ theo dõi" : "No agent conclusion — watchlist only"}
                     </span>
                   )}
                   <p className="mt-2 line-clamp-2 text-[11px] leading-5 text-muted-foreground">
                     {opportunity.reasons.join(" · ") ||
-                      "Được xếp hạng từ dữ liệu thị trường hiện tại."}
+                      (language === "vi" ? "Được xếp hạng từ dữ liệu thị trường hiện tại." : "Ranked from active market signals.")}
                   </p>
                 </div>
               </article>
@@ -394,15 +408,15 @@ export function MarketResearchReport({
         </div>
         {!opportunities.length && !loading && (
           <p className="mt-3 rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-            Chưa lấy được danh sách coin đáng theo dõi từ sàn.
+            {language === "vi" ? "Chưa lấy được danh sách coin đáng theo dõi từ sàn." : "No watched symbols retrieved from exchange."}
           </p>
         )}
       </div>
 
       <p className="text-xs leading-5 text-muted-foreground">
-        Báo cáo phục vụ nghiên cứu và quản trị rủi ro, không phải lời khuyên tài
-        chính hay cam kết lợi nhuận. Quyết định giao dịch vẫn phải qua Judge,
-        Risk Engine và giới hạn portfolio.
+        {language === "vi"
+          ? "Báo cáo phục vụ nghiên cứu và quản trị rủi ro, không phải lời khuyên tài chính hay cam kết lợi nhuận. Quyết định giao dịch vẫn phải qua Judge, Risk Engine và giới hạn portfolio."
+          : "For statistical research and risk management purposes only. Execution remains guarded by Judge, Risk Engine, and portfolio constraints."}
       </p>
     </section>
   );

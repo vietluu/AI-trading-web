@@ -30,10 +30,10 @@ export default function PerformancePage() {
           </p>
         </div>
         <Link
-          className="text-nowrap rounded bg-primary px-4 py-2 font-medium text-primary-foreground hover:bg-primary/90"
+          className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl border border-primary/40 bg-primary/15 px-3.5 py-2 text-xs font-semibold text-primary transition-all hover:bg-primary/25"
           href={ROUTES.ai.reflection}
         >
-          {t.ai.performanceLink}
+          <span>{t.ai.performanceLink}</span>
         </Link>
       </div>
       <div className="rounded-lg border bg-card p-4">

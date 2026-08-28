@@ -3,10 +3,14 @@
 import { useAgentHealth, useAgents } from "@/hooks/ai/useAiFeature";
 import { useTranslation } from "@/lib/i18n/i18n-context";
 
+import Link from "next/link";
+import { Activity, RefreshCw } from "lucide-react";
+import { ROUTES } from "@/constants/routes";
+
 export default function AgentRegistryPage() {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const { data: agents = [], isLoading: loadingAgents } = useAgents();
-  const { data: healthList = [], isLoading: loadingHealth, refetch: refetchHealth } = useAgentHealth();
+  const { data: healthList = [], isLoading: loadingHealth, refetch: refetchHealth, isFetching: isRefreshing } = useAgentHealth();
 
   const getHealthForAgent = (type: string) => {
     return healthList.find((h) => h.agentType === type);
@@ -14,17 +18,28 @@ export default function AgentRegistryPage() {
 
   return (
     <div className="container mx-auto p-6 space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-wrap justify-between items-center gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">{t.ai.agentsTitle}</h1>
           <p className="text-muted-foreground mt-1">{t.ai.agentsSubtitle}</p>
         </div>
-        <button
-          onClick={() => refetchHealth()}
-          className="px-4 py-2 bg-primary text-primary-foreground text-sm font-medium rounded-md hover:bg-primary/90 transition-colors"
-        >
-          {t.ai.refreshHealth}
-        </button>
+        <div className="flex items-center gap-2">
+          <Link
+            className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card/60 px-3.5 py-2 text-xs font-semibold text-muted-foreground transition hover:border-primary/40 hover:bg-muted hover:text-foreground"
+            href={ROUTES.ai.diagnostic}
+          >
+            <Activity className="h-3.5 w-3.5 text-primary" />
+            <span>{language === "vi" ? "Chẩn đoán Hệ thống" : "Diagnostics"}</span>
+          </Link>
+          <button
+            onClick={() => refetchHealth()}
+            disabled={isRefreshing}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-primary/40 bg-primary/15 px-3.5 py-2 text-xs font-semibold text-primary transition hover:bg-primary/25 disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+            <span>{t.ai.refreshHealth}</span>
+          </button>
+        </div>
       </div>
 
       {loadingAgents || loadingHealth ? (

@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { Cpu } from "lucide-react";
 import { ROUTES } from "@/constants/routes";
 import { usePipelineRuns } from "@/hooks/ai/useAiFeature";
+import { useTranslation } from "@/lib/i18n/i18n-context";
 
 type PipelineRunListItem = {
   id: string;
@@ -17,25 +19,25 @@ type PipelineRunListItem = {
 };
 
 export default function PipelineRunsPage() {
+  const { language } = useTranslation();
   const query = usePipelineRuns();
   const runs = (query.data?.data ?? []) as PipelineRunListItem[];
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold">Pipeline runs</h1>
+          <h1 className="text-3xl font-bold">{language === "vi" ? "Lịch sử Pipeline" : "Pipeline Runs"}</h1>
           <p className="mt-1 text-muted-foreground">
-            End-to-end runtime history and outcomes.
+            {language === "vi" ? "Lịch sử thực thi tự động hóa và kết quả đầu ra end-to-end." : "End-to-end runtime history and outcomes."}
           </p>
         </div>
-       <button className="rounded h-8 bg-primary px-4  font-medium text-primary-foreground hover:bg-primary/90">
-         <Link
-          className="text-nowrap h-fit"
+        <Link
+          className="inline-flex items-center gap-1.5 rounded-xl border border-primary/40 bg-primary/15 px-3.5 py-2 text-xs font-semibold text-primary transition-all hover:bg-primary/25"
           href={ROUTES.ai.pipeline}
         >
-          Automation
+          <Cpu className="h-4 w-4" />
+          <span>{language === "vi" ? "Tự động hóa" : "Automation"}</span>
         </Link>
-       </button>
       </div>
       <div className="overflow-x-auto rounded-lg border bg-card">
         <table className="w-full min-w-[640px] text-left text-sm">

@@ -5,7 +5,13 @@ import { useSystemDiagnostic, type DiagnosticRunResult } from "@/hooks/ai/useAiF
 import { useConfiguredTradingScope } from '@/hooks/useConfiguredTradingScope';
 import { useExchangeSymbols } from "@/hooks/useExchangeSymbols";
 
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
+import { ROUTES } from "@/constants/routes";
+import { useTranslation } from "@/lib/i18n/i18n-context";
+
 export default function SystemDiagnosticPage() {
+  const { language } = useTranslation();
   const scope = useConfiguredTradingScope();
   const exchangeSymbols = useExchangeSymbols();
   const availableSymbols = useMemo(() => {
@@ -27,11 +33,24 @@ export default function SystemDiagnosticPage() {
 
   return (
     <div className="container mx-auto p-6 space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">System Diagnostic Agent</h1>
-        <p className="text-muted-foreground mt-1">
-          Execute the internal non-trading diagnostic agent to verify context, prompt, tool, and model pipelines
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <Link
+            className="mb-2 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
+            href={ROUTES.ai.agents}
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            <span>{language === "vi" ? "Quay lại Danh mục Agent" : "Back to Agent Registry"}</span>
+          </Link>
+          <h1 className="text-3xl font-bold tracking-tight">
+            {language === "vi" ? "Chẩn đoán Hệ thống AI" : "System Diagnostic Agent"}
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            {language === "vi"
+              ? "Thực thi Agent chẩn đoán nội bộ để kiểm tra pipeline context, prompt, tool và model."
+              : "Execute the internal non-trading diagnostic agent to verify context, prompt, tool, and model pipelines"}
+          </p>
+        </div>
       </div>
 
       <div className="border rounded-lg p-6 bg-card max-w-xl space-y-4">
