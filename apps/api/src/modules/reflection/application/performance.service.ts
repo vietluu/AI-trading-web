@@ -10,6 +10,7 @@ import {
 import { ReflectionRepository } from "../infrastructure/reflection.repository";
 import { buildReliabilityCurve } from "../domain/confidence-calibration";
 import { timeframeMilliseconds } from "../../pipeline/domain/adaptive-trading-policy";
+import { performanceDriftToleranceMs } from "../domain/performance-provenance";
 
 const FIXED_HORIZONS: Array<{ horizon: EvaluationHorizon; ms: number }> = [
   { horizon: "M15", ms: 15 * 60_000 },
@@ -34,6 +35,8 @@ export class PerformanceService {
     skippedForMissingMarketData: number;
     skippedForMissingStartPrice: number;
     skippedForMissingTargetPrice: number;
+    skippedForMissingStartCandle: number;
+    skippedForDrift: number;
     evaluatedUserIds: string[];
   }> {
     if (!this.config.get<boolean>("REFLECTION_ENABLED", true))
@@ -42,6 +45,8 @@ export class PerformanceService {
         skippedForMissingMarketData: 0,
         skippedForMissingStartPrice: 0,
         skippedForMissingTargetPrice: 0,
+        skippedForMissingStartCandle: 0,
+        skippedForDrift: 0,
         evaluatedUserIds: [],
       };
     const shortMs = this.config.get<number>("EVALUATION_DELAY_MS", 600_000);
@@ -70,6 +75,8 @@ export class PerformanceService {
     let skippedForMissingMarketData = 0;
     let skippedForMissingStartPrice = 0;
     let skippedForMissingTargetPrice = 0;
+    let skippedForMissingStartCandle = 0;
+    let skippedForDrift = 0;
     const evaluatedUserIds = new Set<string>();
     for (const run of runs) {
       if (!run.completedAt || !run.decision || run.confidence == null) continue;
@@ -91,13 +98,19 @@ export class PerformanceService {
         run.completedAt,
         candleToleranceMs,
       );
-      const fallbackStartPrice = priceFromRun(run);
-      const priceAtDecision = start ? Number(start.close) : fallbackStartPrice;
+      if (!start || !start.closeTime) {
+        skippedForMissingStartCandle++;
+        skippedForMissingMarketData++;
+        skippedForMissingStartPrice++;
+        continue;
+      }
+      const priceAtDecision = Number(start.close);
       if (
         !priceAtDecision ||
         !Number.isFinite(priceAtDecision) ||
         priceAtDecision <= 0
       ) {
+        skippedForMissingStartCandle++;
         skippedForMissingMarketData++;
         skippedForMissingStartPrice++;
         continue;
@@ -112,15 +125,27 @@ export class PerformanceService {
           target,
           candleToleranceMs,
         );
-        if (!after) {
+        if (!after || !after.closeTime) {
           skippedForMissingMarketData++;
           skippedForMissingTargetPrice++;
           continue;
         }
-        const priceAfter = Number(after.close);
         const actualTargetTimestamp = after.closeTime instanceof Date
           ? after.closeTime
-          : target;
+          : new Date(after.closeTime);
+        const driftToleranceMs = performanceDriftToleranceMs(
+          item.horizon,
+          item.ms,
+        );
+        const driftMs = Math.abs(
+          actualTargetTimestamp.getTime() - target.getTime(),
+        );
+        if (driftMs > driftToleranceMs) {
+          skippedForDrift++;
+          continue;
+        }
+
+        const priceAfter = Number(after.close);
         const result = evaluateDecision(
           evaluatedDecision as Decision,
           priceAtDecision,
@@ -138,7 +163,7 @@ export class PerformanceService {
           confidence: evaluatedConfidence,
           priceAtDecision,
           priceAfter,
-          actualStartTimestamp: start?.closeTime ?? run.completedAt,
+          actualStartTimestamp: start.closeTime,
           actualTargetTimestamp,
           timeDriftMs: Math.round(
             actualTargetTimestamp.getTime() - target.getTime(),
@@ -149,6 +174,7 @@ export class PerformanceService {
           leverageSource: leverage.source,
           ...context,
           marketRegime: run.marketRegime,
+          provenanceEligible: true,
         });
         evaluated++;
         evaluatedUserIds.add(run.userId);
@@ -159,6 +185,8 @@ export class PerformanceService {
       skippedForMissingMarketData,
       skippedForMissingStartPrice,
       skippedForMissingTargetPrice,
+      skippedForMissingStartCandle,
+      skippedForDrift,
       evaluatedUserIds: [...evaluatedUserIds],
     };
   }
@@ -174,7 +202,7 @@ export class PerformanceService {
     );
   }
   async calibration(userId: string, symbol?: string) {
-    const rows = await this.repository.records(userId, "MID", 500, symbol);
+    const rows = await this.repository.records(userId, "MID", 500, symbol, true);
     return buildReliabilityCurve(
       rows.map((row) => ({
         confidence: row.confidence,

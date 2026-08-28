@@ -16,12 +16,14 @@ export class ReflectionRepository {
     horizon?: EvaluationHorizon,
     take = 500,
     symbol?: string,
+    provenanceOnly?: boolean,
   ) {
     return this.prisma.performanceRecord.findMany({
       where: {
         userId,
         ...(horizon ? { horizon } : {}),
         ...(symbol ? { symbol } : {}),
+        ...(provenanceOnly ? { provenanceEligible: true } : {}),
       },
       orderBy: { evaluatedAt: "desc" },
       take,
