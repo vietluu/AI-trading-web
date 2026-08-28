@@ -173,6 +173,28 @@ export const MarketAgentToolNameSchema = z.enum([
   'market.order_book.get',
 ]);
 
+export const AgentDataQualitySchema = z.enum([
+  'GOOD',
+  'PARTIAL',
+  'INSUFFICIENT',
+]);
+export type AgentDataQuality = z.infer<typeof AgentDataQualitySchema>;
+
+export const SourceCoverageLevelSchema = z.enum(['FULL', 'PARTIAL', 'EMPTY']);
+export type SourceCoverageLevel = z.infer<typeof SourceCoverageLevelSchema>;
+
+export const AgentProvenanceSchema = z
+  .object({
+    provider: z.string(),
+    sourceTimestamp: z.string().datetime().optional(),
+    observationAgeMs: z.number().nonnegative().optional(),
+    coverage: SourceCoverageLevelSchema,
+    unavailableFields: z.array(z.string()).default([]),
+    dataQualityReason: z.string().optional(),
+  })
+  .strict();
+export type AgentProvenance = z.infer<typeof AgentProvenanceSchema>;
+
 export const MarketAgentOutputSchema = z
   .object({
     summary: z.string().min(1),
@@ -211,8 +233,9 @@ export const MarketAgentOutputSchema = z
       })
       .strict(),
     anomalies: z.array(z.string()),
-    dataQuality: z.enum(['GOOD', 'PARTIAL', 'INSUFFICIENT']),
+    dataQuality: AgentDataQualitySchema,
     usedTools: z.array(MarketAgentToolNameSchema).max(6),
+    provenance: AgentProvenanceSchema.optional(),
     generatedAt: z.string().datetime(),
   })
   .strict();
@@ -285,8 +308,9 @@ export const TechnicalAgentOutputSchema = z
       .strict()
       .default({}),
     signals: z.array(z.string()),
-    dataQuality: z.enum(['GOOD', 'PARTIAL', 'INSUFFICIENT']),
+    dataQuality: AgentDataQualitySchema,
     usedTools: z.array(TechnicalAgentToolNameSchema).max(2),
+    provenance: AgentProvenanceSchema.optional(),
     generatedAt: z.string().datetime(),
   })
   .strict();
@@ -328,8 +352,9 @@ export const NewsAgentOutputSchema = z
     ),
     themes: z.array(z.string()),
     riskSignals: z.array(z.string()),
-    dataQuality: z.enum(['GOOD', 'PARTIAL', 'INSUFFICIENT']),
+    dataQuality: AgentDataQualitySchema,
     usedTools: z.array(NewsAgentToolNameSchema).max(3),
+    provenance: AgentProvenanceSchema.optional(),
     generatedAt: z.string().datetime(),
   })
   .strict();
@@ -363,19 +388,13 @@ export const SentimentAgentOutputSchema = z
       })
       .strict(),
     anomalies: z.array(z.string()),
-    dataQuality: z.enum(['GOOD', 'PARTIAL', 'INSUFFICIENT']),
+    dataQuality: AgentDataQualitySchema,
     usedTools: z.array(SentimentAgentToolNameSchema).max(2),
+    provenance: AgentProvenanceSchema.optional(),
     generatedAt: z.string().datetime(),
   })
   .strict();
 export type SentimentAgentOutput = z.infer<typeof SentimentAgentOutputSchema>;
-
-export const AgentDataQualitySchema = z.enum([
-  'GOOD',
-  'PARTIAL',
-  'INSUFFICIENT',
-]);
-export type AgentDataQuality = z.infer<typeof AgentDataQualitySchema>;
 
 export const MacroAgentInputSchema = z
   .object({
@@ -391,6 +410,7 @@ export const MacroAgentOutputSchema = z
     keyEvents: z.array(z.string()),
     riskFactors: z.array(z.string()),
     dataQuality: AgentDataQualitySchema,
+    provenance: AgentProvenanceSchema.optional(),
     generatedAt: z.string().datetime(),
   })
   .strict();
@@ -416,6 +436,7 @@ export const OnChainAgentOutputSchema = z
       .strict(),
     signals: z.array(z.string()),
     dataQuality: AgentDataQualitySchema,
+    provenance: AgentProvenanceSchema.optional(),
     generatedAt: z.string().datetime(),
   })
   .strict();
