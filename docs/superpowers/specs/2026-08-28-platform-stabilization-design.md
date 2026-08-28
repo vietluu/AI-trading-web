@@ -329,7 +329,7 @@ On continuation, the agent must perform these steps before editing code:
 | Wave | State | Evidence |
 |---|---|---|
 | Design | COMPLETE | User approved the design on 2026-08-28 |
-| 1. Deterministic safety and LIVE eligibility | NOT_STARTED | Blocked by design approval and implementation plan |
+| 1. Deterministic safety and LIVE eligibility | NOT_STARTED | Approved implementation plan: `docs/superpowers/plans/2026-08-28-wave-1-live-safety-implementation-plan.md` |
 | 2. Agent data quality and registration | NOT_STARTED | Starts only after Wave 1 verification |
 | 3. Bounded LLM advisory | NOT_STARTED | Starts only after Wave 2 verification |
 | 4. Memory, reflection, and reporting | NOT_STARTED | Starts only after Wave 3 verification |
@@ -344,3 +344,4 @@ Allowed states are `NOT_STARTED`, `IN_PROGRESS`, `BLOCKED`, `VERIFICATION`, and 
 |---|---|---|---|---|
 | 2026-08-28 | Design | Design document | Placeholder, consistency, scope, and ambiguity review passed | Initial stabilization architecture and continuation protocol |
 | 2026-08-28 | Design | User approval | Approved in conversation | Wave 1 implementation planning authorized |
+| 2026-08-28 | Wave 1 | Implementation plan | Nine tasks, strict acceptance contract, TDD commands, and green commit boundaries reviewed | Ready for isolated inline execution |
