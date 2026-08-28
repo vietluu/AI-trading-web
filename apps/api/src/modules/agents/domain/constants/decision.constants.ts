@@ -12,8 +12,8 @@ export const BASE_WEIGHTS: Weighting = {
 
 export const QUALITY_FACTOR: Record<AgentDataQuality, number> = {
   GOOD: 1,
-  PARTIAL: 0.7,
-  INSUFFICIENT: 0.3,
+  PARTIAL: 0.5,
+  INSUFFICIENT: 0,
 };
 
 export const REGIME_FACTOR: Record<MarketRegime['type'], number> = {
