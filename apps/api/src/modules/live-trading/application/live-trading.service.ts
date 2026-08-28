@@ -47,6 +47,7 @@ import {
   evaluateSymbolExecutionPolicy,
 } from "../domain/symbol-execution-policy";
 import { inferProtectiveClosePurpose } from "../domain/protective-close-reason";
+import { evaluateCollateralHealth } from "../../risk/domain/collateral-health";
 
 const RECENT_TRADE_HISTORY_LIMIT = 20;
 const ORDER_RECONCILIATION_LIMIT = 100;
@@ -442,6 +443,33 @@ export class LiveTradingService {
             }),
           ]);
         if (!snapshot) throw new Error("EXCHANGE_ACCOUNT_SNAPSHOT_UNAVAILABLE");
+        // --- Collateral mismatch diagnostic (Task 1) ---
+        const warningRatio = this.config.values.availableCollateralWarningRatio ?? 0.1;
+        const totalEquity = Number(snapshot.totalEquity);
+        const availableBalance = Number(snapshot.availableBalance);
+        const collateralHealth = evaluateCollateralHealth(totalEquity, availableBalance, warningRatio);
+        if (!collateralHealth.healthy) {
+          const existing = await tx.pipelineAlert.findFirst({
+            where: {
+              runId: input.pipelineRunId,
+              kind: "ACCOUNT_COLLATERAL_MISMATCH",
+            },
+          });
+          if (!existing) {
+            await tx.pipelineAlert.create({
+              data: {
+                runId: input.pipelineRunId,
+                kind: "ACCOUNT_COLLATERAL_MISMATCH",
+                symbol: input.symbol,
+                reasoningSummary: JSON.stringify({
+                  totalEquity,
+                  availableBalance,
+                  ratio: collateralHealth.ratio,
+                }),
+              },
+            });
+          }
+        }
         await this.supersedeEarlierEntry(tx, input, price);
         let risk = await this.risk.assess(tx, {
           userId: input.userId,

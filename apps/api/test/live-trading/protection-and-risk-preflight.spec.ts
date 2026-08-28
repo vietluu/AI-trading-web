@@ -381,3 +381,122 @@ describe("live protection and exchange risk preflight", () => {
     })).resolves.toMatchObject({ leverage: 15 });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Collateral mismatch diagnostic (Task 1)
+// ---------------------------------------------------------------------------
+
+function buildForPipeline() {
+  const pipelineAlert = {
+    findFirst: vi.fn().mockResolvedValue(null),
+    create: vi.fn().mockResolvedValue({ id: "alert-1" }),
+  };
+  const prisma = {
+    liveOrder: { findFirst: vi.fn().mockResolvedValue(null) },
+    liveAccountSnapshot: {
+      findFirst: vi.fn().mockResolvedValue({
+        totalEquity: 100_000,
+        availableBalance: 4_000, // 4% – below 10% threshold
+      }),
+      aggregate: vi.fn().mockResolvedValue({ _max: { totalEquity: 100_000 } }),
+    },
+    livePosition: { findMany: vi.fn().mockResolvedValue([]) },
+    closedTrade: { findMany: vi.fn().mockResolvedValue([]) },
+    riskAssessment: {
+      findMany: vi.fn().mockResolvedValue([]),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
+    pipelineAlert,
+    $transaction: vi.fn().mockImplementation(
+      async (callback: (tx: unknown) => Promise<unknown>) => callback(prisma),
+    ),
+  };
+  const connections = {
+    list: vi.fn().mockResolvedValue([
+      { id: "conn-1", provider: "OKX_FUTURES", environment: "DEMO", isEnabled: true, isVerified: true },
+    ]),
+    instrument: vi.fn().mockResolvedValue({ symbol: "BTC-USDT" }),
+  };
+  const publicExchanges = {
+    ticker: vi.fn().mockResolvedValue({ markPrice: "50000" }),
+  };
+  const risk = {
+    assess: vi.fn().mockResolvedValue({ approved: false, reason: "test", riskScore: 10 }),
+  };
+  const portfolio = {
+    prepareStrategy: vi.fn().mockResolvedValue({ id: "strategy-1" }),
+  };
+  const config = {
+    values: {
+      mode: "DEMO" as const,
+      approvalTtlMs: 60_000,
+      cooldownMs: 0,
+      runtimeEnabled: true,
+      liveEnabled: false,
+      availableCollateralWarningRatio: 0.1,
+    },
+    assertExecutionAllowed: vi.fn(),
+  };
+  const service = new LiveTradingService(
+    prisma as never,
+    connections as never,
+    config as never,
+    { record: vi.fn() } as never,
+    { getUserLimits: vi.fn().mockResolvedValue(limits), values: limits } as never,
+    risk as never,
+    portfolio as never,
+    publicExchanges as never,
+  );
+  vi.spyOn(
+    service as unknown as { sync: (...args: unknown[]) => Promise<void> },
+    "sync",
+  ).mockResolvedValue(undefined);
+  return { service, prisma, pipelineAlert };
+}
+
+describe("assessPipelineDecision collateral mismatch alert", () => {
+  it("creates one ACCOUNT_COLLATERAL_MISMATCH alert when available collateral ratio is below threshold", async () => {
+    const { service, pipelineAlert } = buildForPipeline();
+
+    await service.assessPipelineDecision({
+      userId: "user-1",
+      pipelineRunId: "run-colat-1",
+      symbol: "BTC-USDT",
+      provider: "OKX_FUTURES" as never,
+      decision: { decision: "LONG", confidence: 70 } as never,
+    });
+
+    expect(pipelineAlert.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ kind: "ACCOUNT_COLLATERAL_MISMATCH" }) as unknown,
+      }),
+    );
+    expect(pipelineAlert.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          kind: "ACCOUNT_COLLATERAL_MISMATCH",
+          symbol: "BTC-USDT",
+        }) as unknown,
+      }),
+    );
+  });
+
+  it("does not duplicate the alert when one already exists for the run", async () => {
+    const { service, prisma, pipelineAlert } = buildForPipeline();
+    // Simulate existing alert on the second call
+    pipelineAlert.findFirst.mockResolvedValueOnce({ id: "alert-existing" });
+
+    await service.assessPipelineDecision({
+      userId: "user-1",
+      pipelineRunId: "run-colat-2",
+      symbol: "BTC-USDT",
+      provider: "OKX_FUTURES" as never,
+      decision: { decision: "LONG", confidence: 70 } as never,
+    });
+
+    // findFirst was called but create must NOT be called again
+    expect(pipelineAlert.create).not.toHaveBeenCalled();
+    void prisma; // used above
+  });
+});
+

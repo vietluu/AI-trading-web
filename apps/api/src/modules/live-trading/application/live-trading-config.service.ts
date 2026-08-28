@@ -53,6 +53,8 @@ export class LiveTradingConfigService {
         sizeFactor:
           this.config.get<number>("CAUTION_SYMBOL_SIZE_FACTOR") ?? 0.5,
       },
+      availableCollateralWarningRatio:
+        this.config.get<number>("LIVE_AVAILABLE_COLLATERAL_WARNING_RATIO") ?? 0.1,
     } as const;
   }
 

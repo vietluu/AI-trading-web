@@ -534,6 +534,11 @@ const environmentSchema = z
       .min(10_000)
       .max(3_600_000)
       .default(300_000),
+    LIVE_AVAILABLE_COLLATERAL_WARNING_RATIO: z.coerce
+      .number()
+      .min(0)
+      .max(1)
+      .default(0.1),
     OKX_MAKER_FIRST_ENABLED: z
       .enum(["true", "false"])
       .default("true")
