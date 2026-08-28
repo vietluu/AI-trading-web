@@ -1,10 +1,17 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../database/prisma.service';
 import { Prisma } from '@prisma/client';
 import { BASE_WEIGHTS } from '../../agents/domain/constants/decision.constants';
 import type { AnalystName } from '../../agents/domain/types/decision-service.types';
 import { evaluateDecision } from '../domain/performance-calculator';
+import {
+  evaluateLiveEligibility,
+  computeConfigurationHash,
+  LIVE_ELIGIBILITY_POLICY_VERSION,
+  type LiveEligibilityMetrics,
+} from '../domain/live-eligibility';
+import type { LiveEligibilityReviewInput } from '@platform/shared';
 import { createHash } from 'node:crypto';
 
 export interface ShadowPerformance {
@@ -227,18 +234,39 @@ export class SelfLearningService {
         include: { recommendation: { select: { id: true, status: true, title: true } }, events: { orderBy: { createdAt: 'desc' }, take: 1 } },
       }),
     ]);
-    const stage = config.canaryEnabled ? 'CANARY' : config.shadowEnabled ? 'SHADOW' : 'LIVE';
+    const stage = config.canaryEnabled
+      ? 'CANARY'
+      : config.shadowEnabled
+        ? 'SHADOW'
+        : config.eligibleVersion
+          ? 'LIVE_ELIGIBLE'
+          : 'LIVE';
+    const eligibleCandidate = config.eligibleVersion && config.eligibleConfigurationHash ? {
+      version: config.eligibleVersion,
+      weights: config.eligibleWeightsJson as Record<string, number>,
+      threshold: config.eligibleThreshold ?? 60.0,
+      metrics: config.eligibleMetricsJson as unknown as LiveEligibilityMetrics,
+      configurationHash: config.eligibleConfigurationHash,
+      eligibleAt: config.eligibleAt?.toISOString() ?? new Date().toISOString(),
+    } : null;
+    const approvedCandidate = config.approvedVersion && config.approvedConfigurationHash && config.approvedAt ? {
+      version: config.approvedVersion,
+      configurationHash: config.approvedConfigurationHash,
+      approvedAt: config.approvedAt.toISOString(),
+    } : null;
     return {
       stage,
       isEnabled: config.isEnabled,
       liveVersion: config.liveVersion,
-      candidateVersion: config.canaryVersion ?? config.shadowVersion,
+      candidateVersion: config.canaryVersion ?? config.shadowVersion ?? config.eligibleVersion,
       liveImpactPct: stage === 'CANARY' ? 100 - canaryPercent : 100,
       candidateImpactPct: stage === 'CANARY' ? canaryPercent : 0,
       shadowPerformance: stage === 'SHADOW' ? parseShadowPerformance(config.shadowPerformance) : null,
       evidence: { pendingShadowSignals, evaluatedShadowSignals, canaryRecords, liveRecords },
-      startedAt: config.canaryStartedAt ?? config.shadowStartedAt,
+      startedAt: config.canaryStartedAt ?? config.shadowStartedAt ?? config.eligibleAt,
       lastPromotionAt: config.lastPromotionAt,
+      eligibleCandidate,
+      approvedCandidate,
       experiment,
     };
   }
@@ -687,6 +715,7 @@ export class SelfLearningService {
           shadowEnabled: false,
           shadowVersion: null,
           shadowStartedAt: null,
+          candidateShadowTrades: updatedPerf.tradesCount,
           canaryEnabled: true,
           canaryVersion: candidateVersion,
           canaryWeightsJson: config.shadowWeightsJson ?? BASE_WEIGHTS,
@@ -798,12 +827,18 @@ export class SelfLearningService {
       return candidate.accuracy >= baseline.accuracy &&
         candidate.totalReturn / candidate.tradesCount >= baseline.totalReturn / baseline.tradesCount;
     });
-    const average = (value: ShadowPerformance) => value.tradesCount ? value.totalReturn / value.tradesCount : 0;
-    const canPromote = canary.tradesCount >= minTrades && live.tradesCount >= minTrades &&
-      canary.accuracy >= live.accuracy && average(canary) >= average(live) &&
-      canary.profitFactor >= Math.max(1.2, live.profitFactor) &&
-      canary.sharpeRatio >= Math.max(minSharpeRatio, live.sharpeRatio) &&
-      canary.maxDrawdown <= Math.min(maxDrawdown, live.maxDrawdown || maxDrawdown) && regimeGate;
+    const canaryExpectancy = canary.tradesCount > 0 ? canary.totalReturn / canary.tradesCount : 0;
+    const eligibilityMetrics: LiveEligibilityMetrics = {
+      outOfSampleAccuracy: canary.accuracy / 100,
+      expectancy: canaryExpectancy,
+      profitFactor: canary.profitFactor,
+      sharpeRatio: canary.sharpeRatio,
+      maxDrawdownPct: canary.maxDrawdown,
+      shadowTrades: config.candidateShadowTrades || 0,
+      canaryTrades: canary.tradesCount,
+    };
+    const eligibility = evaluateLiveEligibility(eligibilityMetrics);
+    const canAdvanceToEligible = eligibility.eligible && regimeGate;
     const severeRegression = canary.tradesCount >= 20 && (
       canary.accuracy < live.accuracy - 8 ||
       canary.profitFactor < 0.8 ||
@@ -816,23 +851,50 @@ export class SelfLearningService {
       select: { id: true, recommendationId: true },
     });
 
-    if (canPromote) {
+    if (canAdvanceToEligible) {
+      const candidateWeights = (config.canaryWeightsJson ?? config.weightsJson ?? BASE_WEIGHTS) as Record<string, number>;
+      const candidateThreshold = config.canaryThreshold ?? config.confidenceThreshold;
+      const configurationHash = computeConfigurationHash({
+        version: config.canaryVersion,
+        weights: candidateWeights,
+        confidenceThreshold: candidateThreshold,
+        policyVersion: LIVE_ELIGIBILITY_POLICY_VERSION,
+        advisoryPolicyHash: 'advisory-disabled',
+      });
+
       await this.prisma.selfLearningConfiguration.update({
         where: { userId },
         data: {
-          weightsJson: config.canaryWeightsJson ?? config.weightsJson ?? BASE_WEIGHTS,
-          confidenceThreshold: config.canaryThreshold ?? config.confidenceThreshold,
-          liveVersion: config.canaryVersion,
+          eligibleVersion: config.canaryVersion,
+          eligibleWeightsJson: candidateWeights,
+          eligibleThreshold: candidateThreshold,
+          eligibleMetricsJson: eligibilityMetrics as unknown as Prisma.InputJsonObject,
+          eligibleConfigurationHash: configurationHash,
+          eligibleAt: new Date(),
           canaryEnabled: false,
           canaryVersion: null,
           canaryWeightsJson: Prisma.DbNull,
           canaryThreshold: null,
           canaryStartedAt: null,
-          lastPromotionAt: new Date(),
         },
       });
-      if (experiment) await this.appendExperimentEvent(experiment.id, 'CANARY_PROMOTED_TO_LIVE', { canary, live, canaryByRegime, liveByRegime });
-      if (experiment?.recommendationId) await this.prisma.quantRecommendation.update({ where: { id: experiment.recommendationId }, data: { status: 'DEPLOYED' } });
+      if (experiment) {
+        await this.appendExperimentEvent(experiment.id, 'CANARY_PASSED_LIVE_ELIGIBLE', {
+          candidateVersion: config.canaryVersion,
+          configurationHash,
+          eligibilityMetrics,
+          canary,
+          live,
+          canaryByRegime,
+          liveByRegime,
+        });
+      }
+      if (experiment?.recommendationId) {
+        await this.prisma.quantRecommendation.update({
+          where: { id: experiment.recommendationId },
+          data: { status: 'PENDING_APPROVAL' },
+        });
+      }
     } else if (severeRegression || expired) {
       await this.prisma.selfLearningConfiguration.update({
         where: { userId },
@@ -850,6 +912,139 @@ export class SelfLearningService {
       if (experiment) await this.appendExperimentEvent(experiment.id, 'CANARY_ROLLED_BACK', { canary, live, severeRegression, expired });
       if (experiment?.recommendationId) await this.prisma.quantRecommendation.update({ where: { id: experiment.recommendationId }, data: { status: 'ROLLED_BACK', rejectionReason: expired ? 'CANARY_EXPIRED' : 'CANARY_REGRESSION' } });
     }
+  }
+
+  async reviewLiveEligibility(userId: string, dto: LiveEligibilityReviewInput) {
+    const { action, version, configurationHash, confirmed, reason } = dto;
+    if (!confirmed) throw new BadRequestException('Explicit confirmation is required');
+
+    return await this.prisma.$transaction(async (tx) => {
+      const config = await tx.selfLearningConfiguration.findUnique({
+        where: { userId },
+      });
+      if (!config || !config.eligibleVersion || !config.eligibleConfigurationHash) {
+        throw new ConflictException('No candidate is currently eligible for live review');
+      }
+      if (config.eligibleVersion !== version || config.eligibleConfigurationHash !== configurationHash) {
+        throw new ConflictException('Candidate version or configuration hash mismatch (stale review)');
+      }
+
+      const eligibleWeights = (config.eligibleWeightsJson ?? BASE_WEIGHTS) as Record<string, number>;
+      const eligibleThreshold = config.eligibleThreshold ?? 60.0;
+      const recomputedHash = computeConfigurationHash({
+        version: config.eligibleVersion,
+        weights: eligibleWeights,
+        confidenceThreshold: eligibleThreshold,
+        policyVersion: LIVE_ELIGIBILITY_POLICY_VERSION,
+        advisoryPolicyHash: 'advisory-disabled',
+      });
+      if (recomputedHash !== configurationHash) {
+        throw new ConflictException('Recomputed configuration hash does not match candidate hash');
+      }
+
+      const experiment = await tx.selfLearningExperiment.findUnique({
+        where: { userId_version: { userId, version } },
+        select: { id: true, recommendationId: true },
+      });
+
+      if (action === 'APPROVE') {
+        const updateResult = await tx.selfLearningConfiguration.updateMany({
+          where: {
+            userId,
+            eligibleVersion: version,
+            eligibleConfigurationHash: configurationHash,
+          },
+          data: {
+            previousWeightsJson: config.weightsJson ?? BASE_WEIGHTS,
+            previousThreshold: config.confidenceThreshold,
+            previousVersion: config.liveVersion,
+            weightsJson: eligibleWeights,
+            confidenceThreshold: eligibleThreshold,
+            liveVersion: version,
+            approvedVersion: version,
+            approvedConfigurationHash: configurationHash,
+            approvedAt: new Date(),
+            lastPromotionAt: new Date(),
+            eligibleVersion: null,
+            eligibleWeightsJson: Prisma.DbNull,
+            eligibleThreshold: null,
+            eligibleMetricsJson: Prisma.DbNull,
+            eligibleConfigurationHash: null,
+            eligibleAt: null,
+            candidateShadowTrades: 0,
+          },
+        });
+
+        if (updateResult.count !== 1) {
+          throw new ConflictException('Concurrent modification detected during promotion');
+        }
+
+        if (experiment) {
+          await tx.selfLearningExperimentEvent.create({
+            data: {
+              experimentId: experiment.id,
+              eventType: 'LIVE_ELIGIBILITY_APPROVED',
+              payloadJson: {
+                version,
+                configurationHash,
+                approvedAt: new Date().toISOString(),
+                reason: reason ?? 'User approved live strategy promotion',
+              } as unknown as Prisma.InputJsonObject,
+            },
+          });
+          if (experiment.recommendationId) {
+            await tx.quantRecommendation.update({
+              where: { id: experiment.recommendationId },
+              data: { status: 'DEPLOYED' },
+            });
+          }
+        }
+      } else {
+        const updateResult = await tx.selfLearningConfiguration.updateMany({
+          where: {
+            userId,
+            eligibleVersion: version,
+            eligibleConfigurationHash: configurationHash,
+          },
+          data: {
+            eligibleVersion: null,
+            eligibleWeightsJson: Prisma.DbNull,
+            eligibleThreshold: null,
+            eligibleMetricsJson: Prisma.DbNull,
+            eligibleConfigurationHash: null,
+            eligibleAt: null,
+            candidateShadowTrades: 0,
+          },
+        });
+
+        if (updateResult.count !== 1) {
+          throw new ConflictException('Concurrent modification detected during rejection');
+        }
+
+        if (experiment) {
+          await tx.selfLearningExperimentEvent.create({
+            data: {
+              experimentId: experiment.id,
+              eventType: 'LIVE_ELIGIBILITY_REJECTED',
+              payloadJson: {
+                version,
+                configurationHash,
+                rejectedAt: new Date().toISOString(),
+                reason: reason ?? 'User rejected live strategy candidate',
+              } as unknown as Prisma.InputJsonObject,
+            },
+          });
+          if (experiment.recommendationId) {
+            await tx.quantRecommendation.update({
+              where: { id: experiment.recommendationId },
+              data: { status: 'REJECTED', rejectionReason: reason ?? 'USER_REJECTED' },
+            });
+          }
+        }
+      }
+
+      return this.lifecycleStatus(userId);
+    });
   }
 
   async evaluateLiveRollback(userId: string): Promise<boolean> {

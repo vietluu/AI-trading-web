@@ -1,5 +1,10 @@
 import { Body, Controller, Get, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
-import { EvaluationHorizonSchema, ImprovementProposalInputSchema, ImprovementProposalReviewSchema } from '@platform/shared';
+import {
+  EvaluationHorizonSchema,
+  ImprovementProposalInputSchema,
+  ImprovementProposalReviewSchema,
+  LiveEligibilityReviewInputSchema,
+} from '@platform/shared';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { SessionGuard } from '../../../session/session.guard';
 import { PerformanceService } from '../application/performance.service';
@@ -30,6 +35,11 @@ export class ReflectionController {
   experiments(@CurrentUser() user: { id: string }) { return this.selfLearning.listExperiments(user.id); }
   @Get('self-learning/lifecycle')
   lifecycle(@CurrentUser() user: { id: string }) { return this.selfLearning.lifecycleStatus(user.id); }
+  @Post('self-learning/live-eligibility/review')
+  async reviewLiveEligibility(@CurrentUser() user: { id: string }, @Body() body: unknown) {
+    const input = LiveEligibilityReviewInputSchema.parse(body);
+    return this.selfLearning.reviewLiveEligibility(user.id, input);
+  }
 
   @Get('reflection')
   overview(@CurrentUser() user: { id: string }) { return this.reflection.generate(user.id, false); }
