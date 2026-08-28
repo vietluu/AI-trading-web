@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { QUALITY_FACTOR } from "../../src/modules/agents/domain/constants/decision.constants";
 import { DecisionService } from "../../src/modules/agents/application/services/decision.service";
-import { FusionService } from "../../src/modules/agents/application/services/fusion.service";
+import type { FusionService } from "../../src/modules/agents/application/services/fusion.service";
 
 describe("Data-Quality Driven Decision Weighting", () => {
   it("enforces strict QUALITY_FACTOR values: GOOD=1, PARTIAL=0.5, INSUFFICIENT=0", () => {
@@ -50,6 +50,7 @@ describe("Data-Quality Driven Decision Weighting", () => {
         movingAverages: { alignment: "BULLISH" as const, pricePosition: "ABOVE" as const },
         volatility: { bollinger: { position: "UPPER" as const, squeeze: false } },
         structure: { marketStructure: "HH_HL" as const },
+        divergence: {},
         signals: [],
         dataQuality: "GOOD" as const,
         usedTools: ["market.candles.list" as const],

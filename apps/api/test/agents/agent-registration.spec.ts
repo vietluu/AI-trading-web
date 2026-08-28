@@ -56,7 +56,7 @@ describe('AgentRegistryService', () => {
       },
     };
 
-    const firstRun = await registry.syncToDatabase(prisma as never);
+    const firstRun = await registry.syncToDatabase(prisma);
     expect(firstRun.synced).toBe(1);
     expect(upsertMock).toHaveBeenCalledTimes(1);
     expect(upsertMock).toHaveBeenCalledWith(
@@ -72,12 +72,12 @@ describe('AgentRegistryService', () => {
           version: 1,
           displayName: 'System Diagnostic Agent',
           status: 'ACTIVE',
-        }),
+        }) as unknown,
       }),
     );
 
     // Second run should also succeed without error (idempotent)
-    const secondRun = await registry.syncToDatabase(prisma as never);
+    const secondRun = await registry.syncToDatabase(prisma);
     expect(secondRun.synced).toBe(1);
     expect(upsertMock).toHaveBeenCalledTimes(2);
   });

@@ -330,7 +330,7 @@ On continuation, the agent must perform these steps before editing code:
 |---|---|---|
 | Design | COMPLETE | User approved the design on 2026-08-28 |
 | 1. Deterministic safety and LIVE eligibility | COMPLETE | 8 commits, 122 API test files (628 tests) + 16 web test files (37 tests) passed, lint passed, typecheck passed, production build passed |
-| 2. Agent data quality and registration | NOT_STARTED | Starts only after Wave 1 verification |
+| 2. Agent data quality and registration | COMPLETE | 5 commits, 125 API test files (644 tests) + 16 web test files (37 tests) passed, lint passed, typecheck passed, Next.js 15 48/48 pages built cleanly |
 | 3. Bounded LLM advisory | NOT_STARTED | Starts only after Wave 2 verification |
 | 4. Memory, reflection, and reporting | NOT_STARTED | Starts only after Wave 3 verification |
 | 5. Quant lifecycle and data hygiene | NOT_STARTED | Starts only after Wave 4 verification |
@@ -353,4 +353,11 @@ Allowed states are `NOT_STARTED`, `IN_PROGRESS`, `BLOCKED`, `VERIFICATION`, and 
 | 2026-08-28 | Wave 1 | `ab05d27` | `quant-execution-policy.spec.ts`, `live-version-approval.spec.ts` | Task 6: Fail closed in LIVE for quant evidence and strategy approval |
 | 2026-08-28 | Wave 1 | `a4ee3e2` | `performance-provenance.spec.ts`, `reflection-flow.spec.ts` | Task 7: Exclude candle-drifted outcomes from calibration and learning |
 | 2026-08-28 | Wave 1 | `ffa47e9` | `entry-drift-reassessment.spec.ts`, `pipeline-runtime.spec.ts` | Task 8: Reassess deterministic execution exactly once after entry drift |
-| 2026-08-28 | Wave 1 | Verification | `pnpm lint`, `pnpm typecheck`, `pnpm test` (122 API / 16 Web files), `pnpm build` | Task 9: Full verification pass and Wave 1 closure |
+| 2026-08-28 | Wave 1 | `d8fbfcc` | `pnpm lint`, `pnpm typecheck`, `pnpm test` (122 API / 16 Web files), `pnpm build` | Task 9: Full verification pass and Wave 1 closure |
+| 2026-08-28 | Wave 2 | Implementation plan | Five task pairs, provenance schemas, on-chain fallback, social normalization, decision down-weighting | User-approved in conversation |
+| 2026-08-28 | Wave 2 | `ab792b9` | `agent-provenance-contract.spec.ts` | Tasks 1 & 2: Add source coverage and structured provenance to specialist outputs |
+| 2026-08-28 | Wave 2 | `2a92185` | `onchain-tools.spec.ts` | Tasks 3 & 4: Implement verified on-chain fallback and graceful unsupported asset handling |
+| 2026-08-28 | Wave 2 | `d5cbb57` | `sentiment-analyst-provenance.spec.ts` | Tasks 5 & 6: Normalize free social source health with structured provenance |
+| 2026-08-28 | Wave 2 | `fe97942` | `decision-data-quality.spec.ts` | Tasks 7 & 8: Enforce data-quality contribution policy (GOOD=1, PARTIAL=0.5, INSUFFICIENT=0) |
+| 2026-08-28 | Wave 2 | `f7c45dd` | `agent-registration.spec.ts` | Tasks 9 & 10: Synchronize runtime agent registrations to database idempotently |
+| 2026-08-28 | Wave 2 | Verification | `pnpm lint`, `pnpm typecheck`, `pnpm test` (125 API / 16 Web files), `pnpm build` (48/48 pages) | Task 11: Full verification pass and Wave 2 closure |

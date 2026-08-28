@@ -47,24 +47,25 @@ describe("OnChainMetricsGetTool & OnChain Analyst provenance and fallback", () =
   });
 
   it("builds INSUFFICIENT deterministic output with EMPTY provenance for unavailable asset", () => {
-    const output = ON_CHAIN_ANALYST_DEFINITION.buildDeterministicOutput({
+    const output = ON_CHAIN_ANALYST_DEFINITION.buildDeterministicOutput?.({
       "onchain.metrics.get": {
         provider: "COIN_METRICS",
         asset: "unknown",
         metrics: [],
         coverage: "UNAVAILABLE",
       },
-    });
+    }, ["onchain.metrics.get"]);
+    expect(output).toBeDefined();
 
-    expect(output.dataQuality).toBe("INSUFFICIENT");
-    expect(output.activity).toBe("NORMAL");
-    expect(output.flows).toEqual({});
-    expect(output.provenance?.coverage).toBe("EMPTY");
-    expect(output.provenance?.dataQualityReason).toBe("ASSET_NOT_SUPPORTED_BY_ONCHAIN_PROVIDER");
+    expect(output?.dataQuality).toBe("INSUFFICIENT");
+    expect(output?.activity).toBe("NORMAL");
+    expect(output?.flows).toEqual({});
+    expect(output?.provenance?.coverage).toBe("EMPTY");
+    expect(output?.provenance?.dataQualityReason).toBe("ASSET_NOT_SUPPORTED_BY_ONCHAIN_PROVIDER");
   });
 
   it("builds PARTIAL deterministic output when only network activity is present", () => {
-    const output = ON_CHAIN_ANALYST_DEFINITION.buildDeterministicOutput({
+    const output = ON_CHAIN_ANALYST_DEFINITION.buildDeterministicOutput?.({
       "onchain.metrics.get": {
         provider: "COIN_METRICS",
         asset: "btc",
@@ -74,15 +75,16 @@ describe("OnChainMetricsGetTool & OnChain Analyst provenance and fallback", () =
         ],
         coverage: "AVAILABLE",
       },
-    });
+    }, ["onchain.metrics.get"]);
+    expect(output).toBeDefined();
 
-    expect(output.dataQuality).toBe("PARTIAL");
-    expect(output.provenance?.coverage).toBe("PARTIAL");
-    expect(output.provenance?.unavailableFields).toEqual(["exchangeInflow", "exchangeOutflow"]);
+    expect(output?.dataQuality).toBe("PARTIAL");
+    expect(output?.provenance?.coverage).toBe("PARTIAL");
+    expect(output?.provenance?.unavailableFields).toEqual(["exchangeInflow", "exchangeOutflow"]);
   });
 
   it("builds GOOD deterministic output with FULL provenance when exchange flows are present", () => {
-    const output = ON_CHAIN_ANALYST_DEFINITION.buildDeterministicOutput({
+    const output = ON_CHAIN_ANALYST_DEFINITION.buildDeterministicOutput?.({
       "onchain.metrics.get": {
         provider: "COIN_METRICS",
         asset: "btc",
@@ -102,11 +104,12 @@ describe("OnChainMetricsGetTool & OnChain Analyst provenance and fallback", () =
         ],
         coverage: "AVAILABLE",
       },
-    });
+    }, ["onchain.metrics.get"]);
+    expect(output).toBeDefined();
 
-    expect(output.dataQuality).toBe("GOOD");
-    expect(output.provenance?.coverage).toBe("FULL");
-    expect(output.provenance?.unavailableFields).toEqual([]);
-    expect(output.flows.exchangeInflow).toBe("600000000");
+    expect(output?.dataQuality).toBe("GOOD");
+    expect(output?.provenance?.coverage).toBe("FULL");
+    expect(output?.provenance?.unavailableFields).toEqual([]);
+    expect(output?.flows.exchangeInflow).toBe("600000000");
   });
 });
