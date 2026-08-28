@@ -166,9 +166,15 @@ export class OnChainMetricsGetTool implements ToolDefinition<
       ? payload.data.filter((row) => row && typeof row === "object")
       : [];
     if (rows.length === 0) {
-      throw new Error(
-        `Coin Metrics has no verified on-chain coverage for ${asset.toUpperCase()}`,
-      );
+      return {
+        provider: "COIN_METRICS",
+        asset,
+        sourceUrl: sourceUrl.replace(/([?&]api_key=)[^&]+/, "$1REDACTED"),
+        metrics: [],
+        coverage: "UNAVAILABLE",
+        warning: `Coin Metrics has no verified on-chain coverage for ${asset.toUpperCase()}.`,
+        observedAt: new Date().toISOString(),
+      };
     }
 
     return {

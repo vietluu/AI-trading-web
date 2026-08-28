@@ -94,6 +94,12 @@ export const ON_CHAIN_ANALYST_DEFINITION: AgentDefinition<
         flows: {},
         signals: ["Coin Metrics returned no verified coverage for this asset."],
         dataQuality: "INSUFFICIENT",
+        provenance: {
+          provider: "COIN_METRICS",
+          coverage: "EMPTY",
+          unavailableFields: ["exchangeInflow", "exchangeOutflow", "activeAddresses"],
+          dataQualityReason: "ASSET_NOT_SUPPORTED_BY_ONCHAIN_PROVIDER",
+        },
         generatedAt: new Date().toISOString(),
       };
     }
@@ -109,6 +115,7 @@ export const ON_CHAIN_ANALYST_DEFINITION: AgentDefinition<
         : 0;
     const inflow = latest.FlowInExUSD;
     const outflow = latest.FlowOutExUSD;
+    const hasFlows = inflow != null || outflow != null;
     const safeText = (value: unknown, fallback: string) =>
       typeof value === "string" || typeof value === "number"
         ? String(value)
@@ -126,11 +133,20 @@ export const ON_CHAIN_ANALYST_DEFINITION: AgentDefinition<
       },
       signals: [
         `Active network metric: ${Number.isFinite(latestActivity) ? latestActivity : "unavailable"}.`,
-        inflow == null && outflow == null
+        !hasFlows
           ? "Verified exchange-flow metrics are unavailable; network activity only."
           : "Verified exchange-flow metrics are available.",
       ],
-      dataQuality: inflow != null || outflow != null ? "GOOD" : "PARTIAL",
+      dataQuality: hasFlows ? "GOOD" : "PARTIAL",
+      provenance: {
+        provider: "COIN_METRICS",
+        sourceTimestamp: typeof latest.time === "string" ? latest.time : undefined,
+        coverage: hasFlows ? "FULL" : "PARTIAL",
+        unavailableFields: hasFlows ? [] : ["exchangeInflow", "exchangeOutflow"],
+        dataQualityReason: hasFlows
+          ? "VERIFIED_ONCHAIN_EXCHANGE_FLOWS_AVAILABLE"
+          : "COMMUNITY_TIER_NETWORK_ACTIVITY_ONLY",
+      },
       generatedAt: new Date().toISOString(),
     };
   },
@@ -142,6 +158,12 @@ export const ON_CHAIN_ANALYST_DEFINITION: AgentDefinition<
       "Coin Metrics returned no verified coverage for this asset or was unavailable.",
     ],
     dataQuality: "INSUFFICIENT",
+    provenance: {
+      provider: "COIN_METRICS",
+      coverage: "EMPTY",
+      unavailableFields: ["exchangeInflow", "exchangeOutflow", "activeAddresses"],
+      dataQualityReason: reason ?? "ONCHAIN_DATA_UNAVAILABLE",
+    },
     generatedAt: new Date().toISOString(),
   }),
 };
