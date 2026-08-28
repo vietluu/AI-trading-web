@@ -654,3 +654,45 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     );
   });
 });
+
+describe("drift reassessment boundary", () => {
+  it("reassesses at most once when pipeline execution drifts", async () => {
+    const assessPipelineDecision = vi.fn().mockResolvedValue({ outcome: "RISK_APPROVED", price: 100 });
+    const executePipeline = vi.fn()
+      .mockResolvedValueOnce({ outcome: "EXECUTION_FAILED", errorCode: "ENTRY_PRICE_DRIFT", retryable: true })
+      .mockResolvedValueOnce({ outcome: "ORDER_SUBMITTED" });
+
+    const { executeWithSingleDriftReassessment } = await import(
+      "../../src/modules/pipeline/application/entry-drift-reassessment"
+    );
+
+    const result = await executeWithSingleDriftReassessment({
+      assess: () => assessPipelineDecision(),
+      execute: () => executePipeline(),
+    });
+
+    expect(result.outcome).toBe("ORDER_SUBMITTED");
+    expect(assessPipelineDecision).toHaveBeenCalledTimes(2);
+    expect(executePipeline).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns terminal result after second drift without further retry", async () => {
+    const assessPipelineDecision = vi.fn().mockResolvedValue({ outcome: "RISK_APPROVED", price: 100 });
+    const executePipeline = vi.fn().mockResolvedValue(
+      { outcome: "EXECUTION_FAILED", errorCode: "ENTRY_PRICE_DRIFT", retryable: true },
+    );
+
+    const { executeWithSingleDriftReassessment } = await import(
+      "../../src/modules/pipeline/application/entry-drift-reassessment"
+    );
+
+    const result = await executeWithSingleDriftReassessment({
+      assess: () => assessPipelineDecision(),
+      execute: () => executePipeline(),
+    });
+
+    expect(result.outcome).toBe("EXECUTION_FAILED");
+    expect(assessPipelineDecision).toHaveBeenCalledTimes(2);
+    expect(executePipeline).toHaveBeenCalledTimes(2);
+  });
+});

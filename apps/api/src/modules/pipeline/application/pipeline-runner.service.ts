@@ -35,6 +35,7 @@ import {
   selectPipelineTimeframes,
 } from "../domain/multi-timeframe-analysis";
 import { PortfolioService } from "../../portfolio/application/portfolio.service";
+import { executeWithSingleDriftReassessment } from "./entry-drift-reassessment";
 
 class PipelineCancelledError extends Error {}
 class PipelineExecutionLockBusyError extends Error {}
@@ -578,67 +579,81 @@ export class PipelineRunnerService {
         }
 
         try {
-          riskAssessment = await this.liveTrading.assessPipelineDecision({
-            userId: job.userId,
-            pipelineRunId: runId,
-            symbol,
-            provider: job.provider as unknown as ExchangeProvider,
-            decision: executionDecision,
-            // Momentum scalp currently shares the governed breakout portfolio
-            // bucket while retaining its own decision/quant identity.
-            strategyKey: strategyKey === "momentum-scalp" ? "breakout" : strategyKey,
-            executionSizeFactor:
-              'advisory' in quant && quant.advisory && 'sizeFactor' in quant
-                ? quant.sizeFactor
-                : undefined,
-            ...(volatilityAtr !== undefined
-              ? { volatilityAtr }
-              : {}),
-            tradePlanContext: {
-              timeframeMs: timeframeMilliseconds(String(interval)),
-              ...(Number.isFinite(Number(indicatorSnapshot?.values.rsi14))
-                ? { rsi: Number(indicatorSnapshot?.values.rsi14) }
+          const assess = async () => {
+            riskAssessment = await this.liveTrading.assessPipelineDecision({
+              userId: job.userId,
+              pipelineRunId: runId,
+              symbol,
+              provider: job.provider as unknown as ExchangeProvider,
+              decision: executionDecision,
+              // Momentum scalp currently shares the governed breakout portfolio
+              // bucket while retaining its own decision/quant identity.
+              strategyKey: strategyKey === "momentum-scalp" ? "breakout" : strategyKey,
+              executionSizeFactor:
+                'advisory' in quant && quant.advisory && 'sizeFactor' in quant
+                  ? quant.sizeFactor
+                  : undefined,
+              ...(volatilityAtr !== undefined
+                ? { volatilityAtr }
                 : {}),
-              ...(Number.isFinite(Number(indicatorSnapshot?.values.rollingLow))
-                ? { support: Number(indicatorSnapshot?.values.rollingLow) }
-                : {}),
-              ...(Number.isFinite(Number(indicatorSnapshot?.values.rollingHigh))
-                ? { resistance: Number(indicatorSnapshot?.values.rollingHigh) }
-                : {}),
-              ...(Number.isFinite(Number(indicatorSnapshot?.values.adx14))
-                ? { adx: Number(indicatorSnapshot?.values.adx14) }
-                : {}),
-              ...(Number.isFinite(Number(indicatorSnapshot?.values.efficiencyRatio20))
-                ? { efficiencyRatio: Number(indicatorSnapshot?.values.efficiencyRatio20) }
-                : {}),
-              ...(Number.isFinite(Number(indicatorSnapshot?.values.ema20))
-                ? { ema20: Number(indicatorSnapshot?.values.ema20) }
-                : {}),
-              ...(Number.isFinite(Number(indicatorSnapshot?.values.ema50))
-                ? { ema50: Number(indicatorSnapshot?.values.ema50) }
-                : {}),
-              ...(analyses.technical?.structure.breakout !== undefined
-                ? { breakout: analyses.technical.structure.breakout }
-                : {}),
-              ...(analyses.technical?.structure.marketStructure
-                ? { marketStructure: analyses.technical.structure.marketStructure }
-                : {}),
-            },
-          });
-          if (riskAssessment.outcome === "NO_ELIGIBLE_EXCHANGE_CONNECTION") {
-            throw new Error("NO_ELIGIBLE_EXCHANGE_CONNECTION: Active verified exchange connection is required to run live risk assessment.");
-          }
-          if (riskAssessment.outcome === "RISK_APPROVED") {
-            submissionStartedAt = new Date();
-            liveExecution = await this.liveTrading.executePipeline(
-              job.userId,
-              runId,
-            );
-            if (liveExecution.outcome === "EXECUTION_FAILED" && liveExecution.retryable === true) {
-              throw new PipelineExecutionRetryableError(
-                liveExecution.errorCode ?? "RETRYABLE_EXCHANGE_FAILURE",
-              );
+              tradePlanContext: {
+                timeframeMs: timeframeMilliseconds(String(interval)),
+                ...(Number.isFinite(Number(indicatorSnapshot?.values.rsi14))
+                  ? { rsi: Number(indicatorSnapshot?.values.rsi14) }
+                  : {}),
+                ...(Number.isFinite(Number(indicatorSnapshot?.values.rollingLow))
+                  ? { support: Number(indicatorSnapshot?.values.rollingLow) }
+                  : {}),
+                ...(Number.isFinite(Number(indicatorSnapshot?.values.rollingHigh))
+                  ? { resistance: Number(indicatorSnapshot?.values.rollingHigh) }
+                  : {}),
+                ...(Number.isFinite(Number(indicatorSnapshot?.values.adx14))
+                  ? { adx: Number(indicatorSnapshot?.values.adx14) }
+                  : {}),
+                ...(Number.isFinite(Number(indicatorSnapshot?.values.efficiencyRatio20))
+                  ? { efficiencyRatio: Number(indicatorSnapshot?.values.efficiencyRatio20) }
+                  : {}),
+                ...(Number.isFinite(Number(indicatorSnapshot?.values.ema20))
+                  ? { ema20: Number(indicatorSnapshot?.values.ema20) }
+                  : {}),
+                ...(Number.isFinite(Number(indicatorSnapshot?.values.ema50))
+                  ? { ema50: Number(indicatorSnapshot?.values.ema50) }
+                  : {}),
+                ...(analyses.technical?.structure.breakout !== undefined
+                  ? { breakout: analyses.technical.structure.breakout }
+                  : {}),
+                ...(analyses.technical?.structure.marketStructure
+                  ? { marketStructure: analyses.technical.structure.marketStructure }
+                  : {}),
+              },
+            });
+            if (riskAssessment.outcome === "NO_ELIGIBLE_EXCHANGE_CONNECTION") {
+              throw new Error("NO_ELIGIBLE_EXCHANGE_CONNECTION: Active verified exchange connection is required to run live risk assessment.");
             }
+          };
+
+          const execute = async () => {
+            if (riskAssessment?.outcome === "RISK_APPROVED") {
+              submissionStartedAt = new Date();
+              const execution = await this.liveTrading.executePipeline(
+                job.userId,
+                runId,
+              );
+              liveExecution = execution;
+              return execution;
+            }
+            return { outcome: riskAssessment?.outcome ?? "SKIPPED" };
+          };
+
+          const finalExecution = await executeWithSingleDriftReassessment({
+            assess,
+            execute,
+          });
+
+          if (finalExecution.outcome === "EXECUTION_FAILED" && finalExecution.retryable === true) {
+            throw new PipelineExecutionRetryableError(
+              finalExecution.errorCode ?? "RETRYABLE_EXCHANGE_FAILURE",
+            );
           }
         } finally {
           // Always release the lock — even if assessment or execution throws
