@@ -39,6 +39,12 @@ function deterministicSentiment(
       anomalies: ["Sentiment coverage is unavailable."],
       dataQuality: "INSUFFICIENT",
       usedTools: usedTools as SentimentAgentOutput["usedTools"],
+      provenance: {
+        provider: "ALTERNATIVE_ME_REDDIT",
+        coverage: "EMPTY",
+        unavailableFields: ["fearAndGreedIndex", "socialPosts"],
+        dataQualityReason: "NO_SOCIAL_OR_SENTIMENT_SOURCES_AVAILABLE",
+      },
       generatedAt: new Date().toISOString(),
     };
   }
@@ -59,6 +65,7 @@ function deterministicSentiment(
       : hasIndex && (score <= 35 || score >= 65)
         ? ("MEDIUM" as const)
         : ("LOW" as const);
+  const hasBoth = hasIndex && posts.length > 0;
   return {
     summary: `Global Fear & Greed${hasIndex ? ` is ${score} (${classification})` : " is unavailable"}; ${posts.length} recent social post(s) were available.`,
     sentiment: { overall, intensity },
@@ -83,8 +90,23 @@ function deterministicSentiment(
             "No asset-specific social observations; global index is context only.",
           ]
         : [],
-    dataQuality: hasIndex && posts.length > 0 ? "GOOD" : "PARTIAL",
+    dataQuality: hasBoth ? "GOOD" : "PARTIAL",
     usedTools: usedTools as SentimentAgentOutput["usedTools"],
+    provenance: {
+      provider: "ALTERNATIVE_ME_REDDIT",
+      sourceTimestamp: typeof market?.timestamp === "string" ? market.timestamp : undefined,
+      coverage: hasBoth ? "FULL" : "PARTIAL",
+      unavailableFields: hasBoth
+        ? []
+        : !hasIndex
+          ? ["fearAndGreedIndex"]
+          : ["socialPosts"],
+      dataQualityReason: hasBoth
+        ? "FEAR_AND_GREED_AND_SOCIAL_POSTS_AVAILABLE"
+        : !hasIndex
+          ? "SOCIAL_POSTS_AVAILABLE_GLOBAL_INDEX_UNAVAILABLE"
+          : "GLOBAL_INDEX_AVAILABLE_ASSET_SOCIAL_UNAVAILABLE",
+    },
     generatedAt: new Date().toISOString(),
   };
 }
