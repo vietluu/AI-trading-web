@@ -3,10 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "prebuild": "prisma generate",
     "build": "nest build",
     "dev": "nest start --watch",
     "start": "node dist/main.js",
     "lint": "eslint src test",
+    "pretypecheck": "prisma generate",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:integration": "RUN_INTEGRATION_TESTS=true vitest run test/phase2.integration.spec.ts test/phase3.integration.spec.ts test/external-data/phase5.integration.spec.ts",
