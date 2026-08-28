@@ -338,6 +338,29 @@ export class PromptRegistry {
     return tmpl.versions.get(v);
   }
 
+  public addVersion(
+    templateId: string,
+    version: Omit<PromptVersion, "createdAt" | "updatedAt"> & {
+      createdAt?: Date;
+      updatedAt?: Date;
+    },
+  ): boolean {
+    const tmpl = this.templates.get(templateId);
+    if (!tmpl) return false;
+    const now = new Date();
+    const fullVersion: PromptVersion = {
+      ...version,
+      createdAt: version.createdAt ?? now,
+      updatedAt: version.updatedAt ?? now,
+    };
+    tmpl.versions.set(version.version, fullVersion);
+    if (version.version > tmpl.currentVersion) {
+      tmpl.currentVersion = version.version;
+    }
+    tmpl.updatedAt = now;
+    return true;
+  }
+
   public getAllTemplates(): PromptTemplateModel[] {
     return Array.from(this.templates.values());
   }
