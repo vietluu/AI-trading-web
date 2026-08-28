@@ -333,7 +333,7 @@ On continuation, the agent must perform these steps before editing code:
 | 2. Agent data quality and registration | COMPLETE | 5 commits, 125 API test files (644 tests) + 16 web test files (37 tests) passed, lint passed, typecheck passed, Next.js 15 48/48 pages built cleanly |
 | 3. Bounded LLM advisory | COMPLETE | 4 commits, 127 API test files (653 tests) + 16 web test files (37 tests) passed, lint passed, typecheck passed, Next.js 15 48/48 pages built cleanly |
 | 4. Memory, reflection, and reporting | COMPLETE | 2 commits, 128 API test files (655 tests) + 16 web test files (37 tests) passed, lint passed, typecheck passed, Next.js 15 48/48 pages built cleanly |
-| 5. Quant lifecycle and data hygiene | NOT_STARTED | Starts only after Wave 4 verification |
+| 5. Quant lifecycle and data hygiene | COMPLETE | 2 commits, 129 API test files (657 tests) + 16 web test files (37 tests) passed, lint passed, typecheck passed, Next.js 15 48/48 pages built cleanly |
 | 6. Observability and release verification | NOT_STARTED | Starts only after Wave 5 verification |
 
 Allowed states are `NOT_STARTED`, `IN_PROGRESS`, `BLOCKED`, `VERIFICATION`, and `COMPLETE`. `REVIEW_REQUIRED` is reserved for the design gate.
@@ -369,4 +369,7 @@ Allowed states are `NOT_STARTED`, `IN_PROGRESS`, `BLOCKED`, `VERIFICATION`, and 
 | 2026-08-28 | Wave 3 | `4b30065` | `pnpm lint`, `pnpm typecheck`, `pnpm test` (127 API / 16 Web files), `pnpm build` (48/48 pages) | Task 9: Full verification pass and Wave 3 closure |
 | 2026-08-28 | Wave 4 | Implementation plan | Three task pairs, episode retention, hypothesis outcome tracking, scheduled quant reporting | User-approved in conversation |
 | 2026-08-28 | Wave 4 | `6d24b58` | `quant-report-lifecycle.spec.ts` | Tasks 5 & 6: Generate daily, weekly, monthly performance attribution reports |
-| 2026-08-28 | Wave 4 | Verification | `pnpm lint`, `pnpm typecheck`, `pnpm test` (128 API / 16 Web files), `pnpm build` (48/48 pages) | Task 7: Full verification pass and Wave 4 closure |
+| 2026-08-28 | Wave 4 | `4462645` | `pnpm lint`, `pnpm typecheck`, `pnpm test` (128 API / 16 Web files), `pnpm build` (48/48 pages) | Task 7: Full verification pass and Wave 4 closure |
+| 2026-08-28 | Wave 5 | Implementation plan | Reproducible hypothesis fingerprints, 0-100 probability metrics, factor evaluations, retention | User-approved in conversation |
+| 2026-08-28 | Wave 5 | `9f5da77` | `quant-research-engines.spec.ts` | Tasks 1 & 2: Normalize probability metrics and validate factor discovery scales |
+| 2026-08-28 | Wave 5 | `c482f31` | `pnpm lint`, `pnpm typecheck`, `pnpm test` (129 API / 16 Web files), `pnpm build` (48/48 pages) | Task 4: Full verification pass and Wave 5 closure |
