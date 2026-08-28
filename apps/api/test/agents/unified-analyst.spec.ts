@@ -31,4 +31,33 @@ describe('UnifiedAnalystService safety fallback', () => {
     expect(result.fusionOutput.confidence).toBe(0);
     expect(result.fusionOutput.dataQuality).toBe('INSUFFICIENT');
   });
+
+  it('safely falls back to neutral INSUFFICIENT outputs when agent execution throws an error', async () => {
+    const mockAgentExecutionService = {
+      executeSync: () => Promise.reject(new Error('AI_CIRCUIT_BREAKER_OPEN: provider quota exhausted')),
+    } as unknown as AgentExecutionService;
+
+    const service = new UnifiedAnalystService(mockAgentExecutionService);
+    const result = await service.analyze({
+      input: {
+        symbol: 'BTC-USDT',
+        provider: ExchangeProvider.BINANCE_FUTURES,
+        interval: ExchangeInterval.FIVE_MINUTES,
+        lookbackCandles: 100,
+        lookbackHours: 12,
+        maxItems: 20,
+      },
+      invocationSource: AgentInvocationSource.USER_MANUAL,
+    });
+
+    expect(result.analyses).toBeDefined();
+    expect(result.analyses.market.dataQuality).toBe('INSUFFICIENT');
+    expect(result.analyses.technical.dataQuality).toBe('INSUFFICIENT');
+    expect(result.analyses.news.dataQuality).toBe('INSUFFICIENT');
+    expect(result.analyses.sentiment.dataQuality).toBe('INSUFFICIENT');
+    expect(result.analyses.macro.dataQuality).toBe('INSUFFICIENT');
+    expect(result.analyses.onchain.dataQuality).toBe('INSUFFICIENT');
+    expect(result.fusionOutput.overallBias).toBe('NEUTRAL');
+    expect(result.fusionOutput.dataQuality).toBe('INSUFFICIENT');
+  });
 });
