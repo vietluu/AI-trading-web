@@ -126,7 +126,7 @@ describe("ReflectionPage LIVE eligibility candidate review", () => {
     expect(screen.getAllByText("105").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("keeps approval button disabled until confirmation checkbox is clicked", async () => {
+  it("keeps approval button disabled until confirmation checkbox is clicked", () => {
     render(<ReflectionPage />);
 
     const approveButton = screen.getByRole("button", {
@@ -148,7 +148,7 @@ describe("ReflectionPage LIVE eligibility candidate review", () => {
     });
   });
 
-  it("submits candidate rejection when reject button is clicked", async () => {
+  it("submits candidate rejection when reject button is clicked", () => {
     render(<ReflectionPage />);
 
     const rejectButton = screen.getByRole("button", {

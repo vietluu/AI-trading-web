@@ -19,7 +19,25 @@ describe("live eligibility review application flow", () => {
   });
 
   it("approves eligible candidate and applies to live configuration", async () => {
-    let storedConfig = {
+    let storedConfig: {
+      id: string;
+      userId: string;
+      isEnabled: boolean;
+      liveVersion: number;
+      weightsJson: Record<string, number>;
+      confidenceThreshold: number;
+      eligibleVersion: number | null;
+      eligibleWeightsJson: Record<string, number> | null;
+      eligibleThreshold: number | null;
+      eligibleMetricsJson: Record<string, unknown> | null;
+      eligibleConfigurationHash: string | null;
+      eligibleAt: Date | null;
+      approvedVersion: number | null;
+      approvedConfigurationHash: string | null;
+      approvedAt: Date | null;
+      canaryEnabled: boolean;
+      shadowEnabled: boolean;
+    } = {
       id: "config-1",
       userId,
       isEnabled: true,
@@ -48,7 +66,7 @@ describe("live eligibility review application flow", () => {
     };
 
     const prisma = {
-      $transaction: vi.fn().mockImplementation(async (callback) => {
+      $transaction: vi.fn().mockImplementation((callback: (txClient: unknown) => Promise<unknown>) => {
         return callback(tx);
       }),
       selfLearningConfiguration: {
@@ -65,7 +83,7 @@ describe("live eligibility review application flow", () => {
     const tx = {
       selfLearningConfiguration: {
         findUnique: vi.fn().mockImplementation(() => Promise.resolve(storedConfig)),
-        updateMany: vi.fn().mockImplementation(({ where, data }) => {
+        updateMany: vi.fn().mockImplementation(({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
           if (where.userId === userId && where.eligibleVersion === version && where.eligibleConfigurationHash === configurationHash) {
             storedConfig = { ...storedConfig, ...data, eligibleVersion: null, eligibleConfigurationHash: null, liveVersion: version, approvedVersion: version };
             return Promise.resolve({ count: 1 });
@@ -87,7 +105,7 @@ describe("live eligibility review application flow", () => {
     const configService = { get: vi.fn().mockReturnValue(10) };
     const service = new SelfLearningService(prisma as never, configService as never);
 
-    const result = await service.reviewLiveEligibility(userId, {
+    await service.reviewLiveEligibility(userId, {
       action: "APPROVE",
       version,
       configurationHash,
@@ -97,18 +115,18 @@ describe("live eligibility review application flow", () => {
 
     expect(tx.selfLearningConfiguration.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({
+        where: {
           userId,
           eligibleVersion: version,
           eligibleConfigurationHash: configurationHash,
-        }),
+        },
         data: expect.objectContaining({
           liveVersion: version,
           approvedVersion: version,
           approvedConfigurationHash: configurationHash,
           eligibleVersion: null,
           eligibleConfigurationHash: null,
-        }),
+        }) as unknown,
       }),
     );
     expect(tx.quantRecommendation.update).toHaveBeenCalledWith(
@@ -129,13 +147,14 @@ describe("live eligibility review application flow", () => {
       eligibleThreshold: validThreshold,
     };
 
-    const prisma = {
-      $transaction: vi.fn().mockImplementation(async (callback) => callback(tx)),
+    const tx = {
       selfLearningConfiguration: {
         findUnique: vi.fn().mockResolvedValue(storedConfig),
       },
     };
-    const tx = {
+
+    const prisma = {
+      $transaction: vi.fn().mockImplementation((callback: (txClient: unknown) => Promise<unknown>) => callback(tx)),
       selfLearningConfiguration: {
         findUnique: vi.fn().mockResolvedValue(storedConfig),
       },

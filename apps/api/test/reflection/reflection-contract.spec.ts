@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  LiveEligibilityMetricsSchema,
   LiveEligibilityCandidateSchema,
   LiveEligibilityReviewInputSchema,
-  SelfLearningLifecycleStageSchema,
   SelfLearningLifecycleDtoSchema,
 } from "@platform/shared";
 
@@ -57,9 +55,15 @@ describe("reflection and self-learning lifecycle schemas", () => {
   });
 
   it("rejects missing candidate metrics", () => {
-    const { metrics: _, ...missingMetrics } = validCandidate;
+    const candidateWithoutMetrics = {
+      version: validCandidate.version,
+      weights: validCandidate.weights,
+      threshold: validCandidate.threshold,
+      configurationHash: validCandidate.configurationHash,
+      eligibleAt: validCandidate.eligibleAt,
+    };
     expect(() =>
-      LiveEligibilityCandidateSchema.parse(missingMetrics),
+      LiveEligibilityCandidateSchema.parse(candidateWithoutMetrics),
     ).toThrow();
   });
 

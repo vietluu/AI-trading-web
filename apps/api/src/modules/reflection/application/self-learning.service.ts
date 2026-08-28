@@ -787,10 +787,8 @@ export class SelfLearningService {
   async evaluateCanary(userId: string): Promise<void> {
     const config = await this.getOrCreateConfig(userId);
     if (!config.canaryEnabled || !config.canaryVersion || !config.canaryStartedAt) return;
-    const minTrades = this.config.get<number>('SELF_LEARNING_MIN_CANARY_TRADES', 100);
     const maxDays = this.config.get<number>('SELF_LEARNING_MAX_CANARY_DAYS', 14);
     const maxDrawdown = this.config.get<number>('SELF_LEARNING_MAX_DRAWDOWN_PCT', 10);
-    const minSharpeRatio = this.config.get<number>('SELF_LEARNING_MIN_SHARPE_RATIO', 0.5);
     const commonWhere: Prisma.PerformanceRecordWhereInput = {
       userId,
       horizon: 'MID' as const,
@@ -989,7 +987,7 @@ export class SelfLearningService {
                 configurationHash,
                 approvedAt: new Date().toISOString(),
                 reason: reason ?? 'User approved live strategy promotion',
-              } as unknown as Prisma.InputJsonObject,
+              },
             },
           });
           if (experiment.recommendationId) {
@@ -1031,7 +1029,7 @@ export class SelfLearningService {
                 configurationHash,
                 rejectedAt: new Date().toISOString(),
                 reason: reason ?? 'User rejected live strategy candidate',
-              } as unknown as Prisma.InputJsonObject,
+              },
             },
           });
           if (experiment.recommendationId) {

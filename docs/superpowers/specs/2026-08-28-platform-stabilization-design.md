@@ -329,7 +329,7 @@ On continuation, the agent must perform these steps before editing code:
 | Wave | State | Evidence |
 |---|---|---|
 | Design | COMPLETE | User approved the design on 2026-08-28 |
-| 1. Deterministic safety and LIVE eligibility | NOT_STARTED | Approved implementation plan: `docs/superpowers/plans/2026-08-28-wave-1-live-safety-implementation-plan.md` |
+| 1. Deterministic safety and LIVE eligibility | COMPLETE | 8 commits, 122 API test files (628 tests) + 16 web test files (37 tests) passed, lint passed, typecheck passed, production build passed |
 | 2. Agent data quality and registration | NOT_STARTED | Starts only after Wave 1 verification |
 | 3. Bounded LLM advisory | NOT_STARTED | Starts only after Wave 2 verification |
 | 4. Memory, reflection, and reporting | NOT_STARTED | Starts only after Wave 3 verification |
@@ -345,3 +345,12 @@ Allowed states are `NOT_STARTED`, `IN_PROGRESS`, `BLOCKED`, `VERIFICATION`, and 
 | 2026-08-28 | Design | Design document | Placeholder, consistency, scope, and ambiguity review passed | Initial stabilization architecture and continuation protocol |
 | 2026-08-28 | Design | User approval | Approved in conversation | Wave 1 implementation planning authorized |
 | 2026-08-28 | Wave 1 | Implementation plan | Nine tasks, strict acceptance contract, TDD commands, and green commit boundaries reviewed | Ready for isolated inline execution |
+| 2026-08-28 | Wave 1 | `6196281` | `collateral-health.spec.ts`, `protection-and-risk-preflight.spec.ts` | Task 1: Add collateral mismatch diagnostics without changing risk sizing |
+| 2026-08-28 | Wave 1 | `d377b54` | `live-eligibility.spec.ts` | Task 2: Define strict LIVE eligibility as a deterministic domain policy |
+| 2026-08-28 | Wave 1 | `0691e2d` | `reflection-contract.spec.ts` | Task 3: Persist eligible and approved strategy versions additively |
+| 2026-08-28 | Wave 1 | `312a596` | `shadow-promotion.spec.ts`, `live-eligibility-review.spec.ts` | Task 4: Replace automatic LIVE promotion with exact-version manual review |
+| 2026-08-28 | Wave 1 | `4d445b1` | `apps/web/src/app/ai/reflection/page.test.tsx` (16 web files / 37 tests) | Task 5: Add owner-facing LIVE eligibility review UI with gate table |
+| 2026-08-28 | Wave 1 | `ab05d27` | `quant-execution-policy.spec.ts`, `live-version-approval.spec.ts` | Task 6: Fail closed in LIVE for quant evidence and strategy approval |
+| 2026-08-28 | Wave 1 | `a4ee3e2` | `performance-provenance.spec.ts`, `reflection-flow.spec.ts` | Task 7: Exclude candle-drifted outcomes from calibration and learning |
+| 2026-08-28 | Wave 1 | `ffa47e9` | `entry-drift-reassessment.spec.ts`, `pipeline-runtime.spec.ts` | Task 8: Reassess deterministic execution exactly once after entry drift |
+| 2026-08-28 | Wave 1 | Verification | `pnpm lint`, `pnpm typecheck`, `pnpm test` (122 API / 16 Web files), `pnpm build` | Task 9: Full verification pass and Wave 1 closure |

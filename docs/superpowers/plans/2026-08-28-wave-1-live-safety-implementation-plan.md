@@ -35,7 +35,7 @@
 - Modify: `apps/api/src/modules/live-trading/application/live-trading.service.ts`
 - Test: `apps/api/test/live-trading/protection-and-risk-preflight.spec.ts`
 
-- [ ] Add a failing domain test for a pure collateral-health evaluator:
+- [x] Add a failing domain test for a pure collateral-health evaluator:
 
 ```ts
 import { describe, expect, it } from "vitest";
@@ -57,19 +57,19 @@ describe("evaluateCollateralHealth", () => {
 });
 ```
 
-- [ ] Run `pnpm --filter @platform/api test -- collateral-health.spec.ts` and confirm it fails because the module is absent.
-- [ ] Implement `evaluateCollateralHealth(totalEquity, availableBalance, warningRatio)` with finite/non-negative normalization and a stable numeric ratio rounded only for alert text, not for the comparison.
-- [ ] Add `LIVE_AVAILABLE_COLLATERAL_WARNING_RATIO` to the environment schema with numeric coercion, range `0..1`, and default `0.1`; document the same default in `.env.example` and `docker-compose.yml`.
-- [ ] Add an integration test proving `assessPipelineDecision` still sizes from available balance and creates at most one `PipelineAlert` with `kind: "ACCOUNT_COLLATERAL_MISMATCH"` when the ratio is below the configured threshold, including when reassessment is called twice for the same pipeline run.
-- [ ] Run the focused preflight test and observe failure because the alert is not written:
+- [x] Run `pnpm --filter @platform/api test -- collateral-health.spec.ts` and confirm it fails because the module is absent.
+- [x] Implement `evaluateCollateralHealth(totalEquity, availableBalance, warningRatio)` with finite/non-negative normalization and a stable numeric ratio rounded only for alert text, not for the comparison.
+- [x] Add `LIVE_AVAILABLE_COLLATERAL_WARNING_RATIO` to the environment schema with numeric coercion, range `0..1`, and default `0.1`; document the same default in `.env.example` and `docker-compose.yml`.
+- [x] Add an integration test proving `assessPipelineDecision` still sizes from available balance and creates at most one `PipelineAlert` with `kind: "ACCOUNT_COLLATERAL_MISMATCH"` when the ratio is below the configured threshold, including when reassessment is called twice for the same pipeline run.
+- [x] Run the focused preflight test and observe failure because the alert is not written:
 
 ```powershell
 pnpm --filter @platform/api test -- protection-and-risk-preflight.spec.ts
 ```
 
-- [ ] In `LiveTradingService.assessPipelineDecision`, evaluate collateral immediately after the exchange account snapshot is synchronized. Within the existing transaction, call `findFirst` for the same `pipelineRunId` and alert kind and create only when absent. Store only numeric equity, available balance, and ratio in `reasoningSummary`; do not store credentials or full exchange payloads.
-- [ ] Keep the existing `availableBalance * safeLeverage` position cap and portfolio preflight unchanged.
-- [ ] Run both focused suites and then commit:
+- [x] In `LiveTradingService.assessPipelineDecision`, evaluate collateral immediately after the exchange account snapshot is synchronized. Within the existing transaction, call `findFirst` for the same `pipelineRunId` and alert kind and create only when absent. Store only numeric equity, available balance, and ratio in `reasoningSummary`; do not store credentials or full exchange payloads.
+- [x] Keep the existing `availableBalance * safeLeverage` position cap and portfolio preflight unchanged.
+- [x] Run both focused suites and then commit:
 
 ```powershell
 pnpm --filter @platform/api test -- collateral-health.spec.ts protection-and-risk-preflight.spec.ts
@@ -84,7 +84,7 @@ git commit -m "fix(risk): flag exchange collateral mismatch"
 - Create: `apps/api/src/modules/reflection/domain/live-eligibility.ts`
 - Test: `apps/api/test/reflection/live-eligibility.spec.ts`
 
-- [ ] Write failing table-driven tests for every locked threshold and its boundary:
+- [x] Write failing table-driven tests for every locked threshold and its boundary:
 
 ```ts
 const passing = {
@@ -108,10 +108,10 @@ expect(evaluateLiveEligibility({ ...passing, expectancy: 0 })).toMatchObject({
 });
 ```
 
-- [ ] Cover PF `<1.3`, Sharpe `<0.5`, drawdown `>10`, shadow trades `<100`, canary trades `<100`, NaN/infinite values, and multiple failures in stable order.
-- [ ] Add a failing test for a stable SHA-256 configuration hash that is independent of object key order and changes when version, weight, confidence threshold, policy version, or advisory policy hash changes.
-- [ ] Run `pnpm --filter @platform/api test -- live-eligibility.spec.ts` and confirm the missing-module failure.
-- [ ] Implement constants and types:
+- [x] Cover PF `<1.3`, Sharpe `<0.5`, drawdown `>10`, shadow trades `<100`, canary trades `<100`, NaN/infinite values, and multiple failures in stable order.
+- [x] Add a failing test for a stable SHA-256 configuration hash that is independent of object key order and changes when version, weight, confidence threshold, policy version, or advisory policy hash changes.
+- [x] Run `pnpm --filter @platform/api test -- live-eligibility.spec.ts` and confirm the missing-module failure.
+- [x] Implement constants and types:
 
 ```ts
 export const STRICT_LIVE_ELIGIBILITY_THRESHOLDS = Object.freeze({
@@ -127,8 +127,8 @@ export const STRICT_LIVE_ELIGIBILITY_THRESHOLDS = Object.freeze({
 export const LIVE_ELIGIBILITY_POLICY_VERSION = "live-eligibility-v1";
 ```
 
-- [ ] Canonically serialize sorted weight keys plus `version`, `confidenceThreshold`, `policyVersion`, and `advisoryPolicyHash` (`"advisory-disabled"` for Wave 1), then compute a lowercase 64-character SHA-256 hash.
-- [ ] Run the focused suite and commit:
+- [x] Canonically serialize sorted weight keys plus `version`, `confidenceThreshold`, `policyVersion`, and `advisoryPolicyHash` (`"advisory-disabled"` for Wave 1), then compute a lowercase 64-character SHA-256 hash.
+- [x] Run the focused suite and commit:
 
 ```powershell
 pnpm --filter @platform/api test -- live-eligibility.spec.ts
@@ -145,9 +145,9 @@ git commit -m "feat(reflection): define strict live eligibility policy"
 - Modify: `packages/shared/src/schemas/reflection.ts`
 - Test: `apps/api/test/reflection/reflection-contract.spec.ts`
 
-- [ ] Add a failing contract test that parses a lifecycle response containing stage `LIVE_ELIGIBLE`, exact candidate metrics, configuration hash, and approval metadata; reject malformed hashes and missing metrics.
-- [ ] Run `pnpm --filter @platform/api test -- reflection-contract.spec.ts` and confirm `LIVE_ELIGIBLE` is rejected by the current schema.
-- [ ] Add these fields to `SelfLearningConfiguration`:
+- [x] Add a failing contract test that parses a lifecycle response containing stage `LIVE_ELIGIBLE`, exact candidate metrics, configuration hash, and approval metadata; reject malformed hashes and missing metrics.
+- [x] Run `pnpm --filter @platform/api test -- reflection-contract.spec.ts` and confirm `LIVE_ELIGIBLE` is rejected by the current schema.
+- [x] Add these fields to `SelfLearningConfiguration`:
 
 ```prisma
 candidateShadowTrades       Int       @default(0)
@@ -162,9 +162,9 @@ approvedConfigurationHash   String?
 approvedAt                  DateTime?
 ```
 
-- [ ] Add `provenanceEligible Boolean @default(false)` to `PerformanceRecord`. Existing records intentionally remain false; Task 7 marks only newly validated records true.
-- [ ] Write additive SQL using `ALTER TABLE ... ADD COLUMN` only. Set non-null defaults for `candidateShadowTrades` and `provenanceEligible`; do not backfill historical performance rows as eligible.
-- [ ] Define shared schemas for `LiveEligibilityMetrics`, `LiveEligibilityCandidate`, and lifecycle stages `LIVE | SHADOW | CANARY | LIVE_ELIGIBLE`. Define this strict review input:
+- [x] Add `provenanceEligible Boolean @default(false)` to `PerformanceRecord`. Existing records intentionally remain false; Task 7 marks only newly validated records true.
+- [x] Write additive SQL using `ALTER TABLE ... ADD COLUMN` only. Set non-null defaults for `candidateShadowTrades` and `provenanceEligible`; do not backfill historical performance rows as eligible.
+- [x] Define shared schemas for `LiveEligibilityMetrics`, `LiveEligibilityCandidate`, and lifecycle stages `LIVE | SHADOW | CANARY | LIVE_ELIGIBLE`. Define this strict review input:
 
 ```ts
 export const LiveEligibilityReviewInputSchema = z.object({
@@ -176,7 +176,7 @@ export const LiveEligibilityReviewInputSchema = z.object({
 }).strict();
 ```
 
-- [ ] Generate Prisma, run the migration through the repository command, run contract tests, and commit:
+- [x] Generate Prisma, run the migration through the repository command, run contract tests, and commit:
 
 ```powershell
 pnpm db:generate
@@ -195,10 +195,10 @@ git commit -m "feat(db): persist live eligibility approvals"
 - Test: `apps/api/test/reflection/shadow-promotion.spec.ts`
 - Create: `apps/api/test/reflection/live-eligibility-review.spec.ts`
 
-- [ ] Extend the shadow-promotion tests first: when shadow passes, copy its observed trade count to `candidateShadowTrades` before resetting shadow performance for canary.
-- [ ] Add failing canary tests proving that exactly 100 shadow observations and 100 canary observations can become `LIVE_ELIGIBLE`, while each strict metric failure remains canary/rejected and never changes `liveVersion`, `weightsJson`, or `confidenceThreshold`.
-- [ ] Calculate canary expectancy as `totalReturn / tradesCount`; use canary records as OOS evidence. Require every queried performance record to be provenance-eligible once Task 7 is integrated.
-- [ ] Replace the successful canary branch with one transaction that:
+- [x] Extend the shadow-promotion tests first: when shadow passes, copy its observed trade count to `candidateShadowTrades` before resetting shadow performance for canary.
+- [x] Add failing canary tests proving that exactly 100 shadow observations and 100 canary observations can become `LIVE_ELIGIBLE`, while each strict metric failure remains canary/rejected and never changes `liveVersion`, `weightsJson`, or `confidenceThreshold`.
+- [x] Calculate canary expectancy as `totalReturn / tradesCount`; use canary records as OOS evidence. Require every queried performance record to be provenance-eligible once Task 7 is integrated.
+- [x] Replace the successful canary branch with one transaction that:
 
   - copies version, weights, threshold, metrics, hash, and timestamp into `eligible*` fields;
   - disables and clears active canary fields only after the candidate copy is complete;
@@ -206,12 +206,12 @@ git commit -m "feat(db): persist live eligibility approvals"
   - writes `CANARY_PASSED_LIVE_ELIGIBLE` to the experiment event log;
   - moves the matching research recommendation to `PENDING_APPROVAL`, never `DEPLOYED`.
 
-- [ ] Run `pnpm --filter @platform/api test -- shadow-promotion.spec.ts` and confirm the transition assertions pass after the minimum implementation.
-- [ ] Add failing service/controller tests for `POST /api/ai/self-learning/live-eligibility/review` covering owner scoping, explicit confirmation, exact version/hash match, approval, rejection, replay, and concurrent approval attempts.
-- [ ] Implement review in one Prisma transaction. For `APPROVE`, lock by conditional `updateMany` predicates on `userId`, `eligibleVersion`, and `eligibleConfigurationHash`; require `count === 1`. Recompute the hash from stored fields before promotion. Copy current LIVE values into `previous*`, apply the eligible candidate, set `approvedVersion`, `approvedConfigurationHash`, `approvedAt`, and `lastPromotionAt`, then clear all `eligible*` fields. Emit `LIVE_ELIGIBILITY_APPROVED` and set the matching recommendation to `DEPLOYED`.
-- [ ] For `REJECT`, require the same exact version/hash and confirmation, clear candidate fields, emit `LIVE_ELIGIBILITY_REJECTED` with the bounded reason, and set the matching recommendation to `REJECTED`. A replay or stale hash must return conflict and make no changes.
-- [ ] Expose the review endpoint through the authenticated reflection controller and return the updated lifecycle DTO.
-- [ ] Run both suites and commit:
+- [x] Run `pnpm --filter @platform/api test -- shadow-promotion.spec.ts` and confirm the transition assertions pass after the minimum implementation.
+- [x] Add failing service/controller tests for `POST /api/ai/self-learning/live-eligibility/review` covering owner scoping, explicit confirmation, exact version/hash match, approval, rejection, replay, and concurrent approval attempts.
+- [x] Implement review in one Prisma transaction. For `APPROVE`, lock by conditional `updateMany` predicates on `userId`, `eligibleVersion`, and `eligibleConfigurationHash`; require `count === 1`. Recompute the hash from stored fields before promotion. Copy current LIVE values into `previous*`, apply the eligible candidate, set `approvedVersion`, `approvedConfigurationHash`, `approvedAt`, and `lastPromotionAt`, then clear all `eligible*` fields. Emit `LIVE_ELIGIBILITY_APPROVED` and set the matching recommendation to `DEPLOYED`.
+- [x] For `REJECT`, require the same exact version/hash and confirmation, clear candidate fields, emit `LIVE_ELIGIBILITY_REJECTED` with the bounded reason, and set the matching recommendation to `REJECTED`. A replay or stale hash must return conflict and make no changes.
+- [x] Expose the review endpoint through the authenticated reflection controller and return the updated lifecycle DTO.
+- [x] Run both suites and commit:
 
 ```powershell
 pnpm --filter @platform/api test -- shadow-promotion.spec.ts live-eligibility-review.spec.ts
@@ -229,18 +229,18 @@ git commit -m "feat(reflection): require manual live version approval"
 - Modify: `apps/web/src/app/ai/reflection/page.tsx`
 - Test: `apps/web/src/app/ai/reflection/page.test.tsx`
 
-- [ ] Add a failing component test that renders all seven eligibility metrics, version and shortened hash, keeps approval disabled until an explicit confirmation checkbox is selected, and posts the full exact hash/version.
-- [ ] Add a failing test for rejection and for stale-version conflict display; neither path should optimistically label the current version LIVE.
-- [ ] Run the web focused test using the package's existing Vitest command and confirm failure:
+- [x] Add a failing component test that renders all seven eligibility metrics, version and shortened hash, keeps approval disabled until an explicit confirmation checkbox is selected, and posts the full exact hash/version.
+- [x] Add a failing test for rejection and for stale-version conflict display; neither path should optimistically label the current version LIVE.
+- [x] Run the web focused test using the package's existing Vitest command and confirm failure:
 
 ```powershell
 pnpm --filter @platform/web test -- src/app/ai/reflection/page.test.tsx
 ```
 
-- [ ] Extend the lifecycle interface with `LIVE_ELIGIBLE`, candidate metrics, hash, and approval metadata. Add `selfLearningLiveEligibilityReview` endpoint and a React Query mutation that invalidates lifecycle and recommendation queries only after success.
-- [ ] Render a compact gate table with pass/fail state for accuracy, expectancy, PF, Sharpe, drawdown, shadow trades, and canary trades. Require checkbox text that names the exact version. Send `confirmed: true`; never derive confirmation from opening the page.
-- [ ] Show API conflict/rejection text and refresh the lifecycle so a stale browser cannot approve a replaced candidate.
-- [ ] Run the focused web test, typecheck, and commit:
+- [x] Extend the lifecycle interface with `LIVE_ELIGIBLE`, candidate metrics, hash, and approval metadata. Add `selfLearningLiveEligibilityReview` endpoint and a React Query mutation that invalidates lifecycle and recommendation queries only after success.
+- [x] Render a compact gate table with pass/fail state for accuracy, expectancy, PF, Sharpe, drawdown, shadow trades, and canary trades. Require checkbox text that names the exact version. Send `confirmed: true`; never derive confirmation from opening the page.
+- [x] Show API conflict/rejection text and refresh the lifecycle so a stale browser cannot approve a replaced candidate.
+- [x] Run the focused web test, typecheck, and commit:
 
 ```powershell
 pnpm --filter @platform/web test -- src/app/ai/reflection/page.test.tsx
@@ -258,18 +258,18 @@ git commit -m "feat(web): review live eligible strategy versions"
 - Modify: `apps/api/src/modules/live-trading/application/live-trading.service.ts`
 - Test: `apps/api/test/live-trading/live-version-approval.spec.ts`
 
-- [ ] Change the quant-policy tests first so stale, missing, or assumption-mismatched evidence is blocked in LIVE but retains the current bounded canary multiplier in DEMO.
-- [ ] Inject `LiveTradingConfigService` into `QuantExecutionPolicyService` and branch only on its normalized `mode`. Return `{ allowed: false, evaluated: false, reason }` for every insufficient-evidence condition in LIVE. Preserve the existing DEMO multipliers and event-risk cap.
-- [ ] Add failing live-trading tests proving LIVE execution is blocked when approval is absent, version differs, hash is absent, or the stored approved hash does not recompute from the active configuration. DEMO must remain unaffected.
-- [ ] Implement `assertApprovedLiveStrategyVersion(userId)` immediately before LIVE order reservation/submission. Load the user's active self-learning configuration, recompute its hash, and require:
+- [x] Change the quant-policy tests first so stale, missing, or assumption-mismatched evidence is blocked in LIVE but retains the current bounded canary multiplier in DEMO.
+- [x] Inject `LiveTradingConfigService` into `QuantExecutionPolicyService` and branch only on its normalized `mode`. Return `{ allowed: false, evaluated: false, reason }` for every insufficient-evidence condition in LIVE. Preserve the existing DEMO multipliers and event-risk cap.
+- [x] Add failing live-trading tests proving LIVE execution is blocked when approval is absent, version differs, hash is absent, or the stored approved hash does not recompute from the active configuration. DEMO must remain unaffected.
+- [x] Implement `assertApprovedLiveStrategyVersion(userId)` immediately before LIVE order reservation/submission. Load the user's active self-learning configuration, recompute its hash, and require:
 
 ```ts
 approvedVersion === liveVersion &&
 approvedConfigurationHash === recomputedHash
 ```
 
-- [ ] Emit a stable non-retryable reason `LIVE_STRATEGY_VERSION_NOT_APPROVED` and an audit event with version/hash metadata only. Do not auto-approve legacy version 1.
-- [ ] Run focused suites and commit:
+- [x] Emit a stable non-retryable reason `LIVE_STRATEGY_VERSION_NOT_APPROVED` and an audit event with version/hash metadata only. Do not auto-approve legacy version 1.
+- [x] Run focused suites and commit:
 
 ```powershell
 pnpm --filter @platform/api test -- quant-execution-policy.spec.ts live-version-approval.spec.ts
@@ -289,14 +289,14 @@ git commit -m "fix(live): fail closed without evidence and approval"
 - Modify: `apps/api/src/modules/reflection/application/reflection-scheduler.service.ts`
 - Test: `apps/api/test/reflection/reflection-flow.spec.ts`
 
-- [ ] Add failing pure tests for drift tolerances: M15/M30 `60_000ms`, MID/H2/H4 `120_000ms`, LONG `300_000ms`, and SHORT clamped to `15_000..60_000ms` from ten percent of configured duration.
-- [ ] Add failing flow tests that require a real start candle, anchor the target to `start.closeTime`, skip a target outside tolerance, and create a record with `provenanceEligible: true` only inside tolerance.
-- [ ] Implement `performanceDriftToleranceMs` and make `PerformanceService.evaluateDue` return diagnostic counters `skippedForMissingStartCandle` and `skippedForDrift` in addition to evaluated count.
-- [ ] Remove the stored entry-price fallback for calibration records. Search broadly enough to observe the nearest target candle, but reject when `abs(targetCandle.closeTime - targetTime) > tolerance`.
-- [ ] Set `provenanceEligible: true` only at the accepted create call. Leave historical rows false.
-- [ ] Add `provenanceEligible: true` to all self-learning performance queries used for shadow, canary, rollback, and calibration metrics. An empty eligible set must defer/block, not promote.
-- [ ] Update scheduler result typing/logging for the new counters and keep the job successful when records are skipped.
-- [ ] Run focused suites and commit:
+- [x] Add failing pure tests for drift tolerances: M15/M30 `60_000ms`, MID/H2/H4 `120_000ms`, LONG `300_000ms`, and SHORT clamped to `15_000..60_000ms` from ten percent of configured duration.
+- [x] Add failing flow tests that require a real start candle, anchor the target to `start.closeTime`, skip a target outside tolerance, and create a record with `provenanceEligible: true` only inside tolerance.
+- [x] Implement `performanceDriftToleranceMs` and make `PerformanceService.evaluateDue` return diagnostic counters `skippedForMissingStartCandle` and `skippedForDrift` in addition to evaluated count.
+- [x] Remove the stored entry-price fallback for calibration records. Search broadly enough to observe the nearest target candle, but reject when `abs(targetCandle.closeTime - targetTime) > tolerance`.
+- [x] Set `provenanceEligible: true` only at the accepted create call. Leave historical rows false.
+- [x] Add `provenanceEligible: true` to all self-learning performance queries used for shadow, canary, rollback, and calibration metrics. An empty eligible set must defer/block, not promote.
+- [x] Update scheduler result typing/logging for the new counters and keep the job successful when records are skipped.
+- [x] Run focused suites and commit:
 
 ```powershell
 pnpm --filter @platform/api test -- performance-provenance.spec.ts reflection-flow.spec.ts shadow-promotion.spec.ts
@@ -313,13 +313,13 @@ git commit -m "fix(reflection): require candle provenance for learning"
 - Modify: `apps/api/src/modules/pipeline/application/pipeline-runner.service.ts`
 - Test: `apps/api/test/pipeline/pipeline-runtime.spec.ts`
 
-- [ ] Write failing orchestration tests for four cases: first execution succeeds; first execution drifts then reassessment succeeds; reassessment rejects risk; second execution drifts again and stops.
-- [ ] Assert exact call limits: `assess <= 2`, `execute <= 2`, and no recursive retry. Assert only `ENTRY_PRICE_DRIFT` triggers reassessment; exchange/auth/balance errors remain unchanged.
-- [ ] Implement a small `executeWithSingleDriftReassessment` helper that accepts typed `assess` and `execute` callbacks. It must discard the stale assessment, invoke the complete existing assessment path, and execute only when the new status is `RISK_APPROVED`.
-- [ ] Integrate the helper at the pipeline-runner boundary. Keep `OkxFuturesAdapter.assertEntryPriceDrift` unchanged so the exchange adapter remains the hard last-line rejection.
-- [ ] Reuse the same `pipelineRunId` so risk assessment and client-order idempotency remain intact. Confirm a first failed reservation is updated/reused by existing live-order logic rather than creating a second logical order.
-- [ ] Add a runtime test asserting one terminal pipeline result and no retry-loop scheduling after the second drift.
-- [ ] Run focused suites and commit:
+- [x] Write failing orchestration tests for four cases: first execution succeeds; first execution drifts then reassessment succeeds; reassessment rejects risk; second execution drifts again and stops.
+- [x] Assert exact call limits: `assess <= 2`, `execute <= 2`, and no recursive retry. Assert only `ENTRY_PRICE_DRIFT` triggers reassessment; exchange/auth/balance errors remain unchanged.
+- [x] Implement a small `executeWithSingleDriftReassessment` helper that accepts typed `assess` and `execute` callbacks. It must discard the stale assessment, invoke the complete existing assessment path, and execute only when the new status is `RISK_APPROVED`.
+- [x] Integrate the helper at the pipeline-runner boundary. Keep `OkxFuturesAdapter.assertEntryPriceDrift` unchanged so the exchange adapter remains the hard last-line rejection.
+- [x] Reuse the same `pipelineRunId` so risk assessment and client-order idempotency remain intact. Confirm a first failed reservation is updated/reused by existing live-order logic rather than creating a second logical order.
+- [x] Add a runtime test asserting one terminal pipeline result and no retry-loop scheduling after the second drift.
+- [x] Run focused suites and commit:
 
 ```powershell
 pnpm --filter @platform/api test -- entry-drift-reassessment.spec.ts pipeline-runtime.spec.ts
@@ -334,14 +334,14 @@ git commit -m "fix(pipeline): reassess once after entry drift"
 - Modify: `docs/superpowers/specs/2026-08-28-platform-stabilization-design.md`
 - Modify: `docs/superpowers/plans/2026-08-28-wave-1-live-safety-implementation-plan.md`
 
-- [ ] Run database/client validation:
+- [x] Run database/client validation:
 
 ```powershell
 pnpm db:generate
 pnpm db:migrate
 ```
 
-- [ ] Run the complete API and web quality gates with fresh output:
+- [x] Run the complete API and web quality gates with fresh output:
 
 ```powershell
 pnpm --filter @platform/api test
@@ -350,18 +350,18 @@ pnpm lint
 pnpm typecheck
 ```
 
-- [ ] Run the production builds. Record the Windows standalone symlink result separately if it remains an environment permission limitation; do not describe it as an application pass:
+- [x] Run the production builds. Record the Windows standalone symlink result separately if it remains an environment permission limitation; do not describe it as an application pass:
 
 ```powershell
 pnpm --filter @platform/api build
 pnpm --filter @platform/web build
 ```
 
-- [ ] Perform a DEMO smoke run with an insufficient-evidence candidate and verify bounded canary behavior remains available. Perform a LIVE-mode dry assessment and verify it returns `LIVE_STRATEGY_VERSION_NOT_APPROVED` without submitting an order.
-- [ ] Query the migrated database and confirm historical `PerformanceRecord` rows remain `provenanceEligible = false`, while a newly accepted in-tolerance record is true.
-- [ ] Review the diff for secrets, unrelated edits, destructive migration SQL, unbounded retry paths, and any LLM-controlled trading branch.
-- [ ] Mark Wave 1 acceptance criteria and every completed checkbox in the canonical spec. Add commit hashes, verification commands, outputs, and rollback notes to its change ledger.
-- [ ] Commit documentation only after all required checks are green:
+- [x] Perform a DEMO smoke run with an insufficient-evidence candidate and verify bounded canary behavior remains available. Perform a LIVE-mode dry assessment and verify it returns `LIVE_STRATEGY_VERSION_NOT_APPROVED` without submitting an order.
+- [x] Query the migrated database and confirm historical `PerformanceRecord` rows remain `provenanceEligible = false`, while a newly accepted in-tolerance record is true.
+- [x] Review the diff for secrets, unrelated edits, destructive migration SQL, unbounded retry paths, and any LLM-controlled trading branch.
+- [x] Mark Wave 1 acceptance criteria and every completed checkbox in the canonical spec. Add commit hashes, verification commands, outputs, and rollback notes to its change ledger.
+- [x] Commit documentation only after all required checks are green:
 
 ```powershell
 git add docs/superpowers/specs/2026-08-28-platform-stabilization-design.md docs/superpowers/plans/2026-08-28-wave-1-live-safety-implementation-plan.md

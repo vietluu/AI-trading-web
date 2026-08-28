@@ -366,32 +366,3 @@ function evaluationLeverage(
 function round(value: number): number {
   return Math.round(value * 10_000) / 10_000;
 }
-
-function priceFromRun(run: {
-  storedContext?: unknown;
-  result?: unknown;
-}): number | undefined {
-  if (run.storedContext && typeof run.storedContext === "object") {
-    const ctx = run.storedContext as Record<string, unknown>;
-    const dec = ctx.decision as Record<string, unknown> | undefined;
-    if (dec && typeof dec.entryPrice === "number" && dec.entryPrice > 0) {
-      return dec.entryPrice;
-    }
-    const market = ctx.market as Record<string, unknown> | undefined;
-    if (market && typeof market.price === "number" && market.price > 0) {
-      return market.price;
-    }
-    const anal = ctx.analyses as Record<string, unknown> | undefined;
-    const tech = anal?.technical as Record<string, unknown> | undefined;
-    if (tech && typeof tech.price === "number" && tech.price > 0) {
-      return tech.price;
-    }
-  }
-  if (run.result && typeof run.result === "object") {
-    const res = run.result as Record<string, unknown>;
-    if (typeof res.entryPrice === "number" && res.entryPrice > 0) {
-      return res.entryPrice;
-    }
-  }
-  return undefined;
-}

@@ -667,8 +667,13 @@ describe("drift reassessment boundary", () => {
     );
 
     const result = await executeWithSingleDriftReassessment({
-      assess: () => assessPipelineDecision(),
-      execute: () => executePipeline(),
+      assess: async () => {
+        await assessPipelineDecision();
+      },
+      execute: async () => {
+        const res = (await executePipeline()) as { outcome: string; errorCode?: string };
+        return res;
+      },
     });
 
     expect(result.outcome).toBe("ORDER_SUBMITTED");
@@ -687,8 +692,13 @@ describe("drift reassessment boundary", () => {
     );
 
     const result = await executeWithSingleDriftReassessment({
-      assess: () => assessPipelineDecision(),
-      execute: () => executePipeline(),
+      assess: async () => {
+        await assessPipelineDecision();
+      },
+      execute: async () => {
+        const res = (await executePipeline()) as { outcome: string; errorCode?: string };
+        return res;
+      },
     });
 
     expect(result.outcome).toBe("EXECUTION_FAILED");
