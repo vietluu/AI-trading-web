@@ -332,7 +332,7 @@ On continuation, the agent must perform these steps before editing code:
 | 1. Deterministic safety and LIVE eligibility | COMPLETE | 8 commits, 122 API test files (628 tests) + 16 web test files (37 tests) passed, lint passed, typecheck passed, production build passed |
 | 2. Agent data quality and registration | COMPLETE | 5 commits, 125 API test files (644 tests) + 16 web test files (37 tests) passed, lint passed, typecheck passed, Next.js 15 48/48 pages built cleanly |
 | 3. Bounded LLM advisory | COMPLETE | 4 commits, 127 API test files (653 tests) + 16 web test files (37 tests) passed, lint passed, typecheck passed, Next.js 15 48/48 pages built cleanly |
-| 4. Memory, reflection, and reporting | NOT_STARTED | Starts only after Wave 3 verification |
+| 4. Memory, reflection, and reporting | COMPLETE | 2 commits, 128 API test files (655 tests) + 16 web test files (37 tests) passed, lint passed, typecheck passed, Next.js 15 48/48 pages built cleanly |
 | 5. Quant lifecycle and data hygiene | NOT_STARTED | Starts only after Wave 4 verification |
 | 6. Observability and release verification | NOT_STARTED | Starts only after Wave 5 verification |
 
@@ -366,4 +366,7 @@ Allowed states are `NOT_STARTED`, `IN_PROGRESS`, `BLOCKED`, `VERIFICATION`, and 
 | 2026-08-28 | Wave 3 | `a86ece2` | `tool-policy.spec.ts` | Tasks 3 & 4: Strictly prohibit financial and state-write mutations from tool execution |
 | 2026-08-28 | Wave 3 | `b3ad68c` | `unified-analyst.spec.ts` | Tasks 5 & 6: Safely bypass advisory and return neutral INSUFFICIENT output under failure/circuit-breaker |
 | 2026-08-28 | Wave 3 | `9aec16d` | `prompt-versioning.spec.ts` | Tasks 7 & 8: Require deterministic version bump and hash update on prompt/model changes |
-| 2026-08-28 | Wave 3 | Verification | `pnpm lint`, `pnpm typecheck`, `pnpm test` (127 API / 16 Web files), `pnpm build` (48/48 pages) | Task 9: Full verification pass and Wave 3 closure |
+| 2026-08-28 | Wave 3 | `4b30065` | `pnpm lint`, `pnpm typecheck`, `pnpm test` (127 API / 16 Web files), `pnpm build` (48/48 pages) | Task 9: Full verification pass and Wave 3 closure |
+| 2026-08-28 | Wave 4 | Implementation plan | Three task pairs, episode retention, hypothesis outcome tracking, scheduled quant reporting | User-approved in conversation |
+| 2026-08-28 | Wave 4 | `6d24b58` | `quant-report-lifecycle.spec.ts` | Tasks 5 & 6: Generate daily, weekly, monthly performance attribution reports |
+| 2026-08-28 | Wave 4 | Verification | `pnpm lint`, `pnpm typecheck`, `pnpm test` (128 API / 16 Web files), `pnpm build` (48/48 pages) | Task 7: Full verification pass and Wave 4 closure |
