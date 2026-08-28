@@ -176,4 +176,64 @@ export class AgentRegistryService {
       .update(JSON.stringify(hashable))
       .digest('hex');
   }
+
+  /**
+   * Synchronize all in-memory registered definitions to the database idempotently.
+   */
+  public async syncToDatabase(prisma: {
+    agentDefinitionRecord: {
+      upsert: (args: {
+        where: { agentType_version: { agentType: AgentType; version: number } };
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      }) => Promise<unknown>;
+    };
+  }): Promise<{ synced: number }> {
+    let synced = 0;
+    for (const def of this.list()) {
+      const definitionHash = this.calculateDefinitionHash(def);
+      const schemaHash = createHash('sha256')
+        .update(JSON.stringify({
+          input: def.inputSchema ? 'defined' : 'undefined',
+          output: def.outputSchema ? 'defined' : 'undefined',
+        }))
+        .digest('hex');
+
+      await prisma.agentDefinitionRecord.upsert({
+        where: {
+          agentType_version: {
+            agentType: def.type,
+            version: def.version,
+          },
+        },
+        create: {
+          agentType: def.type,
+          version: def.version,
+          displayName: def.displayName,
+          description: def.description,
+          status: def.status,
+          promptId: def.promptId,
+          promptVersion: def.promptVersion,
+          definitionHash,
+          schemaHash,
+          allowedTools: [...def.allowedToolNames],
+          capabilities: [...def.requiredCapabilities],
+        },
+        update: {
+          displayName: def.displayName,
+          description: def.description,
+          status: def.status,
+          promptId: def.promptId,
+          promptVersion: def.promptVersion,
+          definitionHash,
+          schemaHash,
+          allowedTools: [...def.allowedToolNames],
+          capabilities: [...def.requiredCapabilities],
+        },
+      });
+      synced++;
+    }
+    this.logger.log({ event: 'agent_definitions_synced_to_database', count: synced });
+    return { synced };
+  }
 }

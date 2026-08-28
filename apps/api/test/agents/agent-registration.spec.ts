@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AgentRegistryService } from '../../src/modules/agents/infrastructure/registry/agent-registry.service';
 import { SYSTEM_DIAGNOSTIC_DEFINITION } from '../../src/modules/agents/domain/definitions/system-diagnostic.definition';
 import { AgentType } from '../../src/modules/agents/domain/enums';
@@ -44,5 +44,41 @@ describe('AgentRegistryService', () => {
 
     expect(hash1).toBe(hash2);
     expect(hash1).toHaveLength(64); // SHA-256
+  });
+
+  it('should synchronize definitions to database idempotently via upsert', async () => {
+    registry.register(SYSTEM_DIAGNOSTIC_DEFINITION);
+
+    const upsertMock = vi.fn().mockResolvedValue({ id: 'rec-1' });
+    const prisma = {
+      agentDefinitionRecord: {
+        upsert: upsertMock,
+      },
+    };
+
+    const firstRun = await registry.syncToDatabase(prisma as never);
+    expect(firstRun.synced).toBe(1);
+    expect(upsertMock).toHaveBeenCalledTimes(1);
+    expect(upsertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          agentType_version: {
+            agentType: AgentType.SYSTEM_DIAGNOSTIC,
+            version: 1,
+          },
+        },
+        create: expect.objectContaining({
+          agentType: AgentType.SYSTEM_DIAGNOSTIC,
+          version: 1,
+          displayName: 'System Diagnostic Agent',
+          status: 'ACTIVE',
+        }),
+      }),
+    );
+
+    // Second run should also succeed without error (idempotent)
+    const secondRun = await registry.syncToDatabase(prisma as never);
+    expect(secondRun.synced).toBe(1);
+    expect(upsertMock).toHaveBeenCalledTimes(2);
   });
 });
