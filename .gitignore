@@ -30,3 +30,6 @@ apps/api/prisma/*.db-journal
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Local isolated development worktrees
+.worktrees/
