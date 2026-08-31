@@ -23,7 +23,10 @@ import { PipelineRepository } from "./infrastructure/pipeline.repository";
 import { PipelineQueueService } from "./infrastructure/pipeline-queue.service";
 import { PipelineCancellationService } from "./infrastructure/pipeline-cancellation.service";
 import { PipelineProcessor } from "./infrastructure/pipeline.processor";
+import { ConfluenceCollectorService } from "./infrastructure/confluence-collector.service";
+import { ConfluenceTimeoutProcessor } from "./infrastructure/confluence-timeout.processor";
 import {
+  CONFLUENCE_TIMEOUT_QUEUE_NAME,
   PIPELINE_DEAD_LETTER_QUEUE_NAME,
   PIPELINE_RETRY_QUEUE_NAME,
   PIPELINE_RUN_QUEUE_NAME,
@@ -52,6 +55,7 @@ import { HighImportanceNewsTriggerService } from "./application/high-importance-
       { name: PIPELINE_RUN_QUEUE_NAME },
       { name: PIPELINE_RETRY_QUEUE_NAME },
       { name: PIPELINE_DEAD_LETTER_QUEUE_NAME },
+      { name: CONFLUENCE_TIMEOUT_QUEUE_NAME },
     ),
   ],
   controllers: [PipelineController, PipelineSystemController],
@@ -74,7 +78,9 @@ import { HighImportanceNewsTriggerService } from "./application/high-importance-
     PipelineCancellationService,
     PipelineProcessor,
     HighImportanceNewsTriggerService,
+    ConfluenceCollectorService,
+    ConfluenceTimeoutProcessor,
   ],
-  exports: [PipelineService, PipelineHealthService],
+  exports: [PipelineService, PipelineHealthService, ConfluenceCollectorService],
 })
 export class PipelineModule {}

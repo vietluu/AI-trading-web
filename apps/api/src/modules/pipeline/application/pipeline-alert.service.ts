@@ -94,4 +94,26 @@ export class PipelineAlertService {
       windowMinutes: 60,
     });
   }
+  confluenceEvaluation(params: {
+    batchId: string;
+    userId: string;
+    selectedSymbol: string;
+    selectedScore: number;
+    concordanceCount: number;
+    totalSymbols: number;
+    sizeFactor: number;
+    rejectedSymbols: string[];
+  }): void {
+    this.logger.log({
+      event: 'pipeline_confluence_evaluated',
+      batchId: params.batchId,
+      userId: params.userId,
+      selectedSymbol: params.selectedSymbol,
+      selectedScore: params.selectedScore,
+      concordanceCount: params.concordanceCount,
+      totalSymbols: params.totalSymbols,
+      sizeFactor: params.sizeFactor,
+      rejectedSymbols: params.rejectedSymbols,
+    });
+  }
 }

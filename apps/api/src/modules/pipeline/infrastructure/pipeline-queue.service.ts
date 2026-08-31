@@ -3,8 +3,12 @@ import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 import type { ExchangeProvider, PipelineTrigger } from "@prisma/client";
 import type { PipelineSymbol } from "@platform/shared";
+import { Optional } from "@nestjs/common";
 import { FULL_ANALYSIS_DECISION } from "../domain/pipeline.definition";
-import { PIPELINE_RUN_QUEUE_NAME } from "./pipeline-queue.constants";
+import {
+  CONFLUENCE_TIMEOUT_QUEUE_NAME,
+  PIPELINE_RUN_QUEUE_NAME,
+} from "./pipeline-queue.constants";
 
 export interface PipelineJob {
   runId: string;
@@ -16,6 +20,8 @@ export interface PipelineJob {
   trigger: PipelineTrigger;
   createdAt: string;
   useStoredContext?: boolean;
+  confluenceBatchId?: string;
+  confluenceBatchExpectedCount?: number;
 }
 
 @Injectable()
@@ -23,7 +29,28 @@ export class PipelineQueueService {
   constructor(
     @InjectQueue(PIPELINE_RUN_QUEUE_NAME)
     private readonly queue: Queue<PipelineJob>,
+    @Optional()
+    @InjectQueue(CONFLUENCE_TIMEOUT_QUEUE_NAME)
+    private readonly timeoutQueue?: Queue,
   ) {}
+
+  async enqueueConfluenceTimeout(
+    batchId: string,
+    userId: string,
+    delayMs: number,
+  ) {
+    if (!this.timeoutQueue) return;
+    return this.timeoutQueue.add(
+      "timeout",
+      { batchId, userId },
+      {
+        jobId: `confluence-timeout-${batchId}`,
+        delay: delayMs,
+        removeOnComplete: 100,
+        removeOnFail: 200,
+      },
+    );
+  }
   enqueue(job: PipelineJob) {
     return this.queue.add("execute", job, {
       jobId: job.runId,

@@ -335,6 +335,7 @@ On continuation, the agent must perform these steps before editing code:
 | 4. Memory, reflection, and reporting | COMPLETE | 2 commits, 128 API test files (655 tests) + 16 web test files (37 tests) passed, lint passed, typecheck passed, Next.js 15 48/48 pages built cleanly |
 | 5. Quant lifecycle and data hygiene | COMPLETE | 2 commits, 129 API test files (657 tests) + 16 web test files (37 tests) passed, lint passed, typecheck passed, Next.js 15 48/48 pages built cleanly |
 | 6. Observability and release verification | COMPLETE | 1 commit, 129 API test files (657 tests) + 16 web test files (37 tests) passed, lint passed, typecheck passed, Next.js 15 48/48 pages built cleanly |
+| Corrective addendum: DEMO market-dislocation canary | COMPLETE | Bounded 0.10-size EVENT route; 30–31/08 replay: 14 candidates after cooldown, 9 wins, PF 1.7652; 663 API + 37 web + 6 shared tests, lint, typecheck, and production build passed. See `2026-08-31-demo-dislocation-canary-addendum.md` |
 
 Allowed states are `NOT_STARTED`, `IN_PROGRESS`, `BLOCKED`, `VERIFICATION`, and `COMPLETE`. `REVIEW_REQUIRED` is reserved for the design gate.
 
@@ -375,3 +376,6 @@ Allowed states are `NOT_STARTED`, `IN_PROGRESS`, `BLOCKED`, `VERIFICATION`, and 
 | 2026-08-28 | Wave 5 | `385380a` | `pnpm lint`, `pnpm typecheck`, `pnpm test` (129 API / 16 Web files), `pnpm build` (48/48 pages) | Task 4: Full verification pass and Wave 5 closure |
 | 2026-08-28 | Wave 6 | `5a8fd47` | `package.json` | Task 5: Add prebuild and pretypecheck hooks to ensure Prisma Client generation |
 | 2026-08-28 | Wave 6 | Verification | `pnpm lint`, `pnpm typecheck`, `pnpm test` (129 API / 16 Web files), `pnpm build` (48/48 pages) | Task 8: Full verification pass and Wave 6 closure |
+| 2026-08-31 | Corrective addendum | Working tree | Focused policy/runtime suite: 2 files, 41 tests; API typecheck and build passed | Add DEMO-only 0.10-size breakout-plus-ATR dislocation route, preserve Risk/LIVE hard gates, and apply a 60-minute symbol-direction cooldown |
+| 2026-08-31 | Corrective addendum | Replay | 346 EVENT runs; 28 raw eligible; 14 after cooldown; 9 wins; 64.29% win rate; PF 1.7652; +0.1279% average 60-minute net return | Read-only counterfactual replay through the new policy at snapshot `2026-08-31T05:56:30.646Z`; candidates reached Risk eligibility, not guaranteed fills |
+| 2026-08-31 | Corrective addendum | Verification | `pnpm lint`, `pnpm typecheck`, `pnpm test` (663 API + 37 web + 6 shared tests), `pnpm build` (48/48 pages), focused 41-test suite | Full repository verification passed; default test command retained six opt-in API integration/E2E skips and two explicit todo tests |

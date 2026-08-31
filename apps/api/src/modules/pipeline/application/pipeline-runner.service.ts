@@ -36,10 +36,59 @@ import {
 } from "../domain/multi-timeframe-analysis";
 import { PortfolioService } from "../../portfolio/application/portfolio.service";
 import { executeWithSingleDriftReassessment } from "./entry-drift-reassessment";
+import { randomUUID } from "node:crypto";
+import {
+  computeMultiFactorCompositeScore,
+  evaluateConfluence,
+  type ConfluenceEvaluation,
+  type ConfluenceSignal,
+  type ConfluenceSizeConfig,
+  DEFAULT_CONFLUENCE_SIZE_CONFIG,
+} from "../domain/confluence-engine";
+import { ConfluenceCollectorService } from "../infrastructure/confluence-collector.service";
+import type { DecisionOutput } from "@platform/shared";
+import type { TradePlanMarketContext } from "../../risk/domain/trade-plan-engine";
 
 class PipelineCancelledError extends Error {}
 class PipelineExecutionLockBusyError extends Error {}
 class PipelineExecutionRetryableError extends Error {}
+
+const DISLOCATION_CANARY_ADVISORY_REASONS = new Set([
+  "EXPECTED_VALUE_NEGATIVE",
+  "EXPECTED_VALUE_TOO_LOW",
+  "PROFIT_FACTOR_TOO_LOW",
+  "CALIBRATED_PROBABILITY_TOO_LOW",
+  "CALIBRATION_UNRELIABLE",
+]);
+
+function marketDislocationFromParams(value: unknown): {
+  direction: "BULLISH" | "BEARISH";
+  confirmationCount: number;
+  indicatorCloseTime: string;
+  reasons: string[];
+} | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const event = value as Record<string, unknown>;
+  if (
+    (event.direction !== "BULLISH" && event.direction !== "BEARISH") ||
+    !Number.isFinite(Number(event.confirmationCount)) ||
+    typeof event.indicatorCloseTime !== "string" ||
+    !Array.isArray(event.reasons) ||
+    !event.reasons.every((reason) => typeof reason === "string")
+  ) return undefined;
+  return {
+    direction: event.direction,
+    confirmationCount: Number(event.confirmationCount),
+    indicatorCloseTime: event.indicatorCloseTime,
+    reasons: event.reasons,
+  };
+}
+
+function historicalGateReasonsAreAdvisory(reasons: string[]): boolean {
+  return reasons.every((reason) =>
+    DISLOCATION_CANARY_ADVISORY_REASONS.has(reason),
+  );
+}
 
 @Injectable()
 export class PipelineRunnerService {
@@ -61,6 +110,7 @@ export class PipelineRunnerService {
     @Optional() private readonly settings?: SettingsService,
     @Optional() private readonly quantPolicy?: QuantExecutionPolicyService,
     @Optional() private readonly portfolio?: PortfolioService,
+    @Optional() private readonly confluenceCollector?: ConfluenceCollectorService,
   ) {}
 
   async run(job: PipelineJob): Promise<void> {
@@ -383,6 +433,9 @@ export class PipelineRunnerService {
       const primaryRsi = multiTimeframe.frames.find(
         (frame) => frame.timeframe === String(interval),
       )?.rsi;
+      const marketDislocation = job.trigger === "EVENT"
+        ? marketDislocationFromParams(job.params?.eventScan)
+        : undefined;
       const rankedCandidates = rankStrategyDecisionCandidates(
         eligibleStrategyKeys,
         synthesizedOutput,
@@ -403,6 +456,7 @@ export class PipelineRunnerService {
         score: number;
         actionable: boolean;
         blockedReasons: string[];
+        advisoryReasons: string[];
       }> = [];
       let selectedGate: {
         strategyKey: string;
@@ -412,6 +466,9 @@ export class PipelineRunnerService {
         multiTimeframeFilter: ReturnType<typeof evaluateMultiTimeframeDecision>;
         quant: Awaited<ReturnType<QuantExecutionPolicyService["evaluate"]>>;
         actionable: boolean;
+        dislocationCanary: boolean;
+        blockedReasons: string[];
+        advisoryReasons: string[];
       } | undefined;
       for (const candidate of rankedCandidates) {
         const calibrated = await this.decision.calibrateForExecution(
@@ -442,11 +499,13 @@ export class PipelineRunnerService {
               provider: job.provider,
               timeframe: String(interval),
               strategyKey: candidate.strategyKey,
+              mode: process.env.TRADING_MODE === "LIVE" ? "LIVE" : "DEMO",
               decision: calibrated,
               multiTimeframeConfirmation: candidateMultiTimeframe.confirmation,
               primaryRsi,
               marketEventImpact: analyses.news.impact.level,
               marketEventDirection: analyses.news.impact.direction,
+              marketDislocation,
             }).catch((error: unknown) => {
               this.logger.error({
                 event: "quant_execution_policy_failed",
@@ -458,14 +517,35 @@ export class PipelineRunnerService {
               return { allowed: false as const, reason: "QUANT_POLICY_UNAVAILABLE" as const };
             })
           : { allowed: false as const, reason: "QUANT_VALIDATION_MISSING" as const };
-        const candidateActionable = candidateFilter.actionable && candidateJudge.approved &&
-          candidateQuant.allowed && candidateMultiTimeframe.allowed;
         const candidateBlockedReasons = [
           candidateFilter.reason,
           ...candidateJudge.reasons,
           candidateQuant.allowed ? undefined : candidateQuant.reason,
           candidateMultiTimeframe.allowed ? undefined : candidateMultiTimeframe.reason,
         ].filter((item): item is string => Boolean(item));
+        const standardActionable = candidateFilter.actionable && candidateJudge.approved &&
+          candidateQuant.allowed && candidateQuant.dislocationCanary !== true &&
+          candidateMultiTimeframe.allowed;
+        const filterCanaryCompatible = candidateFilter.actionable ||
+          (typeof candidateFilter.reason === "string" &&
+            DISLOCATION_CANARY_ADVISORY_REASONS.has(candidateFilter.reason));
+        const judgeCanaryCompatible = candidateJudge.approved ||
+          (candidateJudge.reasons.length > 0 &&
+            historicalGateReasonsAreAdvisory(candidateJudge.reasons));
+        const dislocationCanary = !standardActionable &&
+          candidateQuant.allowed &&
+          candidateQuant.dislocationCanary === true &&
+          candidateMultiTimeframe.allowed &&
+          filterCanaryCompatible &&
+          judgeCanaryCompatible &&
+          historicalGateReasonsAreAdvisory(candidateBlockedReasons);
+        const candidateActionable = standardActionable || dislocationCanary;
+        const advisoryReasons = dislocationCanary
+          ? [...new Set([
+              ...candidateBlockedReasons,
+              ...(candidateQuant.reason ? [candidateQuant.reason] : []),
+            ])]
+          : [];
         const evaluated = {
           strategyKey: candidate.strategyKey,
           output: calibrated,
@@ -474,13 +554,17 @@ export class PipelineRunnerService {
           multiTimeframeFilter: candidateMultiTimeframe,
           quant: candidateQuant,
           actionable: candidateActionable,
+          dislocationCanary,
+          blockedReasons: dislocationCanary ? [] : candidateBlockedReasons,
+          advisoryReasons,
         };
         gateAttempts.push({
           strategyKey: candidate.strategyKey,
           decision: calibrated.decision,
           score: candidate.score,
           actionable: candidateActionable,
-          blockedReasons: [...new Set(candidateBlockedReasons)],
+          blockedReasons: [...new Set(evaluated.blockedReasons)],
+          advisoryReasons,
         });
         selectedGate ??= evaluated;
         if (candidateActionable) {
@@ -489,7 +573,18 @@ export class PipelineRunnerService {
         }
       }
       if (!selectedGate) throw new Error("NO_STRATEGY_CANDIDATE");
-      const { strategyKey, output, filter, judge, multiTimeframeFilter, quant, actionable } = selectedGate;
+      const {
+        strategyKey,
+        output,
+        filter,
+        judge,
+        multiTimeframeFilter,
+        quant,
+        actionable,
+        dislocationCanary,
+        blockedReasons: selectedBlockedReasons,
+        advisoryReasons: selectedAdvisoryReasons,
+      } = selectedGate;
       const executionStrategySelection = {
         ...strategySelection,
         initialSelectedStrategyKey: strategySelection.selectedStrategyKey,
@@ -505,12 +600,6 @@ export class PipelineRunnerService {
         : undefined;
       const quantBlockReason = quant.allowed ? undefined : quant.reason;
       const reason = filter.reason ?? judge.reasons[0] ?? quantBlockReason ?? multiTimeframeFilter.reason;
-      const blockedReasons = [
-        filter.reason,
-        ...judge.reasons,
-        quantBlockReason,
-        multiTimeframeFilter.allowed ? undefined : multiTimeframeFilter.reason,
-      ].filter((item): item is string => Boolean(item));
       const candidateDecision = {
         decision: output.decision,
         confidence: output.confidence,
@@ -519,8 +608,12 @@ export class PipelineRunnerService {
         timeframe: String(interval),
         marketRegime: output.regime.type,
         actionable,
-        blockedReasons: [...new Set(blockedReasons)],
-        advisoryReasons: 'advisory' in quant && quant.advisory && quant.reason ? [quant.reason] : [],
+        dislocationCanary,
+        blockedReasons: [...new Set(selectedBlockedReasons)],
+        advisoryReasons: [...new Set([
+          ...selectedAdvisoryReasons,
+          ...('advisory' in quant && quant.advisory && quant.reason ? [quant.reason] : []),
+        ])],
       };
       await this.finishStep(runId, "decision", output, decisionCompletedAt);
       this.analytics.recordStageTelemetry({
@@ -555,7 +648,85 @@ export class PipelineRunnerService {
       let riskAssessment: Awaited<ReturnType<LiveTradingService["assessPipelineDecision"]>> | undefined;
       let liveExecution: Awaited<ReturnType<LiveTradingService["executePipeline"]>> | undefined;
       let submissionStartedAt: Date | undefined;
-      if (actionable) {
+      let executionGateReason: string | undefined;
+      let canaryCooldownKey: string | undefined;
+      let retainCanaryCooldown = false;
+      if (actionable && job.confluenceBatchId && this.confluenceCollector) {
+        const candidateScore = computeMultiFactorCompositeScore({
+          confidence: output.confidence,
+          opportunityScore: output.opportunityScore,
+          expectedValue: output.expectedValue,
+          riskScore: output.riskScore,
+        });
+        const confluenceSignal: ConfluenceSignal = {
+          pipelineRunId: runId,
+          symbol,
+          decision: output.decision as "LONG" | "SHORT",
+          confidence: output.confidence,
+          opportunityScore: output.opportunityScore,
+          expectedValue: output.expectedValue,
+          riskScore: output.riskScore,
+          strategyKey,
+          compositeScore: candidateScore,
+          regime: output.regime.type,
+          volatilityAtr,
+          referencePrice: Number(lastPrice),
+          executionContext: {
+            executionDecision,
+            strategyKey:
+              strategyKey === "momentum-scalp" ? "breakout" : strategyKey,
+            provider: String(job.provider),
+            interval: String(interval),
+            quant,
+            tradePlanContext: {
+              timeframeMs: timeframeMilliseconds(String(interval)),
+              ...(Number.isFinite(Number(indicatorSnapshot?.values.rsi14))
+                ? { rsi: Number(indicatorSnapshot?.values.rsi14) }
+                : {}),
+              ...(Number.isFinite(Number(indicatorSnapshot?.values.rollingLow))
+                ? { support: Number(indicatorSnapshot?.values.rollingLow) }
+                : {}),
+              ...(Number.isFinite(Number(indicatorSnapshot?.values.rollingHigh))
+                ? { resistance: Number(indicatorSnapshot?.values.rollingHigh) }
+                : {}),
+              ...(Number.isFinite(Number(indicatorSnapshot?.values.adx14))
+                ? { adx: Number(indicatorSnapshot?.values.adx14) }
+                : {}),
+              ...(Number.isFinite(
+                Number(indicatorSnapshot?.values.efficiencyRatio20),
+              )
+                ? {
+                    efficiencyRatio: Number(
+                      indicatorSnapshot?.values.efficiencyRatio20,
+                    ),
+                  }
+                : {}),
+              ...(Number.isFinite(Number(indicatorSnapshot?.values.ema20))
+                ? { ema20: Number(indicatorSnapshot?.values.ema20) }
+                : {}),
+              ...(Number.isFinite(Number(indicatorSnapshot?.values.ema50))
+                ? { ema50: Number(indicatorSnapshot?.values.ema50) }
+                : {}),
+              ...(analyses.technical?.structure.breakout !== undefined
+                ? { breakout: analyses.technical.structure.breakout }
+                : {}),
+              ...(analyses.technical?.structure.marketStructure
+                ? {
+                    marketStructure:
+                      analyses.technical.structure.marketStructure,
+                  }
+                : {}),
+            },
+          },
+        };
+        const report = await this.confluenceCollector.addSignal(
+          job.confluenceBatchId,
+          confluenceSignal,
+        );
+        if (report.ready) {
+          await this.executeConfluenceBatch(job.confluenceBatchId, job.userId);
+        }
+      } else if (actionable) {
         // ─── Distributed Execution Lock ───────────────────────────────────────
         // Prevent race condition: multiple concurrent pipelines for the same user
         // could all read the same balance snapshot and collectively over-leverage.
@@ -579,85 +750,110 @@ export class PipelineRunnerService {
         }
 
         try {
-          const assess = async () => {
-            riskAssessment = await this.liveTrading.assessPipelineDecision({
-              userId: job.userId,
-              pipelineRunId: runId,
-              symbol,
-              provider: job.provider as unknown as ExchangeProvider,
-              decision: executionDecision,
-              // Momentum scalp currently shares the governed breakout portfolio
-              // bucket while retaining its own decision/quant identity.
-              strategyKey: strategyKey === "momentum-scalp" ? "breakout" : strategyKey,
-              executionSizeFactor:
-                'advisory' in quant && quant.advisory && 'sizeFactor' in quant
-                  ? quant.sizeFactor
-                  : undefined,
-              ...(volatilityAtr !== undefined
-                ? { volatilityAtr }
-                : {}),
-              tradePlanContext: {
-                timeframeMs: timeframeMilliseconds(String(interval)),
-                ...(Number.isFinite(Number(indicatorSnapshot?.values.rsi14))
-                  ? { rsi: Number(indicatorSnapshot?.values.rsi14) }
-                  : {}),
-                ...(Number.isFinite(Number(indicatorSnapshot?.values.rollingLow))
-                  ? { support: Number(indicatorSnapshot?.values.rollingLow) }
-                  : {}),
-                ...(Number.isFinite(Number(indicatorSnapshot?.values.rollingHigh))
-                  ? { resistance: Number(indicatorSnapshot?.values.rollingHigh) }
-                  : {}),
-                ...(Number.isFinite(Number(indicatorSnapshot?.values.adx14))
-                  ? { adx: Number(indicatorSnapshot?.values.adx14) }
-                  : {}),
-                ...(Number.isFinite(Number(indicatorSnapshot?.values.efficiencyRatio20))
-                  ? { efficiencyRatio: Number(indicatorSnapshot?.values.efficiencyRatio20) }
-                  : {}),
-                ...(Number.isFinite(Number(indicatorSnapshot?.values.ema20))
-                  ? { ema20: Number(indicatorSnapshot?.values.ema20) }
-                  : {}),
-                ...(Number.isFinite(Number(indicatorSnapshot?.values.ema50))
-                  ? { ema50: Number(indicatorSnapshot?.values.ema50) }
-                  : {}),
-                ...(analyses.technical?.structure.breakout !== undefined
-                  ? { breakout: analyses.technical.structure.breakout }
-                  : {}),
-                ...(analyses.technical?.structure.marketStructure
-                  ? { marketStructure: analyses.technical.structure.marketStructure }
-                  : {}),
-              },
-            });
-            if (riskAssessment.outcome === "NO_ELIGIBLE_EXCHANGE_CONNECTION") {
-              throw new Error("NO_ELIGIBLE_EXCHANGE_CONNECTION: Active verified exchange connection is required to run live risk assessment.");
-            }
-          };
-
-          const execute = async () => {
-            if (riskAssessment?.outcome === "RISK_APPROVED") {
-              submissionStartedAt = new Date();
-              const execution = await this.liveTrading.executePipeline(
-                job.userId,
-                runId,
-              );
-              liveExecution = execution;
-              return execution;
-            }
-            return { outcome: riskAssessment?.outcome ?? "SKIPPED" };
-          };
-
-          const finalExecution = await executeWithSingleDriftReassessment({
-            assess,
-            execute,
-          });
-
-          if (finalExecution.outcome === "EXECUTION_FAILED" && finalExecution.retryable === true) {
-            throw new PipelineExecutionRetryableError(
-              finalExecution.errorCode ?? "RETRYABLE_EXCHANGE_FAILURE",
+          if (dislocationCanary) {
+            const cooldownKey =
+              `pipeline:dislocation-canary:cooldown:${job.userId}:${symbol}:${output.decision}`;
+            const canaryReserved = await this.redis.setNx(
+              cooldownKey,
+              runId,
+              60 * 60,
             );
+            if (canaryReserved) canaryCooldownKey = cooldownKey;
+            else executionGateReason = "DISLOCATION_CANARY_COOLDOWN_ACTIVE";
+          }
+          if (!executionGateReason) {
+            const assess = async () => {
+              riskAssessment = await this.liveTrading.assessPipelineDecision({
+                userId: job.userId,
+                pipelineRunId: runId,
+                symbol,
+                provider: job.provider as unknown as ExchangeProvider,
+                decision: executionDecision,
+                // Momentum scalp currently shares the governed breakout portfolio
+                // bucket while retaining its own decision/quant identity.
+                strategyKey: strategyKey === "momentum-scalp" ? "breakout" : strategyKey,
+                executionSizeFactor:
+                  'advisory' in quant && quant.advisory && 'sizeFactor' in quant
+                    ? quant.sizeFactor
+                    : undefined,
+                ...(volatilityAtr !== undefined
+                  ? { volatilityAtr }
+                  : {}),
+                tradePlanContext: {
+                  timeframeMs: timeframeMilliseconds(String(interval)),
+                  ...(Number.isFinite(Number(indicatorSnapshot?.values.rsi14))
+                    ? { rsi: Number(indicatorSnapshot?.values.rsi14) }
+                    : {}),
+                  ...(Number.isFinite(Number(indicatorSnapshot?.values.rollingLow))
+                    ? { support: Number(indicatorSnapshot?.values.rollingLow) }
+                    : {}),
+                  ...(Number.isFinite(Number(indicatorSnapshot?.values.rollingHigh))
+                    ? { resistance: Number(indicatorSnapshot?.values.rollingHigh) }
+                    : {}),
+                  ...(Number.isFinite(Number(indicatorSnapshot?.values.adx14))
+                    ? { adx: Number(indicatorSnapshot?.values.adx14) }
+                    : {}),
+                  ...(Number.isFinite(Number(indicatorSnapshot?.values.efficiencyRatio20))
+                    ? { efficiencyRatio: Number(indicatorSnapshot?.values.efficiencyRatio20) }
+                    : {}),
+                  ...(Number.isFinite(Number(indicatorSnapshot?.values.ema20))
+                    ? { ema20: Number(indicatorSnapshot?.values.ema20) }
+                    : {}),
+                  ...(Number.isFinite(Number(indicatorSnapshot?.values.ema50))
+                    ? { ema50: Number(indicatorSnapshot?.values.ema50) }
+                    : {}),
+                  ...(analyses.technical?.structure.breakout !== undefined
+                    ? { breakout: analyses.technical.structure.breakout }
+                    : {}),
+                  ...(analyses.technical?.structure.marketStructure
+                    ? { marketStructure: analyses.technical.structure.marketStructure }
+                    : {}),
+                },
+              });
+              if (riskAssessment.outcome === "NO_ELIGIBLE_EXCHANGE_CONNECTION") {
+                throw new Error("NO_ELIGIBLE_EXCHANGE_CONNECTION: Active verified exchange connection is required to run live risk assessment.");
+              }
+            };
+
+            const execute = async () => {
+              if (riskAssessment?.outcome === "RISK_APPROVED") {
+                submissionStartedAt = new Date();
+                const execution = await this.liveTrading.executePipeline(
+                  job.userId,
+                  runId,
+                );
+                liveExecution = execution;
+                return execution;
+              }
+              return { outcome: riskAssessment?.outcome ?? "SKIPPED" };
+            };
+
+            const finalExecution = await executeWithSingleDriftReassessment({
+              assess,
+              execute,
+            });
+            retainCanaryCooldown = dislocationCanary &&
+              finalExecution.outcome === "ORDER_SUBMITTED";
+
+            if (finalExecution.outcome === "EXECUTION_FAILED" && finalExecution.retryable === true) {
+              throw new PipelineExecutionRetryableError(
+                finalExecution.errorCode ?? "RETRYABLE_EXCHANGE_FAILURE",
+              );
+            }
           }
         } finally {
+          if (canaryCooldownKey && !retainCanaryCooldown) {
+            await this.redis.compareAndDelete(canaryCooldownKey, runId);
+          }
           // Always release the lock — even if assessment or execution throws
           await this.redis.compareAndDelete(lockKey, runId);
+        }
+      } else if (!actionable && job.confluenceBatchId && this.confluenceCollector) {
+        const report = await this.confluenceCollector.reportNonActionable(
+          job.confluenceBatchId,
+        );
+        if (report.ready) {
+          await this.executeConfluenceBatch(job.confluenceBatchId, job.userId);
         }
       }
       const completedAt = new Date();
@@ -674,13 +870,27 @@ export class PipelineRunnerService {
       const slippageBps = actualPrice && referencePrice > 0
         ? Math.abs(actualPrice - referencePrice) / referencePrice * 10_000
         : undefined;
-      const finalSkippedReason = !actionable
+      const finalActionable = actionable && !executionGateReason;
+      const finalExecutionDecision = finalActionable
+        ? executionDecision
+        : { ...executionDecision, decision: "WAIT" as const };
+      const finalCandidateDecision = executionGateReason
+        ? {
+            ...candidateDecision,
+            actionable: false,
+            blockedReasons: [...new Set([
+              ...candidateDecision.blockedReasons,
+              executionGateReason,
+            ])],
+          }
+        : candidateDecision;
+      const finalSkippedReason = executionGateReason ?? (!actionable
         ? reason
         : !riskApproved
           ? risk?.reason ?? riskAssessment?.outcome ?? "RISK_NOT_APPROVED"
           : !orderSubmitted
             ? liveExecution?.errorCode ?? liveExecution?.outcome ?? "ORDER_NOT_SUBMITTED"
-            : undefined;
+            : undefined);
       this.analytics.recordStageTelemetry({
         pipelineId: job.pipelineId,
         runId,
@@ -688,12 +898,12 @@ export class PipelineRunnerService {
         exchange: String(job.provider),
         timeframe: String(job.params?.interval ?? definition.defaultParams.interval),
         stageName: 'execution',
-        inputSummary: `decision=${executionDecision.decision}; confidence=${output.confidence}`,
+        inputSummary: `decision=${finalExecutionDecision.decision}; confidence=${output.confidence}`,
         outputSummary: `risk=${risk?.reason ?? 'approved'}; live=${liveExecution?.outcome ?? 'unknown'}`,
         confidence: output.confidence,
         opportunityScore: output.opportunityScore,
         riskScore: risk?.riskScore ?? 0,
-        decision: executionDecision.decision,
+        decision: finalExecutionDecision.decision,
         rejectReason: finalSkippedReason,
         executionResult: orderSubmitted ? 'EXECUTED' : riskApproved ? 'RISK_APPROVED' : 'REJECTED',
         durationMs: completedAt.getTime() - startedAt.getTime(),
@@ -711,7 +921,7 @@ export class PipelineRunnerService {
         status: "COMPLETED",
         completedAt,
         durationMs: completedAt.getTime() - startedAt.getTime(),
-        decision: executionDecision.decision,
+        decision: finalExecutionDecision.decision,
         confidence: output.confidence,
         dataQuality: output.dataQuality,
         marketRegime: output.regime.type,
@@ -719,13 +929,13 @@ export class PipelineRunnerService {
         learningStage: output.learningConfiguration?.stage,
         timeframe: String(interval),
         skippedReason: finalSkippedReason,
-        storedContext: { analyses, fusionOutput, candidateDecision, strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue },
+        storedContext: { analyses, fusionOutput, candidateDecision: finalCandidateDecision, strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue },
         result: {
           ...output,
-          candidateDecision,
+          candidateDecision: finalCandidateDecision,
           selectedStrategyKey: strategyKey,
           strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue,
-          actionable,
+          actionable: finalActionable,
           skippedReason: finalSkippedReason,
           signalFilter: {
             allowed: signalFilter.allowed,
@@ -744,14 +954,14 @@ export class PipelineRunnerService {
         },
       });
       await this.alerts.contextual(runId, symbol, analyses);
-      if (!actionable) {
+      if (!finalActionable) {
         await this.alerts.blockedOpportunity({
           runId,
           userId: job.userId,
           symbol,
-          decision: candidateDecision.decision,
-          confidence: candidateDecision.confidence,
-          blockedReasons: candidateDecision.blockedReasons,
+          decision: finalCandidateDecision.decision,
+          confidence: finalCandidateDecision.confidence,
+          blockedReasons: finalCandidateDecision.blockedReasons,
           analyses,
           multiTimeframeConfirmation: multiTimeframeFilter.confirmation,
           priceChangePercent: Number.isFinite(Number(indicatorSnapshot?.values.priceChangePercent))
@@ -764,7 +974,7 @@ export class PipelineRunnerService {
           message: error instanceof Error ? error.message : String(error),
         }));
       }
-      if (actionable && riskApproved)
+      if (finalActionable && riskApproved)
         await this.alerts.decision(runId, symbol, output);
     } catch (error) {
       const completedAt = new Date();
@@ -868,5 +1078,170 @@ export class PipelineRunnerService {
         },
       );
     });
+  }
+
+  /**
+   * Evaluates a completed confluence batch, executes the selected best candidate,
+   * boosts sizing, and shadow logs rejected signals.
+   */
+  async executeConfluenceBatch(
+    batchId: string,
+    userId: string,
+  ): Promise<void> {
+    if (!this.confluenceCollector) return;
+
+    const batch = await this.confluenceCollector.drainBatch(batchId);
+    if (!batch || batch.signals.length === 0) {
+      return;
+    }
+
+    const config = this.getConfluenceConfig();
+    const evaluation = evaluateConfluence(
+      batch.signals,
+      batch.meta.expectedCount,
+      config,
+    );
+
+    if (!evaluation) return;
+
+    const selected = evaluation.selected;
+    const lockKey = `pipeline:exec:lock:${userId}`;
+    const lockTtl = 30;
+    const acquired = await this.redis.setNx(lockKey, selected.pipelineRunId, lockTtl);
+
+    if (!acquired) {
+      this.logger.warn({
+        event: "confluence_execution_lock_busy",
+        userId,
+        batchId,
+        selectedRunId: selected.pipelineRunId,
+        symbol: selected.symbol,
+      });
+      throw new PipelineExecutionLockBusyError("EXECUTION_LOCK_BUSY");
+    }
+
+    try {
+      let riskAssessment: Awaited<ReturnType<LiveTradingService["assessPipelineDecision"]>> | undefined;
+
+      const assess = async () => {
+        riskAssessment = await this.liveTrading.assessPipelineDecision({
+          userId,
+          pipelineRunId: selected.pipelineRunId,
+          symbol: selected.symbol,
+          provider: selected.executionContext.provider as unknown as ExchangeProvider,
+          decision: selected.executionContext.executionDecision as DecisionOutput,
+          strategyKey: selected.executionContext.strategyKey,
+          executionSizeFactor: evaluation.sizeFactor,
+          ...(selected.volatilityAtr !== undefined ? { volatilityAtr: selected.volatilityAtr } : {}),
+          tradePlanContext: selected.executionContext.tradePlanContext as TradePlanMarketContext,
+        });
+        if (riskAssessment.outcome === "NO_ELIGIBLE_EXCHANGE_CONNECTION") {
+          throw new Error(
+            "NO_ELIGIBLE_EXCHANGE_CONNECTION: Active verified exchange connection is required to run live risk assessment.",
+          );
+        }
+      };
+
+      const execute = async () => {
+        if (riskAssessment?.outcome === "RISK_APPROVED") {
+          return this.liveTrading.executePipeline(
+            userId,
+            selected.pipelineRunId,
+          );
+        }
+        return { outcome: riskAssessment?.outcome ?? "SKIPPED" };
+      };
+
+      await executeWithSingleDriftReassessment({
+        assess,
+        execute,
+      });
+
+      if (this.alerts) {
+        this.alerts.confluenceEvaluation({
+          batchId,
+          userId,
+          selectedSymbol: selected.symbol,
+          selectedScore: selected.compositeScore,
+          concordanceCount: evaluation.concordanceCount,
+          totalSymbols: evaluation.totalSymbols,
+          sizeFactor: evaluation.sizeFactor,
+          rejectedSymbols: evaluation.rejected.map((s) => s.symbol),
+        });
+      }
+    } finally {
+      await this.redis.compareAndDelete(lockKey, selected.pipelineRunId);
+    }
+
+    await this.shadowLogRejectedSignals(userId, evaluation);
+  }
+
+  private async shadowLogRejectedSignals(
+    userId: string,
+    evaluation: ConfluenceEvaluation,
+  ): Promise<void> {
+    if (evaluation.rejected.length === 0) return;
+
+    const records = evaluation.rejected.map((signal: ConfluenceSignal) => ({
+      id: randomUUID(),
+      userId,
+      pipelineRunId: signal.pipelineRunId,
+      symbol: signal.symbol,
+      provider: signal.executionContext.provider as unknown as ExchangeProvider,
+      decision: signal.decision,
+      confidence: signal.confidence,
+      mode: "CONFLUENCE_REJECTED",
+      referencePrice: signal.referencePrice,
+      outcome: "PENDING",
+      marketRegime: signal.regime,
+    }));
+
+    await this.repository.createPaperSignals(records).catch((err) => {
+      this.logger.error({
+        event: "confluence_shadow_log_failed",
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+
+    for (const signal of evaluation.rejected) {
+      await this.repository
+        .updateRun(signal.pipelineRunId, {
+          skippedReason: "CONFLUENCE_NOT_SELECTED",
+        })
+        .catch((err) => {
+          this.logger.warn({
+            event: "confluence_update_rejected_run_failed",
+            pipelineRunId: signal.pipelineRunId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+    }
+  }
+
+  private getConfluenceConfig(): ConfluenceSizeConfig {
+    const boostPerSignal = Number(
+      process.env.CONFLUENCE_SIZE_BOOST_PER_SIGNAL ??
+        DEFAULT_CONFLUENCE_SIZE_CONFIG.boostPerSignal,
+    );
+    const maxSizeFactor = Number(
+      process.env.CONFLUENCE_MAX_SIZE_FACTOR ??
+        DEFAULT_CONFLUENCE_SIZE_CONFIG.maxSizeFactor,
+    );
+    const minSignalsForBoost = Number(
+      process.env.CONFLUENCE_MIN_SIGNALS_FOR_BOOST ??
+        DEFAULT_CONFLUENCE_SIZE_CONFIG.minSignalsForBoost,
+    );
+
+    return {
+      boostPerSignal: Number.isFinite(boostPerSignal)
+        ? boostPerSignal
+        : DEFAULT_CONFLUENCE_SIZE_CONFIG.boostPerSignal,
+      maxSizeFactor: Number.isFinite(maxSizeFactor)
+        ? maxSizeFactor
+        : DEFAULT_CONFLUENCE_SIZE_CONFIG.maxSizeFactor,
+      minSignalsForBoost: Number.isFinite(minSignalsForBoost)
+        ? minSignalsForBoost
+        : DEFAULT_CONFLUENCE_SIZE_CONFIG.minSignalsForBoost,
+    };
   }
 }

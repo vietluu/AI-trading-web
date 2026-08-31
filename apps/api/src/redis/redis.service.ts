@@ -41,6 +41,14 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     await this.client.ping();
   }
 
+  async eval(
+    script: string,
+    numKeys: number,
+    ...args: (string | number)[]
+  ): Promise<unknown> {
+    return this.client.eval(script, numKeys, ...args);
+  }
+
   async get(key: string): Promise<string | null> {
     return this.client.get(key);
   }

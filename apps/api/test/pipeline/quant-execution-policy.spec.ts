@@ -204,6 +204,161 @@ describe("QuantExecutionPolicyService", () => {
     expect(result).toMatchObject({ allowed: false, reason: "QUANT_WALK_FORWARD_UNSTABLE" });
   });
 
+  it("allows a tenth-size DEMO canary when a confirmed market dislocation aligns with strong realtime evidence", async () => {
+    const result = await service(valid({
+      probabilityOfProfit: 43,
+      probabilityOfRuin: 9.77,
+      outOfSampleSharpe: -0.8,
+      walkForwardStable: false,
+    })).policy.evaluate({
+      ...input,
+      mode: "DEMO",
+      decision: strongDecision({
+        decision: "SHORT",
+        confidence: 75,
+        opportunityScore: 79,
+        expectedReward: 2.867,
+        expectedLoss: 0.696,
+        executionCost: 0.063,
+      }) as never,
+      multiTimeframeConfirmation: 100,
+      primaryRsi: 37.95,
+      marketDislocation: {
+        direction: "BEARISH",
+        confirmationCount: 2,
+        indicatorCloseTime: "2026-08-12T00:59:59.999Z",
+        reasons: [
+          "NEGATIVE_MACD_HISTOGRAM",
+          "ROLLING_LOW_BREAKDOWN",
+          "BEARISH_ATR_IMPULSE",
+        ],
+      },
+    } as never);
+
+    expect(result).toMatchObject({
+      allowed: true,
+      evaluated: true,
+      advisory: true,
+      dislocationCanary: true,
+      reason: "QUANT_WALK_FORWARD_UNSTABLE",
+      sizeFactor: 0.1,
+    });
+  });
+
+  it("treats low historical profit probability as advisory for the same bounded dislocation canary", async () => {
+    const result = await service(valid({ probabilityOfProfit: 43 })).policy.evaluate({
+      ...input,
+      mode: "DEMO",
+      decision: strongDecision({
+        decision: "SHORT",
+        confidence: 75,
+        opportunityScore: 79,
+        expectedReward: 2.867,
+        expectedLoss: 0.696,
+        executionCost: 0.063,
+      }) as never,
+      multiTimeframeConfirmation: 100,
+      primaryRsi: 37.95,
+      marketDislocation: {
+        direction: "BEARISH",
+        confirmationCount: 2,
+        indicatorCloseTime: "2026-08-12T00:59:59.999Z",
+        reasons: ["ROLLING_LOW_BREAKDOWN", "BEARISH_ATR_IMPULSE"],
+      },
+    } as never);
+
+    expect(result).toMatchObject({
+      allowed: true,
+      dislocationCanary: true,
+      reason: "QUANT_PROBABILITY_TOO_LOW",
+      sizeFactor: 0.1,
+    });
+  });
+
+  it("keeps the dislocation bypass disabled in LIVE mode", async () => {
+    const result = await service(valid({ walkForwardStable: false })).policy.evaluate({
+      ...input,
+      mode: "LIVE",
+      decision: strongDecision({
+        decision: "SHORT",
+        confidence: 75,
+        opportunityScore: 79,
+        expectedReward: 2.867,
+        expectedLoss: 0.696,
+        executionCost: 0.063,
+      }) as never,
+      multiTimeframeConfirmation: 100,
+      primaryRsi: 37.95,
+      marketDislocation: {
+        direction: "BEARISH",
+        confirmationCount: 2,
+        indicatorCloseTime: "2026-08-12T00:59:59.999Z",
+        reasons: ["ROLLING_LOW_BREAKDOWN", "BEARISH_ATR_IMPULSE"],
+      },
+    } as never);
+
+    expect(result).toMatchObject({
+      allowed: false,
+      reason: "QUANT_WALK_FORWARD_UNSTABLE",
+    });
+  });
+
+  it("does not use a dislocation canary when the event direction opposes the trade", async () => {
+    const result = await service(valid({ walkForwardStable: false })).policy.evaluate({
+      ...input,
+      mode: "DEMO",
+      decision: strongDecision({
+        decision: "SHORT",
+        confidence: 75,
+        opportunityScore: 79,
+        expectedReward: 2.867,
+        expectedLoss: 0.696,
+        executionCost: 0.063,
+      }) as never,
+      multiTimeframeConfirmation: 100,
+      primaryRsi: 37.95,
+      marketDislocation: {
+        direction: "BULLISH",
+        confirmationCount: 2,
+        indicatorCloseTime: "2026-08-12T00:59:59.999Z",
+        reasons: ["ROLLING_HIGH_BREAKOUT", "BULLISH_ATR_IMPULSE"],
+      },
+    } as never);
+
+    expect(result).toMatchObject({
+      allowed: false,
+      reason: "QUANT_WALK_FORWARD_UNSTABLE",
+    });
+  });
+
+  it("does not classify an ATR impulse without a structural breakout as a dislocation canary", async () => {
+    const result = await service(valid({ walkForwardStable: false })).policy.evaluate({
+      ...input,
+      mode: "DEMO",
+      decision: strongDecision({
+        decision: "SHORT",
+        confidence: 75,
+        opportunityScore: 79,
+        expectedReward: 2.867,
+        expectedLoss: 0.696,
+        executionCost: 0.063,
+      }) as never,
+      multiTimeframeConfirmation: 100,
+      primaryRsi: 37.95,
+      marketDislocation: {
+        direction: "BEARISH",
+        confirmationCount: 2,
+        indicatorCloseTime: "2026-08-12T00:59:59.999Z",
+        reasons: ["BEARISH_EMA_ALIGNMENT", "BEARISH_ATR_IMPULSE"],
+      },
+    } as never);
+
+    expect(result).toMatchObject({
+      allowed: false,
+      reason: "QUANT_WALK_FORWARD_UNSTABLE",
+    });
+  });
+
   it("allows validated out-of-sample edge that agrees with fresh quant regime", async () => {
     const result = await service(valid(), { regime: "BULL", confidence: 82, detectedAt: new Date("2026-08-12T00:55:00Z") }).policy.evaluate(input);
     expect(result.allowed).toBe(true);

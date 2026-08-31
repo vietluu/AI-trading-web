@@ -630,6 +630,29 @@ const environmentSchema = z
       .min(3_600_000)
       .max(86_400_000)
       .default(3_600_000),
+    // Confluence Engine
+    CONFLUENCE_WINDOW_MS: z.coerce
+      .number()
+      .int()
+      .min(10_000)
+      .max(120_000)
+      .default(45_000),
+    CONFLUENCE_SIZE_BOOST_PER_SIGNAL: z.coerce
+      .number()
+      .min(0)
+      .max(0.5)
+      .default(0.25),
+    CONFLUENCE_MAX_SIZE_FACTOR: z.coerce
+      .number()
+      .min(1)
+      .max(3)
+      .default(2.0),
+    CONFLUENCE_MIN_SIGNALS_FOR_BOOST: z.coerce
+      .number()
+      .int()
+      .min(2)
+      .max(10)
+      .default(2),
   })
   .superRefine((environment, context) => {
     if (

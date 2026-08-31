@@ -32,5 +32,20 @@ export class PipelineRepository {
     const eligible = new Set(strategies.map((strategy) => strategy.key));
     return requestedKeys.filter((key) => eligible.has(key));
   }
+  createPaperSignals(data: Array<{
+    id: string;
+    userId: string;
+    pipelineRunId?: string;
+    symbol: string;
+    provider?: ExchangeProvider;
+    decision: string;
+    confidence: number;
+    mode: string;
+    referencePrice: Prisma.Decimal | number;
+    outcome: string;
+    marketRegime?: string;
+  }>) {
+    return this.prisma.paperSignal.createMany({ data });
+  }
   metrics() { return this.prisma.pipelineRun.findMany({ select: { status: true, durationMs: true, decision: true, confidence: true, completedAt: true }, orderBy: { createdAt: 'desc' }, take: 1000 }); }
 }

@@ -9,6 +9,7 @@ import { resolvePipelineDefinition } from '../domain/pipeline.definition';
 import { pipelineSkipReason } from '../domain/rate-limit';
 import { PipelineRunnerService } from './pipeline-runner.service';
 import { RedisService } from '../../../redis/redis.service';
+import { ConfluenceCollectorService } from '../infrastructure/confluence-collector.service';
 
 @Injectable()
 export class PipelineService {
@@ -18,6 +19,7 @@ export class PipelineService {
     private readonly config: PipelineConfigService,
     @Optional() @Inject(PipelineRunnerService) private readonly runner?: PipelineRunnerService,
     @Optional() private readonly redis?: RedisService,
+    @Optional() private readonly confluenceCollector?: ConfluenceCollectorService,
   ) {}
 
   async trigger(userId: string, raw: unknown, trigger: PipelineTrigger = 'MANUAL', options: { replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; useStoredContext?: boolean; maxRunsPerHour?: number; bypassCooldown?: boolean } = {}) {
@@ -27,6 +29,21 @@ export class PipelineService {
     if (!definition?.enabled) throw new NotFoundException('Pipeline definition not found or disabled');
     const symbols = this.extractSymbols(raw, PipelineSymbolSchema.parse(input.symbol));
     if (symbols.length > 1) {
+      const confluenceBatchId = randomUUID();
+      const confluenceBatchExpectedCount = symbols.length;
+      if (this.confluenceCollector) {
+        await this.confluenceCollector.createBatch(
+          confluenceBatchId,
+          userId,
+          confluenceBatchExpectedCount,
+        );
+        const timeoutMs = Number(process.env.CONFLUENCE_WINDOW_MS ?? 45000);
+        await this.queue.enqueueConfluenceTimeout(
+          confluenceBatchId,
+          userId,
+          timeoutMs,
+        );
+      }
       const createdRuns = [] as Array<Awaited<ReturnType<PipelineRepository['createRun']>>>;
       const batches = [] as PipelineSymbol[][];
       for (let index = 0; index < symbols.length; index += 3) {
@@ -54,6 +71,8 @@ export class PipelineService {
                   trigger,
                   createdAt: new Date().toISOString(),
                   useStoredContext: options.useStoredContext,
+                  confluenceBatchId,
+                  confluenceBatchExpectedCount,
                 }, trigger),
             ),
           ),

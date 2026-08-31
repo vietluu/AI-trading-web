@@ -330,6 +330,215 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     expect(fallbackCalls).toContain('"strategyKey":"trend","decision":"LONG"');
   });
 
+  it('routes a confirmed DEMO dislocation canary through risk while preserving historical gate reasons as advisory', async () => {
+    const now = new Date();
+    const repository = {
+      updateRun: vi.fn().mockResolvedValue({}),
+      updateStep: vi.fn().mockResolvedValue({}),
+      findRun: vi.fn().mockResolvedValue(undefined),
+      activeStrategyKeys: vi.fn().mockImplementation(
+        (_userId: string, keys: string[]) => Promise.resolve(keys),
+      ),
+    };
+    const analyses = {
+      market: { summary: 'market', trend: { direction: 'UP', strength: 'STRONG' }, volatility: { level: 'MEDIUM', atr: '0.8' }, liquidity: {}, derivatives: {}, anomalies: [], dataQuality: 'GOOD', usedTools: [], generatedAt: now.toISOString() },
+      technical: { summary: 'tech', trend: { direction: 'UP', strength: 'STRONG' }, momentum: { rsi: '58', rsiState: 'NEUTRAL', macd: { trend: 'BULLISH' } }, movingAverages: { alignment: 'BULLISH', pricePosition: 'ABOVE' }, volatility: { bollinger: { position: 'MIDDLE', squeeze: false } }, structure: { marketStructure: 'HH_HL', breakout: true }, divergence: {}, signals: [], dataQuality: 'GOOD', usedTools: [], generatedAt: now.toISOString() },
+      news: { summary: 'news', impact: { level: 'LOW', direction: 'NEUTRAL' }, keyEvents: [], themes: [], riskSignals: [], dataQuality: 'GOOD', usedTools: [], generatedAt: now.toISOString() },
+      sentiment: { summary: 'sentiment', sentiment: { overall: 'BULLISH', intensity: 'MEDIUM' }, crowdBehavior: { fomo: false, panic: false, euphoria: false }, sources: {}, anomalies: [], dataQuality: 'GOOD', usedTools: [], generatedAt: now.toISOString() },
+      macro: { summary: 'macro', macroTrend: 'RISK_ON', keyEvents: [], riskFactors: [], dataQuality: 'GOOD', generatedAt: now.toISOString() },
+      onchain: { summary: 'onchain', activity: 'HIGH', flows: { exchangeInflow: 'falling' }, signals: [], dataQuality: 'GOOD', generatedAt: now.toISOString() },
+    } as unknown as FusionInput;
+    const fusion = {
+      runDetailed: vi.fn().mockResolvedValue({
+        analyses,
+        fusionOutput: {
+          summary: 'fusion',
+          combinedAnalysis: { news: 'news', sentiment: 'sentiment', macro: 'macro', market: 'market', technical: 'technical', onchain: 'onchain' },
+          overallBias: 'BULLISH', confidence: 75, conflicts: [], dataQuality: 'GOOD', generatedAt: now.toISOString(),
+        } as FusionOutput,
+      }),
+    };
+    const output = {
+      decision: 'LONG', confidence: 75, reasoning: 'confirmed impulse',
+      signals: { bullishFactors: ['market', 'technical'], bearishFactors: [] }, risks: [],
+      agreementScore: 100, directionalAgreement: 100, evidenceCoverage: 100,
+      coreDataQuality: 'GOOD', dataQuality: 'GOOD', regime: { type: 'TRENDING' },
+      weighting: { market: 20, technical: 30, news: 10, sentiment: 15, macro: 15, onchain: 10 },
+      overrides: [], volatilityAdjustment: 0, conflictLevel: 'LOW', opportunityScore: 79,
+      expectedWinProbability: 0.3, expectedReward: 2.8, expectedLoss: 0.7,
+      expectedValue: -0.1, profitFactorEstimate: 1, riskScore: 54,
+      adaptiveThreshold: 60, calibrationAdjustment: 0, executionCost: 0.06,
+      generatedAt: now.toISOString(),
+    };
+    const decision = {
+      decideForUser: vi.fn().mockResolvedValue(output),
+      calibrateForExecution: vi.fn().mockImplementation((value: unknown) => Promise.resolve(value)),
+    };
+    const marketData = {
+      getIndicatorSnapshot: vi.fn().mockResolvedValue({
+        candleOpenTime: new Date(now.getTime() - 5 * 60_000),
+        candleCloseTime: now,
+        values: {
+          rsi14: 58, atr14: 0.8, volumeChangePercent: 180,
+          priceChangePercent: 0.9, ema20: 100, ema50: 99, ema200: 95,
+          adx14: 30, efficiencyRatio20: 0.6, rollingHigh: 100.2,
+        },
+      }),
+      getHistoricalCandles: vi.fn().mockResolvedValue([{ close: '100.4', closeTime: now }]),
+    };
+    const liveTrading = {
+      assessPipelineDecision: vi.fn().mockResolvedValue({ outcome: 'RISK_APPROVED', risk: { approved: true, riskScore: 20 } }),
+      executePipeline: vi.fn().mockResolvedValue({ outcome: 'ORDER_SUBMITTED' }),
+    };
+    const quant = {
+      evaluate: vi.fn().mockImplementation((input: { mode?: string; marketDislocation?: { direction?: string } }) =>
+        Promise.resolve(input.mode === 'DEMO' && input.marketDislocation?.direction === 'BULLISH'
+          ? { allowed: true, evaluated: true, advisory: true, dislocationCanary: true, reason: 'QUANT_WALK_FORWARD_UNSTABLE', sizeFactor: 0.1 }
+          : { allowed: false, reason: 'QUANT_WALK_FORWARD_UNSTABLE' })),
+    };
+    const redis = { setNx: vi.fn().mockResolvedValue(true), compareAndDelete: vi.fn().mockResolvedValue(true) };
+    const signalFilter = {
+      evaluate: vi.fn().mockReturnValue({
+        actionable: false,
+        decision: 'WAIT',
+        reason: 'EXPECTED_VALUE_NEGATIVE',
+      }),
+    };
+    const decisionJudge = {
+      evaluate: vi.fn().mockReturnValue({
+        verdict: 'REQUEST_MORE_DATA',
+        approved: false,
+        reasons: ['CALIBRATED_PROBABILITY_TOO_LOW'],
+      }),
+    };
+    const service = new PipelineRunnerService(
+      fusion as never,
+      decision as never,
+      repository as never,
+      { isCancelled: vi.fn().mockResolvedValue(false) } as never,
+      signalFilter,
+      { evaluate: vi.fn().mockReturnValue({ allowed: true, preliminaryRegime: 'TRENDING' }) },
+      marketData as never,
+      { contextual: vi.fn().mockResolvedValue(undefined), decision: vi.fn().mockResolvedValue(undefined), repeatedFailure: vi.fn().mockResolvedValue(undefined), blockedOpportunity: vi.fn().mockResolvedValue(undefined) } as never,
+      { recordStageTelemetry: vi.fn() } as never,
+      liveTrading as never,
+      redis as never,
+      decisionJudge,
+      undefined,
+      quant as never,
+    );
+
+    await service.run({
+      pipelineId: 'FULL_ANALYSIS_DECISION', runId: 'dislocation-run', userId: 'user-1',
+      provider: 'OKX_FUTURES', symbol: 'SOL-USDT', trigger: 'EVENT', createdAt: now.toISOString(),
+      params: {
+        interval: '15m', strategyIds: ['ai-core'],
+        eventScan: {
+          fingerprint: 'sol-5m-bullish', direction: 'BULLISH', price: 100.4, atr: 0.8,
+          rsi: 58, candleOpenTime: new Date(now.getTime() - 5 * 60_000).toISOString(),
+          indicatorCloseTime: now.toISOString(), confirmationCount: 2,
+          reasons: ['ROLLING_HIGH_BREAKOUT', 'BULLISH_ATR_IMPULSE'],
+        },
+      },
+    } as never);
+
+    expect(liveTrading.assessPipelineDecision).toHaveBeenCalledWith(expect.objectContaining({
+      pipelineRunId: 'dislocation-run',
+      executionSizeFactor: 0.1,
+    }));
+    expect(liveTrading.executePipeline).toHaveBeenCalledWith('user-1', 'dislocation-run');
+    expect(redis.setNx).toHaveBeenNthCalledWith(
+      2,
+      'pipeline:dislocation-canary:cooldown:user-1:SOL-USDT:LONG',
+      'dislocation-run',
+      60 * 60,
+    );
+    expect(repository.updateRun).toHaveBeenCalledWith('dislocation-run', expect.objectContaining({
+      decision: 'LONG',
+      skippedReason: undefined,
+    }));
+
+    liveTrading.assessPipelineDecision.mockClear();
+    liveTrading.executePipeline.mockClear();
+    redis.setNx.mockImplementation((key: string) =>
+      Promise.resolve(!key.includes('pipeline:dislocation-canary:cooldown:')),
+    );
+
+    await service.run({
+      pipelineId: 'FULL_ANALYSIS_DECISION', runId: 'dislocation-cooldown-run', userId: 'user-1',
+      provider: 'OKX_FUTURES', symbol: 'SOL-USDT', trigger: 'EVENT', createdAt: now.toISOString(),
+      params: {
+        interval: '15m', strategyIds: ['ai-core'],
+        eventScan: {
+          fingerprint: 'sol-next-5m-bullish', direction: 'BULLISH', price: 100.6, atr: 0.8,
+          rsi: 59, candleOpenTime: new Date(now.getTime() - 5 * 60_000).toISOString(),
+          indicatorCloseTime: now.toISOString(), confirmationCount: 2,
+          reasons: ['ROLLING_HIGH_BREAKOUT', 'BULLISH_ATR_IMPULSE'],
+        },
+      },
+    } as never);
+
+    expect(liveTrading.assessPipelineDecision).not.toHaveBeenCalled();
+    expect(liveTrading.executePipeline).not.toHaveBeenCalled();
+    expect(repository.updateRun).toHaveBeenCalledWith('dislocation-cooldown-run', expect.objectContaining({
+      decision: 'WAIT',
+      skippedReason: 'DISLOCATION_CANARY_COOLDOWN_ACTIVE',
+    }));
+
+    liveTrading.assessPipelineDecision.mockClear();
+    liveTrading.executePipeline.mockClear();
+    redis.setNx.mockReset().mockResolvedValue(true);
+    signalFilter.evaluate.mockReturnValue({ actionable: true, decision: 'LONG' });
+    decisionJudge.evaluate.mockReturnValue({ verdict: 'APPROVE', approved: true, reasons: [] });
+
+    await service.run({
+      pipelineId: 'FULL_ANALYSIS_DECISION', runId: 'quant-only-dislocation-run', userId: 'user-1',
+      provider: 'OKX_FUTURES', symbol: 'XRP-USDT', trigger: 'EVENT', createdAt: now.toISOString(),
+      params: {
+        interval: '15m', strategyIds: ['ai-core'],
+        eventScan: {
+          fingerprint: 'xrp-5m-bullish', direction: 'BULLISH', price: 100.7, atr: 0.8,
+          rsi: 58, candleOpenTime: new Date(now.getTime() - 5 * 60_000).toISOString(),
+          indicatorCloseTime: now.toISOString(), confirmationCount: 2,
+          reasons: ['ROLLING_HIGH_BREAKOUT', 'BULLISH_ATR_IMPULSE'],
+        },
+      },
+    } as never);
+
+    expect(redis.setNx).toHaveBeenNthCalledWith(
+      2,
+      'pipeline:dislocation-canary:cooldown:user-1:XRP-USDT:LONG',
+      'quant-only-dislocation-run',
+      60 * 60,
+    );
+    expect(liveTrading.assessPipelineDecision).toHaveBeenCalledWith(expect.objectContaining({
+      pipelineRunId: 'quant-only-dislocation-run',
+      executionSizeFactor: 0.1,
+    }));
+
+    liveTrading.assessPipelineDecision.mockClear();
+    liveTrading.executePipeline.mockClear();
+    redis.setNx.mockReset().mockResolvedValue(true);
+    signalFilter.evaluate.mockReturnValue({ actionable: false, decision: 'WAIT' });
+
+    await service.run({
+      pipelineId: 'FULL_ANALYSIS_DECISION', runId: 'unexplained-filter-rejection-run', userId: 'user-1',
+      provider: 'OKX_FUTURES', symbol: 'BTC-USDT', trigger: 'EVENT', createdAt: now.toISOString(),
+      params: {
+        interval: '15m', strategyIds: ['ai-core'],
+        eventScan: {
+          fingerprint: 'btc-5m-bullish', direction: 'BULLISH', price: 100.7, atr: 0.8,
+          rsi: 58, candleOpenTime: new Date(now.getTime() - 5 * 60_000).toISOString(),
+          indicatorCloseTime: now.toISOString(), confirmationCount: 2,
+          reasons: ['ROLLING_HIGH_BREAKOUT', 'BULLISH_ATR_IMPULSE'],
+        },
+      },
+    } as never);
+
+    expect(liveTrading.assessPipelineDecision).not.toHaveBeenCalled();
+    expect(liveTrading.executePipeline).not.toHaveBeenCalled();
+  });
+
   it('uses BullMQ-safe pipeline queue names', () => {
     expect([PIPELINE_RUN_QUEUE_NAME, PIPELINE_RETRY_QUEUE_NAME, PIPELINE_DEAD_LETTER_QUEUE_NAME]).toEqual([
       'pipeline-run',

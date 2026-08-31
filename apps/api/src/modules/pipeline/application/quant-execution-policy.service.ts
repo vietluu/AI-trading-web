@@ -8,6 +8,7 @@ export interface QuantExecutionPolicyResult {
   allowed: boolean;
   evaluated?: boolean;
   advisory?: boolean;
+  dislocationCanary?: boolean;
   sizeFactor?: number;
   reason?: "QUANT_VALIDATION_MISSING" | "QUANT_VALIDATION_STALE" |
     "QUANT_WALK_FORWARD_UNSTABLE" | "QUANT_PROBABILITY_TOO_LOW" |
@@ -45,12 +46,19 @@ export class QuantExecutionPolicyService {
       "decision" | "regime" | "confidence" | "opportunityScore" |
       "expectedValue" | "riskScore" | "volatilityAdjustment" |
       "dataQuality" | "coreDataQuality" | "directionalAgreement" |
-      "evidenceCoverage" | "conflictLevel"
+      "evidenceCoverage" | "conflictLevel" | "expectedReward" |
+      "expectedLoss" | "executionCost"
     >;
     multiTimeframeConfirmation?: number;
     primaryRsi?: number;
     marketEventImpact?: "LOW" | "MEDIUM" | "HIGH";
     marketEventDirection?: "POSITIVE" | "NEGATIVE" | "NEUTRAL";
+    marketDislocation?: {
+      direction: "BULLISH" | "BEARISH";
+      confirmationCount: number;
+      indicatorCloseTime: string;
+      reasons: string[];
+    };
     now?: Date;
   }): Promise<QuantExecutionPolicyResult> {
     if (input.decision.decision === "WAIT") {
@@ -137,9 +145,17 @@ export class QuantExecutionPolicyService {
     // actionable. Once evidence expires it can only authorize a bounded canary;
     // it no longer has enough authority to veto a strong realtime setup alone.
     if (!validation.walkForwardStable)
-      return { allowed: false, reason: "QUANT_WALK_FORWARD_UNSTABLE", validation: evidence };
+      return this.dislocationCanary(
+        "QUANT_WALK_FORWARD_UNSTABLE",
+        input,
+        evidence,
+      ) ?? { allowed: false, reason: "QUANT_WALK_FORWARD_UNSTABLE", validation: evidence };
     if (validation.probabilityOfProfit < 52)
-      return { allowed: false, reason: "QUANT_PROBABILITY_TOO_LOW", validation: evidence };
+      return this.dislocationCanary(
+        "QUANT_PROBABILITY_TOO_LOW",
+        input,
+        evidence,
+      ) ?? { allowed: false, reason: "QUANT_PROBABILITY_TOO_LOW", validation: evidence };
     if (validation.probabilityOfRuin > 5)
       return { allowed: false, reason: "QUANT_RUIN_RISK_TOO_HIGH", validation: evidence };
     if (validation.outOfSampleSharpe <= 0.3)
@@ -219,6 +235,89 @@ export class QuantExecutionPolicyService {
     if (!eligible) return undefined;
     // News-driven entries use less risk than the generic cold-start canary.
     return eventAligned ? 0.15 : 0.25;
+  }
+
+  private dislocationCanary(
+    reason: NonNullable<QuantExecutionPolicyResult["reason"]>,
+    input: {
+      mode?: "DEMO" | "LIVE";
+      decision: Pick<DecisionOutput,
+        "decision" | "regime" | "confidence" | "opportunityScore" |
+        "expectedValue" | "riskScore" | "volatilityAdjustment" |
+        "dataQuality" | "coreDataQuality" | "directionalAgreement" |
+        "evidenceCoverage" | "conflictLevel" | "expectedReward" |
+        "expectedLoss" | "executionCost"
+      >;
+      multiTimeframeConfirmation?: number;
+      primaryRsi?: number;
+      marketDislocation?: {
+        direction: "BULLISH" | "BEARISH";
+        confirmationCount: number;
+        indicatorCloseTime: string;
+        reasons: string[];
+      };
+      now?: Date;
+    },
+    validation: NonNullable<QuantExecutionPolicyResult["validation"]>,
+  ): QuantExecutionPolicyResult | undefined {
+    const event = input.marketDislocation;
+    if (input.mode !== "DEMO" || !event) return undefined;
+    const directionAligned =
+      (input.decision.decision === "LONG" && event.direction === "BULLISH") ||
+      (input.decision.decision === "SHORT" && event.direction === "BEARISH");
+    // A plain ATR impulse was too frequent in the 2026-08-30/31 replay and
+    // behaved like ordinary momentum. A dislocation needs both range expansion
+    // and a broken rolling boundary before historical evidence becomes advisory.
+    const structuralBreakout = event.reasons.some((item) =>
+      /ROLLING_(?:HIGH_BREAKOUT|LOW_BREAKDOWN)/.test(item),
+    );
+    const atrImpulse = event.reasons.some((item) =>
+      /(?:BULLISH|BEARISH)_ATR_IMPULSE/.test(item),
+    );
+    const sourceTime = Date.parse(event.indicatorCloseTime);
+    const now = input.now ?? new Date();
+    const sourceAgeMs = now.getTime() - sourceTime;
+    const payoffRatio = input.decision.expectedReward /
+      Math.max(input.decision.expectedLoss, Number.EPSILON);
+    const neutralPriorValue =
+      0.5 * input.decision.expectedReward -
+      0.5 * input.decision.expectedLoss -
+      input.decision.executionCost;
+    const rsiSafe = input.primaryRsi === undefined ||
+      (input.decision.decision === "LONG"
+        ? input.primaryRsi < 80
+        : input.primaryRsi > 20);
+    const eligible = directionAligned &&
+      structuralBreakout &&
+      atrImpulse &&
+      event.confirmationCount >= 2 &&
+      Number.isFinite(sourceTime) &&
+      sourceAgeMs >= -60_000 &&
+      sourceAgeMs <= 10 * 60_000 &&
+      input.decision.confidence >= 74 &&
+      input.decision.opportunityScore >= 70 &&
+      input.decision.riskScore < 80 &&
+      input.decision.volatilityAdjustment > -30 &&
+      input.decision.regime.type !== "HIGH_VOLATILITY" &&
+      input.decision.dataQuality !== "INSUFFICIENT" &&
+      input.decision.coreDataQuality === "GOOD" &&
+      input.decision.conflictLevel === "LOW" &&
+      (input.decision.directionalAgreement ?? 0) >= 80 &&
+      (input.decision.evidenceCoverage ?? 0) >= 60 &&
+      (input.multiTimeframeConfirmation ?? 0) >= 80 &&
+      payoffRatio >= 1.5 &&
+      neutralPriorValue > 0 &&
+      rsiSafe;
+    if (!eligible) return undefined;
+    return {
+      allowed: true,
+      evaluated: true,
+      advisory: true,
+      dislocationCanary: true,
+      reason,
+      sizeFactor: 0.1,
+      validation,
+    };
   }
 
   private hasFreshRegimeConflict(

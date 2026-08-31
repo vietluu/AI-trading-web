@@ -31,5 +31,6 @@ apps/api/prisma/*.db-journal
 .DS_Store
 Thumbs.db
 
-# Local isolated development worktrees
+# Local isolated development worktrees and agent skills
 .worktrees/
+.agents/

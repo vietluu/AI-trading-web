@@ -607,40 +607,58 @@ export class LiveTradingService {
           input.decision.decision !== "WAIT" &&
           Number.isFinite(executionSizeFactor) &&
           executionSizeFactor > 0 &&
-          executionSizeFactor < 1
+          executionSizeFactor !== 1
         ) {
-          const positionSize = reduceExecutionPositionSize(
-            risk.positionSize,
-            executionSizeFactor,
-          );
-          if (positionSize <= 0) {
-            risk = {
-              approved: false,
-              reason: "CANARY_POSITION_TOO_SMALL",
-              riskScore: risk.riskScore,
-            };
-            await tx.riskAssessment.update({
-              where: { pipelineRunId: input.pipelineRunId },
-              data: {
+          if (executionSizeFactor < 1) {
+            const positionSize = reduceExecutionPositionSize(
+              risk.positionSize,
+              executionSizeFactor,
+            );
+            if (positionSize <= 0) {
+              risk = {
                 approved: false,
-                reason: risk.reason,
-                positionSize: null,
-                leverage: null,
-                stopLoss: null,
-                takeProfit: null,
-              },
-            });
-          } else {
-            risk = { ...risk, positionSize };
+                reason: "CANARY_POSITION_TOO_SMALL",
+                riskScore: risk.riskScore,
+              };
+              await tx.riskAssessment.update({
+                where: { pipelineRunId: input.pipelineRunId },
+                data: {
+                  approved: false,
+                  reason: risk.reason,
+                  positionSize: null,
+                  leverage: null,
+                  stopLoss: null,
+                  takeProfit: null,
+                },
+              });
+            } else {
+              risk = { ...risk, positionSize };
+              await tx.riskAssessment.update({
+                where: { pipelineRunId: input.pipelineRunId },
+                data: { positionSize },
+              });
+              this.logger.warn({
+                event: "quant_advisory_canary_size_reduced",
+                symbol: input.symbol,
+                pipelineRunId: input.pipelineRunId,
+                sizeFactor: executionSizeFactor,
+              });
+            }
+          } else if (executionSizeFactor > 1) {
+            const originalSize = risk.positionSize;
+            const boostedSize = Number((originalSize * executionSizeFactor).toFixed(8));
+            risk = { ...risk, positionSize: boostedSize };
             await tx.riskAssessment.update({
               where: { pipelineRunId: input.pipelineRunId },
-              data: { positionSize },
+              data: { positionSize: boostedSize },
             });
-            this.logger.warn({
-              event: "quant_advisory_canary_size_reduced",
+            this.logger.log({
+              event: "confluence_size_boosted",
               symbol: input.symbol,
               pipelineRunId: input.pipelineRunId,
               sizeFactor: executionSizeFactor,
+              originalSize,
+              boostedSize,
             });
           }
         }
