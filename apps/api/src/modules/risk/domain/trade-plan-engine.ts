@@ -170,7 +170,7 @@ export function buildAdaptiveTradePlan(input: {
     // so monetary risk remains bounded while avoiding noise-only stop-outs.
     const risk = atr * 1.2;
     const stopLoss = side === "LONG" ? entryPrice - risk : entryPrice + risk;
-    const targetMultiple = Math.max(1.25, Math.min(1.5, input.configuredRiskRewardRatio));
+    const targetMultiple = Math.max(1.8, Math.min(2.5, input.configuredRiskRewardRatio));
     const cost = entryPrice * costPct;
     const targetDistance = risk * targetMultiple + cost * (1 + targetMultiple);
     const takeProfit = side === "LONG"
@@ -178,8 +178,8 @@ export function buildAdaptiveTradePlan(input: {
       : entryPrice - targetDistance;
     const rr = rewardToRisk(side, entryPrice, stopLoss, takeProfit, costPct);
     return {
-      approved: rr >= 1.25 - 1e-6,
-      ...(rr < 1.25 - 1e-6 ? { reason: "STRUCTURAL_RISK_REWARD_NOT_MET" } : {}),
+      approved: rr >= 1.5 - 1e-6,
+      ...(rr < 1.5 - 1e-6 ? { reason: "STRUCTURAL_RISK_REWARD_NOT_MET" } : {}),
       regime,
       strategy: "MOMENTUM_SCALP",
       stopLoss: rounded(stopLoss),
@@ -228,7 +228,7 @@ export function buildAdaptiveTradePlan(input: {
         boundaryThreshold: rounded(side === "LONG" ? longBoundary : shortBoundary),
       };
     }
-    const stopLoss = side === "LONG" ? support - atr * 0.3 : resistance + atr * 0.3;
+    const stopLoss = side === "LONG" ? support - atr * 0.5 : resistance + atr * 0.5;
     const takeProfit = side === "LONG" ? resistance - atr * 0.2 : support + atr * 0.2;
     const rr = rewardToRisk(side, entryPrice, stopLoss, takeProfit, costPct);
     const minimum = Math.min(input.configuredRiskRewardRatio, 1.25);
@@ -283,12 +283,12 @@ export function buildAdaptiveTradePlan(input: {
       }
     }
     const structuralStop = finitePositive(boundary)
-      ? side === "LONG" ? boundary - atr * 0.3 : boundary + atr * 0.3
-      : side === "LONG" ? entryPrice - atr : entryPrice + atr;
-    const minimumRisk = atr * 0.8;
+      ? side === "LONG" ? boundary - atr * 0.5 : boundary + atr * 0.5
+      : side === "LONG" ? entryPrice - atr * 1.2 : entryPrice + atr * 1.2;
+    const minimumRisk = atr * 1.0;
     const rawRisk = Math.abs(entryPrice - structuralStop);
     const risk = Math.max(minimumRisk, rawRisk);
-    if (risk > atr * 2) {
+    if (risk > atr * 2.5) {
       return {
         approved: false,
         reason: "BREAKOUT_STOP_TOO_WIDE",
@@ -349,21 +349,21 @@ export function buildAdaptiveTradePlan(input: {
 
   const structuralCandidates = side === "LONG"
     ? [
-        finitePositive(support) ? support - atr * 0.3 : undefined,
-        finitePositive(market.ema20) ? market.ema20 - atr * 0.3 : undefined,
-        finitePositive(market.ema50) ? market.ema50 - atr * 0.3 : undefined,
+        finitePositive(support) ? support - atr * 0.6 : undefined,
+        finitePositive(market.ema20) ? market.ema20 - atr * 0.5 : undefined,
+        finitePositive(market.ema50) ? market.ema50 - atr * 0.5 : undefined,
       ].filter((value): value is number => finitePositive(value) && value < entryPrice)
     : [
-        finitePositive(resistance) ? resistance + atr * 0.3 : undefined,
-        finitePositive(market.ema20) ? market.ema20 + atr * 0.3 : undefined,
-        finitePositive(market.ema50) ? market.ema50 + atr * 0.3 : undefined,
+        finitePositive(resistance) ? resistance + atr * 0.6 : undefined,
+        finitePositive(market.ema20) ? market.ema20 + atr * 0.5 : undefined,
+        finitePositive(market.ema50) ? market.ema50 + atr * 0.5 : undefined,
       ].filter((value): value is number => finitePositive(value) && value > entryPrice);
   const structuralStop = structuralCandidates.length > 0
     ? side === "LONG" ? Math.max(...structuralCandidates) : Math.min(...structuralCandidates)
     : side === "LONG" ? entryPrice - atr * 1.2 : entryPrice + atr * 1.2;
   const rawRisk = Math.abs(entryPrice - structuralStop);
   const structuralRiskAtr = rawRisk / atr;
-  const maximumStructuralRiskAtr = regime === "HIGH_VOLATILITY" ? 2 : 3;
+  const maximumStructuralRiskAtr = regime === "HIGH_VOLATILITY" ? 2.5 : 3.5;
   if (structuralRiskAtr > maximumStructuralRiskAtr) {
     return {
       approved: false,
@@ -375,12 +375,13 @@ export function buildAdaptiveTradePlan(input: {
       structuralRiskAtr: rounded(structuralRiskAtr),
     };
   }
-  const risk = Math.max(atr * 0.8, rawRisk);
+  const risk = Math.max(atr * 1.0, rawRisk);
   const stopLoss = side === "LONG" ? entryPrice - risk : entryPrice + risk;
+  const targetMultiple = Math.max(1.8, input.configuredRiskRewardRatio);
   const cost = entryPrice * costPct;
   const targetDistance =
-    risk * input.configuredRiskRewardRatio +
-    cost * (1 + input.configuredRiskRewardRatio);
+    risk * targetMultiple +
+    cost * (1 + targetMultiple);
   let takeProfit = side === "LONG"
     ? entryPrice + targetDistance
     : entryPrice - targetDistance;
@@ -395,7 +396,8 @@ export function buildAdaptiveTradePlan(input: {
     if (capped < entryPrice - atr * 0.5 && capped > takeProfit) takeProfit = capped;
   }
   const rr = rewardToRisk(side, entryPrice, stopLoss, takeProfit, costPct);
-  if (rr < input.configuredRiskRewardRatio - 1e-6) {
+  const minRR = Math.min(input.configuredRiskRewardRatio, 1.5);
+  if (rr < minRR - 1e-6) {
     return {
       approved: false,
       reason: "STRUCTURAL_RISK_REWARD_NOT_MET",

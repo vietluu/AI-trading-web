@@ -7,7 +7,7 @@ const plan: TradePlan = {
   regime: "TREND_UP",
   strategy: "TREND_PULLBACK",
   stopLoss: 98,
-  takeProfit: 103,
+  takeProfit: 105,
   maxHoldingCandles: 8,
   breakEvenAtR: 0.8,
   trailingAtrMultiple: 2,
@@ -17,11 +17,11 @@ const plan: TradePlan = {
 };
 
 describe("position manager", () => {
-  it("moves a LONG stop to fee-adjusted break-even and never loosens it", () => {
+  it("moves a LONG stop to guaranteed profit retention when profit reaches +2%", () => {
     const action = evaluatePositionManagement({
       side: "LONG",
       entryPrice: 100,
-      markPrice: 102,
+      markPrice: 102, // +2% profit
       initialStopLoss: 98,
       currentStopLoss: 98,
       openedAt: new Date("2026-08-08T00:00:00Z"),
@@ -29,7 +29,8 @@ describe("position manager", () => {
       partialTaken: false,
       plan,
     });
-    expect(action.tightenedStopLoss).toBe(100.125);
+    // With 2% profit (peakProfitPct >= 0.015), retentionRatio = 0.50 -> locks at least 101.0
+    expect(action.tightenedStopLoss).toBe(101);
     expect(action.takePartial).toBe(true);
 
     const ratcheted = evaluatePositionManagement({
@@ -37,7 +38,7 @@ describe("position manager", () => {
       entryPrice: 100,
       markPrice: 100.5,
       initialStopLoss: 98,
-      currentStopLoss: 101,
+      currentStopLoss: 102.5,
       highestMark: 103,
       openedAt: new Date("2026-08-08T00:00:00Z"),
       now: new Date("2026-08-08T00:30:00Z"),
@@ -45,6 +46,46 @@ describe("position manager", () => {
       plan,
     });
     expect(ratcheted.tightenedStopLoss).toBeUndefined();
+  });
+
+  it("locks in at least 70% of peak profit when price reaches +3% profit, protecting gains against drop", () => {
+    const action = evaluatePositionManagement({
+      side: "LONG",
+      entryPrice: 100,
+      markPrice: 101, // current price dropped to +1%
+      highestMark: 103, // but peak reached +3% (+3.00)
+      initialStopLoss: 98,
+      currentStopLoss: 98,
+      openedAt: new Date("2026-08-08T00:00:00Z"),
+      now: new Date("2026-08-08T00:30:00Z"),
+      partialTaken: false,
+      plan,
+    });
+
+    // Peak profit = +3.00 (3.0%).
+    // Tiered retention guarantees at least 70% of peak profit: 3.00 * 0.70 = +2.10.
+    // Plus adaptive ATR (0.9 * 1 = 0.9): 103 - 0.9 = 102.10.
+    // Guaranteed stop is at 102.10 (+2.10% profit!), protecting against dropping down to 100.9.
+    expect(action.tightenedStopLoss).toBeGreaterThanOrEqual(102.1);
+  });
+
+  it("locks in at least 80% of peak profit when price reaches +4% profit", () => {
+    const action = evaluatePositionManagement({
+      side: "LONG",
+      entryPrice: 100,
+      markPrice: 104, // +4% profit
+      highestMark: 104,
+      initialStopLoss: 98,
+      currentStopLoss: 98,
+      openedAt: new Date("2026-08-08T00:00:00Z"),
+      partialTaken: false,
+      plan,
+    });
+
+    // Peak profit = +4.00 (4.0%).
+    // Retention guarantees at least 80%: 100 + 4 * 0.80 = 103.20 (+3.20% locked!).
+    // Adaptive ATR (0.6 * 1 = 0.6): 104 - 0.6 = 103.40.
+    expect(action.tightenedStopLoss).toBeGreaterThanOrEqual(103.2);
   });
 
   it("marks a stale position for reassessment without requesting a time exit", () => {
@@ -67,7 +108,7 @@ describe("position manager", () => {
     const action = evaluatePositionManagement({
       side: "LONG",
       entryPrice: 100,
-      markPrice: 100.5,
+      markPrice: 100.2,
       initialStopLoss: 98,
       currentStopLoss: 98,
       highestMark: 103,
@@ -76,22 +117,23 @@ describe("position manager", () => {
       plan,
     });
     expect(action.peakR).toBe(1.5);
-    expect(action.currentR).toBe(0.25);
+    expect(action.currentR).toBeCloseTo(0.1, 5);
     expect(action.takePartial).toBe(false);
   });
 
-  it("applies symmetric break-even logic to SHORT positions", () => {
+  it("applies symmetric profit retention logic to SHORT positions", () => {
     const action = evaluatePositionManagement({
       side: "SHORT",
       entryPrice: 100,
-      markPrice: 98,
+      markPrice: 98, // +2% profit for SHORT
       initialStopLoss: 102,
       currentStopLoss: 102,
       openedAt: new Date("2026-08-08T00:00:00Z"),
       partialTaken: false,
       plan: { ...plan, regime: "TREND_DOWN" },
     });
-    expect(action.tightenedStopLoss).toBe(99.875);
+    // 50% profit retention for SHORT -> locks stop loss down to 99.0
+    expect(action.tightenedStopLoss).toBe(99);
     expect(action.takePartial).toBe(true);
   });
 });

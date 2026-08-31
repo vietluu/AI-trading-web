@@ -9,6 +9,7 @@ import { LiveTradingService } from "./application/live-trading.service";
 import { LiveTradingController } from "./presentation/live-trading.controller";
 import { LiveTradingGateway } from "./presentation/live-trading.gateway";
 import { ExchangeTradeLedgerService } from "./application/exchange-trade-ledger.service";
+import { PositionCopilotService } from "./application/position-copilot.service";
 
 @Module({
   imports: [AuthModule, ExchangeModule, RiskModule, PortfolioModule],
@@ -19,7 +20,8 @@ import { ExchangeTradeLedgerService } from "./application/exchange-trade-ledger.
     LiveTradingSyncService,
     LiveTradingGateway,
     ExchangeTradeLedgerService,
+    PositionCopilotService,
   ],
-  exports: [LiveTradingService, LiveTradingConfigService],
+  exports: [LiveTradingService, LiveTradingConfigService, PositionCopilotService],
 })
 export class LiveTradingModule {}

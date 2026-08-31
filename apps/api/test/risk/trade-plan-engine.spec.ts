@@ -44,7 +44,7 @@ describe("adaptive trade plan engine", () => {
 
     expect(plan.approved).toBe(true);
     expect(plan.strategy).toBe("RANGE_REVERSAL");
-    expect(plan.stopLoss).toBe(97.85);
+    expect(plan.stopLoss).toBe(97.75);
     expect(plan.takeProfit).toBe(101.9);
   });
 
