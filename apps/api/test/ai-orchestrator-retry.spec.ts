@@ -324,5 +324,40 @@ describe("AIOrchestratorService - Retry & Stream Fallback", () => {
         }
       }).rejects.toThrow("All providers failed for stream request");
     });
+
+    it("should re-throw and not fallback if primary provider fails after yielding chunks", async () => {
+      const primaryStreamMock = vi.fn().mockImplementation(async function* () {
+        await Promise.resolve();
+        yield { deltaToken: "chunk1", isComplete: false };
+        throw new Error("Primary stream connection dropped mid-stream");
+      });
+
+      const fallbackStreamMock = vi.fn().mockImplementation(async function* () {
+        await Promise.resolve();
+        yield { deltaToken: "fallback chunk", isComplete: true };
+      });
+
+      const { orchestrator } = createTestOrchestrator({
+        primaryProviderStream: primaryStreamMock,
+        fallbackProviderStream: fallbackStreamMock,
+        fallbackEnabled: true,
+        fallbackProviders: ["ANTHROPIC"],
+      });
+
+      const iterator = orchestrator.stream({
+        userId: "user-123",
+        userPrompt: "Stream test with mid-stream failure",
+      });
+
+      const chunks = [];
+      await expect(async () => {
+        for await (const chunk of iterator) {
+          chunks.push(chunk);
+        }
+      }).rejects.toThrow("Primary stream connection dropped mid-stream");
+
+      expect(chunks.length).toBe(1);
+      expect(chunks[0]?.deltaToken).toBe("chunk1");
+    });
   });
 });

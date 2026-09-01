@@ -75,6 +75,9 @@ export class BudgetManagerService {
       };
     }
 
+    let finalStatus: "OK" | "WARN" = "OK";
+    let finalReason = "";
+
     // Token limit: WARN at 80%, BLOCK at 100% (0 = disabled)
     if (tokenLimit > 0) {
       if (tokenCount >= tokenLimit) {
@@ -86,12 +89,8 @@ export class BudgetManagerService {
         };
       }
       if (tokenCount >= tokenLimit * 0.8) {
-        return {
-          allowed: true,
-          status: 'WARN',
-          reason: `Approaching token limit (${tokenCount.toLocaleString()} / ${tokenLimit.toLocaleString()} tokens used)`,
-          ...common,
-        };
+        finalStatus = "WARN";
+        finalReason = `Approaching token limit (${tokenCount.toLocaleString()} / ${tokenLimit.toLocaleString()} tokens used)`;
       }
     }
     if (dailySpent + estimatedCallCost > dailyLimit * 1.5) {
@@ -122,17 +121,15 @@ export class BudgetManagerService {
     }
 
     if (dailySpent > dailyLimit * 0.8 || monthlySpent > monthlyLimit * 0.8) {
-      return {
-        allowed: true,
-        status: "WARN",
-        reason: `Approaching budget limit (Daily: $${dailySpent.toFixed(2)}/$${dailyLimit.toFixed(2)})`,
-        ...common,
-      };
+      finalStatus = "WARN";
+      const costReason = `Approaching budget limit (Daily: $${dailySpent.toFixed(2)}/$${dailyLimit.toFixed(2)})`;
+      finalReason = finalReason ? `${finalReason} | ${costReason}` : costReason;
     }
 
     return {
       allowed: true,
-      status: "OK",
+      status: finalStatus,
+      ...(finalReason ? { reason: finalReason } : {}),
       ...common,
     };
   }

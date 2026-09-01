@@ -368,6 +368,7 @@ export class AIOrchestratorService {
     const providerTypes = [primaryProviderType, ...fallbackTypes];
 
     for (const pType of providerTypes) {
+      let hasYielded = false;
       try {
         const provider = this.providerFactory.getProvider(pType);
         const reqOptions: LLMRequestOptions = {
@@ -378,10 +379,14 @@ export class AIOrchestratorService {
           maxTokens: options.maxTokens ?? userConfig.maxTokens,
         };
         for await (const chunk of provider.stream(reqOptions)) {
+          hasYielded = true;
           yield chunk;
         }
         return; // success — stop trying fallbacks
       } catch (err) {
+        if (hasYielded) {
+          throw err;
+        }
         this.logger.warn(
           `Stream failed on provider ${pType}: ${err instanceof Error ? err.message : String(err)}. Trying fallback...`,
         );

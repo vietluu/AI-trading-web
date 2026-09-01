@@ -63,7 +63,8 @@ function scorePostsSentiment(
     const w = Math.log2(Math.max(1, scoreVal) + 1);
     if (BULLISH_KW.some((kw) => text.includes(kw))) {
       bull += w;
-    } else if (BEARISH_KW.some((kw) => text.includes(kw))) {
+    }
+    if (BEARISH_KW.some((kw) => text.includes(kw))) {
       bear += w;
     }
   }
