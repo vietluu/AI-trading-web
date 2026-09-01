@@ -245,7 +245,8 @@ describe("AI Orchestrator & Fallback Integration", () => {
       userPrompt: "Exercise the complete fallback chain",
     });
 
-    expect(calls.slice(0, 3)).toEqual([
+    expect(calls.slice(0, 4)).toEqual([
+      "GEMINI:gemini-primary",
       "GEMINI:gemini-primary",
       "OPENAI:gpt-5-mini",
       "GEMINI:gemini-3.5-flash-lite",
@@ -302,7 +303,7 @@ describe("AI Orchestrator & Fallback Integration", () => {
       provider: "OPENAI",
     })).rejects.toThrow("AI Request failed");
 
-    expect(chatMock).toHaveBeenCalledTimes(1);
+    expect(chatMock).toHaveBeenCalledTimes(2);
   });
 
   it("shares a provider quota cooldown and suppresses unsent failure history", async () => {
@@ -365,7 +366,7 @@ describe("AI Orchestrator & Fallback Integration", () => {
       userPrompt: "second request during cooldown",
     })).rejects.toThrow("quota cooldown is active");
 
-    expect(chatMock).toHaveBeenCalledTimes(1);
+    expect(chatMock).toHaveBeenCalledTimes(2);
     expect(historyLog).toHaveBeenCalledTimes(1);
   });
 
@@ -411,7 +412,7 @@ describe("AI Orchestrator & Fallback Integration", () => {
       userPrompt: "second request during outage",
     })).rejects.toMatchObject({ status: 503, code: "ALL_MODELS_UNAVAILABLE" });
 
-    expect(chatMock).toHaveBeenCalledTimes(1);
+    expect(chatMock).toHaveBeenCalledTimes(2);
   });
 
   it("should reuse a cached response for the same prompt", async () => {

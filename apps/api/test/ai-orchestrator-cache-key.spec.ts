@@ -73,18 +73,20 @@ describe("AIOrchestrator prompt cache key", () => {
       logExecution: () => Promise.resolve(),
     } as unknown as AIHistoryService;
 
+    const resolvedChatMock = (chatMock ||
+      vi.fn().mockResolvedValue({
+        text: "mock analysis response",
+        json: null,
+        finishReason: "stop",
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, estimatedCost: 0.01 },
+        latencyMs: 100,
+        provider: "OPENAI" as const,
+        model: "gpt-5-mini",
+      })) as LLMProvider["chat"];
+
     const provider = {
       providerType: "OPENAI",
-      chat: (chatMock ||
-        vi.fn().mockResolvedValue({
-          text: "mock analysis response",
-          json: null,
-          finishReason: "stop",
-          usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, estimatedCost: 0.01 },
-          latencyMs: 100,
-          provider: "OPENAI" as const,
-          model: "gpt-5-mini",
-        })) as LLMProvider["chat"],
+      chat: resolvedChatMock,
       stream: (async function* () {
         await Promise.resolve();
         yield { deltaToken: "", isComplete: true };
@@ -116,7 +118,7 @@ describe("AIOrchestrator prompt cache key", () => {
       mockRedisService
     );
 
-    return { orchestrator, chatMock: provider.chat, mockRedisService };
+    return { orchestrator, chatMock: resolvedChatMock, mockRedisService };
   }
 
   it("same content with different correlationId and cycleKey should produce the same cache key", () => {
