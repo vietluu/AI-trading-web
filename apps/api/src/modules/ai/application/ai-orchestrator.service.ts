@@ -401,8 +401,6 @@ export class AIOrchestratorService {
       symbol: params.symbol ?? "",
       timeframe: params.timeframe ?? "",
       contextHash: params.contextHash ?? "",
-      correlationId: params.correlationId ?? "",
-      cycleKey: params.cycleKey ?? "",
       systemPrompt: params.systemPrompt || "",
       userPrompt: params.userPrompt || "",
       fullPrompt: params.fullPrompt || "",
