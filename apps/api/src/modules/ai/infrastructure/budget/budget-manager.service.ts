@@ -75,8 +75,25 @@ export class BudgetManagerService {
       };
     }
 
-    // Note: Daily token limit blocking is disabled to allow unconstrained token usage.
-
+    // Token limit: WARN at 80%, BLOCK at 100% (0 = disabled)
+    if (tokenLimit > 0) {
+      if (tokenCount >= tokenLimit) {
+        return {
+          allowed: false,
+          status: 'BLOCK',
+          reason: `Daily token budget exceeded (${tokenCount.toLocaleString()} / ${tokenLimit.toLocaleString()} tokens)`,
+          ...common,
+        };
+      }
+      if (tokenCount >= tokenLimit * 0.8) {
+        return {
+          allowed: true,
+          status: 'WARN',
+          reason: `Approaching token limit (${tokenCount.toLocaleString()} / ${tokenLimit.toLocaleString()} tokens used)`,
+          ...common,
+        };
+      }
+    }
     if (dailySpent + estimatedCallCost > dailyLimit * 1.5) {
       return {
         allowed: false,
