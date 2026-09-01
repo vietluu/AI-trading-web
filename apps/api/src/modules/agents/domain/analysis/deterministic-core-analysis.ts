@@ -106,7 +106,7 @@ export function deterministicMarketAnalysis(
   const ticker = record(toolData["market.ticker.get"]);
   const indicators = record(toolData["market.indicators.get"]);
   const candle = latestCandle(toolData);
-  const price = finite(ticker?.price) ?? finite(candle?.close);
+  const price = finite(ticker?.price) ?? finite(ticker?.last) ?? finite(candle?.close);
   const ema20 = finite(indicators?.ema20);
   const ema50 = finite(indicators?.ema50);
   if (price === undefined || (!indicators && !candle)) return undefined;
@@ -143,6 +143,15 @@ export function deterministicMarketAnalysis(
   );
   const hasCoreSet = Boolean(ticker && indicators && candle);
 
+  const candleRows = rows(toolData["market.candles.list"], "candles");
+  const latestCandleItem = candleRows.at(-1);
+  const latestVol = finite(latestCandleItem?.volume);
+  const priorCandles = candleRows.slice(-21, -1);
+  const avgVol = priorCandles.length > 0
+    ? priorCandles.map((c) => finite(c.volume) ?? 0).reduce((s, v) => s + v, 0) / priorCandles.length
+    : 0;
+  const volumeProfile = latestVol !== undefined && avgVol > 0 ? latestVol > avgVol * 1.5 : false;
+
   return {
     summary: `Deterministic market evidence places price ${trend.direction === "UP" ? "above bullish" : trend.direction === "DOWN" ? "below bearish" : "inside mixed"} EMA20/EMA50 structure with ${volatilityLevel.toLowerCase()} ATR volatility.`,
     trend,
@@ -157,6 +166,7 @@ export function deterministicMarketAnalysis(
       ...(orderBookImbalance(toolData["market.order_book.get"])
         ? { depthImbalance: orderBookImbalance(toolData["market.order_book.get"]) }
         : {}),
+      volumeProfile,
     },
     derivatives: {
       ...(fundingRate !== undefined
