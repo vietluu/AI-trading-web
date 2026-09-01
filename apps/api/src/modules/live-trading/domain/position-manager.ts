@@ -27,6 +27,7 @@ export function evaluatePositionManagement(input: PositionManagementInput) {
       currentR: 0,
       takePartial: false,
       reassessmentDue: false,
+      wickRetractionClose: false,
     };
   }
 
@@ -94,6 +95,17 @@ export function evaluatePositionManagement(input: PositionManagementInput) {
       : Math.min(candidate, trailing);
   }
 
+  // 4. Wick Retraction Profit Lock (Bảo vệ râu rút)
+  // Nếu lệnh đạt ít nhất 1.5R, nhưng giá rút lại làm mất > 35% lợi nhuận so với đỉnh
+  let wickRetractionClose = false;
+  if (peakR >= 1.5) {
+    const retainedProfitRatio = favorable > 0 ? currentProfit / favorable : 0;
+    // Tức là giá rút lại hơn 35% từ đỉnh (chỉ còn giữ được < 65% lãi cực đại)
+    if (retainedProfitRatio < 0.65) {
+      wickRetractionClose = true;
+    }
+  }
+
   const improved = input.side === "LONG"
     ? candidate > input.currentStopLoss + Number.EPSILON
     : candidate < input.currentStopLoss - Number.EPSILON;
@@ -112,6 +124,7 @@ export function evaluatePositionManagement(input: PositionManagementInput) {
       (peakR >= 1.8 || peakProfitPct >= 0.02) &&
       currentR >= 1 &&
       currentProfitPct > minimumPartialProfitPct,
+    wickRetractionClose,
     // maxHoldingCandles is an analysis horizon, not an execution deadline.
     reassessmentDue:
       elapsedCandles >= input.plan.maxHoldingCandles && currentR < 0.3,

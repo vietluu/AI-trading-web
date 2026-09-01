@@ -100,7 +100,7 @@ function rewardToRisk(
   return Math.max(0, grossReward - cost) / Math.max(Number.EPSILON, grossRisk + cost);
 }
 
-export function buildAdaptiveTradePlan(input: {
+function _buildAdaptiveTradePlan(input: {
   side: "LONG" | "SHORT";
   entryPrice: number;
   decision: DecisionOutput;
@@ -108,6 +108,7 @@ export function buildAdaptiveTradePlan(input: {
   configuredStopLossPct: number;
   configuredRiskRewardRatio: number;
   roundTripCostPct?: number;
+  useLimitlessTrailing?: boolean;
 }): TradePlan {
   const { side, entryPrice, decision, market } = input;
   let regime = resolveTradePlanRegime(decision, market);
@@ -423,4 +424,12 @@ export function buildAdaptiveTradePlan(input: {
     timeframeMs: market.timeframeMs,
     structuralRiskAtr: rounded(structuralRiskAtr),
   };
+}
+
+export function buildAdaptiveTradePlan(input: Parameters<typeof _buildAdaptiveTradePlan>[0]): TradePlan {
+  const plan = _buildAdaptiveTradePlan(input);
+  if (plan.approved && input.useLimitlessTrailing) {
+    plan.takeProfit = undefined;
+  }
+  return plan;
 }

@@ -2379,6 +2379,7 @@ export class LiveTradingService {
           // Reaching the plan horizon no longer closes a position. Scheduled
           // pipelines keep refreshing market/news inputs and Decision/Judge may
           // explicitly reverse it; until then native TP/SL remain authoritative.
+          
           if (action.reassessmentDue) {
             this.logger.debug({
               event: "position_reassessment_due",
@@ -2394,6 +2395,37 @@ export class LiveTradingService {
             connection.id,
             context,
           );
+          
+          if (action.wickRetractionClose) {
+            this.logger.log({
+              event: "wick_retraction_profit_lock_triggered",
+              connectionId: connection.id,
+              symbol: position.symbol,
+              currentR: action.currentR,
+              peakR: action.peakR,
+            });
+            await this.submit(
+              userId,
+              connection,
+              {
+                symbol: position.symbol,
+                side: position.side === "LONG" ? "SELL" : "BUY",
+                quantity: position.quantity,
+                leverage: Number(position.leverage ?? source.leverage),
+                clientOrderId: this.derivedId(source.clientOrderId, "wick1"),
+                reduceOnly: true,
+                ...(configuration.positionMode === "HEDGE"
+                  ? { positionSide: position.side as "LONG" | "SHORT" }
+                  : {}),
+              },
+              "CLOSE",
+              null,
+              source.strategyId,
+              context,
+            );
+            continue;
+          }
+
           if (action.takePartial) {
             const clientOrderId = this.derivedId(
               source.clientOrderId,
