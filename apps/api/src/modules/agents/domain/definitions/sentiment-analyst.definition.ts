@@ -18,6 +18,60 @@ export const SENTIMENT_ANALYST_ALLOWED_TOOLS = [
   "social.posts.list",
 ] as const;
 
+const BULLISH_KW = [
+  "moon",
+  "rally",
+  "surge",
+  "pump",
+  "bullish",
+  "breakout",
+  "ath",
+  "etf approv",
+  "adoption",
+  "institutional",
+];
+const BEARISH_KW = [
+  "crash",
+  "dump",
+  "short",
+  "bear",
+  "scam",
+  "hack",
+  "ban",
+  "fear",
+  "capitulat",
+  "liquidat",
+  "collapse",
+  "rekt",
+  "terrible",
+];
+
+function scorePostsSentiment(
+  posts: Array<Record<string, unknown>>,
+): "BULLISH" | "BEARISH" | "NEUTRAL" {
+  if (posts.length === 0) return "NEUTRAL";
+  let bull = 0;
+  let bear = 0;
+  for (const post of posts) {
+    const title = typeof post.title === "string" ? post.title : "";
+    const selftext = typeof post.selftext === "string" ? post.selftext : "";
+    const textExcerpt =
+      typeof post.textExcerpt === "string" ? post.textExcerpt : "";
+    const text = `${title} ${selftext} ${textExcerpt}`.toLowerCase();
+    const rawScore = Number(post.score ?? post.engagementScore ?? 1);
+    const scoreVal = Number.isFinite(rawScore) ? rawScore : 1;
+    const w = Math.log2(Math.max(1, scoreVal) + 1);
+    if (BULLISH_KW.some((kw) => text.includes(kw))) {
+      bull += w;
+    } else if (BEARISH_KW.some((kw) => text.includes(kw))) {
+      bear += w;
+    }
+  }
+  if (bull > bear * 1.3) return "BULLISH";
+  if (bear > bull * 1.3) return "BEARISH";
+  return "NEUTRAL";
+}
+
 function deterministicSentiment(
   toolData: Readonly<Record<string, unknown>>,
   usedTools: string[],
@@ -26,8 +80,14 @@ function deterministicSentiment(
     Record<string, unknown> | undefined;
   const social = toolData["social.posts.list"] as
     Record<string, unknown> | undefined;
-  const score = Number(market?.score);
-  const hasIndex = market?.dataAvailable === true && Number.isFinite(score);
+  const rawScore = market?.score ?? market?.value;
+  const score = Number(rawScore);
+  const hasIndex =
+    (market?.dataAvailable === true ||
+      (market?.dataAvailable === undefined &&
+        rawScore !== undefined &&
+        rawScore !== null)) &&
+    Number.isFinite(score);
   const posts = Array.isArray(social?.posts) ? social.posts : [];
   if (!hasIndex && posts.length === 0) {
     return {
@@ -48,17 +108,22 @@ function deterministicSentiment(
       generatedAt: new Date().toISOString(),
     };
   }
-  const overall = hasIndex
+  const fearBias: "BULLISH" | "BEARISH" | "NEUTRAL" = hasIndex
     ? score <= 35
       ? ("BEARISH" as const)
       : score >= 65
         ? ("BULLISH" as const)
         : ("NEUTRAL" as const)
     : ("NEUTRAL" as const);
+  const socialBias = scorePostsSentiment(posts as Array<Record<string, unknown>>);
+  const overall =
+    posts.length >= 3 && socialBias !== "NEUTRAL" ? socialBias : fearBias;
   const classification =
     typeof market?.classification === "string"
       ? market.classification
-      : overall;
+      : typeof market?.label === "string"
+        ? market.label
+        : overall;
   const intensity =
     hasIndex && (score <= 20 || score >= 80)
       ? ("HIGH" as const)
