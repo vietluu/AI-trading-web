@@ -46,6 +46,19 @@ export default function QuantIntelligencePage() {
   if (loading) return <div className="p-8 text-center text-muted-foreground">{t.common.loading}</div>;
   if (error || !scorecard) return <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-sm text-red-200">{error ?? "DATA_UNAVAILABLE"}</div>;
 
+  const DIMENSION_LABELS: Record<string, string> = {
+    trendAccuracy: "Trend Accuracy",
+    entryPrecision: "Entry Precision",
+    riskManagement: "Risk Management",
+    regimeAdaptation: "Regime Adaptation",
+    newsIntegration: "News Integration",
+    sentimentAlignment: "Sentiment Alignment",
+    macroContext: "Macro Context",
+    onchainSignals: "On-chain Signals",
+    positionSizing: "Position Sizing",
+    exitTiming: "Exit Timing",
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between border-b border-border pb-4">
@@ -107,7 +120,7 @@ export default function QuantIntelligencePage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           {Object.entries(scorecard?.dimensions ?? {}).map(([dim, score]: [string, number]) => (
             <div key={dim} className="rounded-xl border border-border/60 bg-muted/30 p-3 text-center">
-              <p className="text-xs font-medium text-muted-foreground capitalize">{dim.replace(/([A-Z])/g, " $1")}</p>
+              <p className="text-xs font-medium text-muted-foreground">{DIMENSION_LABELS[dim] ?? dim.replace(/([A-Z])/g, " $1")}</p>
               <p className="mt-1 text-xl font-bold text-primary">{formatNumber(score)}/100</p>
             </div>
           ))}

@@ -394,8 +394,17 @@ export class DecisionService {
       { scope: "USER_GLOBAL", records: asCalibrationRecords(records) },
     ]);
     if (this.calibrationCache.size >= 500) {
-      const oldest = this.calibrationCache.keys().next().value;
-      if (oldest) this.calibrationCache.delete(oldest);
+      const now = Date.now();
+      for (const [k, entry] of this.calibrationCache) {
+        if (entry.expiresAt <= now) {
+          this.calibrationCache.delete(k);
+          if (this.calibrationCache.size < 500) break;
+        }
+      }
+      if (this.calibrationCache.size >= 500) {
+        const oldest = this.calibrationCache.keys().next().value;
+        if (oldest) this.calibrationCache.delete(oldest);
+      }
     }
     this.calibrationCache.set(key, {
       // Performance outcomes arrive continuously; a short cache prevents a

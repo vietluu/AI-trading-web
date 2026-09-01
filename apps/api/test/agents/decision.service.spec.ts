@@ -369,4 +369,87 @@ describe('DecisionService', () => {
     expect(prompt?.systemTemplate).toContain('confidence is below 60');
     expect(prompt?.systemTemplate).toContain('Never place or propose an order');
   });
+
+  it('evicts expired items first when calibration cache reaches capacity', async () => {
+    const mockPrisma = {
+      performanceRecord: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+    };
+    const service = new DecisionService({} as never, mockPrisma as never);
+    const helper = service as unknown as {
+      calibrationCache: Map<string, { expiresAt: number; value: unknown }>;
+      confidenceCalibration: (
+        userId: string | undefined,
+        symbol: string,
+        rawScore: number,
+        provider?: string,
+        timeframe?: string,
+        regime?: string,
+        strategyKey?: string,
+      ) => Promise<unknown>;
+    };
+
+    const now = Date.now();
+    helper.calibrationCache.set('key-first-active', {
+      expiresAt: now + 60_000,
+      value: {} as never,
+    });
+    helper.calibrationCache.set('key-second-expired', {
+      expiresAt: now - 10_000,
+      value: {} as never,
+    });
+    for (let i = 3; i <= 500; i++) {
+      helper.calibrationCache.set(`key-${i}`, {
+        expiresAt: now + 60_000,
+        value: {} as never,
+      });
+    }
+
+    expect(helper.calibrationCache.size).toBe(500);
+
+    await helper.confidenceCalibration('user-1', 'BTC-USDT', 75);
+
+    expect(helper.calibrationCache.has('key-second-expired')).toBe(false);
+    expect(helper.calibrationCache.has('key-first-active')).toBe(true);
+    expect(helper.calibrationCache.size).toBe(500);
+  });
+
+  it('evicts oldest item when calibration cache reaches capacity and no items are expired', async () => {
+    const mockPrisma = {
+      performanceRecord: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+    };
+    const service = new DecisionService({} as never, mockPrisma as never);
+    const helper = service as unknown as {
+      calibrationCache: Map<string, { expiresAt: number; value: unknown }>;
+      confidenceCalibration: (
+        userId: string | undefined,
+        symbol: string,
+        rawScore: number,
+        provider?: string,
+        timeframe?: string,
+        regime?: string,
+        strategyKey?: string,
+      ) => Promise<unknown>;
+    };
+
+    const now = Date.now();
+    helper.calibrationCache.set('key-oldest', {
+      expiresAt: now + 60_000,
+      value: {} as never,
+    });
+    for (let i = 2; i <= 500; i++) {
+      helper.calibrationCache.set(`key-${i}`, {
+        expiresAt: now + 60_000,
+        value: {} as never,
+      });
+    }
+
+    await helper.confidenceCalibration('user-1', 'BTC-USDT', 75);
+
+    expect(helper.calibrationCache.has('key-oldest')).toBe(false);
+    expect(helper.calibrationCache.size).toBe(500);
+  });
 });

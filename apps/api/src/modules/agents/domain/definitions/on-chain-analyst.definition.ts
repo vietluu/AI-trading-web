@@ -60,7 +60,7 @@ export const ON_CHAIN_ANALYST_DEFINITION: AgentDefinition<
     maxDelayMs: 2_000,
     retryableErrorCodes: ["AGENT_PROVIDER_UNAVAILABLE", "AGENT_TIMEOUT"],
   },
-  timeoutMs: 30_000,
+  timeoutMs: 45_000,
   maxToolRounds: 1,
   maxToolCalls: 1,
   maxInputTokens: 2_000,
