@@ -362,19 +362,32 @@ export class AIOrchestratorService {
   public async *stream(options: AIExecuteOptions): AsyncIterable<LLMStreamChunk> {
     const userConfig = await this.configService.getOrCreateConfig(options.userId);
     const primaryProviderType = options.provider || userConfig.preferredProvider;
-    const provider = this.providerFactory.getProvider(primaryProviderType);
+    const fallbackTypes = userConfig.fallbackEnabled
+      ? (userConfig.fallbackProviders as AIProviderType[]).filter((f) => f !== primaryProviderType)
+      : [];
+    const providerTypes = [primaryProviderType, ...fallbackTypes];
 
-    const reqOptions: LLMRequestOptions = {
-      model: options.model || userConfig.preferredModel,
-      systemPrompt: options.systemPrompt,
-      userPrompt: options.userPrompt || "",
-      temperature: options.temperature ?? userConfig.temperature,
-      maxTokens: options.maxTokens ?? userConfig.maxTokens,
-    };
-
-    for await (const chunk of provider.stream(reqOptions)) {
-      yield chunk;
+    for (const pType of providerTypes) {
+      try {
+        const provider = this.providerFactory.getProvider(pType);
+        const reqOptions: LLMRequestOptions = {
+          model: options.model || userConfig.preferredModel,
+          systemPrompt: options.systemPrompt,
+          userPrompt: options.userPrompt || "",
+          temperature: options.temperature ?? userConfig.temperature,
+          maxTokens: options.maxTokens ?? userConfig.maxTokens,
+        };
+        for await (const chunk of provider.stream(reqOptions)) {
+          yield chunk;
+        }
+        return; // success — stop trying fallbacks
+      } catch (err) {
+        this.logger.warn(
+          `Stream failed on provider ${pType}: ${err instanceof Error ? err.message : String(err)}. Trying fallback...`,
+        );
+      }
     }
+    throw new Error("All providers failed for stream request");
   }
 
   private buildPromptCacheKey(params: {
@@ -639,7 +652,7 @@ export class AIOrchestratorService {
   private async executeWithRetry(
     provider: LLMProvider,
     options: LLMRequestOptions,
-    maxRetries = 0
+    maxRetries = 1
   ): Promise<LLMResponse> {
     let attempt = 0;
     let delay = 500;
