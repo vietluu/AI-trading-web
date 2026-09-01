@@ -220,6 +220,56 @@ export function deterministicTechnicalAnalysis(
     tool === "market.indicators.get" || tool === "market.candles.list",
   );
 
+  const bbUpper = finite(indicators?.bollingerUpper);
+  const bbMid = finite(indicators?.bollingerMid);
+  const bbLower = finite(indicators?.bollingerLower);
+  const bollingerPosition: "UPPER" | "MIDDLE" | "LOWER" =
+    bbUpper !== undefined && price > bbUpper
+      ? "UPPER"
+      : bbLower !== undefined && price < bbLower
+        ? "LOWER"
+        : "MIDDLE";
+  const bbBandwidth =
+    bbUpper !== undefined && bbMid !== undefined && bbLower !== undefined && bbMid > 0
+      ? (bbUpper - bbLower) / bbMid
+      : undefined;
+  const bbSqueeze = bbBandwidth !== undefined ? bbBandwidth < 0.03 : false;
+
+  const rsiDivergence: "BULLISH" | "BEARISH" | "NONE" = (() => {
+    if (rsi === undefined || candles.length < 10) return "NONE";
+    const mid = Math.floor(candles.length / 2);
+    const first = candles.slice(0, mid);
+    const second = candles.slice(mid);
+    const firstHigh = Math.max(...first.map((c) => finite(c.high) ?? -Infinity));
+    const secondHigh = Math.max(...second.map((c) => finite(c.high) ?? -Infinity));
+    const firstLow = Math.min(...first.map((c) => finite(c.low) ?? Infinity));
+    const secondLow = Math.min(...second.map((c) => finite(c.low) ?? Infinity));
+    const estimatedFirstRsi =
+      rsi +
+      (macdHistogram !== undefined && macdHistogram < 0
+        ? 10
+        : macdHistogram !== undefined && macdHistogram > 0
+          ? -10
+          : 0);
+    if (secondHigh > firstHigh * 1.005 && rsi < estimatedFirstRsi * 0.97) return "BEARISH";
+    if (secondLow < firstLow * 0.995 && rsi > estimatedFirstRsi * 1.03) return "BULLISH";
+    return "NONE";
+  })();
+
+  const macdDivergence: "BULLISH" | "BEARISH" | "NONE" = (() => {
+    if (macdHistogram === undefined || candles.length < 10) return "NONE";
+    const mid = Math.floor(candles.length / 2);
+    const first = candles.slice(0, mid);
+    const second = candles.slice(mid);
+    const firstHigh = Math.max(...first.map((c) => finite(c.high) ?? -Infinity));
+    const secondHigh = Math.max(...second.map((c) => finite(c.high) ?? -Infinity));
+    const firstLow = Math.min(...first.map((c) => finite(c.low) ?? Infinity));
+    const secondLow = Math.min(...second.map((c) => finite(c.low) ?? Infinity));
+    if (secondHigh > firstHigh * 1.005 && macdHistogram < 0) return "BEARISH";
+    if (secondLow < firstLow * 0.995 && macdHistogram > 0) return "BULLISH";
+    return "NONE";
+  })();
+
   return {
     summary: `Deterministic technical analysis identifies a ${trend.strength.toLowerCase()} ${trend.direction.toLowerCase()} trend from price, EMA, RSI and MACD evidence.`,
     trend,
@@ -231,10 +281,10 @@ export function deterministicTechnicalAnalysis(
     movingAverages: { alignment, pricePosition },
     volatility: {
       ...(atr !== undefined ? { atr: String(atr) } : {}),
-      bollinger: { position: "MIDDLE", squeeze: false },
+      bollinger: { position: bollingerPosition, squeeze: bbSqueeze },
     },
     structure: { marketStructure, breakout },
-    divergence: { rsiDivergence: "NONE", macdDivergence: "NONE" },
+    divergence: { rsiDivergence, macdDivergence },
     signals,
     dataQuality: candles.length >= 20 ? "GOOD" : "PARTIAL",
     usedTools: usableTools,
