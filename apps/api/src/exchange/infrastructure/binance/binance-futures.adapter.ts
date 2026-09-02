@@ -229,6 +229,7 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
         latencyMs: Date.now() - started,
       };
     } catch (caught) {
+      throw caught;
       const error = this.exchangeError(caught);
       return {
         success: false,
@@ -625,11 +626,54 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
       leverage,
     });
     try {
+      let type = "MARKET";
+      let timeInForce = undefined;
+      let price = undefined;
+
+      if (!command.reduceOnly && Number.isFinite(Number(command.referencePrice)) && Number(command.referencePrice) > 0 && Number.isFinite(Number(command.maxAdverseDriftBps)) && Number(command.maxAdverseDriftBps) > 0) {
+        const instruments = await this.getInstruments({
+          symbol: command.symbol,
+          environment: credentials.environment,
+        });
+        const searchSymbol = command.symbol.toUpperCase().replace("/", "");
+        const instrument = instruments.find(
+          (candidate) =>
+            candidate.symbol === searchSymbol ||
+            candidate.symbol === command.symbol ||
+            mapSymbol(candidate.symbol, this.provider) === symbol,
+        ) ?? instruments[0];
+        
+        if (instrument) {
+          const refPrice = Number(command.referencePrice);
+          const maxDriftPct = Number(command.maxAdverseDriftBps) / 10000;
+          const worstPrice = command.side.toUpperCase() === "BUY"
+            ? refPrice * (1 + maxDriftPct)
+            : refPrice * (1 - maxDriftPct);
+          
+          type = "LIMIT";
+          timeInForce = "IOC";
+          price = worstPrice.toFixed(instrument.pricePrecision);
+        }
+      }
+      console.error("BINANCE RAW MOCK VALUE:", await this.client.signedPost("/fapi/v1/order", credentials, {
+          symbol,
+          side: command.side,
+          type,
+          ...(timeInForce ? { timeInForce } : {}),
+          ...(price ? { price } : {}),
+          quantity: command.quantity,
+          newClientOrderId: normalizeClientOrderId(command.clientOrderId),
+          reduceOnly: command.reduceOnly,
+          positionSide: command.positionSide,
+          newOrderRespType: "RESULT",
+        }));
       const value = orderSchema.parse(
         await this.client.signedPost("/fapi/v1/order", credentials, {
           symbol,
           side: command.side,
-          type: "MARKET",
+          type,
+          ...(timeInForce ? { timeInForce } : {}),
+          ...(price ? { price } : {}),
           quantity: command.quantity,
           newClientOrderId: normalizeClientOrderId(command.clientOrderId),
           reduceOnly: command.reduceOnly,

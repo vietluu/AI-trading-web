@@ -1063,7 +1063,7 @@ describe("exchange adapter normalization contract", () => {
     );
   });
 
-  it("uses a real market price for OKX limit orders", async () => {
+  it("uses a worst price for OKX ioc orders when maxAdverseDriftBps is provided", async () => {
     const signedPost = vi
       .fn()
       .mockResolvedValueOnce([{ lever: "3" }])
@@ -1123,16 +1123,19 @@ describe("exchange adapter normalization contract", () => {
         quantity: "0.03",
         leverage: 3,
         clientOrderId: "phase9-order",
+        referencePrice: "67230",
+        maxAdverseDriftBps: 10,
       },
     );
 
     const body = signedPost.mock.calls[1]?.[2] as Record<string, unknown>;
-    expect(body.px).toBe("67233.20000000");
+    // 67230 * 1.001 = 67297.23
+    expect(body.px).toBe("67297.2");
+    expect(body.ordType).toBe("ioc");
   });
 
   it("converts base-asset risk size to OKX contract size", async () => {
-    const signedPost = vi
-      .fn()
+    const signedPost = vi.fn()
       .mockResolvedValueOnce([{ lever: "3" }])
       .mockResolvedValueOnce([
         { ordId: "123", clOrdId: "phase9-order", sCode: "0", sMsg: "" },

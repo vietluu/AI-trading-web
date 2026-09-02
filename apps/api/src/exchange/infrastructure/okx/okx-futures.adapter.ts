@@ -871,7 +871,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     const makerFirst =
       !command.reduceOnly &&
       (this.config?.get<boolean>("OKX_MAKER_FIRST_ENABLED") ?? false);
-    let ordType: "limit" | "market" | "post_only" = "market";
+    let ordType = command.reduceOnly ? "market" : "ioc";
     if (!command.reduceOnly) {
       try {
         const ticker = await this.bestBidAsk(command.symbol);
@@ -886,6 +886,20 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
             marketPrice = selectedPrice;
             ordType = "post_only";
           }
+        } else if (
+          Number.isFinite(Number(command.referencePrice)) && 
+          Number(command.referencePrice) > 0 &&
+          Number.isFinite(Number(command.maxAdverseDriftBps)) &&
+          Number(command.maxAdverseDriftBps) > 0
+        ) {
+          const refPrice = Number(command.referencePrice);
+          const maxDriftPct = Number(command.maxAdverseDriftBps) / 10000;
+          const worstPrice = command.side.toUpperCase() === "BUY"
+            ? refPrice * (1 + maxDriftPct)
+            : refPrice * (1 - maxDriftPct);
+          marketPrice = this.decimalString(worstPrice, instrument.pricePrecision);
+        } else {
+          ordType = "market";
         }
       } catch (error) {
         if (
@@ -1006,13 +1020,13 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       }
     };
 
-    let submittedOrderType = body.ordType as "limit" | "market" | "post_only";
+    let submittedOrderType = body.ordType as "limit" | "market" | "post_only" | "ioc";
     let ackPayload: unknown;
     try {
       ackPayload = await placeOrderAttempt(body);
     } catch (error) {
       if (
-        body.ordType === "limit" &&
+        (body.ordType === "limit" || body.ordType === "ioc") &&
         this.shouldRetryAsMarketOrder(error, body)
       ) {
         const fallbackBody = {
@@ -1041,7 +1055,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     let ack = z.array(orderAckSchema).min(1).parse(ackPayload)[0]!;
     if (ack.sCode !== "0") {
       if (
-        body.ordType === "limit" &&
+        (body.ordType === "limit" || body.ordType === "ioc") &&
         this.shouldRetryAsMarketOrder(ack, body)
       ) {
         const fallbackBody = {
@@ -1647,7 +1661,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     ackOrError: unknown,
     body: Record<string, unknown>,
   ): boolean {
-    if (body.ordType !== "limit") return false;
+    if (body.ordType !== "limit" && body.ordType !== "ioc") return false;
     if (ackOrError instanceof ExchangeError) {
       const message = (ackOrError.message ?? "").toLowerCase();
       return (
