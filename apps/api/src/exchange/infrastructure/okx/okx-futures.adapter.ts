@@ -871,24 +871,21 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     const makerFirst =
       !command.reduceOnly &&
       (this.config?.get<boolean>("OKX_MAKER_FIRST_ENABLED") ?? false);
-    let ordType: "limit" | "market" | "post_only" = command.reduceOnly
-      ? "market"
-      : "limit";
+    let ordType: "limit" | "market" | "post_only" = "market";
     if (!command.reduceOnly) {
       try {
         const ticker = await this.bestBidAsk(command.symbol);
         this.assertEntryPriceDrift(command, ticker.askPrice, ticker.bidPrice);
-        const selectedPrice = makerFirst
-          ? command.side.toUpperCase() === "BUY"
+        
+        if (makerFirst) {
+          const selectedPrice = command.side.toUpperCase() === "BUY"
             ? ticker.bidPrice
-            : ticker.askPrice
-          : command.side.toUpperCase() === "BUY"
-            ? ticker.askPrice
-            : ticker.bidPrice;
-        const numericPrice = Number(selectedPrice);
-        if (Number.isFinite(numericPrice) && numericPrice > 0) {
-          marketPrice = selectedPrice;
-          ordType = makerFirst ? "post_only" : "limit";
+            : ticker.askPrice;
+          const numericPrice = Number(selectedPrice);
+          if (Number.isFinite(numericPrice) && numericPrice > 0) {
+            marketPrice = selectedPrice;
+            ordType = "post_only";
+          }
         }
       } catch (error) {
         if (
