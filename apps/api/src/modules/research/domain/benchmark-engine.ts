@@ -146,30 +146,40 @@ export function buildBenchmarkLeaderboard(benchmarks: BenchmarkResult[]): Array<
 }
 
 export function detectMarketRegime(candles: NormalizedCandle[]): MarketRegimeSignal {
-  if (candles.length < 2) {
+  if (candles.length < 20) {
     return { type: 'SIDEWAYS', confidence: 0.5, evidence: ['Insufficient candles'] };
   }
 
   const closes = candles.map((candle) => Number(candle.close));
   const first = closes[0] ?? 0;
   const last = closes[closes.length - 1] ?? first;
-  const drift = last - first;
+  const drift = (last - first) / Math.max(1, first);
+  
+  // Calculate SMA and Standard Deviation for Bollinger Band Width
+  const sma = closes.reduce((a, b) => a + b, 0) / closes.length;
+  const variance = closes.reduce((a, b) => a + Math.pow(b - sma, 2), 0) / closes.length;
+  const stdDev = Math.sqrt(variance);
+  const bbw = (stdDev * 4) / Math.max(1, sma); // Width = (2 * stdDev * 2) / SMA
+  
   const volatility = closes.reduce((sum, value, index) => sum + Math.abs((value - (closes[index - 1] ?? value)) / Math.max(1, value)), 0);
   const averageVolatility = volatility / Math.max(1, closes.length - 1);
 
-  if (drift > 0.06 && averageVolatility < 0.025) {
-    return { type: 'BULL_TREND', confidence: 0.82, evidence: ['Positive drift over the lookback window'] };
+  if (averageVolatility > 0.04 || bbw > 0.15) {
+    return { type: 'HIGH_VOLATILITY', confidence: 0.78, evidence: ['Volatility or Bollinger Band Width exceeded high-volatility threshold'] };
   }
-  if (drift < -0.06 && averageVolatility < 0.025) {
-    return { type: 'BEAR_TREND', confidence: 0.82, evidence: ['Negative drift over the lookback window'] };
+  if (bbw < 0.02) {
+    return { type: 'LOW_VOLATILITY', confidence: 0.85, evidence: ['Bollinger Band Width indicates severe compression'] };
   }
-  if (averageVolatility > 0.04) {
-    return { type: 'HIGH_VOLATILITY', confidence: 0.78, evidence: ['Volatility exceeded the high-volatility threshold'] };
+  
+  // Stricter trend logic: require significant drift AND sufficient BBW expansion (no compression)
+  if (drift > 0.03 && bbw >= 0.02) {
+    return { type: 'BULL_TREND', confidence: 0.82, evidence: ['Positive drift with sufficient band width expansion'] };
   }
-  if (averageVolatility < 0.008) {
-    return { type: 'LOW_VOLATILITY', confidence: 0.74, evidence: ['Volatility remained below the low-volatility threshold'] };
+  if (drift < -0.03 && bbw >= 0.02) {
+    return { type: 'BEAR_TREND', confidence: 0.82, evidence: ['Negative drift with sufficient band width expansion'] };
   }
-  return { type: 'SIDEWAYS', confidence: 0.68, evidence: ['Price action moved within a neutral range'] };
+
+  return { type: 'SIDEWAYS', confidence: 0.68, evidence: ['Price action lacks directional drift or is in compression'] };
 }
 
 export function recommendStrategy(input: {

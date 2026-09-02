@@ -164,7 +164,30 @@ export function decisionForStrategy(
   analyses: FusionInput,
   market?: StrategyMarketSnapshot,
 ): DecisionOutput {
-  if (key === "ai-core") return base;
+  let decisionBase = base;
+
+  // RSI Exhaustion / Momentum Guard
+  if (["ai-core", "trend"].includes(key) && decisionBase.decision !== "WAIT") {
+    const rsiValue = Number(analyses.technical?.momentum?.rsi ?? 50);
+    const isOversold = analyses.technical?.momentum?.rsiState === "OVERSOLD" || rsiValue < 35;
+    const isOverbought = analyses.technical?.momentum?.rsiState === "OVERBOUGHT" || rsiValue > 65;
+    
+    if (decisionBase.decision === "SHORT" && isOversold) {
+      decisionBase = {
+        ...decisionBase,
+        decision: "WAIT",
+        overrides: [...decisionBase.overrides, "Blocked SHORT due to momentum exhaustion (OVERSOLD RSI)."]
+      };
+    } else if (decisionBase.decision === "LONG" && isOverbought) {
+      decisionBase = {
+        ...decisionBase,
+        decision: "WAIT",
+        overrides: [...decisionBase.overrides, "Blocked LONG due to momentum exhaustion (OVERBOUGHT RSI)."]
+      };
+    }
+  }
+
+  if (key === "ai-core") return decisionBase;
   let decision: DecisionOutput["decision"] = "WAIT";
   let confidence = 0;
   let explanation = "No strategy-specific setup is active.";

@@ -145,11 +145,29 @@ export class DecisionService {
           0.1,
           10,
         );
+    let finalConfidence = decision.confidence;
+    if (empiricalProbability !== undefined && empiricalProbability < 0.35) {
+      finalConfidence = Math.min(finalConfidence, 40);
+    }
+
+    let finalDecisionAction = decision.decision;
+    const finalExpectedValue = Number(expectedValue.toFixed(3));
+
+    if (finalExpectedValue < 0.15 && finalDecisionAction !== "WAIT") {
+      finalDecisionAction = "WAIT";
+    }
+
+    if (finalConfidence <= 40 && finalDecisionAction !== "WAIT") {
+      finalDecisionAction = "WAIT";
+    }
+
     const calibratedDecision: DecisionOutput = {
       ...decision,
+      decision: finalDecisionAction,
+      confidence: finalConfidence,
       confidenceCalibration,
       expectedWinProbability: Number(expectedWinProbability.toFixed(3)),
-      expectedValue: Number(expectedValue.toFixed(3)),
+      expectedValue: finalExpectedValue,
       profitFactorEstimate: Number(profitFactorEstimate.toFixed(3)),
       ...(config
         ? {
@@ -247,12 +265,7 @@ export class DecisionService {
       1,
     );
     const hasEmpiricalEdge = empiricalProbability !== undefined;
-    return {
-      ...decision,
-      confidenceCalibration,
-      expectedWinProbability: Number(expectedWinProbability.toFixed(3)),
-      expectedValue: Number(
-        (hasEmpiricalEdge
+    const expectedValueRaw = hasEmpiricalEdge
           ? this.clamp(
               expectedWinProbability * decision.expectedReward -
                 (1 - expectedWinProbability) * decision.expectedLoss -
@@ -260,9 +273,31 @@ export class DecisionService {
               -3,
               3,
             )
-          : 0
-        ).toFixed(3),
-      ),
+          : 0;
+          
+    let finalConfidence = decision.confidence;
+    if (empiricalProbability !== undefined && empiricalProbability < 0.35) {
+      finalConfidence = Math.min(finalConfidence, 40);
+    }
+
+    let finalDecisionAction = decision.decision;
+    const finalExpectedValue = Number(expectedValueRaw.toFixed(3));
+
+    if (finalExpectedValue < 0.15 && finalDecisionAction !== "WAIT") {
+      finalDecisionAction = "WAIT";
+    }
+
+    if (finalConfidence <= 40 && finalDecisionAction !== "WAIT") {
+      finalDecisionAction = "WAIT";
+    }
+
+    return {
+      ...decision,
+      decision: finalDecisionAction,
+      confidence: finalConfidence,
+      confidenceCalibration,
+      expectedWinProbability: Number(expectedWinProbability.toFixed(3)),
+      expectedValue: finalExpectedValue,
       profitFactorEstimate: Number(
         (hasEmpiricalEdge
           ? this.clamp(
