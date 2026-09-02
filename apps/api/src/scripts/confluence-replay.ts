@@ -85,7 +85,7 @@ interface ReplayCandidate {
 
 async function main() {
   const startDate = new Date("2026-08-30T00:00:00.000Z");
-  const endDate = new Date("2026-08-31T23:59:59.999Z");
+  const endDate = new Date();
 
   const CORE_SYMBOLS = new Set(["BTC-USDT", "ETH-USDT", "BNB-USDT", "SOL-USDT"]);
 

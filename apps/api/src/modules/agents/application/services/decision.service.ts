@@ -306,45 +306,17 @@ export class DecisionService {
         confidence: true,
         outcome: true,
         marketRegime: true,
+        strategyKey: true,
         run: {
-          select: { provider: true, timeframe: true, storedContext: true },
+          select: { provider: true, timeframe: true },
         },
       },
       orderBy: { evaluatedAt: "desc" },
       take: 2000,
     });
-    const strategyOf = (storedContext: unknown): string | undefined => {
-      if (
-        !storedContext ||
-        typeof storedContext !== "object" ||
-        Array.isArray(storedContext)
-      )
-        return undefined;
-      const context = storedContext as Record<string, unknown>;
-      const candidate = context.candidateDecision;
-      if (
-        candidate &&
-        typeof candidate === "object" &&
-        !Array.isArray(candidate)
-      ) {
-        const value = (candidate as Record<string, unknown>).strategyKey;
-        if (typeof value === "string") return value;
-      }
-      const selection = context.strategySelection;
-      if (
-        selection &&
-        typeof selection === "object" &&
-        !Array.isArray(selection)
-      ) {
-        const value = (selection as Record<string, unknown>)
-          .selectedStrategyKey;
-        if (typeof value === "string") return value;
-      }
-      return undefined;
-    };
     const records = rows.map((row) => ({
       ...row,
-      strategyKey: strategyOf(row.run.storedContext),
+      strategyKey: row.strategyKey,
     }));
     const asCalibrationRecords = (items: typeof records) =>
       items.map((row) => ({

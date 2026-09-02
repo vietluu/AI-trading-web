@@ -347,11 +347,23 @@ export class ExchangeTradeLedgerService {
 
   private async refreshStrategyPerformance(userId: string): Promise<void> {
     const strategies = await this.prisma.portfolioStrategy.findMany({ where: { userId } });
+    if (strategies.length === 0) return;
+    
+    const allTrades = await this.prisma.closedTrade.findMany({
+      where: { strategyId: { in: strategies.map(s => s.id) } },
+      orderBy: { closedAt: "asc" },
+    });
+    
+    const tradesByStrategy = new Map<string, typeof allTrades>();
+    for (const trade of allTrades) {
+      if (!trade.strategyId) continue;
+      const arr = tradesByStrategy.get(trade.strategyId) ?? [];
+      arr.push(trade);
+      tradesByStrategy.set(trade.strategyId, arr);
+    }
+
     for (const strategy of strategies) {
-      const trades = await this.prisma.closedTrade.findMany({
-        where: { strategyId: strategy.id },
-        orderBy: { closedAt: "asc" },
-      });
+      const trades = tradesByStrategy.get(strategy.id) ?? [];
       const cycles = aggregateClosedTradeCycles(trades);
       const total = cycles.length;
       const wins = cycles.filter((trade) => trade.netPnl > 0).length;

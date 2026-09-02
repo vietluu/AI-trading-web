@@ -30,56 +30,56 @@ enum ExchangeEnvironment {
 }
 
 model User {
-  id                     String                      @id @default(uuid()) @db.Uuid
-  email                  String                      @unique
-  username               String                      @unique
-  passwordHash           String
-  failedLogins           Int                         @default(0)
-  lockedUntil            DateTime?
-  emailVerifiedAt        DateTime?
-  totpSecret             String?
-  totpEnabledAt          DateTime?
-  createdAt              DateTime                    @default(now())
-  updatedAt              DateTime                    @updatedAt
-  sessions               Session[]
-  credentials            EncryptedCredential[]
-  setting                UserSetting?
-  auditLogs              AuditLog[]
-  exchangeConnections    ExchangeConnection[]
-  externalDataPreference UserExternalDataPreference?
-  newsStates             UserNewsState[]
-  macroImportRuns        MacroImportRun[]
-  aiHistories            AIHistory[]
-  aiMemories             AIMemory[]
-  aiConfiguration        AIConfiguration?
-  aiUsages               AIUsage[]
-  toolInvocations        ToolInvocationRecord[]
-  toolQuotas             ToolQuotaUsage[]
-  agentRuns              AgentRun[]
-  agentQuotas            AgentQuotaUsage[]
-  pipelineRuns           PipelineRun[]
-  pipelineSchedules      PipelineSchedule[]
-  performanceRecords     PerformanceRecord[]
-  reflectionInsights     ReflectionInsight[]
-  improvementProposals   ImprovementProposal[]
-  paperAccount           PaperAccount?
-  paperSignals           PaperSignal[]
-  riskAssessments        RiskAssessment[]
-  liveOrders             LiveOrder[]
-  livePositions          LivePosition[]
-  liveAccountSnapshots   LiveAccountSnapshot[]
-  exchangeFills          ExchangeFill[]
-  closedTrades           ClosedTrade[]
-  tradeBackfillCheckpoints TradeLedgerBackfillCheckpoint[]
-  knowledgeArchives      KnowledgeArchive[]
-  portfolioStrategies    PortfolioStrategy[]
-  portfolioRebalances    PortfolioRebalance[]
-  portfolioRiskEvents    PortfolioRiskEvent[]
-  researchValidations    ResearchValidationRun[]
-  benchmarkSuites        BenchmarkSuiteRun[]
-  sensitivityHeatmaps    SensitivityHeatmap[]
+  id                        String                          @id @default(uuid()) @db.Uuid
+  email                     String                          @unique
+  username                  String                          @unique
+  passwordHash              String
+  failedLogins              Int                             @default(0)
+  lockedUntil               DateTime?
+  emailVerifiedAt           DateTime?
+  totpSecret                String?
+  totpEnabledAt             DateTime?
+  createdAt                 DateTime                        @default(now())
+  updatedAt                 DateTime                        @updatedAt
+  sessions                  Session[]
+  credentials               EncryptedCredential[]
+  setting                   UserSetting?
+  auditLogs                 AuditLog[]
+  exchangeConnections       ExchangeConnection[]
+  externalDataPreference    UserExternalDataPreference?
+  newsStates                UserNewsState[]
+  macroImportRuns           MacroImportRun[]
+  aiHistories               AIHistory[]
+  aiMemories                AIMemory[]
+  aiConfiguration           AIConfiguration?
+  aiUsages                  AIUsage[]
+  toolInvocations           ToolInvocationRecord[]
+  toolQuotas                ToolQuotaUsage[]
+  agentRuns                 AgentRun[]
+  agentQuotas               AgentQuotaUsage[]
+  pipelineRuns              PipelineRun[]
+  pipelineSchedules         PipelineSchedule[]
+  performanceRecords        PerformanceRecord[]
+  reflectionInsights        ReflectionInsight[]
+  improvementProposals      ImprovementProposal[]
+  paperAccount              PaperAccount?
+  paperSignals              PaperSignal[]
+  riskAssessments           RiskAssessment[]
+  liveOrders                LiveOrder[]
+  livePositions             LivePosition[]
+  liveAccountSnapshots      LiveAccountSnapshot[]
+  exchangeFills             ExchangeFill[]
+  closedTrades              ClosedTrade[]
+  tradeBackfillCheckpoints  TradeLedgerBackfillCheckpoint[]
+  knowledgeArchives         KnowledgeArchive[]
+  portfolioStrategies       PortfolioStrategy[]
+  portfolioRebalances       PortfolioRebalance[]
+  portfolioRiskEvents       PortfolioRiskEvent[]
+  researchValidations       ResearchValidationRun[]
+  benchmarkSuites           BenchmarkSuiteRun[]
+  sensitivityHeatmaps       SensitivityHeatmap[]
   selfLearningConfiguration SelfLearningConfiguration?
-  selfLearningExperiments SelfLearningExperiment[]
+  selfLearningExperiments   SelfLearningExperiment[]
 
   @@map("users")
 }
@@ -357,21 +357,21 @@ model PaperTrade {
 }
 
 model PaperSignal {
-  id             String   @id @default(uuid()) @db.Uuid
-  userId         String   @db.Uuid
-  pipelineRunId  String?  @unique @db.Uuid
-  symbol         String
-  provider       ExchangeProvider?
-  decision       String
-  confidence     Float
-  mode           String
+  id                   String            @id @default(uuid()) @db.Uuid
+  userId               String            @db.Uuid
+  pipelineRunId        String?           @unique @db.Uuid
+  symbol               String
+  provider             ExchangeProvider?
+  decision             String
+  confidence           Float
+  mode                 String
   configurationVersion Int?
-  marketRegime   String?
-  referencePrice Decimal  @db.Decimal(24, 8)
-  outcome        String
-  returnPct      Float?
-  createdAt      DateTime @default(now())
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  marketRegime         String?
+  referencePrice       Decimal           @db.Decimal(24, 8)
+  outcome              String
+  returnPct            Float?
+  createdAt            DateTime          @default(now())
+  user                 User              @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
   @@index([userId, mode, outcome, createdAt])
@@ -384,39 +384,39 @@ model PaperSignal {
 // ============================================================
 
 model LiveOrder {
-  id               String             @id @default(uuid()) @db.Uuid
-  userId           String             @db.Uuid
-  connectionId     String             @db.Uuid
-  strategyId       String?            @db.Uuid
-  riskAssessmentId String?            @unique @db.Uuid
-  exchangeOrderId  String?
-  clientOrderId    String
-  provider         String
-  environment      String
-  symbol           String
-  side             String
-  type             String             @default("MARKET")
-  quantity         Decimal            @db.Decimal(30, 12)
-  leverage         Int
-  averagePrice     Decimal?           @db.Decimal(24, 8)
-  status           String
-  purpose          String             @default("OPEN")
-  reduceOnly       Boolean            @default(false)
-  stopLoss         Decimal?           @db.Decimal(24, 8)
-  takeProfit       Decimal?           @db.Decimal(24, 8)
-  initialStopLoss  Decimal?            @db.Decimal(24, 8)
-  highestMark      Decimal?            @db.Decimal(24, 8)
-  lowestMark       Decimal?            @db.Decimal(24, 8)
+  id                      String             @id @default(uuid()) @db.Uuid
+  userId                  String             @db.Uuid
+  connectionId            String             @db.Uuid
+  strategyId              String?            @db.Uuid
+  riskAssessmentId        String?            @unique @db.Uuid
+  exchangeOrderId         String?
+  clientOrderId           String
+  provider                String
+  environment             String
+  symbol                  String
+  side                    String
+  type                    String             @default("MARKET")
+  quantity                Decimal            @db.Decimal(30, 12)
+  leverage                Int
+  averagePrice            Decimal?           @db.Decimal(24, 8)
+  status                  String
+  purpose                 String             @default("OPEN")
+  reduceOnly              Boolean            @default(false)
+  stopLoss                Decimal?           @db.Decimal(24, 8)
+  takeProfit              Decimal?           @db.Decimal(24, 8)
+  initialStopLoss         Decimal?           @db.Decimal(24, 8)
+  highestMark             Decimal?           @db.Decimal(24, 8)
+  lowestMark              Decimal?           @db.Decimal(24, 8)
   protectiveClientOrderId String?
-  tradePlan        Json?
-  partialTakenAt   DateTime?
-  errorCode        String?
-  errorMessage     String?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
-  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  strategy         PortfolioStrategy? @relation(fields: [strategyId], references: [id], onDelete: SetNull)
-  fills            ExchangeFill[]
+  tradePlan               Json?
+  partialTakenAt          DateTime?
+  errorCode               String?
+  errorMessage            String?
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
+  user                    User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  strategy                PortfolioStrategy? @relation(fields: [strategyId], references: [id], onDelete: SetNull)
+  fills                   ExchangeFill[]
 
   @@unique([connectionId, clientOrderId])
   @@index([userId, createdAt])
@@ -621,31 +621,31 @@ enum ImprovementProposalStatus {
 }
 
 model PerformanceRecord {
-  id              String             @id @default(uuid()) @db.Uuid
-  userId          String             @db.Uuid
-  runId           String             @db.Uuid
-  symbol          String
-  strategyKey     String?
-  horizon         EvaluationHorizon
-  decision        String
-  confidence      Float
-  priceAtDecision Decimal            @db.Decimal(24, 8)
-  priceAfter      Decimal            @db.Decimal(24, 8)
+  id                    String             @id @default(uuid()) @db.Uuid
+  userId                String             @db.Uuid
+  runId                 String             @db.Uuid
+  symbol                String
+  strategyKey           String?
+  horizon               EvaluationHorizon
+  decision              String
+  confidence            Float
+  priceAtDecision       Decimal            @db.Decimal(24, 8)
+  priceAfter            Decimal            @db.Decimal(24, 8)
   actualStartTimestamp  DateTime?
   actualTargetTimestamp DateTime?
   timeDriftMs           Int?
-  outcome         PerformanceOutcome
-  returnPct       Float
-  leverage        Int                @default(1)
-  netRoePct       Float              @default(0)
-  leverageSource  String             @default("UNLEVERAGED")
-  highVolatility  Boolean            @default(false)
-  marketRegime    String?
-  majorNews       Boolean            @default(false)
-  provenanceEligible Boolean           @default(false)
-  evaluatedAt     DateTime           @default(now())
-  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  run             PipelineRun        @relation(fields: [runId], references: [id], onDelete: Cascade)
+  outcome               PerformanceOutcome
+  returnPct             Float
+  leverage              Int                @default(1)
+  netRoePct             Float              @default(0)
+  leverageSource        String             @default("UNLEVERAGED")
+  highVolatility        Boolean            @default(false)
+  marketRegime          String?
+  majorNews             Boolean            @default(false)
+  provenanceEligible    Boolean            @default(false)
+  evaluatedAt           DateTime           @default(now())
+  user                  User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  run                   PipelineRun        @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   @@unique([runId, horizon])
   @@index([userId, evaluatedAt])
@@ -762,25 +762,25 @@ model EncryptedCredential {
 }
 
 model ExchangeConnection {
-  id              String              @id @default(uuid()) @db.Uuid
-  userId          String              @db.Uuid
-  provider        ExchangeProvider
-  environment     ExchangeEnvironment
-  credentialId    String              @unique @db.Uuid
-  displayName     String?
-  isEnabled       Boolean             @default(true)
-  isVerified      Boolean             @default(false)
-  verifiedAt      DateTime?
-  permissions     Json?
-  lastErrorCode   String?
-  lastErrorAt     DateTime?
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
-  user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  credential      EncryptedCredential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
-  riskAssessments RiskAssessment[]
-  exchangeFills   ExchangeFill[]
-  closedTrades    ClosedTrade[]
+  id                       String                          @id @default(uuid()) @db.Uuid
+  userId                   String                          @db.Uuid
+  provider                 ExchangeProvider
+  environment              ExchangeEnvironment
+  credentialId             String                          @unique @db.Uuid
+  displayName              String?
+  isEnabled                Boolean                         @default(true)
+  isVerified               Boolean                         @default(false)
+  verifiedAt               DateTime?
+  permissions              Json?
+  lastErrorCode            String?
+  lastErrorAt              DateTime?
+  createdAt                DateTime                        @default(now())
+  updatedAt                DateTime                        @updatedAt
+  user                     User                            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  credential               EncryptedCredential             @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+  riskAssessments          RiskAssessment[]
+  exchangeFills            ExchangeFill[]
+  closedTrades             ClosedTrade[]
   tradeBackfillCheckpoints TradeLedgerBackfillCheckpoint[]
 
   @@unique([userId, provider, environment])
@@ -788,7 +788,6 @@ model ExchangeConnection {
   @@index([provider, environment])
   @@map("exchange_connections")
 }
-
 
 model UserSetting {
   id                  String   @id @default(uuid()) @db.Uuid
@@ -1890,16 +1889,16 @@ model ResearchValidationRun {
 }
 
 model BenchmarkSuiteRun {
-  id               String   @id @default(uuid()) @db.Uuid
-  userId           String?  @db.Uuid
-  symbol           String
-  provider         String
-  interval         String
-  strategyCount    Int      @default(20)
-  topStrategyName  String
-  leaderboardJson  Json
-  recommendations  Json
-  createdAt        DateTime @default(now())
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String?  @db.Uuid
+  symbol          String
+  provider        String
+  interval        String
+  strategyCount   Int      @default(20)
+  topStrategyName String
+  leaderboardJson Json
+  recommendations Json
+  createdAt       DateTime @default(now())
 
   user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -1909,14 +1908,14 @@ model BenchmarkSuiteRun {
 }
 
 model SensitivityHeatmap {
-  id              String   @id @default(uuid()) @db.Uuid
-  userId          String?  @db.Uuid
-  symbol          String
-  parameterName   String
-  gridValues      Json
-  metricsSurface  Json
-  optimalValue    Float
-  createdAt       DateTime @default(now())
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String?  @db.Uuid
+  symbol         String
+  parameterName  String
+  gridValues     Json
+  metricsSurface Json
+  optimalValue   Float
+  createdAt      DateTime @default(now())
 
   user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -1961,7 +1960,7 @@ model QuantHypothesis {
   userId           String?  @db.Uuid
   symbol           String?
   title            String
-  category         String   // INDICATOR, FACTOR_COMBINATION, PROMPT, RULE, WEIGHTING, SCORING, POSITION_SIZING
+  category         String // INDICATOR, FACTOR_COMBINATION, PROMPT, RULE, WEIGHTING, SCORING, POSITION_SIZING
   description      String
   hypothesisText   String
   statisticalProof Json?
@@ -1979,53 +1978,53 @@ model QuantHypothesis {
 }
 
 model DiscoveredStrategy {
-  id               String   @id @default(uuid()) @db.Uuid
-  userId           String?  @db.Uuid
-  key              String
-  name             String
-  kind             String   // TREND_FOLLOWING, MEAN_REVERSION, MOMENTUM, BREAKOUT, FUNDING_ARBITRAGE, VOLUME_EXPANSION, VOLATILITY_COMPRESSION, LIQUIDITY_SWEEP, HYBRID_AI
-  score            Float    @default(0)
-  expectedValue    Float    @default(0)
-  profitFactor     Float    @default(0)
-  sharpeRatio      Float    @default(0)
-  calmarRatio      Float    @default(0)
-  maxDrawdown      Float    @default(0)
-  rulesJson        Json
-  parametersJson   Json
-  provenance       Json?
-  status           String   @default("DISCOVERED")
-  createdAt        DateTime @default(now())
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String?  @db.Uuid
+  key            String
+  name           String
+  kind           String // TREND_FOLLOWING, MEAN_REVERSION, MOMENTUM, BREAKOUT, FUNDING_ARBITRAGE, VOLUME_EXPANSION, VOLATILITY_COMPRESSION, LIQUIDITY_SWEEP, HYBRID_AI
+  score          Float    @default(0)
+  expectedValue  Float    @default(0)
+  profitFactor   Float    @default(0)
+  sharpeRatio    Float    @default(0)
+  calmarRatio    Float    @default(0)
+  maxDrawdown    Float    @default(0)
+  rulesJson      Json
+  parametersJson Json
+  provenance     Json?
+  status         String   @default("DISCOVERED")
+  createdAt      DateTime @default(now())
 
   @@index([userId, kind])
   @@map("discovered_strategies")
 }
 
 model FactorEvaluation {
-  id               String   @id @default(uuid()) @db.Uuid
-  userId           String?  @db.Uuid
-  factorName       String
-  category         String   // TECHNICAL, STRUCTURE, VOLUME, FUNDING, OPEN_INTEREST, NEWS, MACRO, SENTIMENT, ONCHAIN, CORRELATION, SEASONALITY
-  predictivePower  Float    @default(0)
-  contribution     Float    @default(0)
-  noiseScore       Float    @default(0)
-  redundancyScore  Float    @default(0)
-  sampleSize       Int      @default(0)
-  provenance       Json?
-  evaluatedAt      DateTime @default(now())
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String?  @db.Uuid
+  factorName      String
+  category        String // TECHNICAL, STRUCTURE, VOLUME, FUNDING, OPEN_INTEREST, NEWS, MACRO, SENTIMENT, ONCHAIN, CORRELATION, SEASONALITY
+  predictivePower Float    @default(0)
+  contribution    Float    @default(0)
+  noiseScore      Float    @default(0)
+  redundancyScore Float    @default(0)
+  sampleSize      Int      @default(0)
+  provenance      Json?
+  evaluatedAt     DateTime @default(now())
 
   @@index([userId, category])
   @@map("factor_evaluations")
 }
 
 model AutoBenchmarkRecord {
-  id                String   @id @default(uuid()) @db.Uuid
-  userId            String?  @db.Uuid
-  strategyName      String
-  benchmarkTarget   String   // BUY_HOLD, EMA, MACD, RSI, SUPERTREND, DONCHIAN, GRID, MOMENTUM, PREVIOUS_AI, BEST_HISTORICAL
-  rank              Int
-  metricsJson       Json
-  provenance        Json?
-  comparedAt        DateTime @default(now())
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String?  @db.Uuid
+  strategyName    String
+  benchmarkTarget String // BUY_HOLD, EMA, MACD, RSI, SUPERTREND, DONCHIAN, GRID, MOMENTUM, PREVIOUS_AI, BEST_HISTORICAL
+  rank            Int
+  metricsJson     Json
+  provenance      Json?
+  comparedAt      DateTime @default(now())
 
   @@index([userId, strategyName])
   @@map("auto_benchmark_records")
@@ -2034,7 +2033,7 @@ model AutoBenchmarkRecord {
 model WeightOptimizationRecord {
   id               String   @id @default(uuid()) @db.Uuid
   userId           String?  @db.Uuid
-  scope            String   // AGENT, FACTOR, OPPORTUNITY, RISK, REGIME
+  scope            String // AGENT, FACTOR, OPPORTUNITY, RISK, REGIME
   optimizedWeights Json
   expectedValue    Float    @default(0)
   sharpeRatio      Float    @default(0)
@@ -2047,43 +2046,43 @@ model WeightOptimizationRecord {
 }
 
 model ThresholdOptimizationRecord {
-  id                 String   @id @default(uuid()) @db.Uuid
-  userId             String?  @db.Uuid
-  thresholdName      String   // CONFIDENCE, OPPORTUNITY, ATR, VOLUME, LIQUIDITY, RISK_REWARD, COOLDOWN, STOP_LOSS, TAKE_PROFIT
-  optimizedValue     Float
-  previousValue      Float
-  expectedImprovement Float   @default(0)
-  sampleSize          Int     @default(0)
+  id                  String   @id @default(uuid()) @db.Uuid
+  userId              String?  @db.Uuid
+  thresholdName       String // CONFIDENCE, OPPORTUNITY, ATR, VOLUME, LIQUIDITY, RISK_REWARD, COOLDOWN, STOP_LOSS, TAKE_PROFIT
+  optimizedValue      Float
+  previousValue       Float
+  expectedImprovement Float    @default(0)
+  sampleSize          Int      @default(0)
   evidenceJson        Json?
-  optimizedAt        DateTime @default(now())
+  optimizedAt         DateTime @default(now())
 
   @@index([userId, thresholdName])
   @@map("threshold_optimization_records")
 }
 
 model SelfLearningInsight {
-  id               String   @id @default(uuid()) @db.Uuid
-  userId           String?  @db.Uuid
-  insightType      String   // WINNING_PATTERN, LOSING_PATTERN, FALSE_POSITIVE, FALSE_NEGATIVE, MISSED_OPPORTUNITY
-  tradeSymbol      String?
-  summary          String
-  evidenceJson     Json
-  recommendation   String
-  createdAt        DateTime @default(now())
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String?  @db.Uuid
+  insightType    String // WINNING_PATTERN, LOSING_PATTERN, FALSE_POSITIVE, FALSE_NEGATIVE, MISSED_OPPORTUNITY
+  tradeSymbol    String?
+  summary        String
+  evidenceJson   Json
+  recommendation String
+  createdAt      DateTime @default(now())
 
   @@index([userId, insightType])
   @@map("self_learning_insights")
 }
 
 model MarketRegimeState {
-  id               String   @id @default(uuid()) @db.Uuid
-  symbol           String
-  provider         String?
-  interval         String?
-  regime           String   // BULL, BEAR, SIDEWAYS, HIGH_VOLATILITY, LOW_VOLATILITY, PANIC, EUPHORIA
-  confidence       Float    @default(0)
+  id                String   @id @default(uuid()) @db.Uuid
+  symbol            String
+  provider          String?
+  interval          String?
+  regime            String // BULL, BEAR, SIDEWAYS, HIGH_VOLATILITY, LOW_VOLATILITY, PANIC, EUPHORIA
+  confidence        Float    @default(0)
   recommendedConfig Json
-  detectedAt       DateTime @default(now())
+  detectedAt        DateTime @default(now())
 
   @@index([symbol, regime])
   @@index([symbol, detectedAt])
@@ -2092,8 +2091,8 @@ model MarketRegimeState {
 }
 
 model QuantRecommendation {
-  id                 String                 @id @default(uuid()) @db.Uuid
-  userId             String?                @db.Uuid
+  id                 String                  @id @default(uuid()) @db.Uuid
+  userId             String?                 @db.Uuid
   title              String
   moduleSource       String
   problemStatement   String
@@ -2101,15 +2100,15 @@ model QuantRecommendation {
   historicalResult   Json
   expectedBenefit    String
   estimatedRisk      String
-  priority           RecommendationPriority @default(MEDIUM)
-  implementationCost String                 @default("LOW")
+  priority           RecommendationPriority  @default(MEDIUM)
+  implementationCost String                  @default("LOW")
   rollbackPlan       String
-  status             RecommendationStatus   @default(PENDING_APPROVAL)
-  reviewedByUserId   String?                @db.Uuid
+  status             RecommendationStatus    @default(PENDING_APPROVAL)
+  reviewedByUserId   String?                 @db.Uuid
   reviewedAt         DateTime?
   rejectionReason    String?
-  createdAt          DateTime               @default(now())
-  updatedAt          DateTime               @updatedAt
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
   experiment         SelfLearningExperiment?
 
   @@index([userId, status])
@@ -2120,7 +2119,7 @@ model SimulationExperiment {
   id               String   @id @default(uuid()) @db.Uuid
   userId           String?  @db.Uuid
   name             String
-  experimentType   String   // PROMPT, THRESHOLD, INDICATOR, AGENT, WEIGHT, STRATEGY
+  experimentType   String // PROMPT, THRESHOLD, INDICATOR, AGENT, WEIGHT, STRATEGY
   configJson       Json
   simulationResult Json
   provenance       Json?
@@ -2132,14 +2131,14 @@ model SimulationExperiment {
 }
 
 model QuantReportRecord {
-  id               String     @id @default(uuid()) @db.Uuid
-  userId           String?    @db.Uuid
-  reportType       ReportType
-  title            String
-  summary          String
-  metricsJson      Json
-  recommendations  Json
-  generatedAt      DateTime   @default(now())
+  id              String     @id @default(uuid()) @db.Uuid
+  userId          String?    @db.Uuid
+  reportType      ReportType
+  title           String
+  summary         String
+  metricsJson     Json
+  recommendations Json
+  generatedAt     DateTime   @default(now())
 
   @@index([userId, reportType])
   @@map("quant_report_records")
@@ -2149,34 +2148,34 @@ model KnowledgeArchive {
   id               String   @id @default(uuid()) @db.Uuid
   userId           String?  @db.Uuid
   title            String
-  category         String   // EXPERIMENT, BENCHMARK, WALK_FORWARD, MONTE_CARLO, REJECTED_IDEA, ACCEPTED_IDEA, DECISION_HISTORY
+  category         String // EXPERIMENT, BENCHMARK, WALK_FORWARD, MONTE_CARLO, REJECTED_IDEA, ACCEPTED_IDEA, DECISION_HISTORY
   summary          String
   contentJson      Json
   reproducibleHash String
   createdAt        DateTime @default(now())
   user             User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, reproducibleHash])
   @@index([category])
   @@index([userId, createdAt])
-  @@unique([userId, reproducibleHash])
   @@map("knowledge_archives")
 }
 
 model TradeLedgerBackfillCheckpoint {
-  id               String             @id @default(uuid()) @db.Uuid
-  userId           String             @db.Uuid
-  connectionId     String             @db.Uuid
-  symbolKey        String
-  cursorBefore     DateTime?
-  status           String             @default("RUNNING")
-  processedPages   Int                @default(0)
-  processedFills   Int                @default(0)
-  lastError        String?
-  completedAt      DateTime?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
-  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  connection       ExchangeConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  id             String             @id @default(uuid()) @db.Uuid
+  userId         String             @db.Uuid
+  connectionId   String             @db.Uuid
+  symbolKey      String
+  cursorBefore   DateTime?
+  status         String             @default("RUNNING")
+  processedPages Int                @default(0)
+  processedFills Int                @default(0)
+  lastError      String?
+  completedAt    DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connection     ExchangeConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
 
   @@unique([connectionId, symbolKey])
   @@index([userId, status])
@@ -2184,36 +2183,37 @@ model TradeLedgerBackfillCheckpoint {
 }
 
 model ExchangeFill {
-  id                String             @id @default(uuid()) @db.Uuid
-  userId            String             @db.Uuid
-  connectionId      String             @db.Uuid
-  strategyId        String?            @db.Uuid
-  liveOrderId       String?            @db.Uuid
-  provider          ExchangeProvider
-  environment       ExchangeEnvironment
-  symbol            String
-  exchangeTradeId   String
-  exchangeOrderId   String
-  clientOrderId     String?
-  side              String
-  positionSide      String?
-  price             Decimal            @db.Decimal(24, 8)
-  quantity          Decimal            @db.Decimal(30, 12)
-  quoteQuantity     Decimal?           @db.Decimal(24, 8)
-  realizedPnl       Decimal            @default(0) @db.Decimal(24, 8)
-  fee               Decimal            @default(0) @db.Decimal(24, 8)
-  feeAsset          String?
-  isMaker           Boolean?
-  isClosing         Boolean
-  executedAt        DateTime
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  connection        ExchangeConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
-  strategy          PortfolioStrategy? @relation(fields: [strategyId], references: [id], onDelete: SetNull)
-  liveOrder         LiveOrder?          @relation(fields: [liveOrderId], references: [id], onDelete: SetNull)
+  id              String              @id @default(uuid()) @db.Uuid
+  userId          String              @db.Uuid
+  connectionId    String              @db.Uuid
+  strategyId      String?             @db.Uuid
+  liveOrderId     String?             @db.Uuid
+  provider        ExchangeProvider
+  environment     ExchangeEnvironment
+  symbol          String
+  exchangeTradeId String
+  exchangeOrderId String
+  clientOrderId   String?
+  side            String
+  positionSide    String?
+  price           Decimal             @db.Decimal(24, 8)
+  quantity        Decimal             @db.Decimal(30, 12)
+  quoteQuantity   Decimal?            @db.Decimal(24, 8)
+  realizedPnl     Decimal             @default(0) @db.Decimal(24, 8)
+  fee             Decimal             @default(0) @db.Decimal(24, 8)
+  feeAsset        String?
+  isMaker         Boolean?
+  isClosing       Boolean
+  executedAt      DateTime
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connection      ExchangeConnection  @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  strategy        PortfolioStrategy?  @relation(fields: [strategyId], references: [id], onDelete: SetNull)
+  liveOrder       LiveOrder?          @relation(fields: [liveOrderId], references: [id], onDelete: SetNull)
 
   @@unique([connectionId, symbol, exchangeTradeId])
+  @@index([liveOrderId])
   @@index([userId, executedAt])
   @@index([strategyId, executedAt])
   @@index([connectionId, exchangeOrderId])
@@ -2221,32 +2221,32 @@ model ExchangeFill {
 }
 
 model ClosedTrade {
-  id                 String             @id @default(uuid()) @db.Uuid
-  userId             String             @db.Uuid
-  connectionId       String             @db.Uuid
-  strategyId         String?            @db.Uuid
+  id                 String              @id @default(uuid()) @db.Uuid
+  userId             String              @db.Uuid
+  connectionId       String              @db.Uuid
+  strategyId         String?             @db.Uuid
   provider           ExchangeProvider
   environment        ExchangeEnvironment
   symbol             String
   exchangeOrderId    String
   side               String
   positionSide       String?
-  quantity           Decimal            @db.Decimal(30, 12)
-  entryPrice         Decimal?           @db.Decimal(24, 8)
-  exitPrice          Decimal            @db.Decimal(24, 8)
-  grossPnl           Decimal            @db.Decimal(24, 8)
-  fee                Decimal            @db.Decimal(24, 8)
-  netPnl             Decimal            @db.Decimal(24, 8)
+  quantity           Decimal             @db.Decimal(30, 12)
+  entryPrice         Decimal?            @db.Decimal(24, 8)
+  exitPrice          Decimal             @db.Decimal(24, 8)
+  grossPnl           Decimal             @db.Decimal(24, 8)
+  fee                Decimal             @db.Decimal(24, 8)
+  netPnl             Decimal             @db.Decimal(24, 8)
   returnPct          Float?
   closeReason        String
-  sourceDataComplete Boolean            @default(false)
+  sourceDataComplete Boolean             @default(false)
   openedAt           DateTime?
   closedAt           DateTime
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
-  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  connection         ExchangeConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
-  strategy           PortfolioStrategy? @relation(fields: [strategyId], references: [id], onDelete: SetNull)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connection         ExchangeConnection  @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  strategy           PortfolioStrategy?  @relation(fields: [strategyId], references: [id], onDelete: SetNull)
 
   @@unique([connectionId, exchangeOrderId])
   @@index([userId, closedAt])
@@ -2256,49 +2256,49 @@ model ClosedTrade {
 }
 
 model SelfLearningConfiguration {
-  id                    String    @id @default(uuid()) @db.Uuid
-  userId                String    @unique @db.Uuid
-  isEnabled             Boolean   @default(true)
-  confidenceThreshold   Float     @default(60.0)
-  volatilityPenalty     Float     @default(20.0)
-  weightsJson           Json?     // Dynamically optimized agent weights: Record<AnalystName, number>
-  shadowWeightsJson     Json?     // Candidate weights under shadow testing
-  shadowThreshold       Float?    // Candidate threshold under shadow testing
-  shadowEnabled         Boolean   @default(false)
-  shadowPerformance     Json?     // Telemetry for shadow testing (e.g. accuracy, profitFactor, tradesCount)
-  liveVersion           Int       @default(1)
-  shadowVersion         Int?
-  shadowStartedAt       DateTime?
-  canaryEnabled         Boolean   @default(false)
-  canaryVersion         Int?
-  canaryWeightsJson     Json?
-  canaryThreshold       Float?
-  canaryStartedAt       DateTime?
-  candidateShadowTrades Int       @default(0)
-  eligibleVersion       Int?
-  eligibleWeightsJson   Json?
-  eligibleThreshold     Float?
-  eligibleMetricsJson   Json?
+  id                        String    @id @default(uuid()) @db.Uuid
+  userId                    String    @unique @db.Uuid
+  isEnabled                 Boolean   @default(true)
+  confidenceThreshold       Float     @default(60.0)
+  volatilityPenalty         Float     @default(20.0)
+  weightsJson               Json? // Dynamically optimized agent weights: Record<AnalystName, number>
+  shadowWeightsJson         Json? // Candidate weights under shadow testing
+  shadowThreshold           Float? // Candidate threshold under shadow testing
+  shadowEnabled             Boolean   @default(false)
+  shadowPerformance         Json? // Telemetry for shadow testing (e.g. accuracy, profitFactor, tradesCount)
+  liveVersion               Int       @default(1)
+  shadowVersion             Int?
+  shadowStartedAt           DateTime?
+  canaryEnabled             Boolean   @default(false)
+  canaryVersion             Int?
+  canaryWeightsJson         Json?
+  canaryThreshold           Float?
+  canaryStartedAt           DateTime?
+  candidateShadowTrades     Int       @default(0)
+  eligibleVersion           Int?
+  eligibleWeightsJson       Json?
+  eligibleThreshold         Float?
+  eligibleMetricsJson       Json?
   eligibleConfigurationHash String?
-  eligibleAt            DateTime?
-  approvedVersion       Int?
+  eligibleAt                DateTime?
+  approvedVersion           Int?
   approvedConfigurationHash String?
-  approvedAt            DateTime?
-  previousWeightsJson   Json?
-  previousThreshold     Float?
-  previousVersion       Int?
-  lastPromotionAt       DateTime?
-  lastOptimizedAt       DateTime?
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
-  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  approvedAt                DateTime?
+  previousWeightsJson       Json?
+  previousThreshold         Float?
+  previousVersion           Int?
+  lastPromotionAt           DateTime?
+  lastOptimizedAt           DateTime?
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+  user                      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("self_learning_configurations")
 }
 
 model SelfLearningExperiment {
-  id                    String   @id @default(uuid()) @db.Uuid
-  userId                String   @db.Uuid
+  id                    String                        @id @default(uuid()) @db.Uuid
+  userId                String                        @db.Uuid
   version               Int
   baseVersion           Int
   candidateWeightsJson  Json
@@ -2310,11 +2310,11 @@ model SelfLearningExperiment {
   trainMetricsJson      Json
   validationMetricsJson Json
   reproducibleHash      String
-  recommendationId      String?  @unique @db.Uuid
-  createdAt             DateTime @default(now())
-  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recommendationId      String?                       @unique @db.Uuid
+  createdAt             DateTime                      @default(now())
+  user                  User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
   events                SelfLearningExperimentEvent[]
-  recommendation        QuantRecommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+  recommendation        QuantRecommendation?          @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
 
   @@unique([userId, version])
   @@index([userId, createdAt])
@@ -2323,11 +2323,11 @@ model SelfLearningExperiment {
 }
 
 model SelfLearningExperimentEvent {
-  id           String   @id @default(uuid()) @db.Uuid
-  experimentId String   @db.Uuid
+  id           String                 @id @default(uuid()) @db.Uuid
+  experimentId String                 @db.Uuid
   eventType    String
   payloadJson  Json
-  createdAt    DateTime @default(now())
+  createdAt    DateTime               @default(now())
   experiment   SelfLearningExperiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
 
   @@index([experimentId, createdAt])
