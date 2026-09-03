@@ -8,8 +8,20 @@ on:
 jobs:
   deploy:
     name: Deploy to Production
+    if: ${{ secrets.GCP_VM_IP != '' && secrets.GCP_VM_USERNAME != '' && secrets.GCP_SSH_PRIVATE_KEY != '' }}
     runs-on: ubuntu-latest
     steps:
+      - name: Validate deployment secrets
+        env:
+          GCP_VM_IP: ${{ secrets.GCP_VM_IP }}
+          GCP_VM_USERNAME: ${{ secrets.GCP_VM_USERNAME }}
+          GCP_SSH_PRIVATE_KEY: ${{ secrets.GCP_SSH_PRIVATE_KEY }}
+        run: |
+          test -n "$GCP_VM_IP" || { echo "::error::GCP_VM_IP is not configured."; exit 1; }
+          test -n "$GCP_VM_USERNAME" || { echo "::error::GCP_VM_USERNAME is not configured."; exit 1; }
+          test -n "$GCP_SSH_PRIVATE_KEY" || { echo "::error::GCP_SSH_PRIVATE_KEY is not configured."; exit 1; }
+          echo "Deployment secrets verified."
+
       - name: Checkout code
         uses: actions/checkout@v4
 
