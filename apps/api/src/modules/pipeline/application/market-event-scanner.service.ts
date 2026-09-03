@@ -69,10 +69,14 @@ export class MarketEventScannerService {
     // scheduler only deduplicates snapshots it can identify confidently.
     if (!indicator) return { run: true };
     const strategyFingerprint = [...input.strategyIds].sort().join(",");
+    const closeIso =
+      indicator.candleCloseTime instanceof Date
+        ? indicator.candleCloseTime.toISOString()
+        : new Date(indicator.candleCloseTime).toISOString();
     const fingerprint = [
       input.provider,
       input.symbol,
-      indicator.candleCloseTime.toISOString(),
+      closeIso,
       strategyFingerprint,
     ].join("|");
     const key = `pipeline:anchor:last:${input.userId}:${input.provider}:${input.symbol}`;

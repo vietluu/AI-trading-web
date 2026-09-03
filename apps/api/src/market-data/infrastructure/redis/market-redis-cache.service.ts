@@ -85,19 +85,36 @@ export class MarketRedisCacheService {
   async getCandle(provider: ExchangeProvider, symbol: string, interval: string): Promise<NormalizedCandle | null> {
     const key = `market:candle:${provider}:${symbol}:${interval}`;
     const data = await this.redisService.get(key);
-    return data ? this.parseCachedPayload<NormalizedCandle>(data) : null;
+    if (!data) return null;
+    const parsed = this.parseCachedPayload<NormalizedCandle>(data);
+    if (parsed) {
+      if (parsed.openTime) parsed.openTime = new Date(parsed.openTime);
+      if (parsed.closeTime) parsed.closeTime = new Date(parsed.closeTime);
+    }
+    return parsed;
   }
 
   async getFundingRate(provider: ExchangeProvider, symbol: string): Promise<NormalizedFundingRate | null> {
     const key = `market:funding:${provider}:${symbol}`;
     const data = await this.redisService.get(key);
-    return data ? this.parseCachedPayload<NormalizedFundingRate>(data) : null;
+    if (!data) return null;
+    const parsed = this.parseCachedPayload<NormalizedFundingRate>(data);
+    if (parsed) {
+      if (parsed.fundingTime) parsed.fundingTime = new Date(parsed.fundingTime);
+      if (parsed.nextFundingTime) parsed.nextFundingTime = new Date(parsed.nextFundingTime);
+    }
+    return parsed;
   }
 
   async getOpenInterest(provider: ExchangeProvider, symbol: string): Promise<NormalizedOpenInterest | null> {
     const key = `market:open-interest:${provider}:${symbol}`;
     const data = await this.redisService.get(key);
-    return data ? this.parseCachedPayload<NormalizedOpenInterest>(data) : null;
+    if (!data) return null;
+    const parsed = this.parseCachedPayload<NormalizedOpenInterest>(data);
+    if (parsed && parsed.timestamp) {
+      parsed.timestamp = new Date(parsed.timestamp);
+    }
+    return parsed;
   }
 
   async getOrderBook(provider: ExchangeProvider, symbol: string, depth: number): Promise<NormalizedOrderBook | null> {
@@ -109,12 +126,27 @@ export class MarketRedisCacheService {
   async getStreamStatus(provider: ExchangeProvider): Promise<MarketStreamStatus | null> {
     const key = `market:stream-status:${provider}`;
     const data = await this.redisService.get(key);
-    return data ? this.parseCachedPayload<MarketStreamStatus>(data) : null;
+    if (!data) return null;
+    const parsed = this.parseCachedPayload<MarketStreamStatus>(data);
+    if (parsed) {
+      if (parsed.connectedAt) parsed.connectedAt = new Date(parsed.connectedAt);
+      if (parsed.lastMessageAt) parsed.lastMessageAt = new Date(parsed.lastMessageAt);
+      if (parsed.lastReconnectAt) parsed.lastReconnectAt = new Date(parsed.lastReconnectAt);
+      if (parsed.lastErrorAt) parsed.lastErrorAt = new Date(parsed.lastErrorAt);
+    }
+    return parsed;
   }
 
   async getIndicator(provider: ExchangeProvider, symbol: string, interval: string): Promise<IndicatorSnapshot | null> {
     const key = `market:indicator:${provider}:${symbol}:${interval}`;
     const data = await this.redisService.get(key);
-    return data ? this.parseCachedPayload<IndicatorSnapshot>(data) : null;
+    if (!data) return null;
+    const parsed = this.parseCachedPayload<IndicatorSnapshot>(data);
+    if (parsed) {
+      if (parsed.candleOpenTime) parsed.candleOpenTime = new Date(parsed.candleOpenTime);
+      if (parsed.candleCloseTime) parsed.candleCloseTime = new Date(parsed.candleCloseTime);
+      if (parsed.calculatedAt) parsed.calculatedAt = new Date(parsed.calculatedAt);
+    }
+    return parsed;
   }
 }

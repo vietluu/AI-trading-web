@@ -93,4 +93,72 @@ describe("MarketDataService indicator cache recovery", () => {
     expect(exchanges.klines).toHaveBeenCalledTimes(1);
     expect(repository.upsertCandleBatch).toHaveBeenCalledWith([fresh]);
   });
+
+  it("handles string timestamps in cached indicator snapshots without throwing", async () => {
+    const now = Date.now();
+    const serializedSnapshot = {
+      provider: ExchangeProvider.OKX_FUTURES,
+      symbol: "SOL-USDT",
+      interval: ExchangeInterval.FIFTEEN_MINUTES,
+      candleOpenTime: new Date(now - 15 * 60_000).toISOString(),
+      candleCloseTime: new Date(now - 1_000).toISOString(),
+      status: IndicatorStatus.CLOSED,
+      values: { rsi14: "55.0" },
+      calculatedAt: new Date(now).toISOString(),
+      calculationVersion: 1,
+    };
+    const cache = {
+      getIndicator: vi.fn().mockResolvedValue(serializedSnapshot),
+      setIndicator: vi.fn(),
+    };
+    const service = new MarketDataService(
+      {} as never,
+      {} as never,
+      cache as never,
+      {} as never,
+      {} as never,
+    );
+
+    const snapshot = await service.getIndicatorSnapshot(
+      ExchangeProvider.OKX_FUTURES,
+      "SOL-USDT",
+      ExchangeInterval.FIFTEEN_MINUTES,
+    );
+    expect(snapshot).not.toBeNull();
+  });
+
+  it("MarketRedisCacheService revives date fields from Redis JSON", async () => {
+    const rawJson = JSON.stringify({
+      provider: "OKX_FUTURES",
+      symbol: "SOL-USDT",
+      interval: "15m",
+      candleOpenTime: "2026-09-02T20:00:00.000Z",
+      candleCloseTime: "2026-09-02T20:14:59.999Z",
+      status: "CLOSED",
+      values: { rsi14: "55.0" },
+      calculatedAt: "2026-09-02T20:15:00.000Z",
+      calculationVersion: 1,
+    });
+    const redisService = {
+      get: vi.fn().mockResolvedValue(rawJson),
+      setWithTtl: vi.fn(),
+    };
+    const { MarketRedisCacheService } = await import(
+      "../src/market-data/infrastructure/redis/market-redis-cache.service"
+    );
+    const cacheService = new MarketRedisCacheService(redisService as never);
+    const indicator = await cacheService.getIndicator(
+      ExchangeProvider.OKX_FUTURES,
+      "SOL-USDT",
+      "15m",
+    );
+
+    expect(indicator).not.toBeNull();
+    expect(indicator!.candleCloseTime).toBeInstanceOf(Date);
+    expect(indicator!.candleCloseTime.getTime()).toBe(new Date("2026-09-02T20:14:59.999Z").getTime());
+    expect(indicator!.candleOpenTime).toBeInstanceOf(Date);
+    expect(indicator!.calculatedAt).toBeInstanceOf(Date);
+  });
 });
+
+

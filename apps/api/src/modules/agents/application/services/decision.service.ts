@@ -153,7 +153,7 @@ export class DecisionService {
     let finalDecisionAction = decision.decision;
     const finalExpectedValue = Number(expectedValue.toFixed(3));
 
-    if (finalExpectedValue < 0.15 && finalDecisionAction !== "WAIT") {
+    if (empiricalProbability !== undefined && finalExpectedValue < 0.15 && finalDecisionAction !== "WAIT") {
       finalDecisionAction = "WAIT";
     }
 
@@ -283,7 +283,7 @@ export class DecisionService {
     let finalDecisionAction = decision.decision;
     const finalExpectedValue = Number(expectedValueRaw.toFixed(3));
 
-    if (finalExpectedValue < 0.15 && finalDecisionAction !== "WAIT") {
+    if (hasEmpiricalEdge && finalExpectedValue < 0.15 && finalDecisionAction !== "WAIT") {
       finalDecisionAction = "WAIT";
     }
 

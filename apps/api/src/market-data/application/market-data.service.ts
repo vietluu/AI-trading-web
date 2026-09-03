@@ -64,7 +64,7 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
       candles = await this.exchanges.klines(query.provider, {
         symbol: query.symbol,
         interval: query.interval,
-        limit: query.limit,
+        limit: Math.max(query.limit, 2),
         ...(query.startTime ? { startTime: query.startTime } : {}),
         ...(query.endTime ? { endTime: query.endTime } : {}),
       });
@@ -95,7 +95,7 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
         );
       }
     }
-    return candles;
+    return query.limit > 0 ? candles.slice(-query.limit) : candles;
   }
 
   async getIndicatorSnapshot(
@@ -159,10 +159,14 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
   }
 
   private isFreshTimestamp(
-    timestamp: Date,
+    timestamp: Date | string | number | undefined | null,
     interval: ExchangeInterval,
   ): boolean {
-    const ageMs = Date.now() - timestamp.getTime();
+    if (!timestamp) return false;
+    const timeMs =
+      timestamp instanceof Date ? timestamp.getTime() : new Date(timestamp).getTime();
+    if (!Number.isFinite(timeMs)) return false;
+    const ageMs = Date.now() - timeMs;
     return ageMs >= -60_000 && ageMs <= this.intervalMilliseconds(interval) * 2;
   }
 

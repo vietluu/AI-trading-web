@@ -229,7 +229,6 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
         latencyMs: Date.now() - started,
       };
     } catch (caught) {
-      throw caught;
       const error = this.exchangeError(caught);
       return {
         success: false,

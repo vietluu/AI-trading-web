@@ -393,16 +393,16 @@ describe('DecisionService', () => {
     const now = Date.now();
     helper.calibrationCache.set('key-first-active', {
       expiresAt: now + 60_000,
-      value: {} as never,
+      value: {},
     });
     helper.calibrationCache.set('key-second-expired', {
       expiresAt: now - 10_000,
-      value: {} as never,
+      value: {},
     });
     for (let i = 3; i <= 500; i++) {
       helper.calibrationCache.set(`key-${i}`, {
         expiresAt: now + 60_000,
-        value: {} as never,
+        value: {},
       });
     }
 
@@ -438,12 +438,12 @@ describe('DecisionService', () => {
     const now = Date.now();
     helper.calibrationCache.set('key-oldest', {
       expiresAt: now + 60_000,
-      value: {} as never,
+      value: {},
     });
     for (let i = 2; i <= 500; i++) {
       helper.calibrationCache.set(`key-${i}`, {
         expiresAt: now + 60_000,
-        value: {} as never,
+        value: {},
       });
     }
 

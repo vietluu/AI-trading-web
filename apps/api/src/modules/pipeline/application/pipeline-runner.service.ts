@@ -217,8 +217,20 @@ export class PipelineRunnerService {
       const staleTimeframes = timeframeMarketData
         .filter((item) => {
           const candle = item.candles[0];
-          const candleTime = candle?.closeTime?.getTime();
-          const indicatorTime = item.snapshot?.candleCloseTime?.getTime();
+          const candleClose = candle?.closeTime;
+          const indicatorClose = item.snapshot?.candleCloseTime;
+          const candleTime =
+            candleClose instanceof Date
+              ? candleClose.getTime()
+              : candleClose
+                ? new Date(candleClose).getTime()
+                : NaN;
+          const indicatorTime =
+            indicatorClose instanceof Date
+              ? indicatorClose.getTime()
+              : indicatorClose
+                ? new Date(indicatorClose).getTime()
+                : NaN;
           const maxAgeMs = timeframeMilliseconds(item.timeframe) * 2;
           return (
             !Number.isFinite(candleTime) ||
