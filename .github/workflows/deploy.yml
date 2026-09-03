@@ -13,6 +13,29 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Validate deployment secrets
+        shell: bash
+        env:
+          GCP_VM_IP: ${{ secrets.GCP_VM_IP }}
+          GCP_VM_USERNAME: ${{ secrets.GCP_VM_USERNAME }}
+          GCP_SSH_PRIVATE_KEY: ${{ secrets.GCP_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+
+          for name in GCP_VM_IP GCP_VM_USERNAME GCP_SSH_PRIVATE_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required secret: ${name}"
+              exit 1
+            fi
+          done
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$GCP_SSH_PRIVATE_KEY" > ~/.ssh/gcp_vm_key
+          chmod 600 ~/.ssh/gcp_vm_key
+          ssh-keygen -y -f ~/.ssh/gcp_vm_key >/dev/null
+          ssh-keyscan -H "$GCP_VM_IP" >> ~/.ssh/known_hosts 2>/dev/null || true
+
       - name: Execute Remote Deployment via SSH
         uses: appleboy/ssh-action@v1.0.3
         env:
@@ -25,7 +48,7 @@ jobs:
           envs: GH_TOKEN
           script_stop: true
           script: |
-            set -e
+            set -euo pipefail
 
             DEPLOY_DIR="/home/vietluu24012001/AI-trading-agents"
             if [ ! -d "$DEPLOY_DIR" ]; then
@@ -34,15 +57,16 @@ jobs:
             echo "Deploying in: $DEPLOY_DIR"
             cd "$DEPLOY_DIR"
 
-            # 1. Pull code mới nhất bằng GitHub Token (hỗ trợ private repo)
             git fetch https://x-access-token:${GH_TOKEN}@github.com/vietluu/AI-trading-agents.git main
-            git merge FETCH_HEAD --no-edit
+            git reset --hard FETCH_HEAD
 
-            # 2. Tái build và cập nhật api & web (giữ nguyên database và redis)
             if docker compose version >/dev/null 2>&1; then
               docker compose up -d --build api web
             elif command -v docker-compose >/dev/null 2>&1; then
               docker-compose up -d --build api web
+            else
+              echo "::error::Neither docker compose nor docker-compose is available on the VM."
+              exit 1
             fi
 
             echo "Deployment completed successfully!"
