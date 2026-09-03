@@ -15,55 +15,34 @@ jobs:
 
       - name: Execute Remote Deployment via SSH
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           host: ${{ secrets.GCP_VM_IP }}
           username: ${{ secrets.GCP_VM_USERNAME }}
           key: ${{ secrets.GCP_SSH_PRIVATE_KEY }}
           port: 22
+          envs: GH_TOKEN
           script_stop: true
           script: |
             set -e
 
-            # 1. Tìm thư mục chứa mã nguồn dự án trên VM
-            DEPLOY_DIR=""
-            for dir in "$HOME/AI-trading-agents" "/var/www/AI-trading-agents" "$HOME/ai-trading-agents" "/home/*"/*; do
-              if [ -d "$dir/.git" ]; then
-                DEPLOY_DIR="$dir"
-                break
-              fi
-            done
-
-            if [ -z "$DEPLOY_DIR" ]; then
+            DEPLOY_DIR="/home/vietluu24012001/AI-trading-agents"
+            if [ ! -d "$DEPLOY_DIR" ]; then
               DEPLOY_DIR="$HOME/AI-trading-agents"
-              if [ ! -d "$DEPLOY_DIR" ]; then
-                echo "Cloning repository to $DEPLOY_DIR..."
-                git clone https://github.com/vietluu/AI-trading-agents.git "$DEPLOY_DIR"
-              fi
             fi
-
             echo "Deploying in: $DEPLOY_DIR"
             cd "$DEPLOY_DIR"
 
-            # 2. Cập nhật mã nguồn mới nhất từ main
-            git fetch origin main
-            git reset --hard origin/main
+            # 1. Pull code mới nhất bằng GitHub Token (hỗ trợ private repo)
+            git fetch https://x-access-token:${GH_TOKEN}@github.com/vietluu/AI-trading-agents.git main
+            git merge FETCH_HEAD --no-edit
 
-            # 3. Chạy build và tái khởi động container
+            # 2. Tái build và cập nhật api & web (giữ nguyên database và redis)
             if docker compose version >/dev/null 2>&1; then
-              echo "Using 'docker compose'..."
-              docker compose down
-              docker compose up -d --build
+              docker compose up -d --build api web
             elif command -v docker-compose >/dev/null 2>&1; then
-              echo "Using 'docker-compose'..."
-              docker-compose down
-              docker-compose up -d --build
-            else
-              echo "Docker compose not found, trying pnpm build..."
-              if command -v pnpm >/dev/null 2>&1; then
-                pnpm install --frozen-lockfile
-                pnpm build
-                pm2 restart all || true
-              fi
+              docker-compose up -d --build api web
             fi
 
             echo "Deployment completed successfully!"
