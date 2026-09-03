@@ -1,0 +1,69 @@
+name: Deploy to GCP VM
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Execute Remote Deployment via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.GCP_VM_IP }}
+          username: ${{ secrets.GCP_VM_USERNAME }}
+          key: ${{ secrets.GCP_SSH_PRIVATE_KEY }}
+          port: 22
+          script_stop: true
+          script: |
+            set -e
+
+            # 1. Tìm thư mục chứa mã nguồn dự án trên VM
+            DEPLOY_DIR=""
+            for dir in "$HOME/AI-trading-agents" "/var/www/AI-trading-agents" "$HOME/ai-trading-agents" "/home/*"/*; do
+              if [ -d "$dir/.git" ]; then
+                DEPLOY_DIR="$dir"
+                break
+              fi
+            done
+
+            if [ -z "$DEPLOY_DIR" ]; then
+              DEPLOY_DIR="$HOME/AI-trading-agents"
+              if [ ! -d "$DEPLOY_DIR" ]; then
+                echo "Cloning repository to $DEPLOY_DIR..."
+                git clone https://github.com/vietluu/AI-trading-agents.git "$DEPLOY_DIR"
+              fi
+            fi
+
+            echo "Deploying in: $DEPLOY_DIR"
+            cd "$DEPLOY_DIR"
+
+            # 2. Cập nhật mã nguồn mới nhất từ main
+            git fetch origin main
+            git reset --hard origin/main
+
+            # 3. Chạy build và tái khởi động container
+            if docker compose version >/dev/null 2>&1; then
+              echo "Using 'docker compose'..."
+              docker compose down
+              docker compose up -d --build
+            elif command -v docker-compose >/dev/null 2>&1; then
+              echo "Using 'docker-compose'..."
+              docker-compose down
+              docker-compose up -d --build
+            else
+              echo "Docker compose not found, trying pnpm build..."
+              if command -v pnpm >/dev/null 2>&1; then
+                pnpm install --frozen-lockfile
+                pnpm build
+                pm2 restart all || true
+              fi
+            fi
+
+            echo "Deployment completed successfully!"
