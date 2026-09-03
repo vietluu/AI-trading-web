@@ -12,7 +12,7 @@ import { AgentType, AgentInvocationSource } from '../../domain/enums';
 import { FusionRunInputSchema } from '@platform/shared';
 import { FusionService } from '../../application/services/fusion.service';
 
-@Controller('agents')
+@Controller(['agents', 'ai/agents'])
 @UseGuards(SessionGuard)
 export class AgentsController {
   constructor(
@@ -103,7 +103,7 @@ export class AgentsController {
     });
   }
 
-  @Post('system-diagnostic/run')
+  @Post(['system-diagnostic', 'system-diagnostic/run'])
   public async runSystemDiagnostic(
     @Body() body: { symbol?: string; provider?: string },
   ) {

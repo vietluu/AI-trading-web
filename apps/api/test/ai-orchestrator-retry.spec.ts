@@ -349,7 +349,7 @@ describe("AIOrchestratorService - Retry & Stream Fallback", () => {
         userPrompt: "Stream test with mid-stream failure",
       });
 
-      const chunks: any[] = [];
+      const chunks: Array<{ deltaToken?: string }> = [];
       await expect(async () => {
         for await (const chunk of iterator) {
           chunks.push(chunk);

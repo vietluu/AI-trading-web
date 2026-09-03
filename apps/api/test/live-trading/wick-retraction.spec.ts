@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { DecisionOutput } from "@platform/shared";
 import { evaluatePositionManagement } from "../../src/modules/live-trading/domain/position-manager";
 import { buildAdaptiveTradePlan } from "../../src/modules/risk/domain/trade-plan-engine";
 
@@ -12,7 +13,7 @@ describe("Wick Retraction and Limitless Trailing", () => {
         confidence: 80,
         reasoning: "Test",
         regime: { type: "TREND_UP", strength: 80 }
-      } as any,
+      } as unknown as DecisionOutput,
       market: { atr: 1, timeframeMs: 60000, ema20: 99 },
       configuredStopLossPct: 1,
       configuredRiskRewardRatio: 2,
@@ -45,7 +46,7 @@ describe("Wick Retraction and Limitless Trailing", () => {
         confidence: 80,
         reasoning: "Test",
         regime: { type: "TREND_UP", strength: 80 }
-      } as any,
+      } as unknown as DecisionOutput,
       market: { atr: 1, timeframeMs: 60000, ema20: 99 },
       configuredStopLossPct: 1,
       configuredRiskRewardRatio: 2,
@@ -77,7 +78,7 @@ describe("Wick Retraction and Limitless Trailing", () => {
         confidence: 80,
         reasoning: "Test",
         regime: { type: "TREND_UP", strength: 80 }
-      } as any,
+      } as unknown as DecisionOutput,
       market: { atr: 1, timeframeMs: 60000, ema20: 99 },
       configuredStopLossPct: 1,
       configuredRiskRewardRatio: 2,
