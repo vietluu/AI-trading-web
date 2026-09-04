@@ -61,6 +61,7 @@ services:
       - "127.0.0.1:8080:8080"
 
   api:
+    image: ${API_IMAGE:-ghcr.io/vietluu/ai-trading-agents-api:latest}
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -222,6 +223,7 @@ services:
       retries: 10
 
   web:
+    image: ${WEB_IMAGE:-ghcr.io/vietluu/ai-trading-agents-web:latest}
     build:
       context: .
       dockerfile: apps/web/Dockerfile
