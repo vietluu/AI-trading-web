@@ -43,6 +43,7 @@ jobs:
           {
             echo "vm_ip=${VM_IP}"
             echo "vm_username=${VM_USERNAME}"
+            echo "ssh_key_path=${HOME}/.ssh/gcp_vm_key"
           } >> "$GITHUB_OUTPUT"
 
       - name: Execute Remote Deployment via SSH
@@ -52,7 +53,7 @@ jobs:
         with:
           host: ${{ steps.validate_secrets.outputs.vm_ip }}
           username: ${{ steps.validate_secrets.outputs.vm_username }}
-          key_path: ~/.ssh/gcp_vm_key
+          key_path: ${{ steps.validate_secrets.outputs.ssh_key_path }}
           port: 22
           envs: GH_TOKEN
           script: |
