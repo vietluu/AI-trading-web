@@ -37,7 +37,7 @@ jobs:
           ssh-keyscan -H "$GCP_VM_IP" >> ~/.ssh/known_hosts 2>/dev/null || true
 
       - name: Execute Remote Deployment via SSH
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.2.5
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
