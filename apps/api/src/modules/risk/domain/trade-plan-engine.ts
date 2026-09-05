@@ -157,6 +157,16 @@ function _buildAdaptiveTradePlan(input: {
   }
 
   if (momentumScalp) {
+    if (regime === "HIGH_VOLATILITY") {
+      return {
+        approved: false,
+        reason: "MOMENTUM_SCALP_DISABLED_IN_HIGH_VOLATILITY",
+        regime,
+        strategy: "MOMENTUM_SCALP",
+        maxHoldingCandles: 6,
+        breakEvenAtR: 0.8,
+      };
+    }
     const emaExtension = finitePositive(market.ema20)
       ? side === "LONG"
         ? entryPrice - market.ema20

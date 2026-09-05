@@ -235,7 +235,14 @@ export function evaluateRisk(
     (input.now ?? new Date()).getTime() - latestLoss.closedAt.getTime() <
       lossStreakPauseMs
   ) return reject("LOSS_STREAK_CIRCUIT_BREAKER_ACTIVE");
-  const baseLossCooldownMs = limits.lossReentryCooldownMs ?? 15 * 60_000;
+  const policy = adaptiveTradingPolicy({
+    symbol: input.symbol,
+    regime: decision.regime?.type,
+  });
+  const cooldownTierMultiplier =
+    policy.liquidityClass === "MAJOR" ? 1 : policy.liquidityClass === "LIQUID_ALT" ? 4 : 16;
+  const baseLossCooldownMs =
+    (limits.lossReentryCooldownMs ?? 15 * 60_000) * cooldownTierMultiplier;
   const lossCooldownMs = baseLossCooldownMs * Math.min(
     4,
     2 ** Math.max(0, lossCount - 1),
@@ -318,10 +325,6 @@ export function evaluateRisk(
       : lossCount === 2
         ? 0.5
         : 0.35;
-  const policy = adaptiveTradingPolicy({
-    symbol: input.symbol,
-    regime: decision.regime?.type,
-  });
   const assetMaxLeverage =
     policy.liquidityClass === "MAJOR" ? 30 : policy.liquidityClass === "LIQUID_ALT" ? 15 : 5;
   const effectiveMaxLeverage = Math.min(limits.maxLeverage, assetMaxLeverage);

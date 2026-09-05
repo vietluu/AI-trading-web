@@ -146,7 +146,7 @@ function strategyCandidateScore(key: StrategyKey, decision: DecisionOutput): num
   const affinity: Record<DecisionOutput["regime"]["type"], Partial<Record<StrategyKey, number>>> = {
     TRENDING: { "ai-core": 4, trend: 18, breakout: 12, "momentum-scalp": 16, "mean-reversion": -20 },
     RANGING: { "ai-core": 0, trend: -18, breakout: -14, "momentum-scalp": -8, "mean-reversion": 22 },
-    HIGH_VOLATILITY: { "ai-core": 0, trend: 2, breakout: 12, "momentum-scalp": 8, news: 8, "mean-reversion": -12 },
+    HIGH_VOLATILITY: { "ai-core": 0, trend: 2, breakout: 12, "momentum-scalp": -25, news: 8, "mean-reversion": -12 },
   };
   const boundedEv = Math.max(-1, Math.min(1, decision.expectedValue));
   return Number((
@@ -265,6 +265,7 @@ export function decisionForStrategy(
     const liquidImpulse = Number.isFinite(volumeChange) && (volumeChange ?? 0) >= 0.35;
     const efficientMove = (market?.adx ?? 0) >= 18 || (market?.efficiencyRatio ?? 0) >= 0.25;
     if (
+      base.regime.type !== "HIGH_VOLATILITY" &&
       !rsiExhausted &&
       timeframeMinutes <= 15 &&
       direction &&
