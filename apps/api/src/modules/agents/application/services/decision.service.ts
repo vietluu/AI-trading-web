@@ -731,7 +731,7 @@ export class DecisionService {
       weighting,
       dataQuality,
     );
-    const { adaptiveThreshold, calibrationAdjustment } =
+    const { adaptiveThreshold, calibrationAdjustment, policy } =
       this.calculateAdaptiveThresholds(
         input,
         regime,
@@ -780,11 +780,12 @@ export class DecisionService {
       regime.type,
     );
     const expectedValue = this.clamp(grossExpectedValue - executionCost, -3, 3);
+    const minRequiredOpportunity = policy.minOpportunityScore;
     const strongConviction =
       coreDataQuality === "GOOD" &&
       directionalAgreement >= 80 &&
       evidenceCoverage >= 60 &&
-      opportunityScore >= 68 &&
+      opportunityScore >= minRequiredOpportunity &&
       expectedValue > 0.2;
     // A learned threshold may make the system more conservative, but must not
     // weaken the regime-specific safety threshold.
@@ -798,7 +799,7 @@ export class DecisionService {
       extreme ||
       calibratedConfidence < adaptiveThresholdValue ||
       (expectedValue <= 0 && !strongConviction) ||
-      (opportunityScore < Math.max(55, adaptiveThresholdValue - 5) &&
+      (opportunityScore < minRequiredOpportunity &&
         !strongConviction)
         ? "WAIT"
         : candidate;
@@ -1151,7 +1152,11 @@ export class DecisionService {
     confidence: number,
     opportunityScore: number,
     conflictLevel: DecisionOutput["conflictLevel"],
-  ): { adaptiveThreshold: number; calibrationAdjustment: number } {
+  ): {
+    adaptiveThreshold: number;
+    calibrationAdjustment: number;
+    policy: ReturnType<typeof adaptiveTradingPolicy>;
+  } {
     const spreadBps = this.spreadBasisPoints(
       input.market?.liquidity?.bidAskSpread ?? input.market?.liquidity?.spread,
     );
@@ -1193,7 +1198,7 @@ export class DecisionService {
     );
     const calibrationAdjustment =
       confidence > threshold ? 4 : confidence < threshold - 8 ? -6 : 0;
-    return { adaptiveThreshold: threshold, calibrationAdjustment };
+    return { adaptiveThreshold: threshold, calibrationAdjustment, policy };
   }
 
   private spreadThresholdAdjustment(raw: string | undefined): number {

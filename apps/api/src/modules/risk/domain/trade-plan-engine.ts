@@ -419,7 +419,7 @@ function _buildAdaptiveTradePlan(input: {
     if (capped < entryPrice - atr * 0.5 && capped > takeProfit) takeProfit = capped;
   }
   const rr = rewardToRisk(side, entryPrice, stopLoss, takeProfit, costPct);
-  const minRR = Math.min(input.configuredRiskRewardRatio, 1.5);
+  const minRR = Math.min(input.configuredRiskRewardRatio, policy.minStructuralRiskReward);
   if (rr < minRR - 1e-6) {
     return {
       approved: false,

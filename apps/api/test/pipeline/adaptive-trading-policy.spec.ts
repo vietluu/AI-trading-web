@@ -63,6 +63,14 @@ describe('adaptive trading policy', () => {
     expect(altRanging.minColdStartConfidence).toBeLessThan(memeHighVol.minColdStartConfidence);
     expect(btcTrending.minColdStartOpportunity).toBeLessThan(memeHighVol.minColdStartOpportunity);
 
+    // Tiered opportunity requirements and structural RR
+    expect(btcTrending.minOpportunityScore).toBe(65);
+    expect(altRanging.minOpportunityScore).toBe(72);
+    expect(memeHighVol.minOpportunityScore).toBe(78);
+    expect(btcTrending.minStructuralRiskReward).toBe(1.5);
+    expect(altRanging.minStructuralRiskReward).toBe(1.75);
+    expect(memeHighVol.minStructuralRiskReward).toBe(2.0);
+
     // Regime-based dynamic RSI boundaries
     expect(btcTrending.maxRsiLong).toBe(85); // Parabolic trend allowed
     expect(altRanging.maxRsiLong).toBe(75); // Sideway tightened

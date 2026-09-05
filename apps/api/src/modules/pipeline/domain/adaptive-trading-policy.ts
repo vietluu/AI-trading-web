@@ -65,6 +65,8 @@ export function adaptiveTradingPolicy(context: AdaptivePolicyContext) {
   const executionCostMultiplier = liquidityClass === 'MAJOR' ? 1 : liquidityClass === 'LIQUID_ALT' ? 1.5 : 2.5;
   const minColdStartConfidence = liquidityClass === 'MAJOR' ? 62 : liquidityClass === 'LIQUID_ALT' ? 66 : 70;
   const minColdStartOpportunity = liquidityClass === 'MAJOR' ? 58 : liquidityClass === 'LIQUID_ALT' ? 62 : 66;
+  const minOpportunityScore = liquidityClass === 'MAJOR' ? 65 : liquidityClass === 'LIQUID_ALT' ? 72 : 78;
+  const minStructuralRiskReward = liquidityClass === 'MAJOR' ? 1.5 : liquidityClass === 'LIQUID_ALT' ? 1.75 : 2.0;
   const maxRsiLong = regime === 'TRENDING' ? 85 : regime === 'RANGING' ? 75 : 72;
   const minRsiShort = regime === 'TRENDING' ? 15 : regime === 'RANGING' ? 25 : 28;
 
@@ -73,6 +75,8 @@ export function adaptiveTradingPolicy(context: AdaptivePolicyContext) {
     executionCostMultiplier,
     minColdStartConfidence,
     minColdStartOpportunity,
+    minOpportunityScore,
+    minStructuralRiskReward,
     maxRsiLong,
     minRsiShort,
     staleAfterMs: Math.round(Math.max(2 * 60_000, Math.min(30 * 60_000, timeframeMs * 2)) / (regime === 'HIGH_VOLATILITY' ? 1.5 : 1)),
