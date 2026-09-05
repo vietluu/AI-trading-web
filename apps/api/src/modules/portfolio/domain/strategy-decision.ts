@@ -242,6 +242,7 @@ export function decisionForStrategy(
     const direction = Number.isFinite(priceChange) && (priceChange ?? 0) !== 0
       ? (priceChange ?? 0) > 0 ? "LONG" : "SHORT"
       : undefined;
+    const isRanging = base.regime.type === "RANGING";
     const trendDirection = analyses.technical.trend.direction;
     const macdDirection = analyses.technical.momentum.macd?.trend;
     const emaAligned = direction === "LONG"
@@ -254,13 +255,20 @@ export function decisionForStrategy(
       : direction === "SHORT"
         ? trendDirection === "DOWN" || macdDirection === "BEARISH" || emaAligned
         : false;
+    const rsiExhausted = direction === "LONG"
+      ? analyses.technical.momentum.rsiState === "OVERBOUGHT" || analyses.technical.volatility?.bollinger?.position === "UPPER"
+      : direction === "SHORT"
+        ? analyses.technical.momentum.rsiState === "OVERSOLD" || analyses.technical.volatility?.bollinger?.position === "LOWER"
+        : false;
     const impulse = Math.abs(priceChange ?? 0);
+    const minImpulse = isRanging ? 0.35 : 0.15;
     const liquidImpulse = Number.isFinite(volumeChange) && (volumeChange ?? 0) >= 0.35;
     const efficientMove = (market?.adx ?? 0) >= 18 || (market?.efficiencyRatio ?? 0) >= 0.25;
     if (
+      !rsiExhausted &&
       timeframeMinutes <= 15 &&
       direction &&
-      impulse >= 0.15 && impulse <= 2.5 &&
+      impulse >= minImpulse && impulse <= 2.5 &&
       liquidImpulse && efficientMove && trendAligned
     ) {
       decision = direction;

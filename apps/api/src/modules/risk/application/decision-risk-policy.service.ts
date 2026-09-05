@@ -43,7 +43,7 @@ export class DecisionRiskPolicyService {
       output.dataQuality === 'PARTIAL' && !coreEvidenceGood &&
       (
         output.confidence < output.adaptiveThreshold + 5 ||
-        directionalAgreement < 75 ||
+        directionalAgreement < 70 ||
         output.expectedValue <= policy.minExpectedValue + 0.1
       )
     ) {
@@ -51,7 +51,7 @@ export class DecisionRiskPolicyService {
     }
     if (
       output.dataQuality === 'PARTIAL' && coreEvidenceGood &&
-      (directionalAgreement < 75 || evidenceCoverage < 60)
+      (directionalAgreement < 60 || evidenceCoverage < 40)
     ) {
       return { actionable: false, decision: 'WAIT', reason: 'PARTIAL_DATA_CONVICTION_TOO_LOW' };
     }

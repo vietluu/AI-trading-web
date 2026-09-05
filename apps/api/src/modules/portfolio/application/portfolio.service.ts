@@ -85,12 +85,34 @@ export class PortfolioService {
   ) {}
 
   async ensureDefaults(userId: string): Promise<void> {
-    await this.ensureRegisteredStrategies(
-      userId,
-      defaults
-        .slice(0, this.config.values.maxStrategies)
-        .map((definition) => definition.key),
-    );
+    await Promise.all([
+      this.ensureRegisteredStrategies(
+        userId,
+        defaults
+          .slice(0, this.config.values.maxStrategies)
+          .map((definition) => definition.key),
+      ),
+      (this.prisma.paperAccount
+        ? this.prisma.paperAccount.upsert({
+            where: { userId },
+            update: {},
+            create: {
+              userId,
+              balance: 10000,
+              equity: 10000,
+              peakEquity: 10000,
+              marginUsed: 0,
+            },
+          })
+        : Promise.resolve()
+      ).catch((err: unknown) => {
+        this.logger.warn({
+          event: "paper_account_init_failed",
+          userId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }),
+    ]);
   }
 
   async ensureRegisteredStrategies(

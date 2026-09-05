@@ -22,9 +22,16 @@ export class PipelineAlertService {
     const alerts: Array<{ kind: string; reasoningSummary: string }> = [];
     if (analyses.market.volatility.level === 'HIGH') alerts.push({ kind: 'ABNORMAL_VOLATILITY', reasoningSummary: analyses.market.summary });
     if (analyses.news.impact.level === 'HIGH') alerts.push({ kind: 'MAJOR_NEWS', reasoningSummary: analyses.news.summary });
+    if (alerts.length === 0) return;
+    const cooldownSince = new Date(Date.now() - 60 * 60_000);
     for (const item of alerts) {
-      await this.prisma.pipelineAlert.create({ data: { runId, symbol, ...item, delivered: true } });
-      this.logger.warn({ event: 'pipeline_context_alert', channel: 'CONSOLE', symbol, kind: item.kind });
+      const recentAlert = await this.prisma.pipelineAlert.findFirst({
+        where: { symbol, kind: item.kind, createdAt: { gte: cooldownSince } },
+      });
+      if (!recentAlert) {
+        await this.prisma.pipelineAlert.create({ data: { runId, symbol, ...item, delivered: true } });
+        this.logger.warn({ event: 'pipeline_context_alert', channel: 'CONSOLE', symbol, kind: item.kind });
+      }
     }
   }
   async blockedOpportunity(input: {
@@ -48,7 +55,11 @@ export class PipelineAlertService {
       reason.includes('CALIBRAT') ||
       reason === 'PARTIAL_DATA_CONVICTION_TOO_LOW' ||
       reason === 'CONFIDENCE_BELOW_THRESHOLD');
-    if (!aligned || !systematicExecutionBlock) return;
+    const hasNegativeExpectancy = input.blockedReasons.some((reason) =>
+      reason === 'EXPECTED_VALUE_NEGATIVE' ||
+      reason === 'EXPECTED_VALUE_TOO_LOW' ||
+      reason === 'PROFIT_FACTOR_TOO_LOW');
+    if (!aligned || !systematicExecutionBlock || hasNegativeExpectancy) return;
 
     const since = new Date(Date.now() - 60 * 60_000);
     await this.prisma.pipelineAlert.create({
