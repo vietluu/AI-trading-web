@@ -143,6 +143,24 @@ describe('DecisionService', () => {
     expect(output.profitFactorEstimate).toBeGreaterThan(1);
   });
 
+  it('adjusts execution cost and adaptive thresholds dynamically across asset liquidity tiers', () => {
+    const service = new DecisionService({} as never);
+    const btcInput = decisionInput();
+    btcInput.symbol = 'BTC-USDT';
+    btcInput.market!.liquidity = { spread: '0.02%' };
+
+    const memeInput = decisionInput();
+    memeInput.symbol = 'PEPE-USDT';
+    memeInput.market!.liquidity = { spread: '0.12%' };
+
+    const btcDecision = service.decide(btcInput);
+    const memeDecision = service.decide(memeInput);
+
+    // PEPE (LONG_TAIL with wider spread) must reflect higher execution cost and higher threshold buffer
+    expect(memeDecision.executionCost).toBeGreaterThan(btcDecision.executionCost);
+    expect(memeDecision.adaptiveThreshold).toBeGreaterThan(btcDecision.adaptiveThreshold);
+  });
+
   it('scores the canonical bearish LH_LL structure as directional structure evidence', () => {
     const input = decisionInput();
     input.market!.trend.direction = 'DOWN';

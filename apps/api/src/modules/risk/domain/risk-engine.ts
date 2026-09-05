@@ -8,6 +8,7 @@ import type {
 } from "./risk-engine.types";
 import { RISK_ENGINE_CONSTANTS } from "./risk-engine.constants";
 import { buildAdaptiveTradePlan } from "./trade-plan-engine";
+import { adaptiveTradingPolicy } from "../../pipeline/domain/adaptive-trading-policy";
 
 export type {
   LastTradeRecord,
@@ -234,7 +235,14 @@ export function evaluateRisk(
     (input.now ?? new Date()).getTime() - latestLoss.closedAt.getTime() <
       lossStreakPauseMs
   ) return reject("LOSS_STREAK_CIRCUIT_BREAKER_ACTIVE");
-  const baseLossCooldownMs = limits.lossReentryCooldownMs ?? 15 * 60_000;
+  const policy = adaptiveTradingPolicy({
+    symbol: input.symbol,
+    regime: decision.regime?.type,
+  });
+  const cooldownTierMultiplier =
+    policy.liquidityClass === "MAJOR" ? 1 : policy.liquidityClass === "LIQUID_ALT" ? 4 : 16;
+  const baseLossCooldownMs =
+    (limits.lossReentryCooldownMs ?? 15 * 60_000) * cooldownTierMultiplier;
   const lossCooldownMs = baseLossCooldownMs * Math.min(
     4,
     2 ** Math.max(0, lossCount - 1),
@@ -247,6 +255,7 @@ export function evaluateRisk(
   ) return reject("LOSS_REENTRY_COOLDOWN_ACTIVE");
 
   const plan = buildAdaptiveTradePlan({
+    symbol: input.symbol,
     side: decision.decision,
     entryPrice: marketData.price,
     decision,
@@ -316,7 +325,11 @@ export function evaluateRisk(
       : lossCount === 2
         ? 0.5
         : 0.35;
-  const highVolatility = marketData.volatility >= limits.highVolatility;
+  const assetMaxLeverage =
+    policy.liquidityClass === "MAJOR" ? 30 : policy.liquidityClass === "LIQUID_ALT" ? 15 : 5;
+  const effectiveMaxLeverage = Math.min(limits.maxLeverage, assetMaxLeverage);
+  const effectiveHighVolatility = limits.highVolatility * (policy.liquidityClass === "MAJOR" ? 1 : policy.liquidityClass === "LIQUID_ALT" ? 1.5 : 2.5);
+  const highVolatility = marketData.volatility >= effectiveHighVolatility;
   if (highVolatility)
     positionSize = rounded(
       positionSize * limits.highVolatilitySizeFactor,
@@ -362,12 +375,12 @@ export function evaluateRisk(
     limits.minLiquidationBufferPct,
   );
   const volatilityLeverageLimit = highVolatility
-    ? Math.max(1, Math.floor(limits.maxLeverage / 2))
-    : limits.maxLeverage;
+    ? Math.max(1, Math.floor(effectiveMaxLeverage / 2))
+    : effectiveMaxLeverage;
   const maximumSafeLeverage = Math.max(
     1,
     Math.min(
-      limits.maxLeverage,
+      effectiveMaxLeverage,
       volatilityLeverageLimit,
       roeLeverageLimit,
       liquidationLeverageLimit,
@@ -418,7 +431,11 @@ export function evaluateRisk(
       leverage,
       exposurePct,
       drawdownPct,
-      limits,
+      {
+        ...limits,
+        highVolatility: effectiveHighVolatility,
+        maxLeverage: effectiveMaxLeverage,
+      },
     ),
     exposurePct: rounded(exposurePct, 6),
     drawdownPct: rounded(drawdownPct, 6),

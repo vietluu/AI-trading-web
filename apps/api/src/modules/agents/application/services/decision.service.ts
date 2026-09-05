@@ -27,6 +27,7 @@ import { PrismaService } from "../../../../database/prisma.service";
 import { calibrateConfidenceWithFallback } from "../../../reflection/domain/confidence-calibration";
 import { ConfigService } from "@nestjs/config";
 import { createHash } from "node:crypto";
+import { adaptiveTradingPolicy, parseSpreadBps } from "../../../pipeline/domain/adaptive-trading-policy";
 
 export type { AnalystName, Bias, ConflictLevel, RunDecisionOptions, Weighting };
 
@@ -130,7 +131,19 @@ export class DecisionService {
     // and Risk gates will therefore reject cold-start automatic execution,
     // UNLESS this is a true cold start (INSUFFICIENT_HISTORY) with strong conviction.
     const isColdStart = confidenceCalibration?.status === "INSUFFICIENT_HISTORY";
-    const strongColdStart = isColdStart && decision.confidence >= 65 && decision.opportunityScore >= 60;
+    const spreadBps = this.spreadBasisPoints(
+      rawInput.market?.liquidity?.bidAskSpread ?? rawInput.market?.liquidity?.spread,
+    );
+    const coldStartPolicy = adaptiveTradingPolicy({
+      symbol: rawInput.symbol,
+      provider: metadata.provider,
+      timeframe: metadata.timeframe,
+      regime: decision.regime.type,
+      spreadBps,
+    });
+    const strongColdStart = isColdStart &&
+      decision.confidence >= coldStartPolicy.minColdStartConfidence &&
+      decision.opportunityScore >= coldStartPolicy.minColdStartOpportunity;
     const expectedValue = empiricalProbability === undefined
       ? (strongColdStart ? decision.expectedValue : 0)
       : this.clamp(
@@ -268,7 +281,15 @@ export class DecisionService {
       1,
     );
     const isColdStart = confidenceCalibration?.status === "INSUFFICIENT_HISTORY";
-    const strongColdStart = isColdStart && decision.confidence >= 65 && decision.opportunityScore >= 60;
+    const coldStartPolicy = adaptiveTradingPolicy({
+      symbol: metadata.symbol,
+      provider: metadata.provider,
+      timeframe: metadata.timeframe,
+      regime: decision.regime.type,
+    });
+    const strongColdStart = isColdStart &&
+      decision.confidence >= coldStartPolicy.minColdStartConfidence &&
+      decision.opportunityScore >= coldStartPolicy.minColdStartOpportunity;
     const hasEmpiricalEdge = empiricalProbability !== undefined;
     const expectedValueRaw = hasEmpiricalEdge
           ? this.clamp(
@@ -710,7 +731,7 @@ export class DecisionService {
       weighting,
       dataQuality,
     );
-    const { adaptiveThreshold, calibrationAdjustment } =
+    const { adaptiveThreshold, calibrationAdjustment, policy } =
       this.calculateAdaptiveThresholds(
         input,
         regime,
@@ -759,11 +780,12 @@ export class DecisionService {
       regime.type,
     );
     const expectedValue = this.clamp(grossExpectedValue - executionCost, -3, 3);
+    const minRequiredOpportunity = policy.minOpportunityScore;
     const strongConviction =
       coreDataQuality === "GOOD" &&
       directionalAgreement >= 80 &&
       evidenceCoverage >= 60 &&
-      opportunityScore >= 68 &&
+      opportunityScore >= minRequiredOpportunity &&
       expectedValue > 0.2;
     // A learned threshold may make the system more conservative, but must not
     // weaken the regime-specific safety threshold.
@@ -777,7 +799,7 @@ export class DecisionService {
       extreme ||
       calibratedConfidence < adaptiveThresholdValue ||
       (expectedValue <= 0 && !strongConviction) ||
-      (opportunityScore < Math.max(55, adaptiveThresholdValue - 5) &&
+      (opportunityScore < minRequiredOpportunity &&
         !strongConviction)
         ? "WAIT"
         : candidate;
@@ -1130,13 +1152,28 @@ export class DecisionService {
     confidence: number,
     opportunityScore: number,
     conflictLevel: DecisionOutput["conflictLevel"],
-  ): { adaptiveThreshold: number; calibrationAdjustment: number } {
+  ): {
+    adaptiveThreshold: number;
+    calibrationAdjustment: number;
+    policy: ReturnType<typeof adaptiveTradingPolicy>;
+  } {
+    const spreadBps = this.spreadBasisPoints(
+      input.market?.liquidity?.bidAskSpread ?? input.market?.liquidity?.spread,
+    );
+    const policy = adaptiveTradingPolicy({
+      symbol: input.symbol,
+      regime: regime.type,
+      spreadBps,
+    });
+    // Tiered base threshold: Major pairs (BTC, ETH) require less conviction buffer than volatile long-tail alts
+    const tierAdjustment =
+      policy.liquidityClass === "MAJOR" ? -2 : policy.liquidityClass === "LIQUID_ALT" ? 0 : 3;
     const base =
-      regime.type === "TRENDING"
+      (regime.type === "TRENDING"
         ? 62
         : regime.type === "HIGH_VOLATILITY"
           ? 78
-          : 72;
+          : 72) + tierAdjustment;
     const volatilityAdjustment =
       input.market?.volatility.level === "HIGH"
         ? 8
@@ -1161,7 +1198,7 @@ export class DecisionService {
     );
     const calibrationAdjustment =
       confidence > threshold ? 4 : confidence < threshold - 8 ? -6 : 0;
-    return { adaptiveThreshold: threshold, calibrationAdjustment };
+    return { adaptiveThreshold: threshold, calibrationAdjustment, policy };
   }
 
   private spreadThresholdAdjustment(raw: string | undefined): number {
@@ -1175,11 +1212,7 @@ export class DecisionService {
 
   private spreadBasisPoints(raw: string | undefined): number | undefined {
     if (!raw) return undefined;
-    const normalized = raw.replace(/[%,$]|bps?/gi, "").trim();
-    if (!normalized) return undefined;
-    const numeric = Number(normalized);
-    if (!Number.isFinite(numeric) || numeric < 0) return undefined;
-    return raw.includes("%") ? numeric * 100 : numeric;
+    return parseSpreadBps(raw);
   }
 
   private estimateExecutionCost(
@@ -1190,8 +1223,13 @@ export class DecisionService {
     const spreadBps = this.spreadBasisPoints(
       input.market?.liquidity?.bidAskSpread ?? input.market?.liquidity?.spread,
     );
+    const policy = adaptiveTradingPolicy({
+      symbol: input.symbol,
+      regime,
+      spreadBps,
+    });
     const spreadPenalty =
-      spreadBps !== undefined ? Math.min(0.25, spreadBps / 1000) : 0.05;
+      spreadBps !== undefined ? Math.min(0.35, (spreadBps / 1000) * policy.executionCostMultiplier) : (0.04 * policy.executionCostMultiplier);
     const volatilityPenalty = regime === "HIGH_VOLATILITY" ? 0.1 : 0.04;
     const slippage = Math.max(
       0.01,

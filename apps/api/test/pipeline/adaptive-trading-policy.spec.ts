@@ -38,4 +38,44 @@ describe('adaptive trading policy', () => {
     expect(preferredTradePlanAtr(undefined, '0.8 USDT')).toBe(0.8);
     expect(preferredTradePlanAtr('0', 'not available')).toBeUndefined();
   });
+
+  it('provides tiered dynamic cold-start thresholds, cost multipliers and RSI boundaries', () => {
+    const btcTrending = adaptiveTradingPolicy({
+      symbol: 'BTC-USDT',
+      regime: 'TRENDING',
+    });
+    const altRanging = adaptiveTradingPolicy({
+      symbol: 'SOL-USDT',
+      regime: 'RANGING',
+    });
+    const memeHighVol = adaptiveTradingPolicy({
+      symbol: 'PEPE-USDT',
+      regime: 'HIGH_VOLATILITY',
+    });
+
+    // Liquidity tier cost multipliers
+    expect(btcTrending.executionCostMultiplier).toBe(1);
+    expect(altRanging.executionCostMultiplier).toBe(1.5);
+    expect(memeHighVol.executionCostMultiplier).toBe(2.5);
+
+    // Tiered cold-start conviction requirements
+    expect(btcTrending.minColdStartConfidence).toBeLessThan(altRanging.minColdStartConfidence);
+    expect(altRanging.minColdStartConfidence).toBeLessThan(memeHighVol.minColdStartConfidence);
+    expect(btcTrending.minColdStartOpportunity).toBeLessThan(memeHighVol.minColdStartOpportunity);
+
+    // Tiered opportunity requirements and structural RR
+    expect(btcTrending.minOpportunityScore).toBe(65);
+    expect(altRanging.minOpportunityScore).toBe(72);
+    expect(memeHighVol.minOpportunityScore).toBe(78);
+    expect(btcTrending.minStructuralRiskReward).toBe(1.5);
+    expect(altRanging.minStructuralRiskReward).toBe(1.75);
+    expect(memeHighVol.minStructuralRiskReward).toBe(2.0);
+
+    // Regime-based dynamic RSI boundaries
+    expect(btcTrending.maxRsiLong).toBe(85); // Parabolic trend allowed
+    expect(altRanging.maxRsiLong).toBe(75); // Sideway tightened
+    expect(memeHighVol.maxRsiLong).toBe(72);
+    expect(btcTrending.minRsiShort).toBe(15);
+    expect(altRanging.minRsiShort).toBe(25);
+  });
 });

@@ -328,4 +328,49 @@ describe("adaptive trade plan engine", () => {
       reason: "PRICE_EXTENDED_FROM_EMA20",
     });
   });
+
+  it("permits momentum scalps with high RSI in strong trending regime and scales trailing ATR for long tail", () => {
+    const btcPlan = buildAdaptiveTradePlan({
+      symbol: "BTC-USDT",
+      side: "LONG",
+      entryPrice: 100,
+      decision: {
+        ...decision("LONG", "TRENDING"),
+        reasoning: "Strong volume [momentum-scalp] breakout",
+      },
+      market: {
+        atr: 1,
+        rsi: 78, // Above old static 72, but below trending dynamic max 85
+        ema20: 99.5, // emaExtension = 0.5 < atr * 0.75
+      },
+      configuredStopLossPct: 0.02,
+      configuredRiskRewardRatio: 2.0,
+    });
+
+    // For BTC (MAJOR): maxRsiLong is 85, so 78 is not exhausted momentum; trailing ATR is 1.8 * 1 = 1.8
+    expect(btcPlan.approved).toBe(true);
+    expect(btcPlan.strategy).toBe("MOMENTUM_SCALP");
+    expect(btcPlan.trailingAtrMultiple).toBe(1.8);
+
+    const memePlan = buildAdaptiveTradePlan({
+      symbol: "PEPE-USDT",
+      side: "LONG",
+      entryPrice: 100,
+      decision: {
+        ...decision("LONG", "TRENDING"),
+        reasoning: "Strong volume [momentum-scalp] breakout",
+      },
+      market: {
+        atr: 1,
+        rsi: 78,
+        ema20: 99.5,
+      },
+      configuredStopLossPct: 0.02,
+      configuredRiskRewardRatio: 2.0,
+    });
+
+    // For PEPE (LONG_TAIL): multiplier is 2.5, trailing ATR is 1.8 * 2.5 = 4.5
+    expect(memePlan.approved).toBe(true);
+    expect(memePlan.trailingAtrMultiple).toBe(4.5);
+  });
 });
