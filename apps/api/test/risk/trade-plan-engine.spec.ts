@@ -373,4 +373,81 @@ describe("adaptive trade plan engine", () => {
     expect(memePlan.approved).toBe(true);
     expect(memePlan.trailingAtrMultiple).toBe(4.5);
   });
+
+  it("rejects LONG entry when volume climax shows exhaustion spike with heavy upper wick", () => {
+    const plan = buildAdaptiveTradePlan({
+      symbol: "BTC-USDT",
+      side: "LONG",
+      entryPrice: 100,
+      decision: decision("LONG", "TRENDING"),
+      market: {
+        atr: 1,
+        volumeRatio: 3.2, // > 2.5 Climax volume
+        candleOpen: 97,
+        candleHigh: 103, // Candle range = 6 (from 97 to 103)
+        candleLow: 97,
+        candleClose: 98, // Body = 1 (1/6 = 0.166 < 0.35), Upper wick = 103 - 98 = 5 (5/6 = 83% > 50%)
+      },
+      configuredStopLossPct: 0.02,
+      configuredRiskRewardRatio: 2.0,
+    });
+
+    expect(plan.approved).toBe(false);
+    expect(plan.reason).toBe("VOLUME_EXHAUSTION_SPIKE");
+  });
+
+  it("detects liquidity sweep V-shape reversal and creates tight structural stop with limit entry", () => {
+    const plan = buildAdaptiveTradePlan({
+      symbol: "ETH-USDT",
+      side: "LONG",
+      entryPrice: 99,
+      decision: decision("LONG", "TRENDING"),
+      market: {
+        atr: 1.5,
+        support: 98,
+        candleOpen: 100,
+        candleHigh: 101,
+        candleLow: 96, // Dips below support 98 (swept support)
+        candleClose: 99.5, // Retracts back above support, lower wick = 99 - 96 = 3, range = 5 (60% wick + swept support)
+      },
+      configuredStopLossPct: 0.02,
+      configuredRiskRewardRatio: 2.0,
+    });
+
+    expect(plan.approved).toBe(true);
+    expect(plan.strategy).toBe("LIQUIDITY_SWEEP_REVERSAL");
+    expect(plan.isLiquiditySweep).toBe(true);
+    expect(plan.orderType).toBe("LIMIT");
+    expect(plan.limitEntryPrice).toBeDefined();
+    expect(plan.limitEntryPrice).toBeLessThan(99);
+    // Stop loss placed below sweep low (96 - 1.5*0.2 = 95.7)
+    expect(plan.stopLoss).toBe(95.7);
+  });
+
+  it("provides limitEntryPrice and orderType LIMIT for trend pullback trades", () => {
+    const plan = buildAdaptiveTradePlan({
+      symbol: "BTC-USDT",
+      side: "LONG",
+      entryPrice: 100,
+      decision: decision("LONG", "TRENDING"),
+      market: {
+        atr: 1,
+        adx: 28,
+        efficiencyRatio: 0.5,
+        ema20: 98,
+        ema50: 95,
+      },
+      configuredStopLossPct: 0.02,
+      configuredRiskRewardRatio: 2.0,
+    });
+
+    expect(plan.approved).toBe(true);
+    expect(plan.strategy).toBe("TREND_PULLBACK");
+    expect(plan.orderType).toBe("LIMIT");
+    expect(plan.limitEntryPrice).toBeDefined();
+    // LONG limit entry should be below market entry price
+    expect(plan.limitEntryPrice).toBeLessThan(100);
+    expect(plan.limitTtlCandles).toBe(2);
+  });
 });
+
