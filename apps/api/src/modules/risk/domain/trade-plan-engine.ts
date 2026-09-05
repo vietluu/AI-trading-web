@@ -14,6 +14,7 @@ export type TradePlanStrategy =
   | "BREAKOUT_RETEST"
   | "MOMENTUM_SCALP"
   | "VOLATILITY_CONTROL"
+  | "LIQUIDITY_SWEEP_REVERSAL"
   | "LEGACY_FALLBACK";
 
 export interface TradePlanMarketContext {
@@ -28,6 +29,11 @@ export interface TradePlanMarketContext {
   breakout?: boolean;
   marketStructure?: "HH_HL" | "LH_LL" | "LL_LH" | "RANGE";
   timeframeMs?: number;
+  candleOpen?: number;
+  candleHigh?: number;
+  candleLow?: number;
+  candleClose?: number;
+  volumeRatio?: number;
 }
 
 export interface TradePlan {
@@ -52,6 +58,10 @@ export interface TradePlan {
   expectedNetRewardPct?: number;
   netRewardToRisk?: number;
   lossStreakSizeFactor?: number;
+  limitEntryPrice?: number;
+  orderType?: "MARKET" | "LIMIT";
+  limitTtlCandles?: number;
+  isLiquiditySweep?: boolean;
 }
 
 const finitePositive = (value: number | undefined): value is number =>
@@ -156,6 +166,116 @@ function _buildAdaptiveTradePlan(input: {
     };
   }
 
+  // 1. Volume Exhaustion / Climax Spike Gate
+  // When volume is extreme (> 2.5x avg) but body is narrow (< 35% of full range),
+  // a long opposing wick indicates smart money distribution or rejection.
+  if (
+    finitePositive(market.volumeRatio) &&
+    market.volumeRatio > 2.5 &&
+    finitePositive(market.candleHigh) &&
+    finitePositive(market.candleLow) &&
+    finitePositive(market.candleOpen) &&
+    finitePositive(market.candleClose)
+  ) {
+    const candleRange = market.candleHigh - market.candleLow;
+    if (candleRange > 0) {
+      const body = Math.abs(market.candleClose - market.candleOpen);
+      const upperWick = market.candleHigh - Math.max(market.candleOpen, market.candleClose);
+      const lowerWick = Math.min(market.candleOpen, market.candleClose) - market.candleLow;
+      const bodyRatio = body / candleRange;
+
+      if (bodyRatio < 0.35) {
+        // For LONG: if upper wick dominates (> 50% of range), buyers were rejected at highs
+        if (side === "LONG" && upperWick / candleRange > 0.5) {
+          return {
+            approved: false,
+            reason: "VOLUME_EXHAUSTION_SPIKE",
+            regime,
+            strategy: "LEGACY_FALLBACK",
+            maxHoldingCandles: 4,
+            breakEvenAtR: 1,
+          };
+        }
+        // For SHORT: if lower wick dominates (> 50% of range), sellers were absorbed at lows
+        if (side === "SHORT" && lowerWick / candleRange > 0.5) {
+          return {
+            approved: false,
+            reason: "VOLUME_EXHAUSTION_SPIKE",
+            regime,
+            strategy: "LEGACY_FALLBACK",
+            maxHoldingCandles: 4,
+            breakEvenAtR: 1,
+          };
+        }
+      }
+    }
+  }
+
+  // 2. Liquidity Sweep / V-Shape Reversal Detection
+  // e.g. Price dipped below support / dumped -3% but retracted >= 70% of the dump,
+  // creating a bear trap. We enter LONG with a tight structural stop below the sweep wick.
+  const isLiquiditySweep = (() => {
+    if (
+      finitePositive(market.candleHigh) &&
+      finitePositive(market.candleLow) &&
+      finitePositive(market.candleOpen) &&
+      finitePositive(market.candleClose)
+    ) {
+      const candleRange = market.candleHigh - market.candleLow;
+      if (candleRange > 0) {
+        if (side === "LONG") {
+          const lowerWick = Math.min(market.candleOpen, market.candleClose) - market.candleLow;
+          // Retraction >= 70% from lowest low
+          const retractionPct = lowerWick / candleRange;
+          const sweptSupport = finitePositive(support) && market.candleLow < support && market.candleClose > support;
+          return retractionPct >= 0.7 || sweptSupport;
+        } else if (side === "SHORT") {
+          const upperWick = market.candleHigh - Math.max(market.candleOpen, market.candleClose);
+          const retractionPct = upperWick / candleRange;
+          const sweptResistance = finitePositive(resistance) && market.candleHigh > resistance && market.candleClose < resistance;
+          return retractionPct >= 0.7 || sweptResistance;
+        }
+      }
+    }
+    return false;
+  })();
+
+  if (isLiquiditySweep && finitePositive(atr)) {
+    const sweepWickExtreme = side === "LONG" ? market.candleLow! : market.candleHigh!;
+    const buffer = atr * 0.2;
+    const stopLoss = side === "LONG" ? sweepWickExtreme - buffer : sweepWickExtreme + buffer;
+    const rawRisk = Math.abs(entryPrice - stopLoss);
+    const risk = Math.max(atr * 0.8, rawRisk);
+    const targetMultiple = Math.max(2.5, policy.minStructuralRiskReward);
+    const cost = entryPrice * costPct;
+    const targetDistance = risk * targetMultiple + cost * (1 + targetMultiple);
+    const takeProfit = side === "LONG" ? entryPrice + targetDistance : entryPrice - targetDistance;
+    const rr = rewardToRisk(side, entryPrice, stopLoss, takeProfit, costPct);
+
+    // Limit Pullback for liquidity sweep: entry waits for minor retest
+    const pullbackOffset = Math.min(atr * 0.25, Math.abs(entryPrice - sweepWickExtreme) * 0.382);
+    const limitEntryPrice = side === "LONG" ? entryPrice - pullbackOffset : entryPrice + pullbackOffset;
+
+    return {
+      approved: rr >= 2.0 - 1e-6,
+      ...(rr < 2.0 - 1e-6 ? { reason: "STRUCTURAL_RISK_REWARD_NOT_MET" } : {}),
+      regime,
+      strategy: "LIQUIDITY_SWEEP_REVERSAL",
+      stopLoss: rounded(stopLoss),
+      takeProfit: rounded(takeProfit),
+      rewardToRisk: rounded(rr),
+      maxHoldingCandles: 10,
+      breakEvenAtR: 0.8,
+      trailingAtrMultiple: Number((2.0 * policy.executionCostMultiplier).toFixed(2)),
+      atr,
+      timeframeMs: market.timeframeMs,
+      limitEntryPrice: rounded(limitEntryPrice),
+      orderType: "LIMIT",
+      limitTtlCandles: 2,
+      isLiquiditySweep: true,
+    };
+  }
+
   if (momentumScalp) {
     if (regime === "HIGH_VOLATILITY") {
       return {
@@ -200,6 +320,8 @@ function _buildAdaptiveTradePlan(input: {
       ? entryPrice + targetDistance
       : entryPrice - targetDistance;
     const rr = rewardToRisk(side, entryPrice, stopLoss, takeProfit, costPct);
+    const pullbackOffset = Math.min(atr * 0.25, entryPrice * 0.003);
+    const limitEntryPrice = side === "LONG" ? entryPrice - pullbackOffset : entryPrice + pullbackOffset;
     return {
       approved: rr >= 1.5 - 1e-6,
       ...(rr < 1.5 - 1e-6 ? { reason: "STRUCTURAL_RISK_REWARD_NOT_MET" } : {}),
@@ -214,6 +336,9 @@ function _buildAdaptiveTradePlan(input: {
       atr,
       timeframeMs: market.timeframeMs,
       structuralRiskAtr: 1.2,
+      limitEntryPrice: rounded(limitEntryPrice),
+      orderType: "LIMIT",
+      limitTtlCandles: 2,
     };
   }
 
@@ -272,6 +397,8 @@ function _buildAdaptiveTradePlan(input: {
         boundaryThreshold: rounded(side === "LONG" ? longBoundary : shortBoundary),
       };
     }
+    const pullbackOffset = Math.min(atr * 0.25, entryPrice * 0.003);
+    const limitEntryPrice = side === "LONG" ? entryPrice - pullbackOffset : entryPrice + pullbackOffset;
     return {
       approved: true,
       regime,
@@ -285,6 +412,9 @@ function _buildAdaptiveTradePlan(input: {
       timeframeMs: market.timeframeMs,
       entryLocation: rounded(location),
       boundaryThreshold: rounded(side === "LONG" ? longBoundary : shortBoundary),
+      limitEntryPrice: rounded(limitEntryPrice),
+      orderType: "LIMIT",
+      limitTtlCandles: 2,
     };
   }
 
@@ -329,6 +459,8 @@ function _buildAdaptiveTradePlan(input: {
       ? entryPrice + targetDistance
       : entryPrice - targetDistance;
     const rr = rewardToRisk(side, entryPrice, stopLoss, takeProfit, costPct);
+    const pullbackOffset = Math.min(atr * 0.25, entryPrice * 0.003);
+    const limitEntryPrice = side === "LONG" ? entryPrice - pullbackOffset : entryPrice + pullbackOffset;
     return {
       approved: rr >= 1.5 - 1e-6,
       ...(rr < 1.5 - 1e-6 ? { reason: "STRUCTURAL_RISK_REWARD_NOT_MET" } : {}),
@@ -342,6 +474,9 @@ function _buildAdaptiveTradePlan(input: {
       trailingAtrMultiple: Number((2.5 * policy.executionCostMultiplier).toFixed(2)),
       atr,
       timeframeMs: market.timeframeMs,
+      limitEntryPrice: rounded(limitEntryPrice),
+      orderType: "LIMIT",
+      limitTtlCandles: 2,
     };
   }
 
@@ -432,6 +567,8 @@ function _buildAdaptiveTradePlan(input: {
       structuralRiskAtr: rounded(structuralRiskAtr),
     };
   }
+  const pullbackOffset = Math.min(atr * 0.25, entryPrice * 0.003);
+  const limitEntryPrice = side === "LONG" ? entryPrice - pullbackOffset : entryPrice + pullbackOffset;
   return {
     approved: true,
     regime,
@@ -448,6 +585,9 @@ function _buildAdaptiveTradePlan(input: {
     atr,
     timeframeMs: market.timeframeMs,
     structuralRiskAtr: rounded(structuralRiskAtr),
+    limitEntryPrice: rounded(limitEntryPrice),
+    orderType: "LIMIT",
+    limitTtlCandles: 2,
   };
 }
 

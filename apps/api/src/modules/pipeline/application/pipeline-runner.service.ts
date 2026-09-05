@@ -657,6 +657,10 @@ export class PipelineRunnerService {
         indicatorSnapshot?.values.atr14,
         analyses.market?.volatility.atr,
       );
+      const primaryCandle = recentCandles[0];
+      const volumeRatio = Number.isFinite(Number(indicatorSnapshot?.values.volumeChangePercent))
+        ? 1 + Number(indicatorSnapshot?.values.volumeChangePercent) / 100
+        : undefined;
       let riskAssessment: Awaited<ReturnType<LiveTradingService["assessPipelineDecision"]>> | undefined;
       let liveExecution: Awaited<ReturnType<LiveTradingService["executePipeline"]>> | undefined;
       let submissionStartedAt: Date | undefined;
@@ -728,6 +732,19 @@ export class PipelineRunnerService {
                       analyses.technical.structure.marketStructure,
                   }
                 : {}),
+              ...(primaryCandle && Number.isFinite(Number(primaryCandle.open))
+                ? { candleOpen: Number(primaryCandle.open) }
+                : {}),
+              ...(primaryCandle && Number.isFinite(Number(primaryCandle.high))
+                ? { candleHigh: Number(primaryCandle.high) }
+                : {}),
+              ...(primaryCandle && Number.isFinite(Number(primaryCandle.low))
+                ? { candleLow: Number(primaryCandle.low) }
+                : {}),
+              ...(primaryCandle && Number.isFinite(Number(primaryCandle.close))
+                ? { candleClose: Number(primaryCandle.close) }
+                : {}),
+              ...(volumeRatio !== undefined ? { volumeRatio } : {}),
             },
           },
         };
@@ -820,6 +837,19 @@ export class PipelineRunnerService {
                   ...(analyses.technical?.structure.marketStructure
                     ? { marketStructure: analyses.technical.structure.marketStructure }
                     : {}),
+                  ...(primaryCandle && Number.isFinite(Number(primaryCandle.open))
+                    ? { candleOpen: Number(primaryCandle.open) }
+                    : {}),
+                  ...(primaryCandle && Number.isFinite(Number(primaryCandle.high))
+                    ? { candleHigh: Number(primaryCandle.high) }
+                    : {}),
+                  ...(primaryCandle && Number.isFinite(Number(primaryCandle.low))
+                    ? { candleLow: Number(primaryCandle.low) }
+                    : {}),
+                  ...(primaryCandle && Number.isFinite(Number(primaryCandle.close))
+                    ? { candleClose: Number(primaryCandle.close) }
+                    : {}),
+                  ...(volumeRatio !== undefined ? { volumeRatio } : {}),
                 },
               });
               if (riskAssessment.outcome === "NO_ELIGIBLE_EXCHANGE_CONNECTION") {
