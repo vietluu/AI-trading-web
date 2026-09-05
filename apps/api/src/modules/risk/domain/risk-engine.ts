@@ -8,6 +8,7 @@ import type {
 } from "./risk-engine.types";
 import { RISK_ENGINE_CONSTANTS } from "./risk-engine.constants";
 import { buildAdaptiveTradePlan } from "./trade-plan-engine";
+import { adaptiveTradingPolicy } from "../../pipeline/domain/adaptive-trading-policy";
 
 export type {
   LastTradeRecord,
@@ -247,6 +248,7 @@ export function evaluateRisk(
   ) return reject("LOSS_REENTRY_COOLDOWN_ACTIVE");
 
   const plan = buildAdaptiveTradePlan({
+    symbol: input.symbol,
     side: decision.decision,
     entryPrice: marketData.price,
     decision,
@@ -316,7 +318,15 @@ export function evaluateRisk(
       : lossCount === 2
         ? 0.5
         : 0.35;
-  const highVolatility = marketData.volatility >= limits.highVolatility;
+  const policy = adaptiveTradingPolicy({
+    symbol: input.symbol,
+    regime: decision.regime?.type,
+  });
+  const assetMaxLeverage =
+    policy.liquidityClass === "MAJOR" ? 30 : policy.liquidityClass === "LIQUID_ALT" ? 15 : 5;
+  const effectiveMaxLeverage = Math.min(limits.maxLeverage, assetMaxLeverage);
+  const effectiveHighVolatility = limits.highVolatility * (policy.liquidityClass === "MAJOR" ? 1 : policy.liquidityClass === "LIQUID_ALT" ? 1.5 : 2.5);
+  const highVolatility = marketData.volatility >= effectiveHighVolatility;
   if (highVolatility)
     positionSize = rounded(
       positionSize * limits.highVolatilitySizeFactor,
@@ -362,12 +372,12 @@ export function evaluateRisk(
     limits.minLiquidationBufferPct,
   );
   const volatilityLeverageLimit = highVolatility
-    ? Math.max(1, Math.floor(limits.maxLeverage / 2))
-    : limits.maxLeverage;
+    ? Math.max(1, Math.floor(effectiveMaxLeverage / 2))
+    : effectiveMaxLeverage;
   const maximumSafeLeverage = Math.max(
     1,
     Math.min(
-      limits.maxLeverage,
+      effectiveMaxLeverage,
       volatilityLeverageLimit,
       roeLeverageLimit,
       liquidationLeverageLimit,
@@ -418,7 +428,11 @@ export function evaluateRisk(
       leverage,
       exposurePct,
       drawdownPct,
-      limits,
+      {
+        ...limits,
+        highVolatility: effectiveHighVolatility,
+        maxLeverage: effectiveMaxLeverage,
+      },
     ),
     exposurePct: rounded(exposurePct, 6),
     drawdownPct: rounded(drawdownPct, 6),

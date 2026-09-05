@@ -3,7 +3,7 @@ import type { MarketRegime } from '@platform/shared';
 export type AssetLiquidityClass = 'MAJOR' | 'LIQUID_ALT' | 'LONG_TAIL';
 
 export interface AdaptivePolicyContext {
-  symbol: string;
+  symbol?: string;
   provider?: 'BINANCE_FUTURES' | 'OKX_FUTURES';
   timeframe?: string;
   regime?: MarketRegime['type'];
@@ -13,7 +13,8 @@ export interface AdaptivePolicyContext {
 const MAJORS = new Set(['BTC', 'ETH']);
 const LIQUID_ALTS = new Set(['SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'LINK']);
 
-export function assetLiquidityClass(symbol: string): AssetLiquidityClass {
+export function assetLiquidityClass(symbol?: string): AssetLiquidityClass {
+  if (!symbol) return 'MAJOR';
   const base = symbol.toUpperCase().split('-')[0] ?? '';
   return MAJORS.has(base) ? 'MAJOR' : LIQUID_ALTS.has(base) ? 'LIQUID_ALT' : 'LONG_TAIL';
 }

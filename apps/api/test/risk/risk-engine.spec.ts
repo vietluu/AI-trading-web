@@ -462,4 +462,41 @@ describe("risk engine", () => {
       reason,
     });
   });
+
+  it("caps long-tail asset leverage strictly at 5x and adapts high volatility threshold", () => {
+    const highLeverageLimits: RiskLimits = {
+      ...limits,
+      maxLeverage: 50,
+      highVolatility: 0.04,
+    };
+
+    const btcResult = evaluateRisk(
+      input({
+        symbol: "BTC-USDT",
+        marketData: {
+          price: 50_000,
+          volatility: 0.05, // > 0.04 -> triggers highVolatility size cut for BTC
+        },
+      }),
+      highLeverageLimits,
+    );
+
+    const memeResult = evaluateRisk(
+      input({
+        symbol: "PEPE-USDT",
+        marketData: {
+          price: 50_000,
+          volatility: 0.05, // < 0.04 * 2.5 (0.10) -> does NOT trigger highVolatility size cut for PEPE
+        },
+      }),
+      highLeverageLimits,
+    );
+
+    expect(btcResult.approved).toBe(true);
+    expect(memeResult.approved).toBe(true);
+    // Leverage cap for LONG_TAIL must not exceed 5x
+    expect(memeResult.leverage).toBeLessThanOrEqual(5);
+    // For MAJOR with maxLeverage 50, it is capped at 30x
+    expect(btcResult.leverage).toBeLessThanOrEqual(30);
+  });
 });

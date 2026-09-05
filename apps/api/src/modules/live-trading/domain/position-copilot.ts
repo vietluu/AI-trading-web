@@ -2,6 +2,7 @@ import type {
   CopilotDecision,
   PositionCopilotInput,
 } from "./position-copilot.types";
+import { adaptiveTradingPolicy } from "../../pipeline/domain/adaptive-trading-policy";
 
 /**
  * Validates the Ironclad Asymmetric Safety Guard:
@@ -139,10 +140,21 @@ export function evaluatePositionCopilot(
 
   // Scenario C: Onchain Whale Dump Warning while in Healthy Profit
   if (onchain?.whaleAlertDetected && currentR >= 0.8) {
+    const roundTripCostPct = input.plan.estimatedRoundTripCostPct ?? 0.001;
+    const policy = adaptiveTradingPolicy({
+      symbol: input.symbol,
+      regime:
+        input.plan.regime === "TREND_UP" || input.plan.regime === "TREND_DOWN" || input.plan.regime === "BREAKOUT"
+          ? "TRENDING"
+          : input.plan.regime === "HIGH_VOLATILITY"
+            ? "HIGH_VOLATILITY"
+            : "RANGING",
+    });
+    const bufferPct = Math.max(0.001, roundTripCostPct * policy.executionCostMultiplier);
     const candidateStop =
       input.side === "LONG"
-        ? Math.max(input.currentStopLoss, input.entryPrice + input.entryPrice * 0.001)
-        : Math.min(input.currentStopLoss, input.entryPrice - input.entryPrice * 0.001);
+        ? Math.max(input.currentStopLoss, input.entryPrice + input.entryPrice * bufferPct)
+        : Math.min(input.currentStopLoss, input.entryPrice - input.entryPrice * bufferPct);
 
     const safety = assertAsymmetricSafety(input.side, input.currentStopLoss, candidateStop);
     if (safety.valid && candidateStop !== input.currentStopLoss) {

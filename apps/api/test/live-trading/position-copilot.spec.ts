@@ -158,5 +158,59 @@ describe("PositionCopilot Domain Logic", () => {
       expect(decision.thesisHealthScore).toBeGreaterThanOrEqual(60);
       expect(decision.urgency).toBe("LOW");
     });
+
+    it("scales breakeven buffer dynamically based on asset liquidity class to avoid spread stop-out", () => {
+      const btcInput = createMockInput({
+        symbol: "BTC-USDT",
+        side: "LONG",
+        entryPrice: 60000,
+        markPrice: 61000,
+        initialStopLoss: 59000,
+        currentStopLoss: 59000,
+        plan: {
+          approved: true,
+          regime: "TREND_UP",
+          strategy: "TREND_PULLBACK",
+          maxHoldingCandles: 10,
+          breakEvenAtR: 0.8,
+          estimatedRoundTripCostPct: 0.001,
+        },
+        triggerEvent: "ONCHAIN_WHALE_PRESSURE",
+        context: {
+          markPrice: 61000,
+          onchainFlow: { whaleAlertDetected: true, inflowSeverity: "HIGH" },
+        },
+      });
+
+      const memeInput = createMockInput({
+        symbol: "PEPE-USDT",
+        side: "LONG",
+        entryPrice: 60000,
+        markPrice: 61000,
+        initialStopLoss: 59000,
+        currentStopLoss: 59000,
+        plan: {
+          approved: true,
+          regime: "TREND_UP",
+          strategy: "TREND_PULLBACK",
+          maxHoldingCandles: 10,
+          breakEvenAtR: 0.8,
+          estimatedRoundTripCostPct: 0.001,
+        },
+        triggerEvent: "ONCHAIN_WHALE_PRESSURE",
+        context: {
+          markPrice: 61000,
+          onchainFlow: { whaleAlertDetected: true, inflowSeverity: "HIGH" },
+        },
+      });
+
+      const btcDecision = evaluatePositionCopilot(btcInput);
+      const memeDecision = evaluatePositionCopilot(memeInput);
+
+      // PEPE has executionCostMultiplier = 2.5 vs BTC = 1.0, so proposedStopLoss must provide larger buffer above entry
+      expect(memeDecision.proposedStopLoss).toBeGreaterThan(btcDecision.proposedStopLoss!);
+      expect(btcDecision.proposedStopLoss).toBe(60060); // 60000 + 60000 * 0.001
+      expect(memeDecision.proposedStopLoss).toBe(60150); // 60000 + 60000 * (0.001 * 2.5)
+    });
   });
 });

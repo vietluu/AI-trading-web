@@ -1,4 +1,5 @@
 import type { DecisionOutput } from "@platform/shared";
+import { adaptiveTradingPolicy } from "../../pipeline/domain/adaptive-trading-policy";
 
 export type TradePlanRegime =
   | "TREND_UP"
@@ -101,6 +102,7 @@ function rewardToRisk(
 }
 
 function _buildAdaptiveTradePlan(input: {
+  symbol?: string;
   side: "LONG" | "SHORT";
   entryPrice: number;
   decision: DecisionOutput;
@@ -117,6 +119,16 @@ function _buildAdaptiveTradePlan(input: {
   const resistance = market.resistance;
   const costPct = input.roundTripCostPct ?? 0.0008;
   const momentumScalp = /\[momentum-scalp\]/i.test(decision.reasoning);
+  const policy = adaptiveTradingPolicy({
+    symbol: input.symbol,
+    regime:
+      regime === "TREND_UP" || regime === "TREND_DOWN" || regime === "BREAKOUT"
+        ? "TRENDING"
+        : regime === "HIGH_VOLATILITY"
+          ? "HIGH_VOLATILITY"
+          : "RANGING",
+    spreadBps: input.roundTripCostPct !== undefined ? input.roundTripCostPct * 10_000 : undefined,
+  });
 
   // Preserve safe behaviour for manual/API callers that do not have a complete
   // market snapshot yet. Automated pipeline calls supply ATR and range levels.
@@ -151,8 +163,8 @@ function _buildAdaptiveTradePlan(input: {
         : market.ema20 - entryPrice
       : 0;
     const exhaustedMomentum =
-      (side === "LONG" && (market.rsi ?? 0) >= 72) ||
-      (side === "SHORT" && (market.rsi ?? 100) <= 28);
+      (side === "LONG" && (market.rsi ?? 0) >= policy.maxRsiLong) ||
+      (side === "SHORT" && (market.rsi ?? 100) <= policy.minRsiShort);
     if (
       emaExtension > atr * 1.5 ||
       (exhaustedMomentum && emaExtension > atr * 0.75)
@@ -188,7 +200,7 @@ function _buildAdaptiveTradePlan(input: {
       rewardToRisk: rounded(rr),
       maxHoldingCandles: 6,
       breakEvenAtR: 0.8,
-      trailingAtrMultiple: 1.8,
+      trailingAtrMultiple: Number((1.8 * policy.executionCostMultiplier).toFixed(2)),
       atr,
       timeframeMs: market.timeframeMs,
       structuralRiskAtr: 1.2,
@@ -317,7 +329,7 @@ function _buildAdaptiveTradePlan(input: {
       rewardToRisk: rounded(rr),
       maxHoldingCandles: 5,
       breakEvenAtR: 0.8,
-      trailingAtrMultiple: 2.5,
+      trailingAtrMultiple: Number((2.5 * policy.executionCostMultiplier).toFixed(2)),
       atr,
       timeframeMs: market.timeframeMs,
     };
@@ -419,7 +431,10 @@ function _buildAdaptiveTradePlan(input: {
     rewardToRisk: rounded(rr),
     maxHoldingCandles: regime === "HIGH_VOLATILITY" ? 8 : 20,
     breakEvenAtR: 1,
-    trailingAtrMultiple: regime === "HIGH_VOLATILITY" ? 3 : 2.5,
+    trailingAtrMultiple:
+      regime === "HIGH_VOLATILITY"
+        ? Number((3 * policy.executionCostMultiplier).toFixed(2))
+        : Number((2.5 * policy.executionCostMultiplier).toFixed(2)),
     atr,
     timeframeMs: market.timeframeMs,
     structuralRiskAtr: rounded(structuralRiskAtr),
