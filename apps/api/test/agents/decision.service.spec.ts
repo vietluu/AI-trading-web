@@ -113,6 +113,36 @@ describe('DecisionService', () => {
     expect(output.profitFactorEstimate).toBe(1);
   });
 
+  it('preserves synthesized EV and profit factor during cold-start when conviction is high', async () => {
+    const service = new DecisionService({} as never);
+    const base = service.decide(decisionInput());
+    const calibrationService = service as unknown as {
+      confidenceCalibration: (...args: unknown[]) => Promise<{
+        status: 'CALIBRATED' | 'INSUFFICIENT_HISTORY';
+        rawScore: number;
+        empiricalProbability: number | null;
+        sampleSize: number;
+        bucketSampleSize: number;
+        brierScore: number | null;
+        scope: 'EXACT' | 'STRATEGY_CONTEXT' | 'STRATEGY_TIMEFRAME' | 'USER_GLOBAL' | 'NONE';
+        fallbackUsed: boolean;
+      }>;
+    };
+    vi.spyOn(calibrationService, 'confidenceCalibration').mockResolvedValue({
+      status: 'INSUFFICIENT_HISTORY', rawScore: base.confidence,
+      empiricalProbability: null, sampleSize: 0, bucketSampleSize: 0,
+      brierScore: null, scope: 'NONE', fallbackUsed: false,
+    } as never);
+
+    const output = await service.calibrateForExecution(base, 'user-1', {
+      symbol: 'BTC-USDT', strategyKey: 'trend', provider: 'OKX_FUTURES', timeframe: '15m',
+    });
+
+    expect(output.confidenceCalibration?.status).toBe('INSUFFICIENT_HISTORY');
+    expect(output.expectedValue).toBeGreaterThan(0);
+    expect(output.profitFactorEstimate).toBeGreaterThan(1);
+  });
+
   it('scores the canonical bearish LH_LL structure as directional structure evidence', () => {
     const input = decisionInput();
     input.market!.trend.direction = 'DOWN';

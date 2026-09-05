@@ -127,9 +127,12 @@ export class DecisionService {
     const expectedWinProbability = this.clamp(empiricalProbability ?? 0.5, 0, 1);
     // A neutral prior is not empirical edge. Keep EV/PF neutral until an exact
     // or governed blended calibration has enough evidence; downstream Judge
-    // and Risk gates will therefore reject cold-start automatic execution.
+    // and Risk gates will therefore reject cold-start automatic execution,
+    // UNLESS this is a true cold start (INSUFFICIENT_HISTORY) with strong conviction.
+    const isColdStart = confidenceCalibration?.status === "INSUFFICIENT_HISTORY";
+    const strongColdStart = isColdStart && decision.confidence >= 65 && decision.opportunityScore >= 60;
     const expectedValue = empiricalProbability === undefined
-      ? 0
+      ? (strongColdStart ? decision.expectedValue : 0)
       : this.clamp(
           expectedWinProbability * decision.expectedReward -
             (1 - expectedWinProbability) * decision.expectedLoss -
@@ -138,7 +141,7 @@ export class DecisionService {
           3,
         );
     const profitFactorEstimate = empiricalProbability === undefined
-      ? 1
+      ? (strongColdStart ? decision.profitFactorEstimate : 1)
       : this.clamp(
           (expectedWinProbability * decision.expectedReward) /
             Math.max((1 - expectedWinProbability) * decision.expectedLoss, 0.05),
@@ -264,6 +267,8 @@ export class DecisionService {
       0,
       1,
     );
+    const isColdStart = confidenceCalibration?.status === "INSUFFICIENT_HISTORY";
+    const strongColdStart = isColdStart && decision.confidence >= 65 && decision.opportunityScore >= 60;
     const hasEmpiricalEdge = empiricalProbability !== undefined;
     const expectedValueRaw = hasEmpiricalEdge
           ? this.clamp(
@@ -273,7 +278,7 @@ export class DecisionService {
               -3,
               3,
             )
-          : 0;
+          : (strongColdStart ? decision.expectedValue : 0);
           
     let finalConfidence = decision.confidence;
     if (empiricalProbability !== undefined && empiricalProbability < 0.35) {
@@ -309,7 +314,7 @@ export class DecisionService {
               0.1,
               10,
             )
-          : 1
+          : (strongColdStart ? decision.profitFactorEstimate : 1)
         ).toFixed(3),
       ),
     };
