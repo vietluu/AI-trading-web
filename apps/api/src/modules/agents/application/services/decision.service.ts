@@ -27,7 +27,7 @@ import { PrismaService } from "../../../../database/prisma.service";
 import { calibrateConfidenceWithFallback } from "../../../reflection/domain/confidence-calibration";
 import { ConfigService } from "@nestjs/config";
 import { createHash } from "node:crypto";
-import { adaptiveTradingPolicy, parseSpreadBps } from "../../../pipeline/domain/adaptive-trading-policy";
+import { adaptiveTradingPolicy, assetLiquidityClass, parseSpreadBps } from "../../../pipeline/domain/adaptive-trading-policy";
 
 export type { AnalystName, Bias, ConflictLevel, RunDecisionOptions, Weighting };
 
@@ -634,6 +634,7 @@ export class DecisionService {
     const { adjustment: volatilityAdjustment, extreme } = this.volatilityFilter(
       input,
       customOptions?.volatilityPenalty,
+      directionalAgreement,
     );
     if (volatilityAdjustment < 0) {
       overrides.push(
@@ -785,7 +786,7 @@ export class DecisionService {
       coreDataQuality === "GOOD" &&
       directionalAgreement >= 80 &&
       evidenceCoverage >= 60 &&
-      opportunityScore >= minRequiredOpportunity &&
+      opportunityScore >= policy.minColdStartOpportunity &&
       expectedValue > 0.2;
     // A learned threshold may make the system more conservative, but must not
     // weaken the regime-specific safety threshold.
@@ -947,12 +948,15 @@ export class DecisionService {
   private volatilityFilter(
     input: DecisionInput,
     customPenalty?: number,
+    directionalAgreement?: number,
   ): {
     factor: number;
     adjustment: number;
     extreme: boolean;
   } {
-    const penalty = customPenalty ?? 20;
+    const isAltcoin = assetLiquidityClass(input.symbol) !== "MAJOR";
+    const strongBreakoutConsensus = isAltcoin && (directionalAgreement ?? 0) >= 80;
+
     const evidence = [
       input.market?.volatility.atr,
       ...(input.market?.anomalies ?? []),
@@ -964,13 +968,21 @@ export class DecisionService {
       input.market?.volatility.level === "HIGH" ||
       /high atr|extreme atr|large swings?|volatility spike/.test(evidence);
     if (!high) return { factor: 1, adjustment: 0, extreme: false };
-    const extreme =
-      /extreme|liquidation cascade|dislocation|violent|flash crash|parabolic spike/.test(
-        evidence,
-      );
+
+    // Cascades, panics and flash crashes are unorderly and always treated as extreme.
+    // Dislocations and parabolic spikes are tradeable for altcoins with strong directional consensus.
+    const dangerousPanic = /liquidation cascade|violent|flash crash/.test(evidence);
+    const dislocation = /extreme|dislocation|parabolic spike/.test(evidence);
+    const extreme = dangerousPanic || (dislocation && !strongBreakoutConsensus);
+
+    // For altcoins with strong breakout consensus, calibrate penalty to 10 (instead of 20)
+    // so viable momentum breakouts are not suffocated, while downstream risk engine limits position size.
+    const defaultPenalty = strongBreakoutConsensus ? 10 : 20;
+    const penalty = customPenalty ?? defaultPenalty;
+
     return extreme
       ? { factor: 0.7, adjustment: -Math.round(penalty * 1.5), extreme: true }
-      : { factor: 0.8, adjustment: -Math.round(penalty), extreme: false };
+      : { factor: 0.85, adjustment: -Math.round(penalty), extreme: false };
   }
 
   private agreementFactor(
@@ -1166,17 +1178,23 @@ export class DecisionService {
       spreadBps,
     });
     // Tiered base threshold: Major pairs (BTC, ETH) require less conviction buffer than volatile long-tail alts
+    const isAltcoin = policy.liquidityClass !== "MAJOR";
+    const isAltcoinBreakout =
+      isAltcoin &&
+      regime.type === "HIGH_VOLATILITY" &&
+      opportunityScore >= 75;
+
     const tierAdjustment =
       policy.liquidityClass === "MAJOR" ? -2 : policy.liquidityClass === "LIQUID_ALT" ? 0 : 3;
     const base =
       (regime.type === "TRENDING"
         ? 62
         : regime.type === "HIGH_VOLATILITY"
-          ? 78
+          ? (isAltcoinBreakout ? 70 : 78)
           : 72) + tierAdjustment;
     const volatilityAdjustment =
       input.market?.volatility.level === "HIGH"
-        ? 8
+        ? (isAltcoinBreakout ? 3 : 8)
         : input.market?.volatility.level === "LOW"
           ? -3
           : 0;

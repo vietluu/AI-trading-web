@@ -241,6 +241,55 @@ describe("independent strategy decisions", () => {
     expect(selection.candidates).toHaveLength(5);
   });
 
+  it("permits high-momentum breakout and trend entries when RSI is elevated (68-74) but not exhausted", () => {
+    const highMomentumBreakout = {
+      ...analyses,
+      market: {
+        ...analyses.market,
+        trend: { direction: "UP" as const, strength: "STRONG" as const },
+        volatility: { level: "HIGH" as const },
+      },
+      technical: {
+        ...analyses.technical,
+        trend: { direction: "UP" as const, strength: "STRONG" as const },
+        momentum: {
+          rsi: "71.5",
+          rsiState: "OVERBOUGHT" as const,
+          macd: { trend: "BULLISH" as const },
+        },
+        structure: { marketStructure: "HH_HL" as const, breakout: true },
+      },
+    } as FusionInput;
+
+    expect(decisionForStrategy("ai-core", base, highMomentumBreakout).decision).toBe("LONG");
+    expect(decisionForStrategy("trend", base, highMomentumBreakout).decision).toBe("LONG");
+    expect(decisionForStrategy("breakout", base, highMomentumBreakout).decision).toBe("LONG");
+  });
+
+  it("blocks entries when RSI exceeds the upper boundary (>75) declaring true exhaustion", () => {
+    const exhaustedMove = {
+      ...analyses,
+      market: {
+        ...analyses.market,
+        trend: { direction: "UP" as const, strength: "STRONG" as const },
+      },
+      technical: {
+        ...analyses.technical,
+        trend: { direction: "UP" as const, strength: "STRONG" as const },
+        momentum: {
+          rsi: "82.0",
+          rsiState: "OVERBOUGHT" as const,
+          macd: { trend: "BULLISH" as const },
+        },
+        structure: { marketStructure: "HH_HL" as const, breakout: true },
+      },
+    } as FusionInput;
+
+    expect(decisionForStrategy("ai-core", base, exhaustedMove).decision).toBe("WAIT");
+    expect(decisionForStrategy("trend", base, exhaustedMove).decision).toBe("WAIT");
+    expect(decisionForStrategy("breakout", base, exhaustedMove).decision).toBe("WAIT");
+  });
+
   it("deduplicates configured strategies and falls back safely", () => {
     expect(selectStrategyDecision(["trend", "trend"], base, analyses).candidates).toHaveLength(1);
     expect(selectStrategyDecision(["unknown"], base, analyses).selectedStrategyKey).toBe("ai-core");
