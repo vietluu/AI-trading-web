@@ -157,6 +157,52 @@ function strategyCandidateScore(key: StrategyKey, decision: DecisionOutput): num
   ).toFixed(3));
 }
 
+/**
+ * Evaluates whether momentum is exhausted based on asset regime, trend strength, and RSI.
+ * In explosive breakouts and strong trends, allows RSI up to 75 for LONG (and down to 25 for SHORT)
+ * without triggering false exhaustion alarms.
+ */
+export function isMomentumExhausted(
+  direction: "LONG" | "SHORT",
+  analyses: FusionInput,
+  baseRegime?: string,
+  market?: StrategyMarketSnapshot,
+): boolean {
+  const parsedRsi = analyses.technical?.momentum?.rsi ? Number(analyses.technical.momentum.rsi) : NaN;
+  const rsiState = analyses.technical?.momentum?.rsiState;
+  const rsiValue = Number.isFinite(parsedRsi)
+    ? parsedRsi
+    : rsiState === "OVERBOUGHT"
+      ? 78
+      : rsiState === "OVERSOLD"
+        ? 22
+        : 50;
+
+  const isStrongBreakoutOrTrend =
+    baseRegime === "BREAKOUT" ||
+    baseRegime === "TRENDING" ||
+    analyses.technical?.structure?.breakout === true ||
+    (analyses.technical?.trend?.strength === "STRONG" && analyses.technical?.trend?.direction !== "SIDEWAYS") ||
+    (market?.adx !== undefined && market.adx >= 25) ||
+    (market?.volumeChangePercent !== undefined && market.volumeChangePercent >= 30);
+
+  if (direction === "LONG") {
+    const hasBearishDiv = analyses.technical?.divergence?.rsiDivergence === "BEARISH";
+    if (hasBearishDiv && rsiValue >= 68) return true;
+    const upperLimit = isStrongBreakoutOrTrend ? 75 : 68;
+    return rsiValue > upperLimit || (!isStrongBreakoutOrTrend && rsiState === "OVERBOUGHT");
+  }
+
+  if (direction === "SHORT") {
+    const hasBullishDiv = analyses.technical?.divergence?.rsiDivergence === "BULLISH";
+    if (hasBullishDiv && rsiValue <= 32) return true;
+    const lowerLimit = isStrongBreakoutOrTrend ? 25 : 32;
+    return rsiValue < lowerLimit || (!isStrongBreakoutOrTrend && rsiState === "OVERSOLD");
+  }
+
+  return false;
+}
+
 /** Converts the shared analysis snapshot into an independent strategy decision. */
 export function decisionForStrategy(
   key: string,
@@ -168,21 +214,15 @@ export function decisionForStrategy(
 
   // RSI Exhaustion / Momentum Guard
   if (["ai-core", "trend"].includes(key) && decisionBase.decision !== "WAIT") {
-    const rsiValue = Number(analyses.technical?.momentum?.rsi ?? 50);
-    const isOversold = analyses.technical?.momentum?.rsiState === "OVERSOLD" || rsiValue < 35;
-    const isOverbought = analyses.technical?.momentum?.rsiState === "OVERBOUGHT" || rsiValue > 65;
-    
-    if (decisionBase.decision === "SHORT" && isOversold) {
+    if (isMomentumExhausted(decisionBase.decision, analyses, decisionBase.regime.type, market)) {
+      const rsiDesc = analyses.technical?.momentum?.rsi ?? analyses.technical?.momentum?.rsiState ?? "exhausted";
       decisionBase = {
         ...decisionBase,
         decision: "WAIT",
-        overrides: [...decisionBase.overrides, "Blocked SHORT due to momentum exhaustion (OVERSOLD RSI)."]
-      };
-    } else if (decisionBase.decision === "LONG" && isOverbought) {
-      decisionBase = {
-        ...decisionBase,
-        decision: "WAIT",
-        overrides: [...decisionBase.overrides, "Blocked LONG due to momentum exhaustion (OVERBOUGHT RSI)."]
+        overrides: [
+          ...decisionBase.overrides,
+          `Blocked ${decisionBase.decision} due to momentum exhaustion (RSI ${rsiDesc}).`,
+        ],
       };
     }
   }
@@ -255,11 +295,9 @@ export function decisionForStrategy(
       : direction === "SHORT"
         ? trendDirection === "DOWN" || macdDirection === "BEARISH" || emaAligned
         : false;
-    const rsiExhausted = direction === "LONG"
-      ? analyses.technical.momentum.rsiState === "OVERBOUGHT" || analyses.technical.volatility?.bollinger?.position === "UPPER"
-      : direction === "SHORT"
-        ? analyses.technical.momentum.rsiState === "OVERSOLD" || analyses.technical.volatility?.bollinger?.position === "LOWER"
-        : false;
+    const rsiExhausted = direction
+      ? isMomentumExhausted(direction, analyses, base.regime.type, market)
+      : false;
     const impulse = Math.abs(priceChange ?? 0);
     const minImpulse = isRanging ? 0.35 : 0.15;
     const liquidImpulse = Number.isFinite(volumeChange) && (volumeChange ?? 0) >= 0.35;
@@ -301,20 +339,30 @@ export function decisionForStrategy(
     confidence = Math.min(confidence, base.confidence);
   }
 
-  const rsiState = analyses.technical.momentum.rsiState;
-  const chasesExhaustedMove =
-    (decision === "SHORT" && rsiState === "OVERSOLD") ||
-    (decision === "LONG" && rsiState === "OVERBOUGHT");
   if (
-    chasesExhaustedMove &&
-    (key === "trend" || key === "breakout" || key === "momentum-scalp")
+    decision !== "WAIT" &&
+    (key === "trend" || key === "breakout" || key === "momentum-scalp") &&
+    isMomentumExhausted(decision, analyses, base.regime.type, market)
   ) {
+    const rsiDesc = analyses.technical?.momentum?.rsi ?? analyses.technical?.momentum?.rsiState ?? "exhausted";
     decision = "WAIT";
     confidence = 0;
-    explanation = `${key} entry rejected because it would chase an ${rsiState.toLowerCase()} move.`;
+    explanation = `${key} entry rejected because it would chase an exhausted move (RSI ${rsiDesc}).`;
   }
 
-  if (analyses.market.volatility.level === "HIGH") confidence -= 10;
+  const isStrongTrend =
+    analyses.market.trend.strength === "STRONG" &&
+    analyses.technical.trend.strength === "STRONG" &&
+    analyses.market.trend.direction === analyses.technical.trend.direction;
+
+  if (
+    analyses.market.volatility.level === "HIGH" &&
+    key !== "breakout" &&
+    key !== "momentum-scalp" &&
+    !(key === "trend" && isStrongTrend)
+  ) {
+    confidence -= 10;
+  }
   if (base.dataQuality === "PARTIAL") confidence = Math.min(confidence, 75);
   if (base.dataQuality === "INSUFFICIENT") {
     decision = "WAIT";

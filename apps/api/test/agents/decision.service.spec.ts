@@ -314,6 +314,33 @@ describe('DecisionService', () => {
     expect(output.overrides).not.toEqual(expect.arrayContaining([expect.stringContaining('Strong conviction override')]));
   });
 
+  it('permits high-momentum breakouts for altcoins with strong directional consensus and calibrated volatility penalty', () => {
+    const input = decisionInput();
+    input.symbol = 'ARB-USDT';
+    input.market!.volatility.level = 'HIGH';
+    input.market!.trend.direction = 'UP';
+    input.market!.trend.strength = 'STRONG';
+    input.technical!.trend.direction = 'UP';
+    input.technical!.trend.strength = 'STRONG';
+    input.technical!.momentum.rsi = '72';
+    input.technical!.momentum.rsiState = 'OVERBOUGHT';
+    input.sentiment!.sentiment.overall = 'BULLISH';
+    input.macro!.macroTrend = 'RISK_ON';
+    input.news!.impact.level = 'MEDIUM';
+    input.news!.impact.direction = 'POSITIVE';
+    input.onchain!.signals = ['Inflow aligned with breakout demand.'];
+    input.fusionOutput.conflicts = [];
+    input.market!.anomalies = ['Volatility spike and momentum breakout.'];
+
+    const output = new DecisionService({} as never).decide(input);
+
+    expect(output.decision).toBe('LONG');
+    expect(output.volatilityAdjustment).toBe(-10);
+    expect(output.confidence).toBeGreaterThanOrEqual(70);
+    expect(output.adaptiveThreshold).toBeLessThanOrEqual(80);
+    expect(output.confidence).toBeGreaterThanOrEqual(output.adaptiveThreshold);
+  });
+
   it('reduces confidence in high volatility and detects major news events', () => {
     const input = decisionInput();
     const baseline = new DecisionService({} as never).decide(input);
