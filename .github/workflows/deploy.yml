@@ -126,13 +126,13 @@ jobs:
             # Authenticate Docker to GitHub Container Registry
             echo "${GH_TOKEN}" | docker login ghcr.io -u "${GH_ACTOR}" --password-stdin
 
-            # Pull pre-built images from GHCR and restart services
+            # Pull pre-built images from GHCR or fallback to build on VM if pull fails
             if docker compose version >/dev/null 2>&1; then
-              docker compose pull api web
+              docker compose pull api web || docker compose build api web
               docker compose up -d api web
               docker image prune -f
             elif command -v docker-compose >/dev/null 2>&1; then
-              docker-compose pull api web
+              docker-compose pull api web || docker-compose build api web
               docker-compose up -d api web
               docker image prune -f
             else

@@ -194,8 +194,12 @@ export class MarketEventScannerService {
     const latestClosed = [...snapshot.closedCandles]
       .filter((candle) => candle.isClosed)
       .sort((a, b) => b.closeTime.getTime() - a.closeTime.getTime())[0];
-    const tickerFresh = snapshot.ticker &&
-      now.getTime() - snapshot.ticker.timestamp.getTime() <= 90_000;
+    const tickerTime = snapshot.ticker?.timestamp instanceof Date
+      ? snapshot.ticker.timestamp.getTime()
+      : snapshot.ticker?.timestamp
+        ? new Date(snapshot.ticker.timestamp).getTime()
+        : NaN;
+    const tickerFresh = Number.isFinite(tickerTime) && now.getTime() - tickerTime <= 90_000;
     const price = this.number(
       tickerFresh
         ? snapshot.ticker?.markPrice ?? snapshot.ticker?.lastPrice
