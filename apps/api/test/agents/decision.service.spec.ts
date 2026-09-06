@@ -250,7 +250,7 @@ describe('DecisionService', () => {
     const output = new DecisionService({} as never).decide(input);
 
     expect(output.dataQuality).toBe('PARTIAL');
-    expect(output.confidence).toBeLessThanOrEqual(75);
+    expect(output.confidence).toBeLessThanOrEqual(85);
     expect(output.expectedWinProbability).toBe(0.5);
   });
 
@@ -267,12 +267,22 @@ describe('DecisionService', () => {
     const output = new DecisionService({} as never).decide(input);
 
     expect(output.decision).toBe('LONG');
-    expect(output.confidence).toBe(75);
+    expect(output.confidence).toBe(85);
     expect(output.dataQuality).toBe('PARTIAL');
     expect(output.coreDataQuality).toBe('GOOD');
     expect(output.agreementScore).toBe(40);
     expect(output.directionalAgreement).toBe(100);
     expect(output.evidenceCoverage).toBe(100);
+  });
+
+  it('caps confidence at 75 when core data quality is not good', () => {
+    const input = decisionInput();
+    input.fusionOutput.dataQuality = 'PARTIAL';
+    input.market!.dataQuality = 'PARTIAL';
+    const output = new DecisionService({} as never).decide(input);
+
+    expect(output.coreDataQuality).toBe('PARTIAL');
+    expect(output.confidence).toBeLessThanOrEqual(75);
   });
 
   it('still blocks aligned core evidence when directional coverage is too sparse', () => {

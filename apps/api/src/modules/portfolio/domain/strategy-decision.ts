@@ -363,7 +363,10 @@ export function decisionForStrategy(
   ) {
     confidence -= 10;
   }
-  if (base.dataQuality === "PARTIAL") confidence = Math.min(confidence, 75);
+  if (base.dataQuality === "PARTIAL") {
+    const partialCeiling = base.coreDataQuality === "GOOD" ? 85 : 75;
+    confidence = Math.min(confidence, partialCeiling);
+  }
   if (base.dataQuality === "INSUFFICIENT") {
     decision = "WAIT";
     confidence = 0;

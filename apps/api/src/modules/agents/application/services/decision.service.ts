@@ -706,7 +706,9 @@ export class DecisionService {
     // instead of every neutral market being displayed as an unexplained 0/100.
     const confidenceCeiling =
       dataQuality === "PARTIAL"
-        ? DECISION_THRESHOLDS.PARTIAL_DATA_CONFIDENCE_CEILING
+        ? (coreDataQuality === "GOOD"
+            ? DECISION_THRESHOLDS.CORE_GOOD_CONFIDENCE_CEILING
+            : DECISION_THRESHOLDS.PARTIAL_DATA_CONFIDENCE_CEILING)
         : 100;
     const confidence = Math.round(
       this.clamp(rawConfidence, 0, confidenceCeiling),
