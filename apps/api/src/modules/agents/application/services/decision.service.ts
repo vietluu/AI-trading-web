@@ -129,8 +129,11 @@ export class DecisionService {
     // A neutral prior is not empirical edge. Keep EV/PF neutral until an exact
     // or governed blended calibration has enough evidence; downstream Judge
     // and Risk gates will therefore reject cold-start automatic execution,
-    // UNLESS this is a true cold start (INSUFFICIENT_HISTORY) with strong conviction.
-    const isColdStart = confidenceCalibration?.status === "INSUFFICIENT_HISTORY";
+    // UNLESS this is an uncalibrated / cold-start symbol with strong conviction
+    // and without negative fallback evidence.
+    const isColdStart =
+      confidenceCalibration?.status === "INSUFFICIENT_HISTORY" ||
+      confidenceCalibration?.hardGateEligible === false;
     const spreadBps = this.spreadBasisPoints(
       rawInput.market?.liquidity?.bidAskSpread ?? rawInput.market?.liquidity?.spread,
     );
@@ -141,7 +144,13 @@ export class DecisionService {
       regime: decision.regime.type,
       spreadBps,
     });
+    const hasNegativeFallbackEvidence =
+      confidenceCalibration?.status === "CALIBRATED" &&
+      confidenceCalibration.empiricalProbability !== null &&
+      confidenceCalibration.empiricalProbability !== undefined &&
+      confidenceCalibration.empiricalProbability < 0.42;
     const strongColdStart = isColdStart &&
+      !hasNegativeFallbackEvidence &&
       decision.confidence >= coldStartPolicy.minColdStartConfidence &&
       decision.opportunityScore >= coldStartPolicy.minColdStartOpportunity;
     const expectedValue = empiricalProbability === undefined
@@ -280,14 +289,22 @@ export class DecisionService {
       0,
       1,
     );
-    const isColdStart = confidenceCalibration?.status === "INSUFFICIENT_HISTORY";
+    const isColdStart =
+      confidenceCalibration?.status === "INSUFFICIENT_HISTORY" ||
+      confidenceCalibration?.hardGateEligible === false;
     const coldStartPolicy = adaptiveTradingPolicy({
       symbol: metadata.symbol,
       provider: metadata.provider,
       timeframe: metadata.timeframe,
       regime: decision.regime.type,
     });
+    const hasNegativeFallbackEvidence =
+      confidenceCalibration?.status === "CALIBRATED" &&
+      confidenceCalibration.empiricalProbability !== null &&
+      confidenceCalibration.empiricalProbability !== undefined &&
+      confidenceCalibration.empiricalProbability < 0.42;
     const strongColdStart = isColdStart &&
+      !hasNegativeFallbackEvidence &&
       decision.confidence >= coldStartPolicy.minColdStartConfidence &&
       decision.opportunityScore >= coldStartPolicy.minColdStartOpportunity;
     const hasEmpiricalEdge = empiricalProbability !== undefined;
