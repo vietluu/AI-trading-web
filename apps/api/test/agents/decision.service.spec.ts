@@ -143,6 +143,47 @@ describe('DecisionService', () => {
     expect(output.profitFactorEstimate).toBeGreaterThan(1);
   });
 
+  it('preserves synthesized EV and profit factor when calibration falls back to strategy context with healthy empirical evidence and high conviction', async () => {
+    const service = new DecisionService({} as never);
+    const base = service.decide(decisionInput());
+    const calibrationService = service as unknown as {
+      confidenceCalibration: (...args: unknown[]) => Promise<{
+        status: 'CALIBRATED' | 'INSUFFICIENT_HISTORY';
+        rawScore: number;
+        empiricalProbability: number | null;
+        sampleSize: number;
+        bucketSampleSize: number;
+        brierScore: number | null;
+        scope: 'EXACT' | 'STRATEGY_CONTEXT' | 'STRATEGY_TIMEFRAME' | 'USER_GLOBAL' | 'NONE';
+        fallbackUsed: boolean;
+        hardGateEligible: boolean;
+      }>;
+    };
+    vi.spyOn(calibrationService, 'confidenceCalibration').mockResolvedValue({
+      status: 'CALIBRATED',
+      rawScore: base.confidence,
+      empiricalProbability: 0.52,
+      sampleSize: 625,
+      bucketSampleSize: 41,
+      brierScore: 0.37,
+      scope: 'STRATEGY_CONTEXT',
+      fallbackUsed: true,
+      hardGateEligible: false,
+    } as never);
+
+    const output = await service.calibrateForExecution(base, 'user-1', {
+      symbol: 'ARB-USDT',
+      strategyKey: 'ai-core',
+      provider: 'OKX_FUTURES',
+      timeframe: '15m',
+    });
+
+    expect(output.confidenceCalibration?.scope).toBe('STRATEGY_CONTEXT');
+    expect(output.confidenceCalibration?.hardGateEligible).toBe(false);
+    expect(output.expectedValue).toBeGreaterThan(0);
+    expect(output.profitFactorEstimate).toBeGreaterThan(1);
+  });
+
   it('adjusts execution cost and adaptive thresholds dynamically across asset liquidity tiers', () => {
     const service = new DecisionService({} as never);
     const btcInput = decisionInput();
