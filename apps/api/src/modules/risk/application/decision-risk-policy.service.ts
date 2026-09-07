@@ -39,19 +39,20 @@ export class DecisionRiskPolicyService {
       return { actionable: false, decision: 'WAIT', reason: 'EXTREME_VOLATILITY' };
     }
     const thresholdFloor = Math.max(55, output.adaptiveThreshold - 5);
+    const shortTermTrade = context?.timeframe ? (context.timeframe === '1m' || context.timeframe === '5m' || context.timeframe === '15m') : true;
     if (
       output.dataQuality === 'PARTIAL' && !coreEvidenceGood &&
       (
-        output.confidence < output.adaptiveThreshold + 5 ||
-        directionalAgreement < 70 ||
-        output.expectedValue <= policy.minExpectedValue + 0.1
+        output.confidence < output.adaptiveThreshold + (shortTermTrade ? 2 : 5) ||
+        directionalAgreement < 65 ||
+        output.expectedValue <= policy.minExpectedValue + 0.05
       )
     ) {
       return { actionable: false, decision: 'WAIT', reason: 'PARTIAL_DATA_CONVICTION_TOO_LOW' };
     }
     if (
       output.dataQuality === 'PARTIAL' && coreEvidenceGood &&
-      (directionalAgreement < 60 || evidenceCoverage < 40)
+      (directionalAgreement < 55 || evidenceCoverage < 35)
     ) {
       return { actionable: false, decision: 'WAIT', reason: 'PARTIAL_DATA_CONVICTION_TOO_LOW' };
     }

@@ -8,6 +8,8 @@ export interface AdaptivePolicyContext {
   timeframe?: string;
   regime?: MarketRegime['type'];
   spreadBps?: number;
+  riskRewardRatio?: number;
+  directionalAgreement?: number;
 }
 
 const MAJORS = new Set(['BTC', 'ETH']);
@@ -70,6 +72,19 @@ export function adaptiveTradingPolicy(context: AdaptivePolicyContext) {
   const maxRsiLong = regime === 'TRENDING' ? 85 : regime === 'RANGING' ? 75 : 72;
   const minRsiShort = regime === 'TRENDING' ? 15 : regime === 'RANGING' ? 25 : 28;
 
+  // Dynamic calibrated probability based on risk:reward and directional consensus
+  const effectiveRr = context.riskRewardRatio && context.riskRewardRatio > 0.5
+    ? Math.min(3.0, context.riskRewardRatio)
+    : 1.5;
+  const breakevenProb = 1 / (1 + effectiveRr);
+  // Base requirement: breakeven probability + risk buffer
+  const baseReq = Math.max(0.48, Math.min(0.53, breakevenProb + 0.06 + totalRisk * 0.005));
+  // High consensus discount: when directional agreement is >= 80%, discount up to 0.025
+  const agreementDiscount = (context.directionalAgreement && context.directionalAgreement >= 80)
+    ? Math.min(0.025, (context.directionalAgreement - 75) * 0.001)
+    : 0;
+  const minCalibratedProbability = Number(Math.max(0.48, baseReq - agreementDiscount).toFixed(3));
+
   return {
     liquidityClass,
     executionCostMultiplier,
@@ -82,7 +97,7 @@ export function adaptiveTradingPolicy(context: AdaptivePolicyContext) {
     staleAfterMs: Math.round(Math.max(2 * 60_000, Math.min(30 * 60_000, timeframeMs * 2)) / (regime === 'HIGH_VOLATILITY' ? 1.5 : 1)),
     minExpectedValue: Number((0.08 + totalRisk * 0.025).toFixed(3)),
     minProfitFactor: Number((1.15 + totalRisk * 0.04).toFixed(2)),
-    minCalibratedProbability: Number((0.51 + totalRisk * 0.008).toFixed(3)),
+    minCalibratedProbability,
     maxRiskScore: Math.round(88 - totalRisk * 2.5),
     minAtrPercent: timeframeAtrBase * (1 + classRisk * 0.2 + volatilityRisk * 0.1),
     minVolumeChangePercent: liquidityClass === 'MAJOR' ? 0.35 : liquidityClass === 'LIQUID_ALT' ? 0.7 : 1.2,

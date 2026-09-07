@@ -311,7 +311,9 @@ function _buildAdaptiveTradePlan(input: {
     // The old 0.8 ATR stop was inside ordinary short-horizon noise in
     // production. A wider structural stop automatically reduces position size,
     // so monetary risk remains bounded while avoiding noise-only stop-outs.
-    const risk = atr * 1.2;
+    // Low-cap / LONG_TAIL assets have wider wicks and require 1.8 ATR stop buffer.
+    const riskAtrMultiple = policy.liquidityClass === 'LONG_TAIL' ? 1.8 : policy.liquidityClass === 'LIQUID_ALT' ? 1.4 : 1.2;
+    const risk = atr * riskAtrMultiple;
     const stopLoss = side === "LONG" ? entryPrice - risk : entryPrice + risk;
     const targetMultiple = Math.max(1.8, Math.min(2.5, input.configuredRiskRewardRatio));
     const cost = entryPrice * costPct;
@@ -533,7 +535,8 @@ function _buildAdaptiveTradePlan(input: {
       structuralRiskAtr: rounded(structuralRiskAtr),
     };
   }
-  const risk = Math.max(atr * 1.0, rawRisk);
+  const minRiskAtr = policy.liquidityClass === 'LONG_TAIL' ? 1.6 : policy.liquidityClass === 'LIQUID_ALT' ? 1.2 : 1.0;
+  const risk = Math.max(atr * minRiskAtr, rawRisk);
   const stopLoss = side === "LONG" ? entryPrice - risk : entryPrice + risk;
   const targetMultiple = Math.max(1.8, input.configuredRiskRewardRatio);
   const cost = entryPrice * costPct;

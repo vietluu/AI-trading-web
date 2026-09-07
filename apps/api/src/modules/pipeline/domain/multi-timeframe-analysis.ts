@@ -93,13 +93,35 @@ export function analyzeMultiTimeframe(
 export function evaluateMultiTimeframeDecision(
   decision: 'LONG' | 'SHORT' | 'WAIT',
   analysis: MultiTimeframeAnalysis,
-): { allowed: boolean; reason?: 'MULTI_TIMEFRAME_CONFLICT'; confirmation: number } {
+): { allowed: boolean; reason?: 'MULTI_TIMEFRAME_CONFLICT' | 'HIGHER_TIMEFRAME_OVERBOUGHT' | 'HIGHER_TIMEFRAME_OVERSOLD'; confirmation: number } {
   const confirmation = decision === 'LONG'
     ? analysis.bullishConfirmation
     : decision === 'SHORT'
       ? analysis.bearishConfirmation
       : 0;
-  if (decision === 'WAIT' || analysis.directionalFrames < 2) {
+  if (decision === 'WAIT') {
+    return { allowed: true, confirmation };
+  }
+
+  // Check Higher-Timeframe RSI Exhaustion (1h, 4h, 1d)
+  for (const frame of analysis.frames) {
+    const isHigherTf = frame.timeframe === '1h' || frame.timeframe === '4h' || frame.timeframe === '1d';
+    if (isHigherTf && frame.rsi !== undefined) {
+      if (decision === 'LONG') {
+        const overboughtThreshold = frame.timeframe === '1h' ? 75 : 78;
+        if (frame.rsi >= overboughtThreshold) {
+          return { allowed: false, reason: 'HIGHER_TIMEFRAME_OVERBOUGHT', confirmation };
+        }
+      } else if (decision === 'SHORT') {
+        const oversoldThreshold = frame.timeframe === '1h' ? 25 : 22;
+        if (frame.rsi <= oversoldThreshold) {
+          return { allowed: false, reason: 'HIGHER_TIMEFRAME_OVERSOLD', confirmation };
+        }
+      }
+    }
+  }
+
+  if (analysis.directionalFrames < 2) {
     return { allowed: true, confirmation };
   }
   return confirmation <= 40

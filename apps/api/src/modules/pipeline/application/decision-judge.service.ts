@@ -34,12 +34,17 @@ export class DecisionJudgeService {
       analyses.market?.liquidity?.bidAskSpread ?? analyses.market?.liquidity?.spread,
       context?.referencePrice,
     );
+    const riskRewardRatio = decision.expectedReward && decision.expectedLoss && decision.expectedLoss > 0
+      ? decision.expectedReward / decision.expectedLoss
+      : undefined;
     const policy = adaptiveTradingPolicy({
       symbol: context.symbol,
       provider: context?.provider,
       timeframe: context?.timeframe,
       regime: decision.regime?.type ?? 'RANGING',
       spreadBps,
+      riskRewardRatio,
+      directionalAgreement: decision.directionalAgreement ?? decision.agreementScore,
     });
     const configured = Object.entries(analyses).filter(([name, analysis]) =>
       (name !== 'onchain' || !(
@@ -136,9 +141,12 @@ export class DecisionJudgeService {
       hardGateCalibration &&
       (hardGateCalibration.empiricalProbability ?? 0) < policy.minCalibratedProbability
     ) reasons.push('CALIBRATED_PROBABILITY_TOO_LOW');
+    const sampleSize = hardGateCalibration?.sampleSize ?? hardGateCalibration?.bucketSampleSize ?? 0;
+    // Tighter brier requirement for larger samples, standard 0.35 ceiling
+    const maxBrier = sampleSize >= 100 ? 0.32 : 0.35;
     if (
       hardGateCalibration &&
-      (hardGateCalibration.brierScore ?? 0) > 0.35
+      (hardGateCalibration.brierScore ?? 0) > maxBrier
     ) reasons.push('CALIBRATION_UNRELIABLE');
 
     if (reasons.some((reason) => reason.includes('DATA') || reason.includes('STALE') || reason.includes('USABLE') || reason.includes('CALIBRAT'))) {
