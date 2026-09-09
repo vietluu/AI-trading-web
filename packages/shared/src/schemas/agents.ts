@@ -665,3 +665,311 @@ export const AgentRunFilterDtoSchema = z.object({
   sort: z.enum(['asc', 'desc']).optional(),
 });
 export type AgentRunFilterDto = z.infer<typeof AgentRunFilterDtoSchema>;
+
+export const OpportunityStateSchema = z.enum([
+  'OBSERVING',
+  'WATCHING',
+  'PROBE_READY',
+  'PROBE_OPEN',
+  'CONFIRMED',
+  'POSITION_OPEN',
+  'INVALIDATED',
+  'EXPIRED',
+  'TOO_LATE',
+]);
+export type OpportunityState = z.infer<typeof OpportunityStateSchema>;
+
+export const EvidenceRefSchema = z
+  .object({
+    snapshotField: z.string().min(1),
+    source: z.string().min(1),
+    sourceTimestamp: z.string().datetime(),
+    calculationVersion: z.number().int().nonnegative(),
+  })
+  .strict();
+export type EvidenceRef = z.infer<typeof EvidenceRefSchema>;
+
+const availableEvidenceMetadata = {
+  coverage: z.literal('AVAILABLE'),
+  sourceTimestamp: z.string().datetime(),
+  calculationVersion: z.number().int().nonnegative(),
+  evidence: z.array(EvidenceRefSchema).min(1),
+};
+
+const UnavailableEvidenceSchema = z
+  .object({
+    coverage: z.literal('UNAVAILABLE'),
+    unavailableFields: z.array(z.string().min(1)).min(1),
+    reason: z.string().min(1),
+  })
+  .strict();
+
+const PriceStructureEvidenceSchema = z.union([
+  UnavailableEvidenceSchema,
+  z
+    .object({
+      ...availableEvidenceMetadata,
+      confirmedPivots: z.array(
+        z
+          .object({
+            kind: z.enum(['HIGH', 'LOW']),
+            price: z.number().positive(),
+            occurredAt: z.string().datetime(),
+            confirmedAt: z.string().datetime(),
+          })
+          .strict(),
+      ),
+      rangeBoundaries: z
+        .object({
+          lower: z.number().positive(),
+          upper: z.number().positive(),
+        })
+        .strict()
+        .refine((range) => range.lower < range.upper, {
+          message: 'range lower boundary must be below upper boundary',
+        }),
+      equalHighs: z.array(z.number().positive()),
+      equalLows: z.array(z.number().positive()),
+      distanceToNearestBoundaryAtr: z.number().nonnegative(),
+      invalidationCandidates: z.array(
+        z
+          .object({
+            direction: z.enum(['LONG', 'SHORT']),
+            price: z.number().positive(),
+            reason: z.string().min(1),
+          })
+          .strict(),
+      ),
+    })
+    .strict(),
+]);
+
+const VolatilityEvidenceSchema = z.union([
+  UnavailableEvidenceSchema,
+  z
+    .object({
+      ...availableEvidenceMetadata,
+      atr: z.number().positive(),
+      atrPercentile: z.number().min(0).max(100),
+      squeezeState: z.enum(['SQUEEZING', 'NOT_SQUEEZING']),
+      squeezeDurationCandles: z.number().int().nonnegative(),
+      compressionSlope: z.number(),
+      expansionState: z.enum(['NOT_EXPANDED', 'EXPANDING', 'EXPANDED']),
+    })
+    .strict(),
+]);
+
+const MomentumEvidenceSchema = z.union([
+  UnavailableEvidenceSchema,
+  z
+    .object({
+      ...availableEvidenceMetadata,
+      rsi: z.number().min(0).max(100),
+      macd: z
+        .object({
+          value: z.number(),
+          signal: z.number(),
+          histogram: z.number(),
+        })
+        .strict(),
+      pivotOscillators: z.array(
+        z
+          .object({
+            pivotOccurredAt: z.string().datetime(),
+            rsi: z.number().min(0).max(100),
+            macdHistogram: z.number(),
+          })
+          .strict(),
+      ),
+      momentumState: z.enum(['ACCELERATING', 'DECELERATING', 'STABLE']),
+    })
+    .strict(),
+]);
+
+const OrderBookEvidenceSchema = z.union([
+  UnavailableEvidenceSchema,
+  z
+    .object({
+      ...availableEvidenceMetadata,
+      imbalance: z.number().min(-1).max(1),
+      ageMs: z.number().int().nonnegative(),
+    })
+    .strict(),
+]);
+
+const ParticipationEvidenceSchema = z.union([
+  UnavailableEvidenceSchema,
+  z
+    .object({
+      ...availableEvidenceMetadata,
+      volumeState: z.enum(['COMPRESSING', 'EXPANDING', 'STABLE']),
+      volumeRatio: z.number().nonnegative(),
+      orderBook: OrderBookEvidenceSchema,
+    })
+    .strict(),
+]);
+
+const LiquidationEvidenceSchema = z.union([
+  UnavailableEvidenceSchema,
+  z
+    .object({
+      ...availableEvidenceMetadata,
+      longLiquidations: z.number().nonnegative(),
+      shortLiquidations: z.number().nonnegative(),
+    })
+    .strict(),
+]);
+
+const DerivativesEvidenceSchema = z.union([
+  UnavailableEvidenceSchema,
+  z
+    .object({
+      ...availableEvidenceMetadata,
+      fundingRate: z.number(),
+      fundingRatePercentile: z.number().min(0).max(100),
+      openInterest: z.number().nonnegative(),
+      openInterestChangePct: z.number(),
+      priceOpenInterestDivergence: z.enum([
+        'OI_RISING_PRICE_FLAT',
+        'OI_RISING_PRICE_FALLING',
+        'OI_FALLING_PRICE_RISING',
+        'ALIGNED',
+      ]),
+      liquidationContext: LiquidationEvidenceSchema,
+    })
+    .strict(),
+]);
+
+const ContextObservationSchema = z.union([
+  UnavailableEvidenceSchema,
+  z
+    .object({
+      ...availableEvidenceMetadata,
+      observations: z.array(
+        z
+          .object({
+            observedAt: z.string().datetime(),
+            summary: z.string().min(1),
+          })
+          .strict(),
+      ),
+    })
+    .strict(),
+]);
+
+const ContextEvidenceSchema = z.union([
+  UnavailableEvidenceSchema,
+  z
+    .object({
+      ...availableEvidenceMetadata,
+      news: ContextObservationSchema,
+      sentiment: ContextObservationSchema,
+      macro: ContextObservationSchema,
+      onChain: ContextObservationSchema,
+    })
+    .strict(),
+]);
+
+const ExecutionEvidenceSchema = z.union([
+  UnavailableEvidenceSchema,
+  z
+    .object({
+      ...availableEvidenceMetadata,
+      spread: z.number().nonnegative(),
+      estimatedRoundTripCost: z.number().nonnegative(),
+      tickSize: z.number().positive(),
+      lotSize: z.number().positive(),
+      currentExposure: z.number().nonnegative(),
+      priceTooFarFromCandidateZones: z.boolean(),
+    })
+    .strict(),
+]);
+
+function addFutureEvidenceIssue(
+  timestamp: string | undefined,
+  cutoffMs: number,
+  path: (string | number)[],
+  ctx: z.RefinementCtx,
+) {
+  if (timestamp !== undefined && Date.parse(timestamp) > cutoffMs) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path,
+      message: 'evidence timestamp must not be after sourceDataCutoff',
+    });
+  }
+}
+
+function validateEvidenceTimestamps(
+  value: unknown,
+  cutoffMs: number,
+  path: (string | number)[],
+  ctx: z.RefinementCtx,
+) {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) =>
+      validateEvidenceTimestamps(item, cutoffMs, [...path, index], ctx),
+    );
+    return;
+  }
+
+  if (value === null || typeof value !== 'object') return;
+
+  const record = value as Record<string, unknown>;
+  for (const [key, nested] of Object.entries(record)) {
+    const nestedPath = [...path, key];
+    if (
+      key === 'sourceTimestamp' ||
+      key === 'occurredAt' ||
+      key === 'confirmedAt' ||
+      key === 'pivotOccurredAt' ||
+      key === 'observedAt'
+    ) {
+      addFutureEvidenceIssue(
+        typeof nested === 'string' ? nested : undefined,
+        cutoffMs,
+        nestedPath,
+        ctx,
+      );
+      continue;
+    }
+    validateEvidenceTimestamps(nested, cutoffMs, nestedPath, ctx);
+  }
+}
+
+export const AnticipatoryMarketSnapshotSchema = z
+  .object({
+    symbol: z.string().min(1),
+    provider: z.string().min(1),
+    timeframe: z.string().min(1),
+    sourceDataCutoff: z.string().datetime(),
+    schemaVersion: z.number().int().nonnegative(),
+    calculationVersion: z.number().int().nonnegative(),
+    structure: PriceStructureEvidenceSchema,
+    volatility: VolatilityEvidenceSchema,
+    momentum: MomentumEvidenceSchema,
+    participation: ParticipationEvidenceSchema,
+    derivatives: DerivativesEvidenceSchema,
+    context: ContextEvidenceSchema,
+    execution: ExecutionEvidenceSchema,
+  })
+  .strict()
+  .superRefine((snapshot, ctx) => {
+    validateEvidenceTimestamps(
+      {
+        structure: snapshot.structure,
+        volatility: snapshot.volatility,
+        momentum: snapshot.momentum,
+        participation: snapshot.participation,
+        derivatives: snapshot.derivatives,
+        context: snapshot.context,
+        execution: snapshot.execution,
+      },
+      Date.parse(snapshot.sourceDataCutoff),
+      [],
+      ctx,
+    );
+  });
+export type AnticipatoryMarketSnapshot = z.infer<
+  typeof AnticipatoryMarketSnapshotSchema
+>;
