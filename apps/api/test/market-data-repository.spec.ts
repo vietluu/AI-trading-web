@@ -4,6 +4,34 @@ import { MarketDataRepository } from '../src/market-data/infrastructure/persiste
 import { ExchangeInterval, ExchangeProvider } from '../src/exchange/domain/exchange.types';
 
 describe('MarketDataRepository candle freshness', () => {
+  it('caps closed-candle queries by close time at the source cutoff', async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const repository = new MarketDataRepository({
+      marketCandle: { findMany },
+    } as never);
+    const sourceDataCutoff = new Date('2026-09-09T12:00:00Z');
+
+    await repository.getClosedCandles({
+      provider: ExchangeProvider.BINANCE_FUTURES,
+      symbol: 'BTC-USDT',
+      interval: ExchangeInterval.ONE_MINUTE,
+      beforeTime: sourceDataCutoff,
+      limit: 250,
+    });
+
+    expect(findMany).toHaveBeenCalledWith({
+      where: {
+        provider: ExchangeProvider.BINANCE_FUTURES,
+        symbol: 'BTC-USDT',
+        interval: 'i1m',
+        isClosed: true,
+        closeTime: { lte: sourceDataCutoff },
+      },
+      orderBy: { openTime: 'desc' },
+      take: 250,
+    });
+  });
+
   it('queries latest candles descending and returns them chronologically', async () => {
     const base = {
       id: crypto.randomUUID(),
@@ -86,6 +114,7 @@ describe('MarketDataRepository candle freshness', () => {
       ExchangeProvider.OKX_FUTURES,
       'ZRO-USDT',
       ExchangeInterval.FIFTEEN_MINUTES,
+      new Date('2026-08-10T04:15:00Z'),
     );
 
     expect(findFirst).toHaveBeenCalledWith({
@@ -93,6 +122,7 @@ describe('MarketDataRepository candle freshness', () => {
         provider: ExchangeProvider.OKX_FUTURES,
         symbol: 'ZRO-USDT',
         interval: 'i15m',
+        candleCloseTime: { lte: new Date('2026-08-10T04:15:00Z') },
       },
       orderBy: { candleCloseTime: 'desc' },
     });

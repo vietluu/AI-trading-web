@@ -39,6 +39,7 @@ import { FusionService } from './application/services/fusion.service';
 import { DecisionService } from './application/services/decision.service';
 import { UnifiedAnalystService } from './application/services/unified-analyst.service';
 import { ChainOfThoughtReflectionService } from './application/services/chain-of-thought-reflection.service';
+import { AnticipatorySnapshotService } from './application/services/anticipatory-snapshot.service';
 
 // Shared Infra Modules
 import { DatabaseModule } from '../../database/database.module';
@@ -46,6 +47,7 @@ import { RedisModule } from '../../redis/redis.module';
 import { SessionModule } from '../../session/session.module';
 import { AIModule } from '../ai/ai.module';
 import { AIToolsModule } from '../ai-tools/ai-tools.module';
+import { MarketDataModule } from '../../market-data/market-data.module';
 
 // Controllers
 import { AgentsController, AgentRunsController } from './presentation/controllers/agents.controller';
@@ -59,6 +61,7 @@ import { DecisionController } from './presentation/controllers/decision.controll
     SessionModule,
     AIModule,
     AIToolsModule,
+    MarketDataModule,
     BullModule.registerQueue({
       name: 'agent-runs',
     }),
@@ -98,6 +101,7 @@ import { DecisionController } from './presentation/controllers/decision.controll
     DecisionService,
     UnifiedAnalystService,
     ChainOfThoughtReflectionService,
+    AnticipatorySnapshotService,
   ],
   exports: [
     AgentRegistryService,
@@ -107,6 +111,7 @@ import { DecisionController } from './presentation/controllers/decision.controll
     FusionService,
     DecisionService,
     UnifiedAnalystService,
+    AnticipatorySnapshotService,
   ],
 })
 export class AgentsModule implements OnModuleInit {

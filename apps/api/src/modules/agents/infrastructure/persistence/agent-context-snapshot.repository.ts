@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../../database/prisma.service';
 import { AgentContextSnapshot, Prisma } from '@prisma/client';
+import { createHash } from 'node:crypto';
+import type { AnticipatoryMarketSnapshot } from '@platform/shared';
+import type { AnticipatoryContextInput } from '../../domain/analysis/anticipatory-snapshot-builder';
 
 export interface CreateAgentContextSnapshotInput {
   userId?: string;
@@ -55,6 +58,76 @@ export class AgentContextSnapshotRepository {
   public async findByHash(contextHash: string): Promise<AgentContextSnapshot | null> {
     return this.databaseService.agentContextSnapshot.findFirst({
       where: { contextHash },
+    });
+  }
+
+  public async findLatestAnticipatoryContext(query: {
+    userId: string;
+    provider: string;
+    symbol: string;
+    timeframe: string;
+    sourceDataCutoff: Date;
+  }): Promise<AnticipatoryContextInput | undefined> {
+    const row = await this.databaseService.agentContextSnapshot.findFirst({
+      where: {
+        userId: query.userId,
+        provider: query.provider,
+        symbol: query.symbol,
+        timeframe: query.timeframe,
+        sourceDataCutoff: { lte: query.sourceDataCutoff },
+        serializedContext: {
+          path: ['anticipatoryContext'],
+          not: Prisma.AnyNull,
+        },
+      },
+      orderBy: { sourceDataCutoff: 'desc' },
+    });
+    const serialized = row?.serializedContext;
+    if (
+      serialized === null ||
+      typeof serialized !== 'object' ||
+      Array.isArray(serialized) ||
+      !('anticipatoryContext' in serialized)
+    ) {
+      return undefined;
+    }
+    return serialized.anticipatoryContext as AnticipatoryContextInput;
+  }
+
+  public async saveAnticipatorySnapshot(input: {
+    userId: string;
+    provider: string;
+    symbol: string;
+    timeframe: string;
+    sourceDataCutoff: Date;
+    snapshot: AnticipatoryMarketSnapshot;
+  }): Promise<AgentContextSnapshot> {
+    const persistenceKey = createHash('sha256')
+      .update([
+        'ANTICIPATORY_MARKET_SNAPSHOT',
+        input.userId,
+        input.provider,
+        input.symbol,
+        input.timeframe,
+        input.sourceDataCutoff.toISOString(),
+      ].join(':'))
+      .digest('hex');
+    const existing = await this.findByHash(persistenceKey);
+    if (existing) return existing;
+
+    return this.create({
+      userId: input.userId,
+      provider: input.provider,
+      symbol: input.symbol,
+      timeframe: input.timeframe,
+      sourceDataCutoff: input.sourceDataCutoff,
+      schemaVersion: input.snapshot.schemaVersion,
+      builderVersion: String(input.snapshot.calculationVersion),
+      contextHash: persistenceKey,
+      serializedContext: {
+        kind: 'ANTICIPATORY_MARKET_SNAPSHOT',
+        snapshot: input.snapshot,
+      },
     });
   }
 }
