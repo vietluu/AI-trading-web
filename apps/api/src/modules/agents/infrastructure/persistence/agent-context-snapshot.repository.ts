@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../../database/prisma.service';
-import { AgentContextSnapshot, Prisma } from '@prisma/client';
-import { createHash } from 'node:crypto';
+import {
+  type AgentContextSnapshot,
+  type AnticipatoryMarketSnapshot as AnticipatoryMarketSnapshotRow,
+  Prisma,
+} from '@prisma/client';
 import type { AnticipatoryMarketSnapshot } from '@platform/shared';
 import type { AnticipatoryContextInput } from '../../domain/analysis/anticipatory-snapshot-builder';
 
@@ -101,35 +104,25 @@ export class AgentContextSnapshotRepository {
     timeframe: string;
     sourceDataCutoff: Date;
     snapshot: AnticipatoryMarketSnapshot;
-  }): Promise<AgentContextSnapshot> {
-    // Temporary Task 3 adapter: this lookup reuses sequential duplicates only.
-    // Task 4 must replace it with the dedicated snapshot table and its database
-    // unique key before any scheduler starts observing snapshots.
-    const persistenceKey = createHash('sha256')
-      .update([
-        'ANTICIPATORY_MARKET_SNAPSHOT',
-        input.userId,
-        input.provider,
-        input.symbol,
-        input.timeframe,
-        input.sourceDataCutoff.toISOString(),
-      ].join(':'))
-      .digest('hex');
-    const existing = await this.findByHash(persistenceKey);
-    if (existing) return existing;
-
-    return this.create({
-      userId: input.userId,
-      provider: input.provider,
-      symbol: input.symbol,
-      timeframe: input.timeframe,
-      sourceDataCutoff: input.sourceDataCutoff,
-      schemaVersion: input.snapshot.schemaVersion,
-      builderVersion: String(input.snapshot.calculationVersion),
-      contextHash: persistenceKey,
-      serializedContext: {
-        kind: 'ANTICIPATORY_MARKET_SNAPSHOT',
-        snapshot: input.snapshot,
+  }): Promise<AnticipatoryMarketSnapshotRow> {
+    return this.databaseService.anticipatoryMarketSnapshot.upsert({
+      where: {
+        provider_symbol_timeframe_sourceDataCutoff: {
+          provider: input.provider,
+          symbol: input.symbol,
+          timeframe: input.timeframe,
+          sourceDataCutoff: input.sourceDataCutoff,
+        },
+      },
+      update: {},
+      create: {
+        provider: input.provider,
+        symbol: input.symbol,
+        timeframe: input.timeframe,
+        sourceDataCutoff: input.sourceDataCutoff,
+        schemaVersion: input.snapshot.schemaVersion,
+        calculationVersion: input.snapshot.calculationVersion,
+        snapshotJson: input.snapshot,
       },
     });
   }

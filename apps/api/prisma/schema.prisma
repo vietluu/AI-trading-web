@@ -80,6 +80,7 @@ model User {
   sensitivityHeatmaps       SensitivityHeatmap[]
   selfLearningConfiguration SelfLearningConfiguration?
   selfLearningExperiments   SelfLearningExperiment[]
+  opportunities             Opportunity[]
 
   @@map("users")
 }
@@ -2332,4 +2333,81 @@ model SelfLearningExperimentEvent {
 
   @@index([experimentId, createdAt])
   @@map("self_learning_experiment_events")
+}
+
+// ============================================================
+// Anticipatory market observation (observe-only foundation)
+// ============================================================
+
+enum OpportunityState {
+  OBSERVING
+  WATCHING
+  PROBE_READY
+  PROBE_OPEN
+  CONFIRMED
+  POSITION_OPEN
+  INVALIDATED
+  EXPIRED
+  TOO_LATE
+}
+
+model AnticipatoryMarketSnapshot {
+  id                 String                  @id @default(uuid()) @db.Uuid
+  provider           String
+  symbol             String
+  timeframe          String
+  sourceDataCutoff   DateTime
+  schemaVersion      Int
+  calculationVersion Int
+  snapshotJson       Json
+  createdAt          DateTime                @default(now())
+  transitions        OpportunityTransition[]
+
+  @@unique([provider, symbol, timeframe, sourceDataCutoff])
+  @@index([symbol, timeframe, sourceDataCutoff])
+  @@map("anticipatory_market_snapshots")
+}
+
+model Opportunity {
+  id                 String                  @id @default(uuid()) @db.Uuid
+  userId             String                  @db.Uuid
+  provider           String
+  symbol             String
+  timeframe          String
+  setup              String
+  direction          String
+  thesisVersion      Int                     @default(1)
+  idempotencyKey     String                  @unique
+  state              OpportunityState        @default(OBSERVING)
+  invalidationPrice  Decimal?                @db.Decimal(24, 8)
+  expiresAt          DateTime
+  lastObservedCutoff DateTime?
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+  user               User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transitions        OpportunityTransition[]
+
+  @@unique([userId, provider, symbol, timeframe, setup, thesisVersion])
+  @@index([userId, state, expiresAt])
+  @@index([provider, symbol, timeframe, setup, state])
+  @@map("opportunities")
+}
+
+model OpportunityTransition {
+  id               String                      @id @default(uuid()) @db.Uuid
+  opportunityId    String                      @db.Uuid
+  snapshotId       String                      @db.Uuid
+  fromState        OpportunityState
+  toState          OpportunityState
+  reasonCode       String
+  sourceDataCutoff DateTime
+  idempotencyKey   String                      @unique
+  createdAt        DateTime                    @default(now())
+  opportunity      Opportunity                 @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  snapshot         AnticipatoryMarketSnapshot  @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+
+  @@unique([opportunityId, sourceDataCutoff])
+  @@index([opportunityId, createdAt])
+  @@index([snapshotId])
+  @@map("opportunity_transitions")
 }

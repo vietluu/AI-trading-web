@@ -44,20 +44,12 @@ describe('AgentContextSnapshotRepository anticipatory snapshots', () => {
     expect(result).toEqual(context);
   });
 
-  it('reuses a temporary adapter row for a sequential duplicate key', async () => {
+  it('uses a database upsert keyed by provider, symbol, timeframe and cutoff', async () => {
     const sourceDataCutoff = new Date('2026-09-09T12:00:00Z');
-    type FindInput = { where: { contextHash: string } };
-    type CreateInput = { data: { contextHash: string } & Record<string, unknown> };
-    const create = vi
-      .fn<(input: CreateInput) => Promise<{ id: string }>>()
-      .mockResolvedValue({ id: 'snapshot-id' });
-    const existing = { id: 'snapshot-id' };
-    const findFirst = vi
-      .fn<(input: FindInput) => Promise<null | typeof existing>>()
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(existing);
+    const persisted = { id: 'snapshot-id' };
+    const upsert = vi.fn().mockResolvedValue(persisted);
     const repository = new AgentContextSnapshotRepository({
-      agentContextSnapshot: { findFirst, create },
+      anticipatoryMarketSnapshot: { upsert },
     } as never);
     const snapshot = { schemaVersion: 1, calculationVersion: 2 } as never;
 
@@ -69,34 +61,28 @@ describe('AgentContextSnapshotRepository anticipatory snapshots', () => {
       sourceDataCutoff,
       snapshot,
     };
-    await repository.saveAnticipatorySnapshot(input);
-    const duplicate = await repository.saveAnticipatorySnapshot(input);
+    const result = await repository.saveAnticipatorySnapshot(input);
 
-    const persistenceKey = findFirst.mock.calls[0]?.[0]?.where.contextHash;
-    expect(persistenceKey).toEqual(expect.stringMatching(/^[a-f0-9]{64}$/));
-    expect(create.mock.calls[0]?.[0]).toEqual({
-      data: {
-        userId: '00000000-0000-4000-8000-000000000001',
+    expect(upsert).toHaveBeenCalledWith({
+      where: {
+        provider_symbol_timeframe_sourceDataCutoff: {
+          provider: 'BINANCE_FUTURES',
+          symbol: 'BTC-USDT',
+          timeframe: '1m',
+          sourceDataCutoff,
+        },
+      },
+      update: {},
+      create: {
         provider: 'BINANCE_FUTURES',
         symbol: 'BTC-USDT',
         timeframe: '1m',
         sourceDataCutoff,
-        contextHash: persistenceKey,
         schemaVersion: 1,
-        builderVersion: '2',
-        tokenEstimate: 0,
-        serializedContext: {
-          kind: 'ANTICIPATORY_MARKET_SNAPSHOT',
-          snapshot,
-        },
-        marketRefs: [],
-        newsRefs: [],
-        macroRefs: [],
-        sentimentRefs: [],
-        memoryRefs: [],
+        calculationVersion: 2,
+        snapshotJson: snapshot,
       },
     });
-    expect(create).toHaveBeenCalledOnce();
-    expect(duplicate).toBe(existing);
+    expect(result).toBe(persisted);
   });
 });

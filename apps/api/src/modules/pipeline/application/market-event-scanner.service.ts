@@ -3,6 +3,7 @@ import { ExchangeInterval, type ExchangeProvider } from "../../../exchange/domai
 import { MarketDataService } from "../../../market-data/application/market-data.service";
 import { MarketRedisCacheService } from "../../../market-data/infrastructure/redis/market-redis-cache.service";
 import type { IndicatorSnapshot, NormalizedCandle, NormalizedTicker } from "../../../market-data/domain/market-data.types";
+import { IndicatorStatus } from "../../../market-data/domain/market-data.enums";
 import { RedisService } from "../../../redis/redis.service";
 
 const SCAN_INTERVAL_SECONDS = 55;
@@ -59,7 +60,7 @@ export class MarketEventScannerService {
     provider: ExchangeProvider;
     symbol: string;
     strategyIds: string[];
-  }): Promise<{ run: boolean; fingerprint?: string }> {
+  }): Promise<{ run: boolean; fingerprint?: string; sourceDataCutoff?: Date }> {
     const indicator = await this.marketData.getIndicatorSnapshot(
       input.provider,
       input.symbol,
@@ -67,7 +68,7 @@ export class MarketEventScannerService {
     );
     // Let the pipeline's own freshness gate report unavailable data. The
     // scheduler only deduplicates snapshots it can identify confidently.
-    if (!indicator) return { run: true };
+    if (!indicator || indicator.status !== IndicatorStatus.CLOSED) return { run: true };
     const strategyFingerprint = [...input.strategyIds].sort().join(",");
     const closeIso =
       indicator.candleCloseTime instanceof Date
@@ -80,9 +81,11 @@ export class MarketEventScannerService {
       strategyFingerprint,
     ].join("|");
     const key = `pipeline:anchor:last:${input.userId}:${input.provider}:${input.symbol}`;
-    if (await this.redis.get(key) === fingerprint) return { run: false, fingerprint };
+    if (await this.redis.get(key) === fingerprint) {
+      return { run: false, fingerprint, sourceDataCutoff: new Date(closeIso) };
+    }
     await this.redis.setWithTtl(key, fingerprint, 60 * 60);
-    return { run: true, fingerprint };
+    return { run: true, fingerprint, sourceDataCutoff: new Date(closeIso) };
   }
 
   async scan(input: {
