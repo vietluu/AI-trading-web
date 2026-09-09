@@ -575,6 +575,15 @@ export interface Dictionary {
     data: string;
     regime: string;
     conflict: string;
+    multiScenarioTitle: string;
+    primaryPlan: string;
+    contingencyPlan: string;
+    invalidationTrigger: string;
+    playbookTitle: string;
+    probabilityLabel: string;
+    triggerLabel: string;
+    targetLabel: string;
+    invalidationLabel: string;
     liveTradingTitle: string;
     liveTradingSubtitle: string;
     killSwitch: string;

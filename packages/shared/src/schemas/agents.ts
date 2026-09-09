@@ -493,9 +493,33 @@ export type FusionOutput = z.infer<typeof FusionOutputSchema>;
 export const DecisionSchema = z.enum(['LONG', 'SHORT', 'WAIT']);
 export type Decision = z.infer<typeof DecisionSchema>;
 
+export const DetailedRegimeTypeSchema = z.enum([
+  'TRENDING_BULL',
+  'TRENDING_BEAR',
+  'RANGING_CONSOLIDATION',
+  'VOLATILE_LIQUIDITY_EXPANSION',
+]);
+export type DetailedRegimeType = z.infer<typeof DetailedRegimeTypeSchema>;
+
+export const TradingScenarioSchema = z
+  .object({
+    id: z.string(),
+    type: z.enum(['PRIMARY', 'CONTINGENCY', 'INVALIDATION']),
+    direction: DecisionSchema,
+    probability: z.number().min(0).max(1),
+    triggerCondition: z.string(),
+    priceTarget: z.number().optional(),
+    invalidationPrice: z.number().optional(),
+    rationale: z.string(),
+  })
+  .strict();
+export type TradingScenario = z.infer<typeof TradingScenarioSchema>;
+
 export const MarketRegimeSchema = z
   .object({
     type: z.enum(['TRENDING', 'RANGING', 'HIGH_VOLATILITY']),
+    detailed: DetailedRegimeTypeSchema.optional(),
+    playbook: z.string().optional(),
   })
   .strict();
 export type MarketRegime = z.infer<typeof MarketRegimeSchema>;
@@ -591,6 +615,8 @@ export const DecisionOutputSchema = z
     adaptiveThreshold: z.number().min(0).max(100),
     calibrationAdjustment: z.number(),
     executionCost: z.number().min(0),
+    scenarios: z.array(TradingScenarioSchema).optional(),
+    regimeDetailed: DetailedRegimeTypeSchema.optional(),
     generatedAt: z.string().datetime(),
   })
   .strict();

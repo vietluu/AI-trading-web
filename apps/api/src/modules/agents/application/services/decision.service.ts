@@ -28,6 +28,8 @@ import { calibrateConfidenceWithFallback } from "../../../reflection/domain/conf
 import { ConfigService } from "@nestjs/config";
 import { createHash } from "node:crypto";
 import { adaptiveTradingPolicy, assetLiquidityClass, parseSpreadBps } from "../../../pipeline/domain/adaptive-trading-policy";
+import { classifyDetailedRegime, computeRegimeAdaptiveWeights } from "../../domain/analysis/regime-adaptive-weights";
+import { buildScenarioBlueprint } from "../../domain/analysis/scenario-planning-engine";
 
 export type { AnalystName, Bias, ConflictLevel, RunDecisionOptions, Weighting };
 
@@ -532,7 +534,7 @@ export class DecisionService {
       (name) => name !== "macro" || this.macroConfigured(input),
     );
     const regime = this.detectRegime(input);
-    const weighting = this.dynamicWeights(regime.type, customOptions?.weights);
+    const weighting = this.dynamicWeights(regime, customOptions?.weights);
     const active = names.filter((name) => {
       const output = input[name];
       return output !== undefined && output.dataQuality !== "INSUFFICIENT";
@@ -835,6 +837,28 @@ export class DecisionService {
         : directionalBias < 0
           ? "bearish"
           : "neutral";
+    const hasSfpWick =
+      input.market?.anomalies.some((a) => /sfp|wick rejection|liquidity sweep/i.test(a)) ||
+      input.technical?.signals.some((s) => /sfp|wick rejection|liquidity sweep/i.test(s));
+    const sfpType = input.technical?.signals.some((s) => /sfp.*bullish|lower wick rejection/i.test(s))
+      ? "BULLISH"
+      : input.technical?.signals.some((s) => /sfp.*bearish|upper wick rejection/i.test(s))
+        ? "BEARISH"
+        : undefined;
+
+    const scenarios = buildScenarioBlueprint({
+      decision: finalDecision,
+      confidence: Math.round(calibratedConfidence),
+      regime,
+      currentPrice: undefined,
+      atr: undefined,
+      supportLevel: undefined,
+      resistanceLevel: undefined,
+      hasSfpWick,
+      sfpType,
+      directionalAgreement,
+    });
+
     const output = DecisionOutputSchema.parse({
       decision: finalDecision,
       confidence: Math.round(calibratedConfidence),
@@ -862,6 +886,8 @@ export class DecisionService {
       adaptiveThreshold: Math.round(adaptiveThreshold),
       calibrationAdjustment: Number(calibrationAdjustment.toFixed(2)),
       executionCost: Number(executionCost.toFixed(3)),
+      scenarios,
+      regimeDetailed: regime.detailed,
       generatedAt: new Date().toISOString(),
     });
 
@@ -897,58 +923,60 @@ export class DecisionService {
       .filter(Boolean)
       .join(" ")
       .toLowerCase();
+    const isSfpWick =
+      input.market?.anomalies.some((a) => /sfp|wick rejection|liquidity sweep/i.test(a)) ||
+      input.technical?.signals.some((s) => /sfp|wick rejection|liquidity sweep/i.test(s));
+
+    let baseType: MarketRegime["type"] = "RANGING";
     if (
       input.market?.volatility.level === "HIGH" ||
       /high atr|extreme atr|large swings?|volatility spike/.test(
         volatilityEvidence,
       )
-    )
-      return { type: "HIGH_VOLATILITY" };
-    if (input.market?.volatility.level === "LOW") return { type: "RANGING" };
-    if (
+    ) {
+      baseType = "HIGH_VOLATILITY";
+    } else if (input.market?.volatility.level === "LOW") {
+      baseType = "RANGING";
+    } else if (
       input.market?.trend.direction === "SIDEWAYS" ||
       input.technical?.trend.direction === "SIDEWAYS"
-    )
-      return { type: "RANGING" };
-    if (
+    ) {
+      baseType = "RANGING";
+    } else if (
       input.market?.trend.strength === "STRONG" ||
       input.technical?.trend.strength === "STRONG"
-    )
-      return { type: "TRENDING" };
-    return { type: "RANGING" };
+    ) {
+      baseType = "TRENDING";
+    }
+
+    const { detailed, playbook } = classifyDetailedRegime({
+      regimeType: baseType,
+      trendDirection: input.technical?.trend.direction ?? input.market?.trend.direction,
+      trendStrength: input.technical?.trend.strength ?? input.market?.trend.strength,
+      volatilityLevel: input.market?.volatility.level,
+      isSfpWick,
+    });
+
+    return {
+      type: baseType,
+      detailed,
+      playbook,
+    };
   }
 
   private dynamicWeights(
-    regime: MarketRegime["type"],
+    regime: MarketRegime,
     customWeights?: Weighting,
   ): Weighting {
-    const weights = { ...(customWeights || BASE_WEIGHTS) };
-    if (regime === "TRENDING") {
-      weights.technical += 5;
-      weights.news -= 5;
-    } else if (regime === "HIGH_VOLATILITY") {
-      weights.market += 5;
-      weights.sentiment += 5;
-      weights.technical -= 5;
-    } else {
-      weights.technical += 5;
-      weights.market -= 5;
+    if (regime.detailed) {
+      return computeRegimeAdaptiveWeights(regime.detailed, undefined, customWeights);
     }
-    for (const name of Object.keys(weights) as AnalystName[])
-      weights[name] = Math.max(1, weights[name]);
-    const total = Object.values(weights).reduce((sum, value) => sum + value, 0);
-    const normalized = {} as Weighting;
-    const names = Object.keys(weights) as AnalystName[];
-    names.forEach((name) => {
-      normalized[name] = Math.round((weights[name] / total) * 10_000) / 100;
-    });
-    const normalizedTotal = Object.values(normalized).reduce(
-      (sum, value) => sum + value,
-      0,
-    );
-    normalized.onchain =
-      Math.round((normalized.onchain + 100 - normalizedTotal) * 100) / 100;
-    return normalized;
+    const detailedFallback = regime.type === "HIGH_VOLATILITY"
+      ? "VOLATILE_LIQUIDITY_EXPANSION"
+      : regime.type === "TRENDING"
+        ? "TRENDING_BULL"
+        : "RANGING_CONSOLIDATION";
+    return computeRegimeAdaptiveWeights(detailedFallback, undefined, customWeights);
   }
 
   private newsShock(input: DecisionInput, overrides: string[]): number {
