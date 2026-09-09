@@ -17,12 +17,12 @@ describe('TradeResearcherService', () => {
     calculationVersion: 1,
     eligibility: { status: 'ELIGIBLE', reasons: [] },
     structure: { coverage: 'UNAVAILABLE', freshness: 'UNAVAILABLE', observationAgeMs: null, unavailableFields: ['x'], reason: 'y' } as any,
-    volatility: { coverage: 'UNAVAILABLE', freshness: 'UNAVAILABLE', observationAgeMs: null, unavailableFields: ['x'], reason: 'y' } as any,
+    volatility: { coverage: 'AVAILABLE', freshness: 'FRESH', observationAgeMs: 0, unavailableFields: [], atr: 1000 } as any,
     momentum: { coverage: 'UNAVAILABLE', freshness: 'UNAVAILABLE', observationAgeMs: null, unavailableFields: ['x'], reason: 'y' } as any,
     participation: { coverage: 'UNAVAILABLE', freshness: 'UNAVAILABLE', observationAgeMs: null, unavailableFields: ['x'], reason: 'y' } as any,
     derivatives: { coverage: 'UNAVAILABLE', freshness: 'UNAVAILABLE', observationAgeMs: null, unavailableFields: ['x'], reason: 'y' } as any,
     context: { coverage: 'UNAVAILABLE', freshness: 'UNAVAILABLE', observationAgeMs: null, unavailableFields: ['x'], reason: 'y' } as any,
-    execution: { coverage: 'UNAVAILABLE', freshness: 'UNAVAILABLE', observationAgeMs: null, unavailableFields: ['x'], reason: 'y' } as any,
+    execution: { coverage: 'AVAILABLE', freshness: 'FRESH', observationAgeMs: 0, unavailableFields: [], currentPrice: 60500 } as any,
   };
 
   const mockContext: TradeResearcherContext = {
@@ -44,9 +44,14 @@ describe('TradeResearcherService', () => {
     setup: direction === 'WAIT' ? 'NO_TRADE' : 'TREND_PULLBACK',
     entryZone: direction === 'WAIT' ? null : { lower: 60000, upper: 61000 },
     trigger: [],
-    invalidation: direction === 'WAIT' ? null : { price: 59000, reason: 'x' },
-    stopLoss: direction === 'WAIT' ? null : 59000,
-    targets: direction === 'WAIT' ? [] : [{ price: 63000, fraction: 1 }],
+    invalidation: direction === 'WAIT' ? null : { 
+      price: direction === 'SHORT' ? 62000 : 59000, 
+      reason: 'x' 
+    },
+    stopLoss: direction === 'WAIT' ? null : (direction === 'SHORT' ? 62000 : 59000),
+    targets: direction === 'WAIT' ? [] : [
+      { price: direction === 'SHORT' ? 59000 : 63000, fraction: 1 }
+    ],
     expectedNetR: direction === 'WAIT' ? null : 2,
     maximumChaseDistanceAtr: 1,
     confidence: 80,
@@ -62,7 +67,17 @@ describe('TradeResearcherService', () => {
     };
 
     decisionService = {
-      decideForUser: vi.fn(),
+      run: vi.fn().mockResolvedValue({
+        decision: 'WAIT',
+        confidence: 50,
+        regime: { type: 'RANGING' },
+        expectedValue: 0,
+        profitFactorEstimate: 1,
+        expectedWinProbability: 0.5,
+        expectedReward: 1,
+        expectedLoss: 1,
+        executionCost: 0.1,
+      }),
     };
     
     prismaService = {
@@ -71,7 +86,21 @@ describe('TradeResearcherService', () => {
       }
     };
 
-    service = new TradeResearcherService(aiOrchestratorService, decisionService, prismaService);
+    const mockReflection = {
+      reflect: vi.fn().mockResolvedValue({
+        action: 'APPROVE',
+        reasonCodes: [],
+        evidenceRefs: [],
+        rationale: 'Looks good'
+      })
+    };
+
+    service = new TradeResearcherService(
+      aiOrchestratorService, 
+      decisionService, 
+      prismaService, 
+      mockReflection as any
+    );
   });
 
   it('should return valid LONG/SHORT/WAIT alternatives when AI succeeds and persist metadata', async () => {
@@ -113,7 +142,7 @@ describe('TradeResearcherService', () => {
   it('should fall back to rules and label AI_WITH_RULES_FALLBACK on AI timeout', async () => {
     aiOrchestratorService.execute.mockRejectedValue(new Error('timeout'));
     
-    decisionService.decideForUser.mockResolvedValue({
+    decisionService.run.mockResolvedValue({
       decision: 'SHORT',
       confidence: 75,
       regime: { type: 'TRENDING' },
@@ -158,7 +187,7 @@ describe('TradeResearcherService', () => {
       model: 'gpt-4o',
     });
     
-    decisionService.decideForUser.mockResolvedValue({
+    decisionService.run.mockResolvedValue({
       decision: 'WAIT',
       confidence: 50,
       regime: { type: 'RANGING' },
@@ -190,7 +219,7 @@ describe('TradeResearcherService', () => {
       model: 'gpt-4o',
     });
 
-    decisionService.decideForUser.mockResolvedValue({
+    decisionService.run.mockResolvedValue({
       decision: 'LONG',
       confidence: 90,
       regime: { type: 'TRENDING' },
@@ -207,5 +236,78 @@ describe('TradeResearcherService', () => {
     expect(result.preferred.decisionSource).toBe('AI_WITH_RULES_FALLBACK');
     expect(result.preferred.direction).toBe('LONG');
     expect(result.preferred.confidence).toBe(90);
+  });
+
+  it('should fallback to rules when multiple theses have the same direction', async () => {
+    const longThesis1 = createBaseThesis('LONG');
+    const longThesis2 = createBaseThesis('LONG'); // duplicate direction
+
+    aiOrchestratorService.execute.mockResolvedValue({
+      json: {
+        preferred: longThesis1,
+        alternatives: [longThesis2],
+      },
+      text: '',
+      finishReason: 'stop',
+      usage: { promptTokens: 10, completionTokens: 10, totalTokens: 20, estimatedCost: 0 },
+      latencyMs: 100,
+      provider: 'OPENAI',
+      model: 'gpt-4o',
+    });
+
+    decisionService.run.mockResolvedValue({
+      decision: 'WAIT',
+      confidence: 50,
+      regime: { type: 'RANGING' },
+      expectedValue: 0,
+      profitFactorEstimate: 1,
+      expectedWinProbability: 0.5,
+      expectedReward: 1,
+      expectedLoss: 1,
+      executionCost: 0.1,
+    });
+
+    const result = await service.research(mockSnapshot, mockContext);
+
+    expect(result.preferred.decisionSource).toBe('AI_WITH_RULES_FALLBACK');
+    expect(result.preferred.direction).toBe('WAIT');
+  });
+
+  it('should fallback to rules when an alternative thesis fails validation', async () => {
+    const longThesis = createBaseThesis('LONG');
+    const invalidAltThesis = createBaseThesis('SHORT');
+    invalidAltThesis.evidenceFor = [
+      { snapshotField: 'does.not.exist', source: 'x', sourceTimestamp: new Date().toISOString(), calculationVersion: 1 }
+    ];
+
+    aiOrchestratorService.execute.mockResolvedValue({
+      json: {
+        preferred: longThesis,
+        alternatives: [invalidAltThesis],
+      },
+      text: '',
+      finishReason: 'stop',
+      usage: { promptTokens: 10, completionTokens: 10, totalTokens: 20, estimatedCost: 0 },
+      latencyMs: 100,
+      provider: 'OPENAI',
+      model: 'gpt-4o',
+    });
+
+    decisionService.run.mockResolvedValue({
+      decision: 'WAIT',
+      confidence: 50,
+      regime: { type: 'RANGING' },
+      expectedValue: 0,
+      profitFactorEstimate: 1,
+      expectedWinProbability: 0.5,
+      expectedReward: 1,
+      expectedLoss: 1,
+      executionCost: 0.1,
+    });
+
+    const result = await service.research(mockSnapshot, mockContext);
+
+    expect(result.preferred.decisionSource).toBe('AI_WITH_RULES_FALLBACK');
+    expect(result.preferred.direction).toBe('WAIT');
   });
 });

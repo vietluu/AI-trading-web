@@ -6,9 +6,10 @@ import {
 } from '@platform/shared';
 import { AIOrchestratorService } from '../../../ai/application/ai-orchestrator.service';
 import { DecisionService } from './decision.service';
-import { TRADE_RESEARCHER_SYSTEM_PROMPT } from '../../domain/prompts/trade-researcher.prompt';
+import { TRADE_RESEARCHER_SYSTEM_PROMPT, TRADE_THESIS_JSON_SCHEMA } from '../../domain/prompts/trade-researcher.prompt';
 import { validateTradeThesis } from '../../domain/trade-thesis-validator';
 import { PrismaService } from '../../../../database/prisma.service';
+import { ChainOfThoughtReflectionService } from './chain-of-thought-reflection.service';
 
 export interface TradeResearcherContext {
   userId: string;
@@ -32,6 +33,7 @@ export class TradeResearcherService {
     private readonly aiOrchestrator: AIOrchestratorService,
     private readonly decisionService: DecisionService,
     private readonly prisma: PrismaService,
+    private readonly reflectionService: ChainOfThoughtReflectionService,
   ) {}
 
   public async research(
@@ -54,6 +56,7 @@ export class TradeResearcherService {
         systemPrompt: TRADE_RESEARCHER_SYSTEM_PROMPT,
         userPrompt,
         responseFormat: 'json',
+        jsonSchema: TRADE_THESIS_JSON_SCHEMA,
       });
 
       if (!response.json) {
@@ -73,11 +76,43 @@ export class TradeResearcherService {
           `AI thesis failed validation: ${validation.reasons.join(', ')}`,
         );
       }
+      for (const alt of alternatives) {
+        const altValidation = validateTradeThesis(alt, snapshot);
+        if (!altValidation.valid) {
+          throw new Error(`AI alternative thesis failed validation: ${altValidation.reasons.join(', ')}`);
+        }
+      }
 
       // Enforce at most one thesis per direction
       const directions = new Set([preferred.direction, ...alternatives.map((a: TradeThesis) => a.direction)]);
       if (directions.size !== 1 + alternatives.length) {
          throw new Error('AI returned multiple theses for the same direction');
+      }
+
+      // Critic Review
+      const review = await this.reflectionService.reflect(
+        { snapshot, thesis: preferred },
+        context.userId
+      );
+
+      if (review.action === 'CANCEL') {
+        preferred.direction = 'WAIT';
+        preferred.state = 'WAIT';
+        preferred.setup = 'NO_TRADE';
+      } else if (review.action === 'REQUIRE_TRIGGER') {
+        preferred.state = 'WATCHING';
+      }
+      if (review.action === 'REDUCE_SIZE' && review.sizeFactor !== undefined) {
+        // Apply bounded factor to expectedNetR if size is reduced
+        if (preferred.expectedNetR !== null) {
+          preferred.expectedNetR = Number((preferred.expectedNetR * review.sizeFactor).toFixed(2));
+        }
+        // Could also apply to targets if required, but NetR is a solid proxy for size factor bound
+      }
+
+      // Attach review reasons as missing evidence or against
+      if (review.reasonCodes.length > 0) {
+        preferred.missingEvidence.push(...review.reasonCodes);
       }
 
       // Ensure decisionSource is correctly labeled if AI succeeded
@@ -137,22 +172,44 @@ export class TradeResearcherService {
     snapshot: AnticipatoryMarketSnapshot,
     context: TradeResearcherContext,
   ): Promise<TradeResearchResult> {
-    const minimalInput = {
-      symbol: snapshot.symbol,
-      fusionOutput: {
-        summary: 'Fallback',
-        combinedAnalysis: {
-           market: '', technical: '', news: '', sentiment: '', macro: '', onchain: ''
-        },
-        overallBias: 'NEUTRAL',
-        confidence: 50,
-        conflicts: [],
-        dataQuality: 'GOOD',
-        generatedAt: new Date().toISOString(),
-      },
-    };
+    const rulesDecision = await this.decisionService.run({
+      userId: context.userId,
+      invocationSource: 'INTERNAL_SERVICE',
+      correlationId: context.parentSnapshotId,
+      input: {
+        symbol: snapshot.symbol,
+        provider: snapshot.provider as any,
+        interval: snapshot.timeframe as any,
+        lookbackCandles: 150,
+        lookbackHours: 6,
+        maxItems: 20,
+      }
+    });
 
-    const rulesDecision = await this.decisionService.decideForUser(minimalInput as any, context.userId);
+    let entryZone = null;
+    let stopLoss = null;
+    let invalidation = null;
+    let targets: { price: number; fraction: number }[] = [];
+    let expectedNetR = null;
+
+    if (rulesDecision.decision !== 'WAIT' && snapshot.execution.coverage === 'AVAILABLE' && snapshot.volatility.coverage === 'AVAILABLE') {
+      const currentPrice = snapshot.execution.currentPrice;
+      const atr = snapshot.volatility.atr;
+      
+      if (rulesDecision.decision === 'LONG') {
+        entryZone = { lower: currentPrice - atr, upper: currentPrice };
+        stopLoss = currentPrice - 2 * atr;
+        invalidation = { price: stopLoss, reason: 'Fallback ATR stop' };
+        targets = [{ price: currentPrice + 2 * atr, fraction: 1 }];
+        expectedNetR = 1;
+      } else {
+        entryZone = { lower: currentPrice, upper: currentPrice + atr };
+        stopLoss = currentPrice + 2 * atr;
+        invalidation = { price: stopLoss, reason: 'Fallback ATR stop' };
+        targets = [{ price: currentPrice - 2 * atr, fraction: 1 }];
+        expectedNetR = 1;
+      }
+    }
 
     const preferred: TradeThesis = {
       thesisVersion: 1,
@@ -162,12 +219,12 @@ export class TradeResearcherService {
       regime: rulesDecision.regime.type,
       transitionProbability: 0.1,
       setup: rulesDecision.decision === 'WAIT' ? 'NO_TRADE' : 'TREND_PULLBACK', // simplified fallback
-      entryZone: rulesDecision.decision === 'WAIT' ? null : { lower: 0, upper: 0 },
+      entryZone,
       trigger: [],
-      invalidation: rulesDecision.decision === 'WAIT' ? null : { price: 0, reason: 'Fallback' },
-      stopLoss: rulesDecision.decision === 'WAIT' ? null : 0,
-      targets: rulesDecision.decision === 'WAIT' ? [] : [{ price: 0, fraction: 1 }],
-      expectedNetR: rulesDecision.decision === 'WAIT' ? null : 1,
+      invalidation,
+      stopLoss,
+      targets,
+      expectedNetR,
       maximumChaseDistanceAtr: 1,
       confidence: rulesDecision.confidence,
       evidenceFor: [],
@@ -175,6 +232,19 @@ export class TradeResearcherService {
       missingEvidence: [],
       expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 4).toISOString(), // 4h
     };
+
+    const validation = validateTradeThesis(preferred, snapshot);
+    if (!validation.valid) {
+      // Fallback geometry was invalid, force WAIT
+      preferred.direction = 'WAIT';
+      preferred.setup = 'NO_TRADE';
+      preferred.state = 'WAIT';
+      preferred.entryZone = null;
+      preferred.invalidation = null;
+      preferred.stopLoss = null;
+      preferred.targets = [];
+      preferred.expectedNetR = null;
+    }
 
     return {
       preferred,
