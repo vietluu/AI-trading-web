@@ -62,6 +62,8 @@ export interface TradePlan {
   orderType?: "MARKET" | "LIMIT";
   limitTtlCandles?: number;
   isLiquiditySweep?: boolean;
+  tp1Price?: number;
+  tp2Price?: number;
 }
 
 const finitePositive = (value: number | undefined): value is number =>
@@ -596,7 +598,43 @@ function _buildAdaptiveTradePlan(input: {
 
 export function buildAdaptiveTradePlan(input: Parameters<typeof _buildAdaptiveTradePlan>[0]): TradePlan {
   const plan = _buildAdaptiveTradePlan(input);
-  if (plan.approved && input.useLimitlessTrailing) {
+  if (!plan.approved) return plan;
+
+  // 1. Fee Friction & Net Economic Edge Audit
+  // Ensure potential gross profit target is at least 3x round-trip cost to prevent fee drag
+  const entry = input.entryPrice;
+  const costPct = input.roundTripCostPct ?? (plan.orderType === "LIMIT" ? 0.0004 : 0.001);
+  plan.estimatedRoundTripCostPct = costPct;
+
+  if (finitePositive(plan.takeProfit) && finitePositive(entry)) {
+    const grossRewardDistance = Math.abs(plan.takeProfit - entry);
+    const grossRewardPct = grossRewardDistance / entry;
+    const roundTripCost = entry * costPct;
+    const netRewardDistance = Math.max(0, grossRewardDistance - roundTripCost);
+    const expectedNetRewardPct = netRewardDistance / entry;
+
+    plan.grossRewardPct = Number((grossRewardPct * 100).toFixed(4));
+    plan.expectedNetRewardPct = Number((expectedNetRewardPct * 100).toFixed(4));
+
+    // Hard Gate: Gross reward must be at least 2.5x total fees AND at least 0.5% net expected return
+    const minRequiredGrossDistance = entry * costPct * 2.5;
+    const minNetEdgePct = 0.004; // 0.4% minimum net edge after costs
+    if (grossRewardDistance < minRequiredGrossDistance || expectedNetRewardPct < minNetEdgePct) {
+      return {
+        ...plan,
+        approved: false,
+        reason: "INSUFFICIENT_NET_EDGE_AFTER_FEES",
+      };
+    }
+
+    // 2. Multi-Stage Take Profit Setup:
+    // TP1: 50% target at intermediate level (mid-way to full TP or EMA20), locking in profit and pulling SL to BE
+    const tp1Distance = grossRewardDistance * 0.5;
+    plan.tp1Price = rounded(input.side === "LONG" ? entry + tp1Distance : entry - tp1Distance);
+    plan.tp2Price = plan.takeProfit;
+  }
+
+  if (input.useLimitlessTrailing) {
     plan.takeProfit = undefined;
   }
   return plan;

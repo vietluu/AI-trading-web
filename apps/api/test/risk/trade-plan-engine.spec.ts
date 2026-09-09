@@ -449,5 +449,51 @@ describe("adaptive trade plan engine", () => {
     expect(plan.limitEntryPrice).toBeLessThan(100);
     expect(plan.limitTtlCandles).toBe(2);
   });
+
+  it("rejects trades where gross reward is too thin to overcome round-trip fee friction", () => {
+    // In fallback mode without ATR, entryPrice 100, configuredStopLossPct 0.002 (risk = 0.2), configuredRR 1.0 -> targetDistance = 0.2
+    // With roundTripCostPct 0.002 -> 2.5x cost = 0.5 > targetDistance (0.2) -> INSUFFICIENT_NET_EDGE_AFTER_FEES
+    const plan = buildAdaptiveTradePlan({
+      side: "LONG",
+      entryPrice: 100,
+      decision: decision("LONG", "TRENDING"),
+      market: {}, // No ATR -> uses fallback branch with approved = true
+      configuredStopLossPct: 0.001,
+      configuredRiskRewardRatio: 1.0,
+      roundTripCostPct: 0.002,
+    });
+
+    expect(plan.approved).toBe(false);
+    expect(plan.reason).toBe("INSUFFICIENT_NET_EDGE_AFTER_FEES");
+  });
+
+  it("calculates multi-stage take profit targets (tp1Price at mid-range, tp2Price at boundary)", () => {
+    const plan = buildAdaptiveTradePlan({
+      symbol: "SOL-USDT",
+      side: "LONG",
+      entryPrice: 100,
+      decision: decision("LONG", "RANGING"),
+      market: {
+        atr: 1.0,
+        support: 98,
+        resistance: 105,
+        timeframeMs: 15 * 60_000,
+      },
+      configuredStopLossPct: 0.02,
+      configuredRiskRewardRatio: 2.0,
+      roundTripCostPct: 0.0004,
+    });
+
+    expect(plan.approved).toBe(true);
+    expect(plan.orderType).toBe("LIMIT");
+    expect(plan.tp1Price).toBeDefined();
+    expect(plan.tp2Price).toBeDefined();
+    // LONG tp1Price should be midway between entry (100) and full takeProfit
+    expect(plan.tp1Price).toBeGreaterThan(100);
+    expect(plan.tp1Price).toBeLessThan(plan.takeProfit!);
+    expect(plan.tp2Price).toBe(plan.takeProfit);
+    expect(plan.grossRewardPct).toBeGreaterThan(1.0);
+    expect(plan.expectedNetRewardPct).toBeGreaterThan(0.5);
+  });
 });
 

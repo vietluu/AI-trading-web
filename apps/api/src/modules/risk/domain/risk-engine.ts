@@ -335,6 +335,12 @@ export function evaluateRisk(
       positionSize * limits.highVolatilitySizeFactor,
       RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
     );
+  if (plan.strategy === "RANGE_REVERSAL") {
+    positionSize = rounded(
+      positionSize * 0.6,
+      RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
+    );
+  }
   const retainedExposure = retainedPositions.reduce(
     (sum, position) => sum + Math.abs(position.size * position.markPrice),
     0,

@@ -294,6 +294,49 @@ describe("independent strategy decisions", () => {
     expect(selectStrategyDecision(["trend", "trend"], base, analyses).candidates).toHaveLength(1);
     expect(selectStrategyDecision(["unknown"], base, analyses).selectedStrategyKey).toBe("ai-core");
   });
+
+  it("activates mean-reversion LONG at lower boundary with numeric RSI even when marketStructure is LH_LL", () => {
+    const rangingBase = {
+      ...base,
+      decision: "WAIT" as const,
+      confidence: 40,
+      regime: { type: "RANGING" as const },
+    };
+    const dynamicRangeInput = {
+      ...rangeAnalyses(),
+      technical: {
+        ...rangeAnalyses().technical,
+        momentum: {
+          ...rangeAnalyses().technical.momentum,
+          rsi: "34.5",
+          rsiState: "NEUTRAL" as const,
+        },
+        volatility: { bollinger: { position: "LOWER" as const, squeeze: false } },
+        structure: { marketStructure: "LH_LL" as const, breakout: false },
+      },
+    } as FusionInput;
+
+    const result = decisionForStrategy("mean-reversion", rangingBase, dynamicRangeInput, {
+      adx: 17,
+      efficiencyRatio: 0.22,
+    });
+    expect(result.decision).toBe("LONG");
+    expect(result.confidence).toBeGreaterThanOrEqual(70);
+  });
+
+  it("preserves mean-reversion confidence under PARTIAL data when core market and technical are verified", () => {
+    const partialRangingBase = {
+      ...base,
+      decision: "WAIT" as const,
+      confidence: 35,
+      dataQuality: "PARTIAL" as const,
+      coreDataQuality: "GOOD" as const,
+      regime: { type: "RANGING" as const },
+    };
+    const result = decisionForStrategy("mean-reversion", partialRangingBase, rangeAnalyses());
+    expect(result.decision).toBe("LONG");
+    expect(result.confidence).toBe(73); // Not crushed to 35
+  });
 });
 
 function rangeAnalyses(): FusionInput {
