@@ -21,6 +21,7 @@ function createHarness(evaluatedUserIds: string[], activeUserIds: string[]) {
   const scheduler = new ReflectionSchedulerService(
     performance as never,
     selfLearning as never,
+    { analyzeFailedRun: vi.fn().mockResolvedValue(null) } as never,
     { get: vi.fn().mockReturnValue(true) } as never,
   );
   return { scheduler, selfLearning };

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { identifyLiquidityZones, detectLiquiditySweep, CandleInput } from '../src/modules/agents/domain/analysis/liquidity-sweep-hunter';
+import { identifyLiquidityZones, detectLiquiditySweep, type CandleInput } from '../src/modules/agents/domain/analysis/liquidity-sweep-hunter';
 
 describe('Liquidity Sweep Hunter', () => {
   it('Empty/single candle = empty zones', () => {

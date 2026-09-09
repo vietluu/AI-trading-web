@@ -1,5 +1,5 @@
-import { KeltnerChannelsResult, calculateKeltnerChannels } from './keltner-channels';
-import { SqueezeState, detectSqueeze } from './squeeze-detector';
+import { type KeltnerChannelsResult, calculateKeltnerChannels } from './keltner-channels';
+import { type SqueezeState, detectSqueeze } from './squeeze-detector';
 
 export interface CandleData {
   open: string;

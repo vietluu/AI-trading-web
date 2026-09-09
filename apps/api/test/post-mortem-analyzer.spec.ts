@@ -1,10 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { PrismaService } from '../src/database/prisma.service';
 import { PostMortemAnalyzerService } from '../src/modules/reflection/application/post-mortem-analyzer.service';
 import { buildPostMortemContext } from '../src/modules/agents/domain/analysis/post-mortem-memory-injector';
 
 describe('PostMortemAnalyzerService', () => {
   let service: PostMortemAnalyzerService;
-  let prisma: any;
+  let prisma: {
+    aIMemory: {
+      findFirst: ReturnType<typeof vi.fn>;
+      create: ReturnType<typeof vi.fn>;
+      update: ReturnType<typeof vi.fn>;
+      findMany: ReturnType<typeof vi.fn>;
+    };
+  };
 
   beforeEach(() => {
     prisma = {
@@ -15,11 +23,18 @@ describe('PostMortemAnalyzerService', () => {
         findMany: vi.fn(),
       }
     };
-    service = new PostMortemAnalyzerService(prisma);
+    service = new PostMortemAnalyzerService(prisma as unknown as PrismaService);
   });
 
   it('should return null if outcome is not WRONG', async () => {
-    const result = await service.analyzeFailedRun({ outcome: 'CORRECT' } as any);
+    const result = await service.analyzeFailedRun({
+      runId: '123',
+      userId: 'u1',
+      symbol: 'BTC',
+      decision: 'LONG',
+      outcome: 'CORRECT',
+      returnPct: 1,
+    });
     expect(result).toBeNull();
   });
 
@@ -73,8 +88,8 @@ describe('PostMortemAnalyzerService', () => {
     ]);
     const patterns = await service.findRecurringPatterns('u1');
     expect(patterns.length).toBe(1);
-    expect(patterns[0].pattern).toBe('BTC:RANGING:TRAP_ENTRY');
-    expect(patterns[0].count).toBe(2);
+    expect(patterns[0]!.pattern).toBe('BTC:RANGING:TRAP_ENTRY');
+    expect(patterns[0]!.count).toBe(2);
   });
 });
 
@@ -87,7 +102,7 @@ describe('PostMortemMemoryInjector', () => {
     const ctx = buildPostMortemContext(memories, 'BTC', 'RANGING');
     expect(ctx.recentLosses.length).toBe(2);
     expect(ctx.recurringPatterns.length).toBe(1);
-    expect(ctx.recurringPatterns[0].pattern).toBe('BTC:RANGING:TRAP_ENTRY');
+    expect(ctx.recurringPatterns[0]!.pattern).toBe('BTC:RANGING:TRAP_ENTRY');
     expect(ctx.cautionAdvice).toContain('Require higher confidence threshold');
     expect(ctx.penalties).toEqual({ trend: -3, macro: -2 });
   });

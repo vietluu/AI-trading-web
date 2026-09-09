@@ -8,7 +8,24 @@ export interface PostMortemContext {
 /**
  * Pure domain helper to build PostMortemContext from loaded memories.
  */
-export function buildPostMortemContext(memories: any[], symbol: string, regime: string): PostMortemContext {
+export interface MemoryRecordLike {
+  content?: unknown;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+/**
+ * Pure domain helper to build PostMortemContext from loaded memories.
+ */
+export function buildPostMortemContext(
+  memories: MemoryRecordLike[],
+  symbol: string,
+  regime: string,
+): PostMortemContext {
   const recentLosses: PostMortemContext['recentLosses'] = [];
   const penalties: Record<string, number> = {};
   
@@ -16,31 +33,36 @@ export function buildPostMortemContext(memories: any[], symbol: string, regime: 
   const patternCounts: Record<string, number> = {};
 
   for (const mem of memories) {
-    if (!mem.content) continue;
-    const content = mem.content;
+    const content = asRecord(mem.content);
+    if (!content) continue;
+    const contentSymbol = typeof content.symbol === 'string' ? content.symbol : undefined;
+    const contentRegime = typeof content.regime === 'string' ? content.regime : undefined;
+    const rootCause = typeof content.rootCause === 'string' ? content.rootCause : undefined;
+    const recommendation = typeof content.recommendation === 'string' ? content.recommendation : undefined;
     
     // Only process relevant memories matching symbol or regime
-    if (content.symbol === symbol || content.regime === regime) {
+    if (contentSymbol === symbol || contentRegime === regime) {
       recentLosses.push({
-        symbol: content.symbol,
-        regime: content.regime,
-        rootCause: content.rootCause,
-        recommendation: content.recommendation,
+        symbol: contentSymbol ?? symbol,
+        regime: contentRegime ?? regime,
+        rootCause: rootCause ?? 'UNKNOWN',
+        recommendation: recommendation ?? '',
       });
 
-      if (content.penaltyAdjustments) {
-        for (const [agent, penalty] of Object.entries(content.penaltyAdjustments)) {
-          penalties[agent] = (penalties[agent] || 0) + (penalty as number);
+      const penaltyAdjustments = asRecord(content.penaltyAdjustments);
+      if (penaltyAdjustments) {
+        for (const [agent, penalty] of Object.entries(penaltyAdjustments)) {
+          penalties[agent] = (penalties[agent] || 0) + (typeof penalty === 'number' ? penalty : 0);
         }
       }
 
-      const patternKey = `${content.symbol}:${content.regime}:${content.rootCause}`;
+      const patternKey = `${contentSymbol ?? symbol}:${contentRegime ?? regime}:${rootCause ?? 'UNKNOWN'}`;
       patternCounts[patternKey] = (patternCounts[patternKey] || 0) + 1;
     }
   }
 
   const recurringPatterns = Object.entries(patternCounts)
-    .filter(([_, count]) => count >= 2)
+    .filter(([, count]) => count >= 2)
     .map(([pattern, count]) => ({ pattern, count }));
 
   let cautionAdvice: string | undefined;

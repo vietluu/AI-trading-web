@@ -35,7 +35,6 @@ export function identifyLiquidityZones(
   if (candles.length < 2) return [];
 
   const startIndex = Math.max(0, candles.length - lookback);
-  const relevantCandles = candles; // Need original indices for lastTestedIndex? Wait, we can just use the absolute indices.
 
   const swingHighs: { price: number; index: number }[] = [];
   const swingLows: { price: number; index: number }[] = [];

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
 
 export interface PostMortemResult {
@@ -22,6 +23,13 @@ export interface RecurringPattern {
   lastOccurred: Date;
 }
 
+export interface FailedRunContext {
+  agentVotes?: Record<string, string>;
+  isExtendedEntry?: boolean;
+  trapLikelihood?: number;
+  actualRegime?: string;
+}
+
 @Injectable()
 export class PostMortemAnalyzerService {
   constructor(private readonly prisma: PrismaService) {}
@@ -34,7 +42,7 @@ export class PostMortemAnalyzerService {
     outcome: string;
     returnPct: number;
     marketRegime?: string;
-    storedContext?: any;
+    storedContext?: Prisma.JsonValue | FailedRunContext | Record<string, unknown>;
   }): Promise<PostMortemResult | null> {
     if (params.outcome !== 'WRONG') return null;
 
@@ -42,9 +50,11 @@ export class PostMortemAnalyzerService {
     const penaltyAdjustments: Record<string, number> = {};
     let wrongVotes = 0;
 
-    if (params.storedContext?.agentVotes) {
-      for (const [agent, vote] of Object.entries(params.storedContext.agentVotes)) {
-        const voteStr = vote as string;
+    const ctx = (params.storedContext ?? {}) as FailedRunContext;
+
+    if (ctx.agentVotes) {
+      for (const [agent, vote] of Object.entries(ctx.agentVotes)) {
+        const voteStr = typeof vote === 'string' ? vote : String(vote);
         const votedWithSystem = voteStr === params.decision;
         const correct = !votedWithSystem && voteStr !== 'NEUTRAL';
         
@@ -60,9 +70,9 @@ export class PostMortemAnalyzerService {
     let rootCause: PostMortemResult['rootCause'] = 'UNKNOWN';
     if (wrongVotes >= 3) {
       rootCause = 'AGENT_DISAGREEMENT';
-    } else if (params.storedContext?.isExtendedEntry || params.storedContext?.trapLikelihood > 0.7) {
+    } else if (ctx.isExtendedEntry || (typeof ctx.trapLikelihood === 'number' && ctx.trapLikelihood > 0.7)) {
       rootCause = 'TRAP_ENTRY';
-    } else if (params.marketRegime === 'TRENDING' && params.storedContext?.actualRegime === 'RANGING') {
+    } else if (params.marketRegime === 'TRENDING' && ctx.actualRegime === 'RANGING') {
       rootCause = 'REGIME_MISMATCH';
     } else {
       rootCause = 'TIMING_ERROR';
@@ -86,11 +96,13 @@ export class PostMortemAnalyzerService {
       where: { userId: params.userId, key }
     });
 
+    const jsonContent = result as unknown as Prisma.InputJsonValue;
+
     if (existing) {
       await this.prisma.aIMemory.update({
         where: { id: existing.id },
         data: {
-          content: result as any,
+          content: jsonContent,
           tags: ['post-mortem', params.symbol, result.regime, result.rootCause],
         }
       });
@@ -100,7 +112,7 @@ export class PostMortemAnalyzerService {
           userId: params.userId,
           type: 'REFLECTION',
           key,
-          content: result as any,
+          content: jsonContent,
           tags: ['post-mortem', params.symbol, result.regime, result.rootCause],
         }
       });

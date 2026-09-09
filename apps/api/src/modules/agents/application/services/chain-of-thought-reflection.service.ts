@@ -47,7 +47,10 @@ export class ChainOfThoughtReflectionService {
     try {
       const prompt = this.buildPrompt(input);
       const model = this.configService?.get<string>('LLM_REFLECTION_MODEL', 'gemini-3.1-flash-lite') ?? 'gemini-3.1-flash-lite';
-      const provider = this.configService?.get<string>('LLM_REFLECTION_PROVIDER') as any;
+      const providerStr = this.configService?.get<string>('LLM_REFLECTION_PROVIDER');
+      const provider = providerStr === 'OPENAI' || providerStr === 'ANTHROPIC' || providerStr === 'GEMINI' || providerStr === 'OLLAMA'
+        ? providerStr
+        : undefined;
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -66,7 +69,7 @@ export class ChainOfThoughtReflectionService {
         });
 
         clearTimeout(timer);
-        const rawText = response.text ?? (response as any).response ?? (response.json ? JSON.stringify(response.json) : '');
+        const rawText = response.text || (response.json ? JSON.stringify(response.json) : '');
         return this.parseResponse(rawText, input);
       } finally {
         clearTimeout(timer);
@@ -126,7 +129,7 @@ Respond in JSON format with this exact structure:
       }
       if (input.anticipatorySignals.liquiditySweep) {
         const l = input.anticipatorySignals.liquiditySweep;
-        parts.push(`- Liquidity Sweep: ${l.detected ? 'DETECTED' : 'None'} (direction: ${l.direction}, confidence: ${l.confidence}%)`);
+        parts.push(`- Liquidity Sweep: ${l.detected ? 'DETECTED' : 'None'} (direction: ${l.direction ?? 'None'}, confidence: ${l.confidence}%)`);
       }
       if (input.anticipatorySignals.derivativesImbalance) {
         const d = input.anticipatorySignals.derivativesImbalance;
@@ -166,26 +169,25 @@ Respond in JSON format with this exact structure:
 
   private parseResponse(raw: string, input: ReflectionInput): ReflectionOutput {
     try {
-      // Try to parse JSON from the response
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (!jsonMatch) return this.passthrough(input);
 
-      const parsed = JSON.parse(jsonMatch[0]);
+      const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
 
-      const adjustedDecision = ['LONG', 'SHORT', 'WAIT'].includes(parsed.adjustedDecision)
-        ? parsed.adjustedDecision
-        : input.candidateDecision;
+      const candidateAdj = typeof parsed.adjustedDecision === 'string' ? parsed.adjustedDecision : '';
+      const adjustedDecision: 'LONG' | 'SHORT' | 'WAIT' =
+        candidateAdj === 'LONG' || candidateAdj === 'SHORT' || candidateAdj === 'WAIT'
+          ? candidateAdj
+          : input.candidateDecision;
 
-      const adjustedConfidence = typeof parsed.adjustedConfidence === 'number'
-        ? Math.max(0, Math.min(100, Math.round(parsed.adjustedConfidence)))
-        : input.confidence;
+      const rawConf = typeof parsed.adjustedConfidence === 'number' ? parsed.adjustedConfidence : input.confidence;
+      const adjustedConfidence = Math.max(0, Math.min(100, Math.round(rawConf)));
 
-      const trapProbability = typeof parsed.trapProbability === 'number'
-        ? Math.max(0, Math.min(100, Math.round(parsed.trapProbability)))
-        : 0;
+      const rawTrap = typeof parsed.trapProbability === 'number' ? parsed.trapProbability : 0;
+      const trapProbability = Math.max(0, Math.min(100, Math.round(rawTrap)));
 
       const contrarianArguments = Array.isArray(parsed.contrarianArguments)
-        ? parsed.contrarianArguments.filter((a: unknown) => typeof a === 'string').slice(0, 5)
+        ? (parsed.contrarianArguments as unknown[]).filter((a): a is string => typeof a === 'string').slice(0, 5)
         : [];
 
       return {

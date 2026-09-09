@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { predictDerivativesImbalance, DerivativesInput } from '../src/modules/agents/domain/analysis/derivatives-imbalance-predictor';
+import { predictDerivativesImbalance, type DerivativesInput } from '../src/modules/agents/domain/analysis/derivatives-imbalance-predictor';
 
 describe('Derivatives Imbalance Predictor', () => {
   it('Extreme negative funding => SHORT_SQUEEZE', () => {
