@@ -81,9 +81,44 @@ function inputFixture(): AnticipatorySnapshotInput {
   };
 }
 
+function addValidDerivatives(input: AnticipatorySnapshotInput): string[] {
+  const signals = ['Position building'];
+  input.derivatives = {
+    timestamp: input.candles[7]!.closeTime,
+    fundingRate: 0.01,
+    fundingHistory: input.candles.slice(1, 7).map((item, index) => ({
+      timestamp: item.closeTime,
+      value: index / 10_000,
+    })),
+    openInterest: 110,
+    openInterestHistory: [
+      { timestamp: input.candles[6]!.closeTime, value: 100 },
+      { timestamp: input.candles[7]!.closeTime, value: 110 },
+    ],
+    priceOpenInterestDivergence: 'OI_RISING_PRICE_FLAT',
+    derivativesImbalance: {
+      timestamp: input.candles[7]!.closeTime,
+      fundingExtreme: 'NORMAL',
+      oiPriceDivergence: 'OI_RISING_PRICE_FLAT',
+      squeezeProbability: 40,
+      squeezeDirection: 'NONE',
+      signals,
+    },
+  };
+  return signals;
+}
+
 describe('buildAnticipatoryMarketSnapshot', () => {
   it('cannot see candles or oscillator observations after the source cutoff', () => {
     const withFutureData = inputFixture();
+    withFutureData.candles[8] = {
+      ...withFutureData.candles[8]!,
+      high: Number.NaN,
+    };
+    withFutureData.atrHistory![8] = {
+      ...withFutureData.atrHistory![8]!,
+      value: Number.NaN,
+    };
     const withoutFutureData = {
       ...withFutureData,
       candles: withFutureData.candles.slice(0, 8),
@@ -114,7 +149,7 @@ describe('buildAnticipatoryMarketSnapshot', () => {
         },
       ]);
     }
-    expect(JSON.stringify(snapshot)).not.toContain(withFutureData.candles[8]!.closeTime);
+    expect(JSON.stringify(snapshot)).not.toContain(withFutureData.candles[8].closeTime);
     expect(snapshot.volatility.coverage).toBe('AVAILABLE');
     if (snapshot.volatility.coverage === 'AVAILABLE') {
       expect(snapshot.volatility.atr).toBe(4);
@@ -130,6 +165,36 @@ describe('buildAnticipatoryMarketSnapshot', () => {
     expect(snapshot.structure).toMatchObject({
       coverage: 'UNAVAILABLE',
       unavailableFields: ['structure.distanceToNearestBoundaryAtr'],
+    });
+  });
+
+  it('marks execution unavailable when ATR cannot support chase distance', () => {
+    const input = inputFixture();
+    input.atrHistory = undefined;
+
+    const snapshot = buildAnticipatoryMarketSnapshot(input);
+
+    expect(snapshot.execution).toEqual({
+      coverage: 'UNAVAILABLE',
+      freshness: 'UNAVAILABLE',
+      observationAgeMs: null,
+      unavailableFields: ['execution.priceTooFarFromCandidateZones'],
+      reason: 'CHASE_DISTANCE_ATR_UNAVAILABLE',
+    });
+  });
+
+  it('marks execution unavailable when candidate zones are absent', () => {
+    const input = inputFixture();
+    input.execution = { ...input.execution!, candidateZonePrices: [] };
+
+    const snapshot = buildAnticipatoryMarketSnapshot(input);
+
+    expect(snapshot.execution).toEqual({
+      coverage: 'UNAVAILABLE',
+      freshness: 'UNAVAILABLE',
+      observationAgeMs: null,
+      unavailableFields: ['execution.priceTooFarFromCandidateZones'],
+      reason: 'CHASE_DISTANCE_CANDIDATE_ZONES_UNAVAILABLE',
     });
   });
 
@@ -183,6 +248,79 @@ describe('buildAnticipatoryMarketSnapshot', () => {
       ],
       reason: 'DERIVATIVES_HISTORY_INSUFFICIENT_AT_CUTOFF',
     });
+  });
+
+  it('marks derivatives unavailable when prior open interest is zero', () => {
+    const input = inputFixture();
+    addValidDerivatives(input);
+    input.derivatives!.openInterestHistory = [
+      { timestamp: input.candles[6]!.closeTime, value: 0 },
+      { timestamp: input.candles[7]!.closeTime, value: 110 },
+    ];
+
+    const snapshot = buildAnticipatoryMarketSnapshot(input);
+
+    expect(snapshot.derivatives).toEqual({
+      coverage: 'UNAVAILABLE',
+      freshness: 'UNAVAILABLE',
+      observationAgeMs: null,
+      unavailableFields: ['derivatives.openInterestChangePct'],
+      reason: 'OPEN_INTEREST_PERCENTAGE_DENOMINATOR_INVALID',
+    });
+  });
+
+  it.each([
+    ['execution.spread', (input: AnticipatorySnapshotInput) => { input.execution!.spread = -1; }],
+    ['execution.currentExposure', (input: AnticipatorySnapshotInput) => { input.execution!.currentExposure = Number.NaN; }],
+    ['execution.tickSize', (input: AnticipatorySnapshotInput) => { input.execution!.tickSize = 0; }],
+    ['execution.lotSize', (input: AnticipatorySnapshotInput) => { input.execution!.lotSize = Number.POSITIVE_INFINITY; }],
+    ['derivatives.openInterest', (input: AnticipatorySnapshotInput) => {
+      addValidDerivatives(input);
+      input.derivatives!.openInterest = -1;
+    }],
+    ['orderBook.imbalance', (input: AnticipatorySnapshotInput) => {
+      input.orderBook = {
+        timestamp: input.candles[7]!.closeTime,
+        imbalance: Number.POSITIVE_INFINITY,
+      };
+    }],
+    ['context.news.freshnessThresholdMs', (input: AnticipatorySnapshotInput) => {
+      input.context = {
+        news: {
+          source: 'REUTERS',
+          freshnessThresholdMs: -1,
+          observations: [
+            {
+              observedAt: input.candles[7]!.closeTime,
+              summary: 'Scheduled market update',
+            },
+          ],
+        },
+      };
+    }],
+  ])('rejects invalid raw numeric input at %s', (field, mutate) => {
+    const input = inputFixture();
+    mutate(input);
+
+    expect(() => buildAnticipatoryMarketSnapshot(input)).toThrowError(
+      `Invalid anticipatory snapshot input: ${field}`,
+    );
+  });
+
+  it('copies derivatives imbalance signals into the snapshot', () => {
+    const input = inputFixture();
+    const inputSignals = addValidDerivatives(input);
+
+    const snapshot = buildAnticipatoryMarketSnapshot(input);
+    expect(snapshot.derivatives.coverage).toBe('AVAILABLE');
+    if (
+      snapshot.derivatives.coverage === 'AVAILABLE' &&
+      snapshot.derivatives.derivativesImbalance.coverage === 'AVAILABLE'
+    ) {
+      snapshot.derivatives.derivativesImbalance.signals.push('Output-only mutation');
+    }
+
+    expect(inputSignals).toEqual(['Position building']);
   });
 
   it('stores RSI and MACD values matched to confirmed pivots', () => {

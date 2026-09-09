@@ -1,4 +1,8 @@
-import type { AnticipatoryMarketSnapshot, EvidenceRef } from '@platform/shared';
+import {
+  AnticipatoryMarketSnapshotSchema,
+  type AnticipatoryMarketSnapshot,
+  type EvidenceRef,
+} from '@platform/shared';
 
 import {
   CALCULATION_VERSION,
@@ -152,6 +156,215 @@ type UnavailableEvidence = {
 };
 
 const DEFAULT_FRESHNESS_THRESHOLD_MS = 300_000;
+
+function assertNumericInput(
+  field: string,
+  value: number,
+  predicate: (value: number) => boolean = () => true,
+): void {
+  if (!Number.isFinite(value) || !predicate(value)) {
+    throw new Error(`Invalid anticipatory snapshot input: ${field}`);
+  }
+}
+
+function validateRawNumericInputs(
+  input: AnticipatorySnapshotInput,
+  cutoffMs: number,
+): void {
+  const assertOptionalNonnegativeInteger = (
+    field: string,
+    value: number | undefined,
+  ) => {
+    if (value !== undefined) {
+      assertNumericInput(
+        field,
+        value,
+        (candidate) => Number.isSafeInteger(candidate) && candidate >= 0,
+      );
+    }
+  };
+  assertOptionalNonnegativeInteger('schemaVersion', input.schemaVersion);
+  assertOptionalNonnegativeInteger('calculationVersion', input.calculationVersion);
+  assertOptionalNonnegativeInteger('freshnessThresholdMs', input.freshnessThresholdMs);
+  if (input.pivotStrength !== undefined) {
+    assertNumericInput(
+      'pivotStrength',
+      input.pivotStrength,
+      (value) => Number.isSafeInteger(value) && value >= 1,
+    );
+  }
+  if (input.lookback !== undefined) {
+    assertNumericInput(
+      'lookback',
+      input.lookback,
+      (value) => Number.isSafeInteger(value) && value >= 1,
+    );
+  }
+
+  input.candles.forEach((candle, index) => {
+    if (candle.isClosed === false || !isAtOrBefore(candle.closeTime, cutoffMs)) return;
+    assertNumericInput(`candles[${index}].open`, candle.open, (value) => value > 0);
+    assertNumericInput(`candles[${index}].high`, candle.high, (value) => value > 0);
+    assertNumericInput(`candles[${index}].low`, candle.low, (value) => value > 0);
+    assertNumericInput(`candles[${index}].close`, candle.close, (value) => value > 0);
+    assertNumericInput(`candles[${index}].volume`, candle.volume, (value) => value >= 0);
+    if (candle.high < candle.low) {
+      throw new Error(`Invalid anticipatory snapshot input: candles[${index}].high`);
+    }
+  });
+  input.rsiHistory?.forEach((point, index) => {
+    if (!isAtOrBefore(point.timestamp, cutoffMs)) return;
+    assertNumericInput(
+      `rsiHistory[${index}].value`,
+      point.value,
+      (value) => value >= 0 && value <= 100,
+    );
+  });
+  input.macdHistory?.forEach((point, index) => {
+    if (!isAtOrBefore(point.timestamp, cutoffMs)) return;
+    assertNumericInput(`macdHistory[${index}].value`, point.value);
+    assertNumericInput(`macdHistory[${index}].signal`, point.signal);
+    assertNumericInput(`macdHistory[${index}].histogram`, point.histogram);
+  });
+  input.atrHistory?.forEach((point, index) => {
+    if (!isAtOrBefore(point.timestamp, cutoffMs)) return;
+    assertNumericInput(
+      `atrHistory[${index}].value`,
+      point.value,
+      (value) => value > 0,
+    );
+  });
+
+  if (
+    input.orderBook !== undefined &&
+    isAtOrBefore(input.orderBook.timestamp, cutoffMs)
+  ) {
+    assertNumericInput(
+      'orderBook.imbalance',
+      input.orderBook.imbalance,
+      (value) => value >= -1 && value <= 1,
+    );
+    assertOptionalNonnegativeInteger(
+      'orderBook.freshnessThresholdMs',
+      input.orderBook.freshnessThresholdMs,
+    );
+  }
+
+  const execution = input.execution;
+  if (execution !== undefined && isAtOrBefore(execution.timestamp, cutoffMs)) {
+    if (execution.currentPrice !== undefined) {
+      assertNumericInput(
+        'execution.currentPrice',
+        execution.currentPrice,
+        (value) => value > 0,
+      );
+    }
+    assertNumericInput('execution.spread', execution.spread, (value) => value >= 0);
+    assertNumericInput(
+      'execution.estimatedRoundTripCost',
+      execution.estimatedRoundTripCost,
+      (value) => value >= 0,
+    );
+    assertNumericInput('execution.tickSize', execution.tickSize, (value) => value > 0);
+    assertNumericInput('execution.lotSize', execution.lotSize, (value) => value > 0);
+    assertNumericInput(
+      'execution.currentExposure',
+      execution.currentExposure,
+      (value) => value >= 0,
+    );
+    execution.candidateZonePrices?.forEach((value, index) =>
+      assertNumericInput(
+        `execution.candidateZonePrices[${index}]`,
+        value,
+        (price) => price > 0,
+      ),
+    );
+    if (execution.maximumChaseDistanceAtr !== undefined) {
+      assertNumericInput(
+        'execution.maximumChaseDistanceAtr',
+        execution.maximumChaseDistanceAtr,
+        (value) => value >= 0,
+      );
+    }
+    assertOptionalNonnegativeInteger(
+      'execution.freshnessThresholdMs',
+      execution.freshnessThresholdMs,
+    );
+  }
+
+  const derivatives = input.derivatives;
+  if (derivatives !== undefined && isAtOrBefore(derivatives.timestamp, cutoffMs)) {
+    assertNumericInput('derivatives.fundingRate', derivatives.fundingRate);
+    assertNumericInput(
+      'derivatives.openInterest',
+      derivatives.openInterest,
+      (value) => value >= 0,
+    );
+    derivatives.fundingHistory.forEach((point, index) => {
+      if (!isAtOrBefore(point.timestamp, cutoffMs)) return;
+      assertNumericInput(`derivatives.fundingHistory[${index}].value`, point.value);
+    });
+    derivatives.openInterestHistory.forEach((point, index) => {
+      if (!isAtOrBefore(point.timestamp, cutoffMs)) return;
+      assertNumericInput(
+        `derivatives.openInterestHistory[${index}].value`,
+        point.value,
+        (value) => value >= 0,
+      );
+    });
+    assertOptionalNonnegativeInteger(
+      'derivatives.freshnessThresholdMs',
+      derivatives.freshnessThresholdMs,
+    );
+    const liquidation = derivatives.liquidationContext;
+    if (
+      liquidation !== undefined &&
+      isAtOrBefore(liquidation.timestamp, cutoffMs)
+    ) {
+      assertNumericInput(
+        'derivatives.liquidationContext.longLiquidations',
+        liquidation.longLiquidations,
+        (value) => value >= 0,
+      );
+      assertNumericInput(
+        'derivatives.liquidationContext.shortLiquidations',
+        liquidation.shortLiquidations,
+        (value) => value >= 0,
+      );
+      assertOptionalNonnegativeInteger(
+        'derivatives.liquidationContext.freshnessThresholdMs',
+        liquidation.freshnessThresholdMs,
+      );
+    }
+    const imbalance = derivatives.derivativesImbalance;
+    if (imbalance !== undefined && isAtOrBefore(imbalance.timestamp, cutoffMs)) {
+      assertNumericInput(
+        'derivatives.derivativesImbalance.squeezeProbability',
+        imbalance.squeezeProbability,
+        (value) => value >= 0 && value <= 100,
+      );
+      assertOptionalNonnegativeInteger(
+        'derivatives.derivativesImbalance.freshnessThresholdMs',
+        imbalance.freshnessThresholdMs,
+      );
+    }
+  }
+
+  for (const name of ['news', 'sentiment', 'macro', 'onChain'] as const) {
+    const source = input.context?.[name];
+    if (
+      source !== undefined &&
+      source.observations.some((observation) =>
+        isAtOrBefore(observation.observedAt, cutoffMs),
+      )
+    ) {
+      assertOptionalNonnegativeInteger(
+        `context.${name}.freshnessThresholdMs`,
+        source.freshnessThresholdMs,
+      );
+    }
+  }
+}
 
 function timestampMs(value: Timestamp): number {
   return value instanceof Date ? value.getTime() : Date.parse(value);
@@ -340,6 +553,7 @@ export function buildAnticipatoryMarketSnapshot(
 ): AnticipatoryMarketSnapshot {
   const cutoffMs = timestampMs(input.sourceDataCutoff);
   if (!Number.isFinite(cutoffMs)) throw new Error('sourceDataCutoff must be a valid timestamp');
+  validateRawNumericInputs(input, cutoffMs);
 
   const calculationVersion = input.calculationVersion ?? CALCULATION_VERSION;
   const freshnessThresholdMs =
@@ -597,7 +811,7 @@ export function buildAnticipatoryMarketSnapshot(
               snapshotFields: ['participation.orderBook.imbalance'],
               source: orderBook.source ?? input.provider,
             }),
-            imbalance: Math.max(-1, Math.min(1, orderBook.imbalance)),
+            imbalance: orderBook.imbalance,
           }
         : unavailable(
             ['participation.orderBook'],
@@ -660,7 +874,7 @@ export function buildAnticipatoryMarketSnapshot(
     }
   }
 
-  return {
+  const snapshot = {
     symbol: input.symbol,
     provider: input.provider,
     timeframe: input.timeframe,
@@ -679,6 +893,15 @@ export function buildAnticipatoryMarketSnapshot(
     context,
     execution,
   };
+  const parsed = AnticipatoryMarketSnapshotSchema.safeParse(snapshot);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const path = issue?.path.join('.') || 'snapshot';
+    throw new Error(
+      `Invalid anticipatory snapshot output: ${path}: ${issue?.message ?? 'schema validation failed'}`,
+    );
+  }
+  return parsed.data;
 }
 
 function buildDerivativesEvidence(
@@ -717,10 +940,14 @@ function buildDerivativesEvidence(
     );
   }
   const previousOi = oiHistory[oiHistory.length - 2]?.value;
+  if (previousOi === undefined || !Number.isFinite(previousOi) || previousOi <= 0) {
+    return unavailable(
+      ['derivatives.openInterestChangePct'],
+      'OPEN_INTEREST_PERCENTAGE_DENOMINATOR_INVALID',
+    );
+  }
   const openInterestChangePct =
-    previousOi !== undefined && previousOi !== 0
-      ? ((derivatives.openInterest - previousOi) / previousOi) * 100
-      : 0;
+    ((derivatives.openInterest - previousOi) / previousOi) * 100;
   const threshold = derivatives.freshnessThresholdMs ?? defaultFreshnessThresholdMs;
   const nestedUnavailable = (field: string, reason: string) => unavailable([field], reason);
   const liquidation = derivatives.liquidationContext;
@@ -755,7 +982,7 @@ function buildDerivativesEvidence(
           oiPriceDivergence: imbalance.oiPriceDivergence,
           squeezeProbability: imbalance.squeezeProbability,
           squeezeDirection: imbalance.squeezeDirection,
-          signals: imbalance.signals,
+          signals: [...imbalance.signals],
         }
       : nestedUnavailable('derivatives.derivativesImbalance', 'DERIVATIVES_IMBALANCE_UNAVAILABLE');
 
@@ -866,19 +1093,27 @@ function buildExecutionEvidence(params: {
   if (currentPrice === undefined || !(currentPrice > 0)) {
     return unavailable(['execution.currentPrice'], 'CURRENT_PRICE_UNAVAILABLE');
   }
+  if (params.currentAtr === undefined || !(params.currentAtr > 0)) {
+    return unavailable(
+      ['execution.priceTooFarFromCandidateZones'],
+      'CHASE_DISTANCE_ATR_UNAVAILABLE',
+    );
+  }
   const candidateZonePrices = execution.candidateZonePrices ??
     (params.rangeBoundaries === undefined
       ? []
       : [params.rangeBoundaries.lower, params.rangeBoundaries.upper]);
+  if (candidateZonePrices.length === 0) {
+    return unavailable(
+      ['execution.priceTooFarFromCandidateZones'],
+      'CHASE_DISTANCE_CANDIDATE_ZONES_UNAVAILABLE',
+    );
+  }
   const nearestDistance =
-    candidateZonePrices.length === 0
-      ? 0
-      : Math.min(...candidateZonePrices.map((price) => Math.abs(currentPrice - price)));
+    Math.min(...candidateZonePrices.map((price) => Math.abs(currentPrice - price)));
   const maximumChaseDistanceAtr = execution.maximumChaseDistanceAtr ?? 0.8;
   const priceTooFarFromCandidateZones =
-    params.currentAtr !== undefined && params.currentAtr > 0 && candidateZonePrices.length > 0
-      ? nearestDistance / params.currentAtr > maximumChaseDistanceAtr
-      : false;
+    nearestDistance / params.currentAtr > maximumChaseDistanceAtr;
   return {
     ...availableMetadata({
       cutoffMs: params.cutoffMs,
