@@ -1,3 +1,6 @@
+import { KeltnerChannelsResult, calculateKeltnerChannels } from './keltner-channels';
+import { SqueezeState, detectSqueeze } from './squeeze-detector';
+
 export interface CandleData {
   open: string;
   high: string;
@@ -19,6 +22,8 @@ export interface BollingerBandsResult {
 }
 
 export interface CalculatedIndicators {
+  keltnerChannels?: KeltnerChannelsResult;
+  squeezeState?: SqueezeState;
   sma20?: string;
   sma50?: string;
   sma200?: string;
@@ -326,6 +331,12 @@ export function calculateAllIndicators(candles: CandleData[]): CalculatedIndicat
 
   const bb = calculateBollingerBands(closes, 20, 2);
   if (bb) result.bollingerBands = bb;
+
+  const kc = calculateKeltnerChannels(closes, highs, lows);
+  if (kc) result.keltnerChannels = kc;
+  
+  const squeeze = detectSqueeze(closes, highs, lows, volumes, result.macd?.histogram);
+  result.squeezeState = squeeze;
 
   const volChange = calculateVolumeChangePercent(volumes);
   if (volChange !== undefined)
