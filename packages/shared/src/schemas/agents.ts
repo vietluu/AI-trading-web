@@ -832,7 +832,6 @@ const OrderBookEvidenceSchema = z.union([
     .object({
       ...availableEvidenceMetadata,
       imbalance: z.number().min(-1).max(1),
-      ageMs: z.number().int().nonnegative(),
     })
     .strict(),
 ]);
@@ -875,7 +874,6 @@ const DerivativesImbalanceEvidenceSchema = z.union([
         'OI_RISING_PRICE_FALLING',
         'OI_FALLING_PRICE_RISING',
         'ALIGNED',
-        'INSUFFICIENT_DATA',
       ]),
       squeezeProbability: z.number().min(0).max(100),
       squeezeDirection: z.enum(['LONG_SQUEEZE', 'SHORT_SQUEEZE', 'NONE']),
@@ -1175,6 +1173,7 @@ export const AnticipatoryMarketSnapshotSchema = z
       snapshot.structure,
       snapshot.volatility,
       snapshot.momentum,
+      snapshot.participation,
     ].every(
       (section) =>
         section.coverage === 'AVAILABLE' && section.freshness === 'FRESH',
@@ -1183,7 +1182,7 @@ export const AnticipatoryMarketSnapshotSchema = z
       addIssue(
         ctx,
         ['eligibility', 'status'],
-        'eligible snapshots require fresh available structure, volatility, and momentum evidence',
+        'eligible snapshots require fresh available structure, volatility, momentum, and participation evidence',
       );
     }
   });

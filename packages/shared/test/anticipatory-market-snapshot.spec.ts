@@ -201,6 +201,67 @@ describe("AnticipatoryMarketSnapshotSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("rejects an eligible snapshot when participation evidence is unavailable", () => {
+    const result = AnticipatoryMarketSnapshotSchema.safeParse({
+      ...completeSnapshot,
+      participation: unavailable("participation"),
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an eligible snapshot when participation evidence is stale", () => {
+    const staleAt = "2026-09-09T11:54:59.999Z";
+    const result = AnticipatoryMarketSnapshotSchema.safeParse({
+      ...completeSnapshot,
+      participation: {
+        ...completeSnapshot.participation,
+        freshness: "STALE",
+        observationAgeMs: 300_001,
+        sourceTimestamp: staleAt,
+        evidence: [
+          {
+            ...completeSnapshot.participation.evidence[0],
+            sourceTimestamp: staleAt,
+          },
+        ],
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an available derivatives imbalance without enough history", () => {
+    const result = AnticipatoryMarketSnapshotSchema.safeParse({
+      ...completeSnapshot,
+      derivatives: {
+        ...completeSnapshot.derivatives,
+        derivativesImbalance: {
+          ...completeSnapshot.derivatives.derivativesImbalance,
+          oiPriceDivergence: "INSUFFICIENT_DATA",
+        },
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects redundant order-book ageMs in favor of observationAgeMs", () => {
+    const result = AnticipatoryMarketSnapshotSchema.safeParse({
+      ...completeSnapshot,
+      participation: {
+        ...completeSnapshot.participation,
+        orderBook: {
+          ...available("participation.orderBook"),
+          imbalance: 0.35,
+          ageMs: 10,
+        },
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
   it("rejects a pivot confirmed before it occurred", () => {
     const result = AnticipatoryMarketSnapshotSchema.safeParse({
       ...completeSnapshot,
