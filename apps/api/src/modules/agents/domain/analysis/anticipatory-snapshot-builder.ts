@@ -231,7 +231,7 @@ function validateRawNumericInputs(
     assertNumericInput(
       `atrHistory[${index}].value`,
       point.value,
-      (value) => value > 0,
+      (value) => value >= 0,
     );
   });
 
@@ -585,15 +585,16 @@ export function buildAnticipatoryMarketSnapshot(
   const lastCandle = candles[candles.length - 1];
   const indicators = calculateAllIndicators(indicatorCandles);
   const latestStoredAtrPoint = atrHistory[atrHistory.length - 1];
-  const latestStoredAtr = latestStoredAtrPoint?.value;
   const calculatedAtr =
     indicators.atr14 === undefined ? undefined : Number(indicators.atr14);
   const currentAtr =
-    latestStoredAtr !== undefined && latestStoredAtr > 0
-      ? latestStoredAtr
-      : calculatedAtr;
+    latestStoredAtrPoint === undefined
+      ? calculatedAtr
+      : latestStoredAtrPoint.value > 0
+        ? latestStoredAtrPoint.value
+        : undefined;
   const currentAtrTimestamp =
-    latestStoredAtrPoint !== undefined && latestStoredAtrPoint.value > 0
+    latestStoredAtrPoint !== undefined
       ? latestStoredAtrPoint.timestamp
       : lastCandle?.closeTime;
   const pivots = identifyConfirmedPivots(candles, lookback, pivotStrength);

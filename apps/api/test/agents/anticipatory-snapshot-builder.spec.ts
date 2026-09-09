@@ -168,6 +168,74 @@ describe('buildAnticipatoryMarketSnapshot', () => {
     });
   });
 
+  it('accepts historical zero ATR while current zero keeps dependent evidence unavailable', () => {
+    const input = inputFixture();
+    const candles = [
+      ...input.candles.slice(0, 8),
+      ...Array.from({ length: 22 }, (_, offset) => {
+        const index = offset + 8;
+        return candle(
+          index,
+          104 + (index % 3),
+          86 - (index % 2),
+          99 + (index % 2),
+        );
+      }),
+    ];
+    input.candles = candles;
+    input.sourceDataCutoff = candles[29]!.closeTime;
+    input.rsiHistory = candles.map((item) => ({
+      timestamp: item.closeTime,
+      value: 50,
+    }));
+    input.macdHistory = candles.map((item) => ({
+      timestamp: item.closeTime,
+      value: 0,
+      signal: 0,
+      histogram: 0,
+    }));
+    input.atrHistory = candles.map((item, index) => ({
+      timestamp: item.closeTime,
+      value: index === 0 ? 0 : 4,
+    }));
+    input.execution = {
+      ...input.execution!,
+      timestamp: candles[29]!.closeTime,
+      currentPrice: 100,
+      candidateZonePrices: [100],
+    };
+
+    const historicalZeroSnapshot = buildAnticipatoryMarketSnapshot(input);
+    expect(historicalZeroSnapshot.structure.coverage).toBe('AVAILABLE');
+    expect(historicalZeroSnapshot.volatility).toMatchObject({
+      coverage: 'AVAILABLE',
+      atr: 4,
+    });
+    expect(historicalZeroSnapshot.execution.coverage).toBe('AVAILABLE');
+
+    const currentZeroInput: AnticipatorySnapshotInput = {
+      ...input,
+      atrHistory: input.atrHistory.map((point, index) => ({
+        ...point,
+        value: index === input.atrHistory!.length - 1 ? 0 : point.value,
+      })),
+    };
+    const currentZeroSnapshot = buildAnticipatoryMarketSnapshot(currentZeroInput);
+
+    expect(currentZeroSnapshot.structure).toMatchObject({
+      coverage: 'UNAVAILABLE',
+      unavailableFields: ['structure.distanceToNearestBoundaryAtr'],
+    });
+    expect(currentZeroSnapshot.volatility).toMatchObject({
+      coverage: 'UNAVAILABLE',
+      unavailableFields: ['volatility.atr'],
+    });
+    expect(currentZeroSnapshot.execution).toMatchObject({
+      coverage: 'UNAVAILABLE',
+      unavailableFields: ['execution.priceTooFarFromCandidateZones'],
+    });
+  });
+
   it('marks execution unavailable when ATR cannot support chase distance', () => {
     const input = inputFixture();
     input.atrHistory = undefined;
