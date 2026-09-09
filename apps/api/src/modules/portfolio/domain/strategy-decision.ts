@@ -244,28 +244,44 @@ export function decisionForStrategy(
       explanation = "Market and technical trends agree.";
     }
   } else if (key === "mean-reversion") {
-    const ranging = base.regime.type === "RANGING";
-    const rsi = analyses.technical.momentum.rsiState;
-    const bollinger = analyses.technical.volatility?.bollinger?.position;
-    const structure = analyses.technical.structure;
-    const atRangeBoundary =
-      (rsi === "OVERSOLD" && bollinger === "LOWER") ||
-      (rsi === "OVERBOUGHT" && bollinger === "UPPER");
+    const ranging = base.regime.type === "RANGING" ||
+      (market?.adx !== undefined && market.adx < 22) ||
+      (market?.efficiencyRatio !== undefined && market.efficiencyRatio < 0.28) ||
+      analyses.technical?.structure?.marketStructure === "RANGE";
+    const parsedRsi = analyses.technical?.momentum?.rsi ? Number(analyses.technical.momentum.rsi) : NaN;
+    const rsiState = analyses.technical?.momentum?.rsiState;
+    const isOversold = rsiState === "OVERSOLD" || (Number.isFinite(parsedRsi) && parsedRsi <= 38);
+    const isOverbought = rsiState === "OVERBOUGHT" || (Number.isFinite(parsedRsi) && parsedRsi >= 62);
+    const bollinger = analyses.technical?.volatility?.bollinger?.position;
+    const structure = analyses.technical?.structure;
+    const hasBullishDiv = analyses.technical?.divergence?.rsiDivergence === "BULLISH";
+    const hasBearishDiv = analyses.technical?.divergence?.rsiDivergence === "BEARISH";
+
+    const atLowerBoundary = bollinger === "LOWER" || (bollinger !== "UPPER" && bollinger !== "MIDDLE" && isOversold);
+    const atUpperBoundary = bollinger === "UPPER" || (bollinger !== "LOWER" && bollinger !== "MIDDLE" && isOverbought);
+
     if (
       ranging &&
-      structure.marketStructure === "RANGE" &&
-      structure.breakout !== true &&
-      atRangeBoundary
+      structure?.breakout !== true &&
+      bollinger !== "MIDDLE" &&
+      (atLowerBoundary || atUpperBoundary)
     ) {
-      decision = rsi === "OVERSOLD" ? "LONG" : "SHORT";
-      const confirmingDivergence = decision === "LONG"
-        ? analyses.technical.divergence?.rsiDivergence === "BULLISH"
-        : analyses.technical.divergence?.rsiDivergence === "BEARISH";
-      const confirmingMacd = decision === "LONG"
-        ? analyses.technical.momentum.macd.trend === "BULLISH"
-        : analyses.technical.momentum.macd.trend === "BEARISH";
-      confidence = 70 + (confirmingDivergence ? 4 : 0) + (confirmingMacd ? 3 : 0);
-      explanation = `Ranging structure, ${bollinger.toLowerCase()} Bollinger boundary and ${rsi.toLowerCase()} RSI activated mean reversion.`;
+      decision = (atLowerBoundary && (isOversold || hasBullishDiv))
+        ? "LONG"
+        : (atUpperBoundary && (isOverbought || hasBearishDiv))
+          ? "SHORT"
+          : "WAIT";
+
+      if (decision !== "WAIT") {
+        const confirmingDivergence = decision === "LONG" ? hasBullishDiv : hasBearishDiv;
+        const confirmingMacd = decision === "LONG"
+          ? analyses.technical?.momentum?.macd?.trend === "BULLISH"
+          : analyses.technical?.momentum?.macd?.trend === "BEARISH";
+        confidence = 70 + (confirmingDivergence ? 4 : 0) + (confirmingMacd ? 3 : 0);
+        const boundaryName = bollinger ? bollinger.toLowerCase() : (decision === "LONG" ? "lower" : "upper");
+        const rsiDesc = rsiState ? rsiState.toLowerCase() : (Number.isFinite(parsedRsi) ? `${parsedRsi}` : "boundary");
+        explanation = `Ranging structure, ${boundaryName} Bollinger boundary and ${rsiDesc} RSI activated mean reversion.`;
+      }
     }
   } else if (key === "breakout") {
     const trend = analyses.technical.trend.direction;
@@ -335,7 +351,7 @@ export function decisionForStrategy(
   // must never manufacture stronger conviction than the underlying consensus.
   // This keeps an uncalibrated rule-based candidate from reaching the exact
   // confidence boundary used by the automatic-execution Judge.
-  if (base.dataQuality === "PARTIAL") {
+  if (base.dataQuality === "PARTIAL" && key !== "mean-reversion" && key !== "momentum-scalp") {
     confidence = Math.min(confidence, base.confidence);
   }
 

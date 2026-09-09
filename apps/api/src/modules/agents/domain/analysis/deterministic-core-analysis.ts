@@ -215,6 +215,28 @@ export function deterministicTechnicalAnalysis(
   const bullishBreakout = priorHigh !== undefined && Number.isFinite(priorHigh) && price > priorHigh;
   const bearishBreakout = priorLow !== undefined && Number.isFinite(priorLow) && price < priorLow;
   const breakout = bullishBreakout || bearishBreakout;
+
+  // Candlestick Price Action & Liquidity Sweep (SFP / Wick Rejection) Detection
+  const candleHigh = finite(current?.high);
+  const candleLow = finite(current?.low);
+  const candleOpen = finite(current?.open);
+  const candleClose = finite(current?.close);
+  const candleRange = candleHigh !== undefined && candleLow !== undefined ? candleHigh - candleLow : 0;
+  const isSfpBullish = (() => {
+    if (candleRange <= 0 || candleHigh === undefined || candleLow === undefined || candleOpen === undefined || candleClose === undefined) return false;
+    const lowerWick = Math.min(candleOpen, candleClose) - candleLow;
+    const lowerWickRatio = lowerWick / candleRange;
+    const sweptPriorLow = priorLow !== undefined && Number.isFinite(priorLow) && candleLow < priorLow && candleClose > priorLow;
+    return lowerWickRatio >= 0.6 || sweptPriorLow;
+  })();
+  const isSfpBearish = (() => {
+    if (candleRange <= 0 || candleHigh === undefined || candleLow === undefined || candleOpen === undefined || candleClose === undefined) return false;
+    const upperWick = candleHigh - Math.max(candleOpen, candleClose);
+    const upperWickRatio = upperWick / candleRange;
+    const sweptPriorHigh = priorHigh !== undefined && Number.isFinite(priorHigh) && candleHigh > priorHigh && candleClose < priorHigh;
+    return upperWickRatio >= 0.6 || sweptPriorHigh;
+  })();
+
   const marketStructure = trend.direction === "UP"
     ? ("HH_HL" as const)
     : trend.direction === "DOWN"
@@ -225,6 +247,8 @@ export function deterministicTechnicalAnalysis(
     `${alignment.toLowerCase()} moving-average alignment is derived from verified indicators.`,
     `RSI is ${rsi === undefined ? "unavailable" : rsi.toFixed(2)} and MACD momentum is ${mapMacdTrend(macdHistogram ?? 0).toLowerCase()}.`,
     ...(breakout ? [`Price closed beyond the previous ${prior.length}-candle range.`] : []),
+    ...(isSfpBullish ? [`Bullish liquidity sweep / long lower-wick rejection detected at boundary.`] : []),
+    ...(isSfpBearish ? [`Bearish liquidity sweep / long upper-wick rejection detected at boundary.`] : []),
   ];
   const usableTools = usedTools.filter((tool): tool is TechnicalAgentOutput["usedTools"][number] =>
     tool === "market.indicators.get" || tool === "market.candles.list",
