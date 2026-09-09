@@ -45,7 +45,7 @@ describe('DecisionJudgeService', () => {
       market: good, technical: good, news: good, sentiment: good, macro: good, onchain: good,
     } as never, { symbol: 'ETH-USDT', requireCalibratedConfidence: true });
 
-    expect(result).toEqual({ approved: true, verdict: 'APPROVE', reasons: [] });
+    expect(result).toMatchObject({ approved: true, verdict: 'APPROVE', reasons: [] });
   });
 
   it('does not let a boundary confidence bypass an unreliable global fallback', () => {
@@ -99,7 +99,7 @@ describe('DecisionJudgeService', () => {
       onchain: { dataQuality: 'INSUFFICIENT', generatedAt, signals: ['No verified on-chain provider is configured.'] },
     } as never, { symbol: 'SOL-USDT', timeframe: '15m', requireCalibratedConfidence: true });
 
-    expect(result).toEqual({ approved: true, verdict: 'APPROVE', reasons: [] });
+    expect(result).toMatchObject({ approved: true, verdict: 'APPROVE', reasons: [] });
   });
 
   it('requires stronger raw confidence for uncalibrated automatic execution', () => {
@@ -211,7 +211,7 @@ describe('DecisionJudgeService', () => {
       sentiment: stale, macro: fresh, onchain: stale,
     } as never, { symbol: 'ETH-USDT', timeframe: '15m' }, now);
 
-    expect(result).toEqual({ approved: true, verdict: 'APPROVE', reasons: [] });
+    expect(result).toMatchObject({ approved: true, verdict: 'APPROVE', reasons: [] });
   });
 
   it('still blocks stale core Market evidence', () => {

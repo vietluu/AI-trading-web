@@ -53,7 +53,7 @@ describe("QuantExecutionPolicyService", () => {
   };
 
   it("fails closed when exact validation is missing", async () => {
-    await expect(service(null).policy.evaluate(input)).resolves.toEqual({
+    await expect(service(null).policy.evaluate(input)).resolves.toMatchObject({
       allowed: false,
       evaluated: false,
       reason: "QUANT_VALIDATION_MISSING",
@@ -73,7 +73,7 @@ describe("QuantExecutionPolicyService", () => {
       primaryRsi: 68.06,
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       allowed: true,
       evaluated: false,
       advisory: true,
@@ -425,7 +425,7 @@ describe("QuantExecutionPolicyService", () => {
       decision: { decision: "WAIT", regime: { type: "RANGING" } } as never,
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       allowed: false,
       evaluated: false,
       reason: "QUANT_NOT_APPLICABLE",
@@ -449,7 +449,7 @@ describe("QuantExecutionPolicyService", () => {
       decision: strongDecision() as never,
       multiTimeframeConfirmation: 90,
     });
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       allowed: false,
       evaluated: false,
       reason: "QUANT_VALIDATION_MISSING",

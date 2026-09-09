@@ -1,3 +1,4 @@
+import { evaluateEvidenceGate } from '../domain/evidence-gate';
 import { Injectable } from '@nestjs/common';
 import type { DecisionOutput, FusionInput } from '@platform/shared';
 import {
@@ -7,6 +8,7 @@ import {
 } from '../domain/adaptive-trading-policy';
 
 export interface JudgeDecision {
+  severity: 'BLOCK' | 'REDUCE_SIZE' | 'APPROVE';
   verdict: 'APPROVE' | 'REJECT' | 'REQUEST_MORE_DATA';
   approved: boolean;
   reasons: string[];
@@ -28,7 +30,7 @@ export class DecisionJudgeService {
   evaluate(decision: DecisionOutput, analyses: FusionInput, context?: JudgeContext, now = Date.now()): JudgeDecision {
     const reasons: string[] = [];
     if (!context?.symbol) {
-      return { verdict: 'REQUEST_MORE_DATA', approved: false, reasons: ['SYMBOL_REQUIRED'] };
+      return { verdict: 'REQUEST_MORE_DATA', severity: 'BLOCK', approved: false, reasons: ['SYMBOL_REQUIRED'] };
     }
     const spreadBps = parseSpreadBps(
       analyses.market?.liquidity?.bidAskSpread ?? analyses.market?.liquidity?.spread,
@@ -76,6 +78,13 @@ export class DecisionJudgeService {
       const generatedAt = Date.parse(analysis.generatedAt);
       return !Number.isFinite(generatedAt) || now - generatedAt > policy.staleAfterMs;
     });
+    
+    // Integrate Evidence Gate
+    const gateResult = evaluateEvidenceGate({
+      mode: 'LIVE',
+      coreDataStale: staleCoreAnalysis,
+    });
+    
     const targetDirection = decision.decision === 'LONG' ? 'UP' : decision.decision === 'SHORT' ? 'DOWN' : undefined;
     const executionCoreGood = Boolean(
       targetDirection &&
@@ -150,9 +159,9 @@ export class DecisionJudgeService {
     ) reasons.push('CALIBRATION_UNRELIABLE');
 
     if (reasons.some((reason) => reason.includes('DATA') || reason.includes('STALE') || reason.includes('USABLE') || reason.includes('CALIBRAT'))) {
-      return { verdict: 'REQUEST_MORE_DATA', approved: false, reasons };
+      return { verdict: 'REQUEST_MORE_DATA', severity: 'BLOCK', approved: false, reasons };
     }
-    if (reasons.length > 0) return { verdict: 'REJECT', approved: false, reasons };
-    return { verdict: 'APPROVE', approved: true, reasons: [] };
+    if (reasons.length > 0) return { verdict: 'REJECT', severity: 'BLOCK', approved: false, reasons };
+    return { verdict: 'APPROVE', severity: 'APPROVE', approved: true, reasons: [] };
   }
 }

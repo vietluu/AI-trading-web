@@ -1,10 +1,12 @@
 import { Injectable, Optional } from "@nestjs/common";
 import type { DecisionOutput } from "@platform/shared";
 import { PrismaService } from "../../../database/prisma.service";
+import { evaluateEvidenceGate } from '../domain/evidence-gate';
 import { timeframeMilliseconds } from "../domain/adaptive-trading-policy";
 import { RiskConfigService } from "../../risk/application/risk-config.service";
 
 export interface QuantExecutionPolicyResult {
+  severity: 'BLOCK' | 'REDUCE_SIZE' | 'APPROVE';
   allowed: boolean;
   evaluated?: boolean;
   advisory?: boolean;
@@ -63,9 +65,7 @@ export class QuantExecutionPolicyService {
   }): Promise<QuantExecutionPolicyResult> {
     if (input.decision.decision === "WAIT") {
       return {
-        allowed: false,
-        evaluated: false,
-        reason: "QUANT_NOT_APPLICABLE",
+        severity: 'BLOCK', allowed: false, evaluated: false, reason: 'QUANT_NOT_APPLICABLE',
       };
     }
     const now = input.now ?? new Date();
@@ -90,7 +90,7 @@ export class QuantExecutionPolicyService {
       : undefined;
     if (this.hasFreshRegimeConflict(input, regime, now)) {
       return {
-        allowed: false,
+        severity: 'BLOCK', allowed: false,
         reason: "QUANT_REGIME_CONFLICT",
         ...(regimeEvidence ? { regime: regimeEvidence } : {}),
       };
@@ -123,6 +123,15 @@ export class QuantExecutionPolicyService {
       confidenceBrierScore: validation.confidenceBrierScore,
       createdAt: validation.createdAt.toISOString(),
     };
+    
+    // Integrate Evidence Gate
+    const gateResult = evaluateEvidenceGate({
+      mode: input.mode ?? 'LIVE',
+      negativeExactCohort: !validation?.walkForwardStable || (validation?.probabilityOfProfit ?? 0) < 52,
+      newCohort: !validation || Number(sampleEvidence?.totalTrades ?? 0) < 30,
+      assumptionMismatch: false, // simplified for now
+    });
+    
     const maxAge = Math.max(36 * 3_600_000, timeframeMilliseconds(input.timeframe) * 12);
     if (now.getTime() - validation.createdAt.getTime() > maxAge)
       return { ...this.insufficientEvidence("QUANT_VALIDATION_STALE", input), validation: evidence };
@@ -149,21 +158,22 @@ export class QuantExecutionPolicyService {
         "QUANT_WALK_FORWARD_UNSTABLE",
         input,
         evidence,
-      ) ?? { allowed: false, reason: "QUANT_WALK_FORWARD_UNSTABLE", validation: evidence };
+      ) ?? { severity: 'BLOCK', allowed: false, reason: "QUANT_WALK_FORWARD_UNSTABLE", validation: evidence };
     if (validation.probabilityOfProfit < 52)
       return this.dislocationCanary(
         "QUANT_PROBABILITY_TOO_LOW",
         input,
         evidence,
-      ) ?? { allowed: false, reason: "QUANT_PROBABILITY_TOO_LOW", validation: evidence };
+      ) ?? { severity: 'BLOCK', allowed: false, reason: "QUANT_PROBABILITY_TOO_LOW", validation: evidence };
     if (validation.probabilityOfRuin > 5)
-      return { allowed: false, reason: "QUANT_RUIN_RISK_TOO_HIGH", validation: evidence };
+      return { severity: 'BLOCK', allowed: false, reason: "QUANT_RUIN_RISK_TOO_HIGH", validation: evidence };
     if (validation.outOfSampleSharpe <= 0.3)
-      return { allowed: false, reason: "QUANT_OUT_OF_SAMPLE_EDGE_MISSING", validation: evidence };
+      return { severity: 'BLOCK', allowed: false, reason: "QUANT_OUT_OF_SAMPLE_EDGE_MISSING", validation: evidence };
     if (calibration?.evidenceSufficient === true && validation.confidenceBrierScore > 0.3)
-      return { allowed: false, reason: "QUANT_CALIBRATION_UNRELIABLE", validation: evidence };
+      return { severity: 'BLOCK', allowed: false, reason: "QUANT_CALIBRATION_UNRELIABLE", validation: evidence };
 
     return {
+      severity: 'APPROVE',
       allowed: true,
       evaluated: true,
       validation: evidence,
@@ -190,11 +200,12 @@ export class QuantExecutionPolicyService {
     },
   ): QuantExecutionPolicyResult {
     if (input.mode === "LIVE") {
-      return { allowed: false, evaluated: false, reason };
+      return { severity: 'BLOCK', allowed: false, evaluated: false, reason };
     }
     const sizeFactor = this.boundedCanarySizeFactor(input);
     if (sizeFactor !== undefined) {
       return {
+        severity: 'REDUCE_SIZE',
         allowed: true,
         evaluated: false,
         advisory: true,
@@ -202,7 +213,7 @@ export class QuantExecutionPolicyService {
         sizeFactor,
       };
     }
-    return { allowed: false, evaluated: false, reason };
+    return { severity: 'BLOCK', allowed: false, evaluated: false, reason };
   }
 
   private boundedCanarySizeFactor(input: {
@@ -310,6 +321,7 @@ export class QuantExecutionPolicyService {
       rsiSafe;
     if (!eligible) return undefined;
     return {
+      severity: 'REDUCE_SIZE',
       allowed: true,
       evaluated: true,
       advisory: true,

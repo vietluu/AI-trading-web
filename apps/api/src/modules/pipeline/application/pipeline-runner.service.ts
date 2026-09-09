@@ -502,7 +502,7 @@ export class PipelineRunnerService {
           referencePrice: lastPrice,
           sourceTimestamp: indicatorSnapshot?.candleCloseTime ?? recentCandles[0]?.closeTime,
           requireCalibratedConfidence: true,
-        }) ?? { verdict: 'APPROVE' as const, approved: true, reasons: [] };
+        }) ?? { verdict: 'APPROVE' as const, severity: 'APPROVE' as const, approved: true, reasons: [] };
         const candidateMultiTimeframe = evaluateMultiTimeframeDecision(calibrated.decision, multiTimeframe);
         const candidateQuant = this.quantPolicy
           ? await this.quantPolicy.evaluate({
@@ -526,9 +526,9 @@ export class PipelineRunnerService {
                 strategyKey: candidate.strategyKey,
                 message: error instanceof Error ? error.message : "Unknown quant policy error",
               });
-              return { allowed: false as const, reason: "QUANT_POLICY_UNAVAILABLE" as const };
+              return { severity: 'BLOCK' as const, allowed: false as const, reason: "QUANT_POLICY_UNAVAILABLE" as const };
             })
-          : { allowed: false as const, reason: "QUANT_VALIDATION_MISSING" as const };
+          : { severity: 'BLOCK' as const, allowed: false as const, reason: "QUANT_VALIDATION_MISSING" as const };
         const candidateBlockedReasons = [
           candidateFilter.reason,
           ...candidateJudge.reasons,
