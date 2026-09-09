@@ -584,6 +584,14 @@ export interface Dictionary {
     triggerLabel: string;
     targetLabel: string;
     invalidationLabel: string;
+    anticipatorySignalsTitle: string;
+    volatilitySqueeze: string;
+    liquiditySweep: string;
+    derivativesImbalance: string;
+    llmReflectionTitle: string;
+    trapProbability: string;
+    contrarianArguments: string;
+    postMortemLessons: string;
     liveTradingTitle: string;
     liveTradingSubtitle: string;
     killSwitch: string;
