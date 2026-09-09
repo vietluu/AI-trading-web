@@ -40,6 +40,7 @@ import { DecisionService } from './application/services/decision.service';
 import { UnifiedAnalystService } from './application/services/unified-analyst.service';
 import { ChainOfThoughtReflectionService } from './application/services/chain-of-thought-reflection.service';
 import { AnticipatorySnapshotService } from './application/services/anticipatory-snapshot.service';
+import { TradeResearcherService } from './application/services/trade-researcher.service';
 
 // Shared Infra Modules
 import { DatabaseModule } from '../../database/database.module';
@@ -102,6 +103,7 @@ import { DecisionController } from './presentation/controllers/decision.controll
     UnifiedAnalystService,
     ChainOfThoughtReflectionService,
     AnticipatorySnapshotService,
+    TradeResearcherService,
   ],
   exports: [
     AgentRegistryService,
@@ -112,6 +114,7 @@ import { DecisionController } from './presentation/controllers/decision.controll
     DecisionService,
     UnifiedAnalystService,
     AnticipatorySnapshotService,
+    TradeResearcherService,
   ],
 })
 export class AgentsModule implements OnModuleInit {
