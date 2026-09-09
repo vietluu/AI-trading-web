@@ -355,6 +355,16 @@ const environmentSchema = z
     DEFAULT_MAX_TOKENS: z.coerce.number().int().default(2048),
     DEFAULT_TEMPERATURE: z.coerce.number().default(0.7),
     DEFAULT_TIMEOUT: z.coerce.number().int().default(30000),
+    LLM_REFLECTION_ENABLED: z
+      .enum(['true', 'false'])
+      .default('true')
+      .transform((value) => value === 'true'),
+    LLM_REFLECTION_MODEL: z.string().default('gemini-3.1-flash-lite'),
+    LLM_REFLECTION_PROVIDER: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.enum(['OPENAI', 'ANTHROPIC', 'GEMINI', 'OLLAMA']).optional(),
+    ),
+    LLM_REFLECTION_TIMEOUT_MS: z.coerce.number().int().min(1000).max(30000).default(8000),
     GEMINI_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(10).default(2),
     GEMINI_429_COOLDOWN_MS: z.coerce
       .number()
