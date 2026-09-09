@@ -44,6 +44,12 @@ export interface CalculatedIndicators {
   volatility?: string;
 }
 
+export interface IndicatorSeries {
+  rsi14: Array<number | undefined>;
+  macd: Array<MacdResult | undefined>;
+  atr14: Array<number | undefined>;
+}
+
 export const CALCULATION_VERSION = 2;
 
 function toDecimal(value: number, precision: number = 8): string {
@@ -153,6 +159,100 @@ export function calculateATR(
     atr = (atr * (period - 1) + trueRanges[i]!) / period;
   }
   return atr;
+}
+
+export function calculateIndicatorSeries(candles: CandleData[]): IndicatorSeries {
+  const closes = candles.map((candle) => Number(candle.close));
+  const rsi14 = Array<number | undefined>(candles.length).fill(undefined);
+  const macd = Array<MacdResult | undefined>(candles.length).fill(undefined);
+  const atr14 = Array<number | undefined>(candles.length).fill(undefined);
+  const period = 14;
+
+  if (candles.length > period) {
+    let averageGain = 0;
+    let averageLoss = 0;
+    let averageTrueRange = 0;
+    for (let index = 1; index <= period; index++) {
+      const change = closes[index]! - closes[index - 1]!;
+      averageGain += Math.max(0, change);
+      averageLoss += Math.max(0, -change);
+      const high = Number(candles[index]!.high);
+      const low = Number(candles[index]!.low);
+      const previousClose = closes[index - 1]!;
+      averageTrueRange += Math.max(
+        high - low,
+        Math.abs(high - previousClose),
+        Math.abs(low - previousClose),
+      );
+    }
+    averageGain /= period;
+    averageLoss /= period;
+    averageTrueRange /= period;
+
+    for (let index = period; index < candles.length; index++) {
+      if (index > period) {
+        const change = closes[index]! - closes[index - 1]!;
+        averageGain =
+          (averageGain * (period - 1) + Math.max(0, change)) / period;
+        averageLoss =
+          (averageLoss * (period - 1) + Math.max(0, -change)) / period;
+        const high = Number(candles[index]!.high);
+        const low = Number(candles[index]!.low);
+        const previousClose = closes[index - 1]!;
+        const trueRange = Math.max(
+          high - low,
+          Math.abs(high - previousClose),
+          Math.abs(low - previousClose),
+        );
+        averageTrueRange =
+          (averageTrueRange * (period - 1) + trueRange) / period;
+      }
+      rsi14[index] =
+        averageLoss === 0
+          ? 100
+          : 100 - 100 / (1 + averageGain / averageLoss);
+      atr14[index] = averageTrueRange;
+    }
+  }
+
+  const fastEma = calculateEmaSeries(closes, 12);
+  const slowEma = calculateEmaSeries(closes, 26);
+  const macdLine = closes.map((_, index) => {
+    const fast = fastEma[index];
+    const slow = slowEma[index];
+    return fast === undefined || slow === undefined ? undefined : fast - slow;
+  });
+  const definedMacd = macdLine.filter((value): value is number => value !== undefined);
+  const signalLine = calculateEmaSeries(definedMacd, 9);
+  let signalIndex = 0;
+  macdLine.forEach((value, index) => {
+    if (value === undefined) return;
+    const signal = signalLine[signalIndex++];
+    if (signal === undefined || index < 34) return;
+    macd[index] = {
+      value: toDecimal(value),
+      signal: toDecimal(signal),
+      histogram: toDecimal(value - signal),
+    };
+  });
+
+  return { rsi14, macd, atr14 };
+}
+
+function calculateEmaSeries(
+  values: number[],
+  period: number,
+): Array<number | undefined> {
+  const result = Array<number | undefined>(values.length).fill(undefined);
+  if (values.length < period) return result;
+  const multiplier = 2 / (period + 1);
+  let ema = values.slice(0, period).reduce((sum, value) => sum + value, 0) / period;
+  result[period - 1] = ema;
+  for (let index = period; index < values.length; index++) {
+    ema = (values[index]! - ema) * multiplier + ema;
+    result[index] = ema;
+  }
+  return result;
 }
 
 export function calculateADX(
