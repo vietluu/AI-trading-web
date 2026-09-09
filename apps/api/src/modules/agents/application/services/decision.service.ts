@@ -1,3 +1,4 @@
+import { buildPostMortemContext } from "../../domain/analysis/post-mortem-memory-injector";
 import { Injectable, Logger, Inject, Optional } from "@nestjs/common";
 import {
   DecisionInputSchema,
@@ -106,17 +107,40 @@ export class DecisionService {
     const liveWeights = this.validWeights(
       useCanary ? config?.canaryWeightsJson : config?.weightsJson,
     );
+
+    let postMortemContext;
+    let customPenalties;
+    if (userId && this.prisma) {
+      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const memories = await this.prisma.aIMemory.findMany({
+        where: {
+          userId,
+          type: 'REFLECTION',
+          tags: { has: 'post-mortem' },
+          createdAt: { gte: since }
+        }
+      });
+      const tempRegime = this.detectRegime(DecisionInputSchema.parse(rawInput));
+      postMortemContext = buildPostMortemContext(memories, rawInput.symbol, tempRegime.type);
+      customPenalties = postMortemContext.penalties;
+    }
+
+    let finalConfidenceThreshold = config ? (useCanary
+      ? (config.canaryThreshold ?? config.confidenceThreshold)
+      : config.confidenceThreshold) : undefined;
+
+    if (postMortemContext?.cautionAdvice && finalConfidenceThreshold !== undefined) {
+      finalConfidenceThreshold = Math.min(finalConfidenceThreshold + 10, 100);
+    }
+
     const decision = this.decide(
       rawInput,
-      config
-        ? {
-            weights: liveWeights,
-            confidenceThreshold: useCanary
-              ? (config.canaryThreshold ?? config.confidenceThreshold)
-              : config.confidenceThreshold,
-            volatilityPenalty: config.volatilityPenalty,
-          }
-        : undefined,
+      {
+        weights: liveWeights ?? undefined,
+        confidenceThreshold: finalConfidenceThreshold,
+        volatilityPenalty: config?.volatilityPenalty ?? undefined,
+        penalties: customPenalties,
+      }
     );
     const confidenceCalibration = await this.confidenceCalibration(
       userId,
@@ -224,6 +248,7 @@ export class DecisionService {
             regime: calibratedDecision.regime.detailed ?? calibratedDecision.regime.type,
             anticipatorySignals: calibratedDecision.anticipatorySignals,
             agentSummaries: this.extractAgentSummaries(rawInput),
+            recentLosses: postMortemContext?.recentLosses?.map(l => ({ symbol: l.symbol, reason: l.rootCause, regime: l.regime })),
           },
           userId,
         );
@@ -580,6 +605,7 @@ export class DecisionService {
       weights?: Weighting;
       confidenceThreshold?: number;
       volatilityPenalty?: number;
+      penalties?: Partial<Record<keyof Weighting, number>>;
     },
   ): DecisionOutput {
     const input = DecisionInputSchema.parse(rawInput);
@@ -587,7 +613,7 @@ export class DecisionService {
       (name) => name !== "macro" || this.macroConfigured(input),
     );
     const regime = this.detectRegime(input);
-    const weighting = this.dynamicWeights(regime, customOptions?.weights);
+    const weighting = this.dynamicWeights(regime, customOptions?.weights, customOptions?.penalties);
     const active = names.filter((name) => {
       const output = input[name];
       return output !== undefined && output.dataQuality !== "INSUFFICIENT";
@@ -1020,16 +1046,17 @@ export class DecisionService {
   private dynamicWeights(
     regime: MarketRegime,
     customWeights?: Weighting,
+    penalties?: Partial<Record<keyof Weighting, number>>,
   ): Weighting {
     if (regime.detailed) {
-      return computeRegimeAdaptiveWeights(regime.detailed, undefined, customWeights);
+      return computeRegimeAdaptiveWeights(regime.detailed, penalties, customWeights);
     }
     const detailedFallback = regime.type === "HIGH_VOLATILITY"
       ? "VOLATILE_LIQUIDITY_EXPANSION"
       : regime.type === "TRENDING"
         ? "TRENDING_BULL"
         : "RANGING_CONSOLIDATION";
-    return computeRegimeAdaptiveWeights(detailedFallback, undefined, customWeights);
+    return computeRegimeAdaptiveWeights(detailedFallback, penalties, customWeights);
   }
 
   private newsShock(input: DecisionInput, overrides: string[]): number {
