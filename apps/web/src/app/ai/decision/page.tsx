@@ -183,6 +183,100 @@ export default function DecisionPage(): React.JSX.Element {
             </div>
           ) : null}
 
+          {output.anticipatorySignals ? (
+            <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <span className="h-2 w-2 rounded-full bg-purple-400 animate-pulse" />
+                  <h2 className="font-semibold text-sm tracking-wide text-purple-300">
+                    {t.ai.anticipatorySignalsTitle}
+                  </h2>
+                </div>
+                <span className="text-xs font-mono text-purple-400/80 uppercase">Pre-Breakout Engine</span>
+              </div>
+              <div className="grid gap-3 md:grid-cols-3 text-xs">
+                {output.anticipatorySignals.squeeze ? (
+                  <div className="rounded border border-border/60 bg-background/60 p-3 space-y-1">
+                    <div className="font-semibold flex items-center justify-between">
+                      <span>{t.ai.volatilitySqueeze}</span>
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${output.anticipatorySignals.squeeze.active ? 'bg-amber-500/20 text-amber-300' : 'bg-muted text-muted-foreground'}`}>
+                        {output.anticipatorySignals.squeeze.active ? 'SQUEEZE ACTIVE' : 'RELEASED'}
+                      </span>
+                    </div>
+                    <p className="text-muted-foreground">Breakout Prob: <span className="font-mono text-foreground font-semibold">{output.anticipatorySignals.squeeze.breakoutProbability}%</span> ({output.anticipatorySignals.squeeze.breakoutBias})</p>
+                    <p className="text-muted-foreground">Intensity: <span className="font-mono">{output.anticipatorySignals.squeeze.intensity}%</span> | Duration: <span className="font-mono">{output.anticipatorySignals.squeeze.duration} bars</span></p>
+                  </div>
+                ) : null}
+
+                {output.anticipatorySignals.liquiditySweep ? (
+                  <div className="rounded border border-border/60 bg-background/60 p-3 space-y-1">
+                    <div className="font-semibold flex items-center justify-between">
+                      <span>{t.ai.liquiditySweep}</span>
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${output.anticipatorySignals.liquiditySweep.detected ? 'bg-emerald-500/20 text-emerald-300' : 'bg-muted text-muted-foreground'}`}>
+                        {output.anticipatorySignals.liquiditySweep.detected ? 'SWEEP DETECTED' : 'NONE'}
+                      </span>
+                    </div>
+                    <p className="text-muted-foreground">Direction: <span className="font-semibold text-foreground">{output.anticipatorySignals.liquiditySweep.direction ?? 'N/A'}</span></p>
+                    <p className="text-muted-foreground">Confidence: <span className="font-mono font-semibold">{output.anticipatorySignals.liquiditySweep.confidence}%</span></p>
+                  </div>
+                ) : null}
+
+                {output.anticipatorySignals.derivativesImbalance ? (
+                  <div className="rounded border border-border/60 bg-background/60 p-3 space-y-1">
+                    <div className="font-semibold flex items-center justify-between">
+                      <span>{t.ai.derivativesImbalance}</span>
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${output.anticipatorySignals.derivativesImbalance.squeezeDirection !== 'NONE' ? 'bg-red-500/20 text-red-300' : 'bg-muted text-muted-foreground'}`}>
+                        {output.anticipatorySignals.derivativesImbalance.squeezeDirection}
+                      </span>
+                    </div>
+                    <p className="text-muted-foreground">Squeeze Prob: <span className="font-mono text-foreground font-semibold">{output.anticipatorySignals.derivativesImbalance.squeezeProbability}%</span></p>
+                    <p className="text-muted-foreground">Funding: <span className="font-semibold">{output.anticipatorySignals.derivativesImbalance.fundingExtreme}</span></p>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          {output.reflection ? (
+            <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <span className="h-2 w-2 rounded-full bg-cyan-400" />
+                  <h2 className="font-semibold text-sm tracking-wide text-cyan-300">
+                    {t.ai.llmReflectionTitle}
+                  </h2>
+                </div>
+                <div className="flex items-center space-x-2 text-xs">
+                  <span className="text-muted-foreground">{t.ai.trapProbability}:</span>
+                  <span className={`font-mono font-bold px-2 py-0.5 rounded ${output.reflection.trapProbability > 50 ? 'bg-red-500/20 text-red-300' : 'bg-emerald-500/20 text-emerald-300'}`}>
+                    {output.reflection.trapProbability}%
+                  </span>
+                </div>
+              </div>
+
+              <p className="text-xs text-muted-foreground leading-relaxed italic bg-background/50 p-3 rounded border border-border/40">
+                "{output.reflection.reasoning}"
+              </p>
+
+              {output.reflection.contrarianArguments && output.reflection.contrarianArguments.length ? (
+                <div className="space-y-1.5 pt-1">
+                  <h3 className="text-xs font-semibold text-cyan-200">{t.ai.contrarianArguments}:</h3>
+                  <ul className="list-disc list-inside space-y-1 text-xs text-muted-foreground">
+                    {output.reflection.contrarianArguments.map((arg, idx) => (
+                      <li key={idx}>{arg}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              {output.reflection.overrideReason ? (
+                <div className="rounded bg-red-500/10 border border-red-500/30 p-2 text-xs text-red-300">
+                  <span className="font-bold">Override: </span>{output.reflection.overrideReason}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           <div className="grid gap-4 md:grid-cols-2">
             <FactorCard title={t.ai.bullishFactors} items={output.signals.bullishFactors} empty={t.ai.noBullish} />
             <FactorCard title={t.ai.bearishFactors} items={output.signals.bearishFactors} empty={t.ai.noBearish} />

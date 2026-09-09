@@ -8,6 +8,8 @@ import { SelfLearningService } from './application/self-learning.service';
 import { ReflectionRepository } from './infrastructure/reflection.repository';
 import { ReflectionController } from './presentation/reflection.controller';
 
+import { PostMortemAnalyzerService } from './application/post-mortem-analyzer.service';
+
 @Module({
   imports: [DatabaseModule, SessionModule],
   controllers: [ReflectionController],
@@ -17,7 +19,8 @@ import { ReflectionController } from './presentation/reflection.controller';
     ReflectionService,
     ReflectionSchedulerService,
     SelfLearningService,
+    PostMortemAnalyzerService,
   ],
-  exports: [PerformanceService, ReflectionService, SelfLearningService],
+  exports: [PerformanceService, ReflectionService, SelfLearningService, PostMortemAnalyzerService],
 })
 export class ReflectionModule {}

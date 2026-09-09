@@ -38,6 +38,7 @@ import { AgentPolicyEngine } from './application/policies/agent-policy.engine';
 import { FusionService } from './application/services/fusion.service';
 import { DecisionService } from './application/services/decision.service';
 import { UnifiedAnalystService } from './application/services/unified-analyst.service';
+import { ChainOfThoughtReflectionService } from './application/services/chain-of-thought-reflection.service';
 
 // Shared Infra Modules
 import { DatabaseModule } from '../../database/database.module';
@@ -96,6 +97,7 @@ import { DecisionController } from './presentation/controllers/decision.controll
     FusionService,
     DecisionService,
     UnifiedAnalystService,
+    ChainOfThoughtReflectionService,
   ],
   exports: [
     AgentRegistryService,

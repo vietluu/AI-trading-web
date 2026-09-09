@@ -1,3 +1,4 @@
+import { buildPostMortemContext } from "../../domain/analysis/post-mortem-memory-injector";
 import { Injectable, Logger, Inject, Optional } from "@nestjs/common";
 import {
   DecisionInputSchema,
@@ -30,6 +31,7 @@ import { createHash } from "node:crypto";
 import { adaptiveTradingPolicy, assetLiquidityClass, parseSpreadBps } from "../../../pipeline/domain/adaptive-trading-policy";
 import { classifyDetailedRegime, computeRegimeAdaptiveWeights } from "../../domain/analysis/regime-adaptive-weights";
 import { buildScenarioBlueprint } from "../../domain/analysis/scenario-planning-engine";
+import { ChainOfThoughtReflectionService, type ReflectionOutput } from './chain-of-thought-reflection.service';
 
 export type { AnalystName, Bias, ConflictLevel, RunDecisionOptions, Weighting };
 
@@ -48,6 +50,7 @@ export class DecisionService {
     private readonly fusionService: FusionService,
     @Optional() @Inject(PrismaService) private readonly prisma?: PrismaService,
     @Optional() private readonly configService?: ConfigService,
+    @Optional() private readonly reflectionService?: ChainOfThoughtReflectionService,
   ) {}
 
   public async run(options: RunDecisionOptions): Promise<DecisionOutput> {
@@ -104,17 +107,40 @@ export class DecisionService {
     const liveWeights = this.validWeights(
       useCanary ? config?.canaryWeightsJson : config?.weightsJson,
     );
+
+    let postMortemContext;
+    let customPenalties;
+    if (userId && this.prisma) {
+      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const memories = await this.prisma.aIMemory.findMany({
+        where: {
+          userId,
+          type: 'REFLECTION',
+          tags: { has: 'post-mortem' },
+          createdAt: { gte: since }
+        }
+      });
+      const tempRegime = this.detectRegime(DecisionInputSchema.parse(rawInput));
+      postMortemContext = buildPostMortemContext(memories, rawInput.symbol, tempRegime.type);
+      customPenalties = postMortemContext.penalties;
+    }
+
+    let finalConfidenceThreshold = config ? (useCanary
+      ? (config.canaryThreshold ?? config.confidenceThreshold)
+      : config.confidenceThreshold) : undefined;
+
+    if (postMortemContext?.cautionAdvice && finalConfidenceThreshold !== undefined) {
+      finalConfidenceThreshold = Math.min(finalConfidenceThreshold + 10, 100);
+    }
+
     const decision = this.decide(
       rawInput,
-      config
-        ? {
-            weights: liveWeights,
-            confidenceThreshold: useCanary
-              ? (config.canaryThreshold ?? config.confidenceThreshold)
-              : config.confidenceThreshold,
-            volatilityPenalty: config.volatilityPenalty,
-          }
-        : undefined,
+      {
+        weights: liveWeights ?? undefined,
+        confidenceThreshold: finalConfidenceThreshold,
+        volatilityPenalty: config?.volatilityPenalty ?? undefined,
+        penalties: customPenalties,
+      }
     );
     const confidenceCalibration = await this.confidenceCalibration(
       userId,
@@ -205,6 +231,58 @@ export class DecisionService {
           }
         : {}),
     };
+
+    // LLM Chain-of-Thought Reflection — final contrarian review
+    let reflectionResult: ReflectionOutput | undefined;
+    if (
+      this.reflectionService &&
+      calibratedDecision.decision !== 'WAIT' &&
+      this.configService?.get('LLM_REFLECTION_ENABLED', true)
+    ) {
+      try {
+        reflectionResult = await this.reflectionService.reflect(
+          {
+            symbol: rawInput.symbol,
+            candidateDecision: calibratedDecision.decision,
+            confidence: calibratedDecision.confidence,
+            regime: calibratedDecision.regime.detailed ?? calibratedDecision.regime.type,
+            anticipatorySignals: calibratedDecision.anticipatorySignals,
+            agentSummaries: this.extractAgentSummaries(rawInput),
+            recentLosses: postMortemContext?.recentLosses?.map(l => ({ symbol: l.symbol, reason: l.rootCause, regime: l.regime })),
+          },
+          userId,
+        );
+
+        if (reflectionResult && reflectionResult.trapProbability > 70) {
+          calibratedDecision.decision = 'WAIT';
+          calibratedDecision.confidence = Math.min(calibratedDecision.confidence, reflectionResult.adjustedConfidence);
+          calibratedDecision.overrides = [
+            ...calibratedDecision.overrides,
+            `LLM_REFLECTION_OVERRIDE: ${reflectionResult.overrideReason ?? 'Trap probability exceeded 70%'}`,
+          ];
+        } else if (reflectionResult) {
+          calibratedDecision.confidence = Math.min(
+            calibratedDecision.confidence,
+            reflectionResult.adjustedConfidence,
+          );
+        }
+
+        if (reflectionResult) {
+          calibratedDecision.reflection = {
+            reasoning: reflectionResult.reasoning,
+            contrarianArguments: reflectionResult.contrarianArguments,
+            trapProbability: reflectionResult.trapProbability,
+            overrideReason: reflectionResult.overrideReason,
+          };
+        }
+      } catch (reflectionError) {
+        this.logger.warn({
+          event: 'reflection_step_failed',
+          symbol: rawInput.symbol,
+          error: reflectionError instanceof Error ? reflectionError.message : String(reflectionError),
+        });
+      }
+    }
 
     // Phase C: Shadow Mode Simulation Run
     if (config?.shadowEnabled && userId && this.prisma) {
@@ -527,6 +605,7 @@ export class DecisionService {
       weights?: Weighting;
       confidenceThreshold?: number;
       volatilityPenalty?: number;
+      penalties?: Partial<Record<keyof Weighting, number>>;
     },
   ): DecisionOutput {
     const input = DecisionInputSchema.parse(rawInput);
@@ -534,7 +613,7 @@ export class DecisionService {
       (name) => name !== "macro" || this.macroConfigured(input),
     );
     const regime = this.detectRegime(input);
-    const weighting = this.dynamicWeights(regime, customOptions?.weights);
+    const weighting = this.dynamicWeights(regime, customOptions?.weights, customOptions?.penalties);
     const active = names.filter((name) => {
       const output = input[name];
       return output !== undefined && output.dataQuality !== "INSUFFICIENT";
@@ -967,16 +1046,17 @@ export class DecisionService {
   private dynamicWeights(
     regime: MarketRegime,
     customWeights?: Weighting,
+    penalties?: Partial<Record<keyof Weighting, number>>,
   ): Weighting {
     if (regime.detailed) {
-      return computeRegimeAdaptiveWeights(regime.detailed, undefined, customWeights);
+      return computeRegimeAdaptiveWeights(regime.detailed, penalties, customWeights);
     }
     const detailedFallback = regime.type === "HIGH_VOLATILITY"
       ? "VOLATILE_LIQUIDITY_EXPANSION"
       : regime.type === "TRENDING"
         ? "TRENDING_BULL"
         : "RANGING_CONSOLIDATION";
-    return computeRegimeAdaptiveWeights(detailedFallback, undefined, customWeights);
+    return computeRegimeAdaptiveWeights(detailedFallback, penalties, customWeights);
   }
 
   private newsShock(input: DecisionInput, overrides: string[]): number {
@@ -1440,5 +1520,16 @@ export class DecisionService {
     return name === "onchain"
       ? "On-chain"
       : `${name.charAt(0).toUpperCase()}${name.slice(1)}`;
+  }
+
+  private extractAgentSummaries(input: DecisionInput): Record<string, string> {
+    const summaries: Record<string, string> = {};
+    if (input.market?.summary) summaries.market = input.market.summary;
+    if (input.technical?.summary) summaries.technical = input.technical.summary;
+    if (input.news?.summary) summaries.news = input.news.summary;
+    if (input.sentiment?.summary) summaries.sentiment = input.sentiment.summary;
+    if (input.macro?.summary) summaries.macro = input.macro.summary;
+    if (input.onchain?.summary) summaries.onchain = input.onchain.summary;
+    return summaries;
   }
 }

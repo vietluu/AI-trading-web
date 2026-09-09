@@ -4,6 +4,8 @@ import { PerformanceService } from './performance.service';
 import { SelfLearningService } from './self-learning.service';
 import { DistributedTaskLockService } from '../../../redis/distributed-task-lock.service';
 
+import { PostMortemAnalyzerService } from './post-mortem-analyzer.service';
+
 @Injectable()
 export class ReflectionSchedulerService implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(ReflectionSchedulerService.name);
@@ -12,6 +14,7 @@ export class ReflectionSchedulerService implements OnApplicationBootstrap, OnMod
   constructor(
     private readonly performance: PerformanceService,
     private readonly selfLearning: SelfLearningService,
+    private readonly postMortemAnalyzer: PostMortemAnalyzerService,
     private readonly config: ConfigService,
     @Optional() private readonly taskLock?: DistributedTaskLockService,
   ) {}
@@ -46,6 +49,20 @@ export class ReflectionSchedulerService implements OnApplicationBootstrap, OnMod
     try {
       const result = await this.performance.evaluateDue();
       this.logger.log({ event: 'performance_evaluation_sweep', ...result });
+
+      if (result.newlyFailedRuns && result.newlyFailedRuns.length > 0) {
+        for (const run of result.newlyFailedRuns) {
+          try {
+            await this.postMortemAnalyzer.analyzeFailedRun(run);
+          } catch (pmError) {
+            this.logger.warn({
+              event: 'post_mortem_analysis_failed',
+              runId: run.runId,
+              error: pmError instanceof Error ? pmError.message : String(pmError),
+            });
+          }
+        }
+      }
 
       // Active shadow/canary/rollback lifecycles must continue even when no
       // new live performance row was created in this particular sweep. This

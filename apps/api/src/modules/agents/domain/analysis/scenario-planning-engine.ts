@@ -11,6 +11,11 @@ export interface ScenarioPlanningInput {
   hasSfpWick?: boolean;
   sfpType?: 'BULLISH' | 'BEARISH';
   directionalAgreement?: number;
+  anticipatorySignals?: {
+    squeeze?: { active: boolean; breakoutProbability: number; breakoutBias: string };
+    liquiditySweep?: { detected: boolean; direction: string; confidence: number };
+    derivativesImbalance?: { squeezeProbability: number; squeezeDirection: string };
+  };
 }
 
 /**
@@ -31,6 +36,7 @@ export function buildScenarioBlueprint(input: ScenarioPlanningInput): TradingSce
     hasSfpWick,
     sfpType,
     directionalAgreement = 70,
+    anticipatorySignals,
   } = input;
 
   const scenarios: TradingScenario[] = [];
@@ -50,9 +56,13 @@ export function buildScenarioBlueprint(input: ScenarioPlanningInput): TradingSce
       type: 'PRIMARY',
       direction: 'LONG',
       probability: Number(baseProb.toFixed(2)),
-      triggerCondition: hasSfpWick && sfpType === 'BULLISH'
-        ? 'Confirmed lower wick rejection (SFP) above support boundary'
-        : 'Sustained buy momentum holding above local support',
+      triggerCondition: anticipatorySignals?.squeeze?.active
+        ? `Squeeze breakout detected (${anticipatorySignals.squeeze.breakoutProbability}% probability, ${anticipatorySignals.squeeze.breakoutBias} bias). Enter on first momentum bar after squeeze release.`
+        : anticipatorySignals?.liquiditySweep?.detected && anticipatorySignals.liquiditySweep.direction === 'BULLISH_SWEEP'
+          ? `Liquidity sweep reclaim at support (${anticipatorySignals.liquiditySweep.confidence}% confidence). Enter at sweep reclaim with SL below sweep extreme.`
+          : hasSfpWick && sfpType === 'BULLISH'
+            ? 'Confirmed lower wick rejection (SFP) above support boundary'
+            : 'Sustained buy momentum holding above local support',
       priceTarget: tpTarget ? Number(tpTarget.toFixed(2)) : undefined,
       invalidationPrice: slLevel ? Number(slLevel.toFixed(2)) : undefined,
       rationale: `${detailedRegime} favor continuation upward with structural support buffer.`,
@@ -63,7 +73,9 @@ export function buildScenarioBlueprint(input: ScenarioPlanningInput): TradingSce
       type: 'CONTINGENCY',
       direction: 'SHORT',
       probability: Number((1 - baseProb).toFixed(2)),
-      triggerCondition: 'Failure to hold support with high volume breakdown / upper wick sweep',
+      triggerCondition: anticipatorySignals?.derivativesImbalance?.squeezeDirection === 'SHORT_SQUEEZE'
+        ? `Short squeeze risk (${anticipatorySignals.derivativesImbalance.squeezeProbability}% probability). Failure to hold support may trigger rapid reversal.`
+        : 'Failure to hold support with high volume breakdown / upper wick sweep',
       priceTarget: slLevel && currentPrice > 0 ? Number((slLevel - atr * 1.5).toFixed(2)) : undefined,
       invalidationPrice: currentPrice > 0 ? Number((currentPrice + atr * 0.8).toFixed(2)) : undefined,
       rationale: 'If price breaks lower support decisively, flip to hedge or short retest.',
@@ -87,9 +99,13 @@ export function buildScenarioBlueprint(input: ScenarioPlanningInput): TradingSce
       type: 'PRIMARY',
       direction: 'SHORT',
       probability: Number(baseProb.toFixed(2)),
-      triggerCondition: hasSfpWick && sfpType === 'BEARISH'
-        ? 'Confirmed upper wick rejection (SFP) below resistance boundary'
-        : 'Bearish continuation with momentum rejection at resistance',
+      triggerCondition: anticipatorySignals?.squeeze?.active
+        ? `Squeeze breakout detected (${anticipatorySignals.squeeze.breakoutProbability}% probability, ${anticipatorySignals.squeeze.breakoutBias} bias). Enter short on squeeze release breakdown.`
+        : anticipatorySignals?.liquiditySweep?.detected && anticipatorySignals.liquiditySweep.direction === 'BEARISH_SWEEP'
+          ? `Liquidity sweep above resistance (${anticipatorySignals.liquiditySweep.confidence}% confidence). Enter short at sweep reclaim.`
+          : hasSfpWick && sfpType === 'BEARISH'
+            ? 'Confirmed upper wick rejection (SFP) below resistance boundary'
+            : 'Bearish continuation with momentum rejection at resistance',
       priceTarget: tpTarget ? Number(tpTarget.toFixed(2)) : undefined,
       invalidationPrice: slLevel ? Number(slLevel.toFixed(2)) : undefined,
       rationale: `${detailedRegime} favor short-side momentum targeting lower liquidity pools.`,
@@ -100,7 +116,9 @@ export function buildScenarioBlueprint(input: ScenarioPlanningInput): TradingSce
       type: 'CONTINGENCY',
       direction: 'LONG',
       probability: Number((1 - baseProb).toFixed(2)),
-      triggerCondition: 'Short squeeze breakout above resistance with sustained volume expansion',
+      triggerCondition: anticipatorySignals?.derivativesImbalance?.squeezeDirection === 'LONG_SQUEEZE'
+        ? `Long squeeze risk (${anticipatorySignals.derivativesImbalance.squeezeProbability}% probability). Breakout above resistance may trigger forced liquidations.`
+        : 'Short squeeze breakout above resistance with sustained volume expansion',
       priceTarget: slLevel && currentPrice > 0 ? Number((slLevel + atr * 1.5).toFixed(2)) : undefined,
       invalidationPrice: currentPrice > 0 ? Number((currentPrice - atr * 0.8).toFixed(2)) : undefined,
       rationale: 'If resistance is breached with strong volume, cancel short bias and seek pullback long.',

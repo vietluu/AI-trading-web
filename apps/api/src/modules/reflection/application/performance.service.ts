@@ -38,6 +38,7 @@ export class PerformanceService {
     skippedForMissingStartCandle: number;
     skippedForDrift: number;
     evaluatedUserIds: string[];
+    newlyFailedRuns: Array<{ runId: string, userId: string, symbol: string, decision: string, outcome: string, returnPct: number, marketRegime?: string, storedContext?: Prisma.JsonValue }>;
   }> {
     if (!this.config.get<boolean>("REFLECTION_ENABLED", true))
       return {
@@ -48,6 +49,7 @@ export class PerformanceService {
         skippedForMissingStartCandle: 0,
         skippedForDrift: 0,
         evaluatedUserIds: [],
+        newlyFailedRuns: [],
       };
     const shortMs = this.config.get<number>("EVALUATION_DELAY_MS", 600_000);
     const horizons = [
@@ -78,6 +80,7 @@ export class PerformanceService {
     let skippedForMissingStartCandle = 0;
     let skippedForDrift = 0;
     const evaluatedUserIds = new Set<string>();
+    const newlyFailedRuns: Array<{ runId: string, userId: string, symbol: string, decision: string, outcome: string, returnPct: number, marketRegime?: string, storedContext?: Prisma.JsonValue }> = [];
     for (const run of runs) {
       if (!run.completedAt || !run.decision || run.confidence == null) continue;
       const candidate = evaluationCandidate(run.storedContext);
@@ -178,6 +181,18 @@ export class PerformanceService {
         });
         evaluated++;
         evaluatedUserIds.add(run.userId);
+        if (result.outcome === 'WRONG') {
+          newlyFailedRuns.push({
+            runId: run.id,
+            userId: run.userId,
+            symbol: run.symbol,
+            decision: evaluatedDecision,
+            outcome: result.outcome,
+            returnPct: round(result.returnPct * leverage.value),
+            marketRegime: run.marketRegime ?? undefined,
+            storedContext: run.storedContext ?? undefined,
+          });
+        }
       }
     }
     return {
@@ -188,6 +203,7 @@ export class PerformanceService {
       skippedForMissingStartCandle,
       skippedForDrift,
       evaluatedUserIds: [...evaluatedUserIds],
+      newlyFailedRuns,
     };
   }
 
