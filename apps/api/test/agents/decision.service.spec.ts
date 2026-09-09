@@ -224,6 +224,10 @@ describe('DecisionService', () => {
     expect(DecisionOutputSchema.safeParse(output).success).toBe(true);
     expect(output.decision).toBe('LONG');
     expect(output.regime.type).toBe('TRENDING');
+    expect(output.regime.detailed).toBe('TRENDING_BULL');
+    expect(output.scenarios).toBeDefined();
+    expect(output.scenarios?.length).toBeGreaterThanOrEqual(2);
+    expect(output.scenarios?.find((s) => s.type === 'PRIMARY')?.direction).toBe('LONG');
     expect(output.weighting.technical).toBe(30);
     expect(output.weighting.news).toBe(10);
     expect(Object.values(output.weighting).reduce((sum, weight) => sum + weight, 0)).toBe(100);

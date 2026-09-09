@@ -104,12 +104,85 @@ export default function DecisionPage(): React.JSX.Element {
                 ) : null}
                 <Metric label={t.ai.agreement} value={`${output.agreementScore}%`} />
                 <Metric label={t.ai.data} value={output.dataQuality} />
-                <Metric label={t.ai.regime} value={output.regime.type} />
+                <Metric label={t.ai.regime} value={output.regime.detailed ?? output.regime.type} />
                 <Metric label={t.ai.conflict} value={output.conflictLevel} />
               </div>
             </div>
+            {output.regime.playbook ? (
+              <div className="mt-4 rounded-md border border-primary/20 bg-primary/5 p-3 text-xs text-muted-foreground">
+                <span className="font-semibold text-primary">{t.ai.playbookTitle}: </span>
+                {output.regime.playbook}
+              </div>
+            ) : null}
             <p className="mt-5 text-sm leading-6">{output.reasoning}</p>
           </div>
+
+          {output.scenarios && output.scenarios.length > 0 ? (
+            <div className="rounded-lg border bg-card p-5 space-y-4">
+              <h2 className="font-semibold text-base flex items-center gap-2">
+                <span className="inline-block w-2.5 h-2.5 rounded-full bg-primary animate-pulse" />
+                {t.ai.multiScenarioTitle}
+              </h2>
+              <div className="grid gap-4 md:grid-cols-3">
+                {output.scenarios.map((scenario) => {
+                  const isPrimary = scenario.type === "PRIMARY";
+                  const isInvalidation = scenario.type === "INVALIDATION";
+                  const borderColor = isPrimary
+                    ? "border-emerald-500/40 bg-emerald-500/5"
+                    : isInvalidation
+                      ? "border-red-500/30 bg-red-500/5"
+                      : "border-amber-500/30 bg-amber-500/5";
+                  const tagColor = isPrimary
+                    ? "text-emerald-400 bg-emerald-500/10"
+                    : isInvalidation
+                      ? "text-red-400 bg-red-500/10"
+                      : "text-amber-400 bg-amber-500/10";
+                  const title = isPrimary
+                    ? t.ai.primaryPlan
+                    : isInvalidation
+                      ? t.ai.invalidationTrigger
+                      : t.ai.contingencyPlan;
+
+                  return (
+                    <div key={scenario.id} className={`rounded-lg border p-4 flex flex-col justify-between space-y-3 ${borderColor}`}>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold ${tagColor}`}>
+                            {scenario.direction}
+                          </span>
+                          <span className="text-xs font-mono text-muted-foreground">
+                            {t.ai.probabilityLabel}: {Math.round(scenario.probability * 100)}%
+                          </span>
+                        </div>
+                        <h3 className="font-medium text-sm">{title}</h3>
+                        <p className="text-xs text-muted-foreground leading-relaxed">{scenario.rationale}</p>
+                      </div>
+
+                      <div className="space-y-1.5 pt-2 border-t border-border/50 text-xs">
+                        <div>
+                          <span className="text-muted-foreground">{t.ai.triggerLabel}: </span>
+                          <span className="font-medium">{scenario.triggerCondition}</span>
+                        </div>
+                        {scenario.priceTarget !== undefined ? (
+                          <div>
+                            <span className="text-muted-foreground">{t.ai.targetLabel}: </span>
+                            <span className="font-mono font-semibold text-emerald-400">${scenario.priceTarget}</span>
+                          </div>
+                        ) : null}
+                        {scenario.invalidationPrice !== undefined ? (
+                          <div>
+                            <span className="text-muted-foreground">{t.ai.invalidationLabel}: </span>
+                            <span className="font-mono font-semibold text-red-400">${scenario.invalidationPrice}</span>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
           <div className="grid gap-4 md:grid-cols-2">
             <FactorCard title={t.ai.bullishFactors} items={output.signals.bullishFactors} empty={t.ai.noBullish} />
             <FactorCard title={t.ai.bearishFactors} items={output.signals.bearishFactors} empty={t.ai.noBearish} />
