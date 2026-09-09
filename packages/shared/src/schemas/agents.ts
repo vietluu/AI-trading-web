@@ -498,6 +498,7 @@ export const DetailedRegimeTypeSchema = z.enum([
   'TRENDING_BEAR',
   'RANGING_CONSOLIDATION',
   'VOLATILE_LIQUIDITY_EXPANSION',
+  'PRE_BREAKOUT_ACCUMULATION',
 ]);
 export type DetailedRegimeType = z.infer<typeof DetailedRegimeTypeSchema>;
 
@@ -617,6 +618,31 @@ export const DecisionOutputSchema = z
     executionCost: z.number().min(0),
     scenarios: z.array(TradingScenarioSchema).optional(),
     regimeDetailed: DetailedRegimeTypeSchema.optional(),
+    anticipatorySignals: z.object({
+      squeeze: z.object({
+        active: z.boolean(),
+        intensity: z.number().min(0).max(100),
+        duration: z.number().int().min(0),
+        breakoutBias: z.enum(['BULLISH', 'BEARISH', 'NEUTRAL']),
+        breakoutProbability: z.number().min(0).max(100),
+      }).optional(),
+      liquiditySweep: z.object({
+        detected: z.boolean(),
+        direction: z.enum(['BULLISH_SWEEP', 'BEARISH_SWEEP']).nullable(),
+        confidence: z.number().min(0).max(100),
+      }).optional(),
+      derivativesImbalance: z.object({
+        squeezeProbability: z.number().min(0).max(100),
+        squeezeDirection: z.enum(['LONG_SQUEEZE', 'SHORT_SQUEEZE', 'NONE']),
+        fundingExtreme: z.enum(['EXTREME_NEGATIVE', 'EXTREME_POSITIVE', 'NORMAL']),
+      }).optional(),
+    }).optional(),
+    reflection: z.object({
+      reasoning: z.string(),
+      contrarianArguments: z.array(z.string()),
+      trapProbability: z.number().min(0).max(100),
+      overrideReason: z.string().optional(),
+    }).optional(),
     generatedAt: z.string().datetime(),
   })
   .strict();
