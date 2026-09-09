@@ -6,7 +6,8 @@ export type TradePlanRegime =
   | "TREND_DOWN"
   | "RANGING"
   | "BREAKOUT"
-  | "HIGH_VOLATILITY";
+  | "HIGH_VOLATILITY"
+  | "PRE_BREAKOUT_ACCUMULATION";
 
 export type TradePlanStrategy =
   | "TREND_PULLBACK"
@@ -15,6 +16,7 @@ export type TradePlanStrategy =
   | "MOMENTUM_SCALP"
   | "VOLATILITY_CONTROL"
   | "LIQUIDITY_SWEEP_REVERSAL"
+  | "SQUEEZE_BREAKOUT"
   | "LEGACY_FALLBACK";
 
 export interface TradePlanMarketContext {
@@ -34,6 +36,12 @@ export interface TradePlanMarketContext {
   candleLow?: number;
   candleClose?: number;
   volumeRatio?: number;
+  squeezeState?: {
+    isSqueezing: boolean;
+    breakoutProbability: number;
+    breakoutBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    consecutiveSqueezeBars: number;
+  };
 }
 
 export interface TradePlan {
@@ -78,6 +86,7 @@ export function resolveTradePlanRegime(
   decision: DecisionOutput,
   market: TradePlanMarketContext,
 ): TradePlanRegime {
+  if (decision.regimeDetailed === "PRE_BREAKOUT_ACCUMULATION" || decision.regime.detailed === "PRE_BREAKOUT_ACCUMULATION") return "PRE_BREAKOUT_ACCUMULATION";
   if (decision.regime.type === "HIGH_VOLATILITY") return "HIGH_VOLATILITY";
   if (market.breakout) return "BREAKOUT";
   const directionAligned = decision.decision === "LONG"
@@ -275,6 +284,40 @@ function _buildAdaptiveTradePlan(input: {
       orderType: "LIMIT",
       limitTtlCandles: 2,
       isLiquiditySweep: true,
+    };
+  }
+  
+  if (
+    (regime === "PRE_BREAKOUT_ACCUMULATION" || regime === "HIGH_VOLATILITY") &&
+    market.squeezeState?.isSqueezing &&
+    market.squeezeState.breakoutProbability > 65 &&
+    finitePositive(atr) &&
+    finitePositive(support) &&
+    finitePositive(resistance)
+  ) {
+    const isLong = side === "LONG";
+    const limitEntryPrice = isLong ? support : resistance;
+    const buffer = atr * 0.3;
+    const stopLoss = isLong ? support - buffer : resistance + buffer;
+    const targetDistance = atr * 4;
+    const takeProfit = isLong ? limitEntryPrice + targetDistance : limitEntryPrice - targetDistance;
+    const rr = rewardToRisk(side, limitEntryPrice, stopLoss, takeProfit, costPct);
+    
+    return {
+      approved: true,
+      regime,
+      strategy: "SQUEEZE_BREAKOUT",
+      stopLoss: rounded(stopLoss),
+      takeProfit: rounded(takeProfit),
+      rewardToRisk: rounded(rr),
+      maxHoldingCandles: 15,
+      breakEvenAtR: 1,
+      trailingAtrMultiple: 1.5,
+      atr,
+      timeframeMs: market.timeframeMs,
+      limitEntryPrice: rounded(limitEntryPrice),
+      orderType: "LIMIT",
+      limitTtlCandles: 4,
     };
   }
 
