@@ -9,7 +9,7 @@ export interface ReflectionInput {
   regime: string;
   anticipatorySignals?: {
     squeeze?: { active: boolean; breakoutProbability: number; breakoutBias: string };
-    liquiditySweep?: { detected: boolean; direction: string; confidence: number };
+    liquiditySweep?: { detected: boolean; direction: string | null; confidence: number };
     derivativesImbalance?: { squeezeProbability: number; squeezeDirection: string };
   };
   agentSummaries: Record<string, string>;
@@ -66,7 +66,8 @@ export class ChainOfThoughtReflectionService {
         });
 
         clearTimeout(timer);
-        return this.parseResponse(response.response ?? '', input);
+        const rawText = response.text ?? (response as any).response ?? (response.json ? JSON.stringify(response.json) : '');
+        return this.parseResponse(rawText, input);
       } finally {
         clearTimeout(timer);
       }

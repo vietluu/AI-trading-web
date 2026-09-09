@@ -167,7 +167,8 @@ export class PostMortemAnalyzerService {
     }
 
     for (const agent in totalPenalties) {
-      if (totalPenalties[agent] < -15) {
+      const val = totalPenalties[agent];
+      if (typeof val === 'number' && val < -15) {
         totalPenalties[agent] = -15;
       }
     }

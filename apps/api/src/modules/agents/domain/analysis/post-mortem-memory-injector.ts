@@ -53,7 +53,8 @@ export function buildPostMortemContext(memories: any[], symbol: string, regime: 
 
   // clamp penalties
   for (const agent in penalties) {
-    if (penalties[agent] < -15) {
+    const val = penalties[agent];
+    if (typeof val === 'number' && val < -15) {
       penalties[agent] = -15;
     }
   }
