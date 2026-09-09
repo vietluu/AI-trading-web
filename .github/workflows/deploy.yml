@@ -104,12 +104,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_ACTOR: ${{ github.actor }}
+          DEPLOY_SHA: ${{ github.sha }}
+          API_IMAGE: ghcr.io/vietluu/ai-trading-web-api:${{ github.sha }}
+          WEB_IMAGE: ghcr.io/vietluu/ai-trading-web-web:${{ github.sha }}
         with:
           host: ${{ steps.validate_secrets.outputs.vm_ip }}
           username: ${{ steps.validate_secrets.outputs.vm_username }}
           key_path: ${{ steps.validate_secrets.outputs.ssh_key_path }}
           port: 22
-          envs: GH_TOKEN,GH_ACTOR
+          envs: GH_TOKEN,GH_ACTOR,DEPLOY_SHA,API_IMAGE,WEB_IMAGE
           script: |
             set -euo pipefail
 
@@ -120,24 +123,53 @@ jobs:
             echo "Deploying in: $DEPLOY_DIR"
             cd "$DEPLOY_DIR"
 
-            git fetch https://x-access-token:${GH_TOKEN}@github.com/vietluu/AI-trading-agents.git main
+            git fetch https://x-access-token:${GH_TOKEN}@github.com/vietluu/AI-trading-web.git main
             git reset --hard FETCH_HEAD
+
+            deployed_sha="$(git rev-parse HEAD)"
+            if [ "$deployed_sha" != "$DEPLOY_SHA" ]; then
+              echo "::error::Checked out ${deployed_sha}, expected ${DEPLOY_SHA}."
+              exit 1
+            fi
 
             # Authenticate Docker to GitHub Container Registry
             echo "${GH_TOKEN}" | docker login ghcr.io -u "${GH_ACTOR}" --password-stdin
 
-            # Pull pre-built images from GHCR or fallback to build on VM if pull fails
+            # Deploy the immutable images built by this exact workflow run.
             if docker compose version >/dev/null 2>&1; then
-              docker compose pull api web || docker compose build api web
-              docker compose up -d api web
-              docker image prune -f
+              docker compose pull api web
+              docker compose up -d --force-recreate api web
+              api_container="$(docker compose ps -q api)"
+              web_container="$(docker compose ps -q web)"
             elif command -v docker-compose >/dev/null 2>&1; then
-              docker-compose pull api web || docker-compose build api web
-              docker-compose up -d api web
-              docker image prune -f
+              docker-compose pull api web
+              docker-compose up -d --force-recreate api web
+              api_container="$(docker-compose ps -q api)"
+              web_container="$(docker-compose ps -q web)"
             else
               echo "::error::Neither docker compose nor docker-compose is available on the VM."
               exit 1
             fi
+
+            for container in "$api_container" "$web_container"; do
+              if [ -z "$container" ] || [ "$(docker inspect --format='{{.State.Running}}' "$container")" != "true" ]; then
+                echo "::error::A deployed container is not running."
+                exit 1
+              fi
+            done
+
+            actual_api_image="$(docker inspect --format='{{.Config.Image}}' "$api_container")"
+            actual_web_image="$(docker inspect --format='{{.Config.Image}}' "$web_container")"
+            if [ "$actual_api_image" != "$API_IMAGE" ] || [ "$actual_web_image" != "$WEB_IMAGE" ]; then
+              echo "::error::Running images do not match this workflow run."
+              echo "Expected API: $API_IMAGE; running: $actual_api_image"
+              echo "Expected Web: $WEB_IMAGE; running: $actual_web_image"
+              exit 1
+            fi
+
+            echo "Verified commit: $deployed_sha"
+            echo "Verified API image: $actual_api_image"
+            echo "Verified Web image: $actual_web_image"
+            docker image prune -f
 
             echo "Deployment completed successfully!"
