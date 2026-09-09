@@ -62,6 +62,17 @@ export const REGIME_WEIGHT_PROFILES: Record<DetailedRegimeType, RegimeWeightProf
     },
     playbook: 'Defensive liquidity sweep sniper. Wait for confirmed wick rejection before entering counter-moves.',
   },
+  PRE_BREAKOUT_ACCUMULATION: {
+    weights: {
+      technical: 35,
+      market: 25,
+      sentiment: 10,
+      news: 10,
+      macro: 10,
+      onchain: 10,
+    },
+    playbook: 'Anticipatory positioning at range boundaries during volatility compression. Tight SL below squeeze low, target 1:4+ R:R on breakout direction.',
+  },
 };
 
 export function classifyDetailedRegime(params: {
@@ -70,13 +81,24 @@ export function classifyDetailedRegime(params: {
   trendStrength?: 'WEAK' | 'MODERATE' | 'STRONG';
   volatilityLevel?: 'LOW' | 'MEDIUM' | 'HIGH';
   isSfpWick?: boolean;
+  isSqueezing?: boolean;
+  squeezeDuration?: number;
+  atrPercentile?: number;
 }): { detailed: DetailedRegimeType; playbook: string } {
-  const { regimeType, trendDirection, trendStrength, volatilityLevel, isSfpWick } = params;
+  const { regimeType, trendDirection, trendStrength, volatilityLevel, isSfpWick, isSqueezing, squeezeDuration, atrPercentile } = params;
 
   if (regimeType === 'HIGH_VOLATILITY' || volatilityLevel === 'HIGH' || isSfpWick) {
     return {
       detailed: 'VOLATILE_LIQUIDITY_EXPANSION',
       playbook: REGIME_WEIGHT_PROFILES.VOLATILE_LIQUIDITY_EXPANSION.playbook,
+    };
+  }
+
+  // Pre-breakout accumulation: squeeze active with significant duration and low ATR
+  if (isSqueezing && (squeezeDuration ?? 0) >= 3 && (atrPercentile ?? 50) < 25) {
+    return {
+      detailed: 'PRE_BREAKOUT_ACCUMULATION',
+      playbook: REGIME_WEIGHT_PROFILES.PRE_BREAKOUT_ACCUMULATION.playbook,
     };
   }
 
