@@ -85,7 +85,12 @@ export class ChainOfThoughtReflectionService {
         symbol: input.snapshot.symbol,
         error: error instanceof Error ? error.message : String(error),
       });
-      return this.passthrough(input);
+      return {
+        action: 'REQUIRE_TRIGGER',
+        reasonCodes: ['CRITIC_TIMEOUT'],
+        evidenceRefs: [],
+        rationale: 'Reflection network or provider error. Safely falling back to REQUIRE_TRIGGER.'
+      };
     }
   }
 
@@ -116,9 +121,20 @@ Respond in JSON format matching this schema:
   }
 
   private buildPrompt(input: CriticInput): string {
+    const marketContext = {
+      execution: input.snapshot.execution,
+      volatility: input.snapshot.volatility,
+      structure: input.snapshot.structure,
+      momentum: input.snapshot.momentum,
+      derivatives: input.snapshot.derivatives,
+    };
+
     return `## Snapshot Context
 Symbol: ${input.snapshot.symbol}
 Timeframe: ${input.snapshot.timeframe}
+
+## Market Context
+${JSON.stringify(marketContext, null, 2)}
 
 ## Proposed Thesis
 ${JSON.stringify(input.thesis, null, 2)}

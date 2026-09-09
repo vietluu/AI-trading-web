@@ -9,7 +9,6 @@ import { DecisionService } from './decision.service';
 import { TRADE_RESEARCHER_SYSTEM_PROMPT, TRADE_THESIS_JSON_SCHEMA } from '../../domain/prompts/trade-researcher.prompt';
 import { validateTradeThesis } from '../../domain/trade-thesis-validator';
 import { PrismaService } from '../../../../database/prisma.service';
-import { ChainOfThoughtReflectionService } from './chain-of-thought-reflection.service';
 
 export interface TradeResearcherContext {
   userId: string;
@@ -33,7 +32,6 @@ export class TradeResearcherService {
     private readonly aiOrchestrator: AIOrchestratorService,
     private readonly decisionService: DecisionService,
     private readonly prisma: PrismaService,
-    private readonly reflectionService: ChainOfThoughtReflectionService,
   ) {}
 
   public async research(
@@ -87,32 +85,6 @@ export class TradeResearcherService {
       const directions = new Set([preferred.direction, ...alternatives.map((a: TradeThesis) => a.direction)]);
       if (directions.size !== 1 + alternatives.length) {
          throw new Error('AI returned multiple theses for the same direction');
-      }
-
-      // Critic Review
-      const review = await this.reflectionService.reflect(
-        { snapshot, thesis: preferred },
-        context.userId
-      );
-
-      if (review.action === 'CANCEL') {
-        preferred.direction = 'WAIT';
-        preferred.state = 'WAIT';
-        preferred.setup = 'NO_TRADE';
-      } else if (review.action === 'REQUIRE_TRIGGER') {
-        preferred.state = 'WATCHING';
-      }
-      if (review.action === 'REDUCE_SIZE' && review.sizeFactor !== undefined) {
-        // Apply bounded factor to expectedNetR if size is reduced
-        if (preferred.expectedNetR !== null) {
-          preferred.expectedNetR = Number((preferred.expectedNetR * review.sizeFactor).toFixed(2));
-        }
-        // Could also apply to targets if required, but NetR is a solid proxy for size factor bound
-      }
-
-      // Attach review reasons as missing evidence or against
-      if (review.reasonCodes.length > 0) {
-        preferred.missingEvidence.push(...review.reasonCodes);
       }
 
       // Ensure decisionSource is correctly labeled if AI succeeded

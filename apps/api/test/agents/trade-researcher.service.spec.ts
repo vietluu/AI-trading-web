@@ -86,20 +86,10 @@ describe('TradeResearcherService', () => {
       }
     };
 
-    const mockReflection = {
-      reflect: vi.fn().mockResolvedValue({
-        action: 'APPROVE',
-        reasonCodes: [],
-        evidenceRefs: [],
-        rationale: 'Looks good'
-      })
-    };
-
     service = new TradeResearcherService(
       aiOrchestratorService, 
       decisionService, 
-      prismaService, 
-      mockReflection as any
+      prismaService
     );
   });
 

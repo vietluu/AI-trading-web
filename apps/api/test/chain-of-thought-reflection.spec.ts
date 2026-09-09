@@ -32,10 +32,9 @@ const mockConfig = {
 };
 
 function makeService(opts?: { orchestrator?: AIOrchestratorService; config?: ConfigService }) {
-  return new ChainOfThoughtReflectionService(
-    opts?.orchestrator ?? mockOrchestrator as unknown as AIOrchestratorService,
-    opts?.config ?? mockConfig as unknown as ConfigService,
-  );
+  const orch = opts && 'orchestrator' in opts ? opts.orchestrator : (mockOrchestrator as unknown as AIOrchestratorService);
+  const conf = opts && 'config' in opts ? opts.config : (mockConfig as unknown as ConfigService);
+  return new ChainOfThoughtReflectionService(orch, conf);
 }
 
 const mockSnapshot = {
