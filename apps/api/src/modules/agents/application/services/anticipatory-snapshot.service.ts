@@ -11,6 +11,7 @@ import type {
   NormalizedFundingRate,
   NormalizedOpenInterest,
 } from '../../../../market-data/domain/market-data.types';
+import { IndicatorStatus } from '../../../../market-data/domain/market-data.enums';
 import { MarketDataRepository } from '../../../../market-data/infrastructure/persistence/market-data.repository';
 import {
   buildAnticipatoryMarketSnapshot,
@@ -73,29 +74,49 @@ function derivativesInput(
   fundingRows: NormalizedFundingRate[],
   openInterestRows: NormalizedOpenInterest[],
   candles: NormalizedCandle[],
+  sourceDataCutoff: Date,
 ): AnticipatoryDerivativesInput | undefined {
   const funding = fundingRows
     .map((row) => ({ timestamp: row.fundingTime, value: Number(row.fundingRate) }))
-    .filter((row) => Number.isFinite(row.value))
+    .filter(
+      (row) =>
+        Number.isFinite(row.value) &&
+        Number.isFinite(row.timestamp.getTime()) &&
+        row.timestamp <= sourceDataCutoff,
+    )
     .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime());
   const openInterest = openInterestRows
     .map((row) => ({ timestamp: row.timestamp, value: Number(row.openInterest) }))
-    .filter((row) => Number.isFinite(row.value) && row.value >= 0)
+    .filter(
+      (row) =>
+        Number.isFinite(row.value) &&
+        row.value >= 0 &&
+        Number.isFinite(row.timestamp.getTime()) &&
+        row.timestamp <= sourceDataCutoff,
+    )
     .sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime());
   const currentFunding = funding.at(-1);
   const currentOpenInterest = openInterest.at(-1);
   if (currentFunding === undefined || currentOpenInterest === undefined) return undefined;
 
   const closed = candles
-    .filter((candle) => candle.isClosed)
+    .filter(
+      (candle) =>
+        candle.isClosed &&
+        Number.isFinite(candle.closeTime.getTime()) &&
+        candle.closeTime <= sourceDataCutoff &&
+        finiteNumber(candle.close) !== undefined &&
+        Number(candle.close) > 0,
+    )
     .slice()
     .sort((left, right) => left.closeTime.getTime() - right.closeTime.getTime());
+  if (closed.length < 2) return undefined;
   const currentPrice = finiteNumber(closed.at(-1)?.close);
   const previousPrice = finiteNumber(closed.at(-2)?.close);
-  const priceChange =
-    currentPrice !== undefined && previousPrice !== undefined && previousPrice > 0
-      ? ((currentPrice - previousPrice) / previousPrice) * 100
-      : 0;
+  if (currentPrice === undefined || previousPrice === undefined || previousPrice <= 0) {
+    return undefined;
+  }
+  const priceChange = ((currentPrice - previousPrice) / previousPrice) * 100;
   const imbalance = predictDerivativesImbalance({
     currentFundingRate: currentFunding.value,
     historicalFundingRates: funding.map((row) => row.value),
@@ -108,6 +129,7 @@ function derivativesInput(
   const timestamp = new Date(Math.min(
     currentFunding.timestamp.getTime(),
     currentOpenInterest.timestamp.getTime(),
+    closed.at(-2)!.closeTime.getTime(),
   ));
 
   return {
@@ -163,6 +185,7 @@ export class AnticipatorySnapshotService {
         input.symbol,
         input.timeframe,
         cutoff,
+        IndicatorStatus.CLOSED,
       ),
       this.marketDataRepository.getFundingRates({
         provider: input.provider,
@@ -185,13 +208,21 @@ export class AnticipatorySnapshotService {
       }),
     ]);
 
+    const alignedClosedCandles = candles.filter(
+      (candle) =>
+        candle.provider === input.provider &&
+        candle.symbol === input.symbol &&
+        candle.interval === input.timeframe &&
+        candle.isClosed &&
+        candle.closeTime <= cutoff,
+    );
     const snapshot = buildAnticipatoryMarketSnapshot({
       symbol: input.symbol,
       provider: input.provider,
       timeframe: input.timeframe,
       sourceDataCutoff: cutoff,
       calculationVersion: indicator?.calculationVersion,
-      candles: candles.map((candle) => ({
+      candles: alignedClosedCandles.map((candle) => ({
         openTime: candle.openTime,
         closeTime: candle.closeTime,
         open: Number(candle.open),
@@ -202,7 +233,12 @@ export class AnticipatorySnapshotService {
         isClosed: candle.isClosed,
       })),
       ...indicatorInputs(indicator),
-      derivatives: derivativesInput(funding, openInterest, candles),
+      derivatives: derivativesInput(
+        funding,
+        openInterest,
+        alignedClosedCandles,
+        cutoff,
+      ),
       context,
     });
 

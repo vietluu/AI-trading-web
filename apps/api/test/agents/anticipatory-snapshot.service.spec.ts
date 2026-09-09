@@ -69,13 +69,14 @@ describe('AnticipatorySnapshotService', () => {
         });
         return candleResult.promise;
       }),
-      getLatestIndicatorSnapshot: vi.fn((provider, symbol, interval, atOrBefore) => {
+      getLatestIndicatorSnapshot: vi.fn((provider, symbol, interval, atOrBefore, status) => {
         calls.push('indicator');
-        expect([provider, symbol, interval, atOrBefore]).toEqual([
+        expect([provider, symbol, interval, atOrBefore, status]).toEqual([
           ExchangeProvider.BINANCE_FUTURES,
           'BTC-USDT',
           ExchangeInterval.ONE_MINUTE,
           cutoff,
+          IndicatorStatus.CLOSED,
         ]);
         return indicatorResult.promise;
       }),
@@ -243,5 +244,95 @@ describe('AnticipatorySnapshotService', () => {
       reason: 'DERIVATIVES_HISTORY_INSUFFICIENT_AT_CUTOFF',
     });
     expect(saveAnticipatorySnapshot).toHaveBeenCalledOnce();
+  });
+
+  it('keeps derivatives unavailable without two valid aligned price candles', async () => {
+    const [aligned, unaligned] = candles().slice(-2);
+    const service = new AnticipatorySnapshotService(
+      {
+        getClosedCandles: vi.fn().mockResolvedValue([
+          aligned,
+          { ...unaligned, symbol: 'ETH-USDT' },
+        ]),
+        getLatestIndicatorSnapshot: vi.fn().mockResolvedValue(null),
+        getFundingRates: vi.fn().mockResolvedValue(
+          [-0.05, 0, 0.01, 0.02, 0.03].map((fundingRate, index) => ({
+            fundingRate: String(fundingRate),
+            fundingTime: new Date(cutoff.getTime() - index * minute),
+          })),
+        ),
+        getOpenInterestHistory: vi.fn().mockResolvedValue([
+          { openInterest: '110', timestamp: cutoff },
+          { openInterest: '100', timestamp: new Date(cutoff.getTime() - minute) },
+        ]),
+      } as never,
+      {
+        findLatestAnticipatoryContext: vi.fn().mockResolvedValue(undefined),
+        saveAnticipatorySnapshot: vi.fn().mockResolvedValue(undefined),
+      } as never,
+    );
+
+    const snapshot = await service.build({
+      userId: '00000000-0000-4000-8000-000000000001',
+      provider: ExchangeProvider.BINANCE_FUTURES,
+      symbol: 'BTC-USDT',
+      timeframe: ExchangeInterval.ONE_MINUTE,
+      sourceDataCutoff: cutoff,
+    });
+
+    expect(snapshot.derivatives).toEqual({
+      coverage: 'UNAVAILABLE',
+      freshness: 'UNAVAILABLE',
+      observationAgeMs: null,
+      unavailableFields: ['derivatives'],
+      reason: 'DERIVATIVES_UNAVAILABLE',
+    });
+  });
+
+  it('uses the older comparison candle timestamp for derivatives freshness', async () => {
+    const candleRows = candles().slice(-2).map((candle, index) => ({
+      ...candle,
+      openTime: new Date(cutoff.getTime() - (index === 0 ? 11 : 1) * minute),
+      closeTime: new Date(cutoff.getTime() - (index === 0 ? 10 : 0) * minute),
+    }));
+    const service = new AnticipatorySnapshotService(
+      {
+        getClosedCandles: vi.fn().mockResolvedValue(candleRows),
+        getLatestIndicatorSnapshot: vi.fn().mockResolvedValue(null),
+        getFundingRates: vi.fn().mockResolvedValue(
+          [-0.05, 0, 0.01, 0.02, 0.03].map((fundingRate, index) => ({
+            fundingRate: String(fundingRate),
+            fundingTime: new Date(cutoff.getTime() - index * minute),
+          })),
+        ),
+        getOpenInterestHistory: vi.fn().mockResolvedValue([
+          { openInterest: '110', timestamp: cutoff },
+          { openInterest: '100', timestamp: new Date(cutoff.getTime() - minute) },
+        ]),
+      } as never,
+      {
+        findLatestAnticipatoryContext: vi.fn().mockResolvedValue(undefined),
+        saveAnticipatorySnapshot: vi.fn().mockResolvedValue(undefined),
+      } as never,
+    );
+
+    const snapshot = await service.build({
+      userId: '00000000-0000-4000-8000-000000000001',
+      provider: ExchangeProvider.BINANCE_FUTURES,
+      symbol: 'BTC-USDT',
+      timeframe: ExchangeInterval.ONE_MINUTE,
+      sourceDataCutoff: cutoff,
+    });
+
+    expect(snapshot.derivatives).toMatchObject({
+      coverage: 'AVAILABLE',
+      freshness: 'STALE',
+      sourceTimestamp: new Date(cutoff.getTime() - 10 * minute).toISOString(),
+      derivativesImbalance: {
+        coverage: 'AVAILABLE',
+        freshness: 'STALE',
+        sourceTimestamp: new Date(cutoff.getTime() - 10 * minute).toISOString(),
+      },
+    });
   });
 });

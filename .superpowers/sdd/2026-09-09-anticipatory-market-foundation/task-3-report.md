@@ -13,7 +13,7 @@ No Decision, Risk, order submission, exchange permission, or LIVE behavior was c
 - Added cutoff support to indicator snapshot lookup and changed closed-candle lookup to bound `closeTime <= sourceDataCutoff` while requiring `isClosed: true`.
 - Extended `AgentContextSnapshotRepository`, the closest existing repository abstraction, with:
   - cutoff-bounded compatible context lookup;
-  - append-only/idempotent snapshot persistence keyed by user, provider, symbol, timeframe, and cutoff.
+  - temporary persistence with best-effort sequential duplicate reuse keyed by user, provider, symbol, timeframe, and cutoff.
 - Added service and repository coverage for concurrency, frozen-cutoff propagation, stale optional context, actual derivatives histories, insufficient-history behavior, runtime schema parsing, and persistence.
 
 The repository file was not named in the original task file list, but the implementation ledger explicitly required extending the closest existing repository rather than placing direct Prisma access in the pure builder. No Task 4 opportunity model or migration was introduced.
@@ -77,4 +77,45 @@ Result: ESLint exited 0 with no findings.
 
 ## Dependency ordering concern
 
-Task 4 should move persistence to its dedicated append-only `anticipatory_market_snapshots` model and enforce the provider/symbol/timeframe/cutoff idempotency key with a database unique constraint. The current adapter uses deterministic key lookup followed by create in the existing generic context table; it is suitable for Task 3 observe-mode wiring and test doubles, but the table cannot make that two-step operation race-safe without the Task 4 schema.
+Task 4 immediately follows this task and must move persistence to its dedicated append-only `anticipatory_market_snapshots` model with a non-user provider/symbol/timeframe/cutoff database unique constraint before any scheduler observer invokes this service. The current adapter uses deterministic key lookup followed by create in the existing generic context table. It can reuse a sequential duplicate but is neither race-safe nor database-idempotent.
+
+## Fix Round 1
+
+Reviewer findings were reproduced with focused tests before implementation:
+
+- A complete funding/OI history plus only one valid aligned price candle incorrectly produced AVAILABLE derivatives because the service substituted `priceChange = 0`.
+- A stale previous price candle did not affect derivatives freshness or provenance because only funding and OI timestamps contributed to the section timestamp.
+- The cutoff-safe indicator repository query did not constrain indicator status to CLOSED.
+
+The fix now:
+
+- filters price candles by provider, symbol, timeframe, closed state, cutoff, valid timestamp, and positive finite close;
+- returns no derivatives input when fewer than two qualifying price candles exist, causing explicit `UNAVAILABLE` snapshot evidence;
+- derives price change only from two real qualifying closes, with no zero fallback;
+- uses the oldest timestamp among current funding, current OI, and the previous comparison candle for both derivatives and nested imbalance freshness/provenance;
+- requests and queries only CLOSED indicator snapshots for the anticipatory path;
+- documents and tests only sequential duplicate reuse for the temporary context-table adapter.
+
+Focused GREEN result:
+
+```text
+pnpm --filter @platform/api exec vitest run \
+  test/agents/anticipatory-snapshot.service.spec.ts \
+  test/market-data-repository.spec.ts \
+  test/agents/agent-context-snapshot.repository.spec.ts
+```
+
+Result: 3 test files passed, 10 tests passed, 0 failed.
+
+Final Fix Round 1 verification:
+
+```text
+pnpm --filter @platform/api exec vitest run \
+  test/agents/agent-context-snapshot.repository.spec.ts \
+  test/market-data-repository.spec.ts \
+  test/agents/anticipatory-snapshot.service.spec.ts \
+  test/derivatives-imbalance-predictor.spec.ts \
+  test/agents/anticipatory-snapshot-builder.spec.ts
+```
+
+Result: 5 test files passed, 35 tests passed, 0 failed. API typecheck and API lint both exited 0.

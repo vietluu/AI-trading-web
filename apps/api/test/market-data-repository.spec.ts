@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
 import { MarketDataRepository } from '../src/market-data/infrastructure/persistence/market-data.repository';
 import { ExchangeInterval, ExchangeProvider } from '../src/exchange/domain/exchange.types';
+import { IndicatorStatus } from '../src/market-data/domain/market-data.enums';
 
 describe('MarketDataRepository candle freshness', () => {
   it('caps closed-candle queries by close time at the source cutoff', async () => {
@@ -115,6 +116,7 @@ describe('MarketDataRepository candle freshness', () => {
       'ZRO-USDT',
       ExchangeInterval.FIFTEEN_MINUTES,
       new Date('2026-08-10T04:15:00Z'),
+      IndicatorStatus.CLOSED,
     );
 
     expect(findFirst).toHaveBeenCalledWith({
@@ -123,6 +125,7 @@ describe('MarketDataRepository candle freshness', () => {
         symbol: 'ZRO-USDT',
         interval: 'i15m',
         candleCloseTime: { lte: new Date('2026-08-10T04:15:00Z') },
+        status: IndicatorStatus.CLOSED,
       },
       orderBy: { candleCloseTime: 'desc' },
     });

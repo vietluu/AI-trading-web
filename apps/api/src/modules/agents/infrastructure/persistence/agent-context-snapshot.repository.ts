@@ -102,6 +102,9 @@ export class AgentContextSnapshotRepository {
     sourceDataCutoff: Date;
     snapshot: AnticipatoryMarketSnapshot;
   }): Promise<AgentContextSnapshot> {
+    // Temporary Task 3 adapter: this lookup reuses sequential duplicates only.
+    // Task 4 must replace it with the dedicated snapshot table and its database
+    // unique key before any scheduler starts observing snapshots.
     const persistenceKey = createHash('sha256')
       .update([
         'ANTICIPATORY_MARKET_SNAPSHOT',

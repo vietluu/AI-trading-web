@@ -44,29 +44,33 @@ describe('AgentContextSnapshotRepository anticipatory snapshots', () => {
     expect(result).toEqual(context);
   });
 
-  it('persists each provider/symbol/timeframe/cutoff key once', async () => {
+  it('reuses a temporary adapter row for a sequential duplicate key', async () => {
     const sourceDataCutoff = new Date('2026-09-09T12:00:00Z');
     type FindInput = { where: { contextHash: string } };
     type CreateInput = { data: { contextHash: string } & Record<string, unknown> };
     const create = vi
       .fn<(input: CreateInput) => Promise<{ id: string }>>()
       .mockResolvedValue({ id: 'snapshot-id' });
+    const existing = { id: 'snapshot-id' };
     const findFirst = vi
-      .fn<(input: FindInput) => Promise<null>>()
-      .mockResolvedValue(null);
+      .fn<(input: FindInput) => Promise<null | typeof existing>>()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(existing);
     const repository = new AgentContextSnapshotRepository({
       agentContextSnapshot: { findFirst, create },
     } as never);
     const snapshot = { schemaVersion: 1, calculationVersion: 2 } as never;
 
-    await repository.saveAnticipatorySnapshot({
+    const input = {
       userId: '00000000-0000-4000-8000-000000000001',
       provider: 'BINANCE_FUTURES',
       symbol: 'BTC-USDT',
       timeframe: '1m',
       sourceDataCutoff,
       snapshot,
-    });
+    };
+    await repository.saveAnticipatorySnapshot(input);
+    const duplicate = await repository.saveAnticipatorySnapshot(input);
 
     const persistenceKey = findFirst.mock.calls[0]?.[0]?.where.contextHash;
     expect(persistenceKey).toEqual(expect.stringMatching(/^[a-f0-9]{64}$/));
@@ -92,5 +96,7 @@ describe('AgentContextSnapshotRepository anticipatory snapshots', () => {
         memoryRefs: [],
       },
     });
+    expect(create).toHaveBeenCalledOnce();
+    expect(duplicate).toBe(existing);
   });
 });
