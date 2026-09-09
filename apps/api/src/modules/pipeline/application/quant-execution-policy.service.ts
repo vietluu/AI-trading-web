@@ -172,11 +172,30 @@ export class QuantExecutionPolicyService {
     if (calibration?.evidenceSufficient === true && validation.confidenceBrierScore > 0.3)
       return { severity: 'BLOCK', allowed: false, reason: "QUANT_CALIBRATION_UNRELIABLE", validation: evidence };
 
+    if (gateResult.severity === 'BLOCK') {
+      return { severity: 'BLOCK', allowed: false, evaluated: false, reason: gateResult.reasons[0] as any };
+    }
+    
+    if (gateResult.severity === 'REDUCE_SIZE') {
+      return {
+        severity: 'REDUCE_SIZE',
+        allowed: true,
+        evaluated: true,
+        advisory: true,
+        sizeFactor: gateResult.sizeFactor,
+        reason: gateResult.reasons[0] as any,
+        reasons: gateResult.reasons,
+        validation: evidence,
+        ...(regimeEvidence ? { regime: regimeEvidence } : {}),
+      };
+    }
+
     return {
-      severity: 'APPROVE',
+      severity: gateResult.severity,
       allowed: true,
       evaluated: true,
       validation: evidence,
+      reasons: gateResult.reasons,
       ...(regimeEvidence ? { regime: regimeEvidence } : {}),
     };
   }

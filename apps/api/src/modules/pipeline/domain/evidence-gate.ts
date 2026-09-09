@@ -16,66 +16,49 @@ export interface EvidenceGateInput {
   mode: 'SHADOW' | 'DEMO' | 'LIVE';
 }
 
-export function evaluateEvidenceGate(input: EvidenceGateInput): EvidenceGateResult {
+export interface EvidenceGateOptions {
+  minSizeFactor?: number;
+  maxSizeFactor?: number;
+}
+
+export function evaluateEvidenceGate(input: EvidenceGateInput, options?: EvidenceGateOptions): EvidenceGateResult {
   const reasons: string[] = [];
-  let severity: 'BLOCK' | 'REDUCE_SIZE' | 'APPROVE' = 'APPROVE';
-  let targetFactor = 1.0;
+  let factor = 1.0;
 
-  if (input.coreDataStale) {
-    severity = 'BLOCK';
-    reasons.push('STALE_CORE_DATA');
-  }
+  if (input.coreDataStale) reasons.push('STALE_CORE_DATA');
+  if (input.unsafeGeometry) reasons.push('UNSAFE_GEOMETRY');
+  if (input.missingProtection) reasons.push('MISSING_PROTECTION');
+  if (input.costTooHigh) reasons.push('COST_TOO_HIGH');
+  if (input.hardAccountLimit) reasons.push('HARD_ACCOUNT_LIMIT');
+  if (input.negativeExactCohort) reasons.push('NEGATIVE_EXACT_COHORT');
+  
+  if (input.assumptionMismatch && input.mode === 'LIVE') reasons.push('ASSUMPTION_MISMATCH_LIVE');
+  if (input.newCohort && input.mode === 'LIVE') reasons.push('NEW_COHORT_LIVE');
 
-  if (input.unsafeGeometry) {
-    severity = 'BLOCK';
-    reasons.push('UNSAFE_GEOMETRY');
-  }
-
-  if (input.missingProtection) {
-    severity = 'BLOCK';
-    reasons.push('MISSING_PROTECTION');
-  }
-
-  if (input.costTooHigh) {
-    severity = 'BLOCK';
-    reasons.push('COST_TOO_HIGH');
-  }
-
-  if (input.hardAccountLimit) {
-    severity = 'BLOCK';
-    reasons.push('HARD_ACCOUNT_LIMIT');
-  }
-
-  if (input.negativeExactCohort) {
-    severity = 'BLOCK';
-    reasons.push('NEGATIVE_EXACT_COHORT');
-  }
-
-  if (input.assumptionMismatch && input.mode === 'LIVE') {
-    severity = 'BLOCK';
-    reasons.push('ASSUMPTION_MISMATCH_LIVE');
-  }
-
-  if (severity === 'BLOCK') {
+  if (reasons.length > 0) {
     return { severity: 'BLOCK', reasons };
   }
 
-  if (input.assumptionMismatch && (input.mode === 'SHADOW' || input.mode === 'DEMO')) {
+  let severity: 'BLOCK' | 'REDUCE_SIZE' | 'APPROVE' = 'APPROVE';
+
+  if (input.assumptionMismatch) {
     severity = 'REDUCE_SIZE';
     reasons.push('ASSUMPTION_MISMATCH_PROBE');
-    targetFactor = Math.min(targetFactor, 0.1);
+    factor *= 0.1;
   }
 
   if (input.newCohort) {
     severity = 'REDUCE_SIZE';
     reasons.push('NEW_COHORT');
-    targetFactor = Math.min(targetFactor, 0.25);
+    factor *= 0.25;
   }
 
   if (severity === 'REDUCE_SIZE') {
+    const minSize = options?.minSizeFactor ?? 0.05;
+    const maxSize = options?.maxSizeFactor ?? 1.0;
     return {
       severity: 'REDUCE_SIZE',
-      sizeFactor: Math.max(0.05, Math.min(1.0, targetFactor)),
+      sizeFactor: Math.max(minSize, Math.min(maxSize, factor)),
       reasons,
     };
   }
