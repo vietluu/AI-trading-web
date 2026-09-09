@@ -76,7 +76,16 @@ Your output must EXACTLY MATCH this JSON schema format:
         },
         "evidenceAgainst": {
           "type": "array",
-          "items": { /* Same as evidenceFor */ }
+          "items": {
+            "type": "object",
+            "properties": {
+              "snapshotField": { "type": "string" },
+              "source": { "type": "string" },
+              "sourceTimestamp": { "type": "string", "format": "date-time" },
+              "calculationVersion": { "type": "number" }
+            },
+            "required": ["snapshotField", "source", "sourceTimestamp", "calculationVersion"]
+          }
         },
         "missingEvidence": { "type": "array", "items": { "type": "string" } },
         "expiresAt": { "type": "string", "format": "date-time" }
@@ -163,7 +172,16 @@ export const TRADE_THESIS_JSON_SCHEMA = {
         },
         evidenceAgainst: {
           type: "array",
-          items: {}
+          items: {
+            type: "object",
+            properties: {
+              snapshotField: { type: "string" },
+              source: { "type": "string" },
+              sourceTimestamp: { type: "string", format: "date-time" },
+              calculationVersion: { type: "number" }
+            },
+            required: ["snapshotField", "source", "sourceTimestamp", "calculationVersion"]
+          }
         },
         missingEvidence: { type: "array", items: { type: "string" } },
         expiresAt: { type: "string", format: "date-time" }

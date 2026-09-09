@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AnticipatoryMarketSnapshot, TradeThesis } from '@platform/shared';
-import { validateTradeThesis } from '../../src/modules/agents/domain/trade-thesis-validator';
+import { validateTradeThesis, applyThesisReview } from '../../src/modules/agents/domain/trade-thesis-validator';
 
 const cutoff = '2026-09-09T12:00:00.000Z';
 const observedAt = '2026-09-09T11:59:00.000Z';
@@ -533,5 +533,72 @@ describe('TradeThesisValidator', () => {
     expect(result.valid).toBe(true);
     expect(result.status).toBe('VALID');
     expect(result.reasonCodes).toEqual([]);
+  });
+});
+
+describe('applyThesisReview', () => {
+  it('maps CANCEL to WAIT state and clears geometry', () => {
+    const thesis = createValidLongThesis();
+    const result = applyThesisReview(thesis, {
+      action: 'CANCEL',
+      reasonCodes: ['NO_VOLUME'],
+      evidenceRefs: [],
+      rationale: 'Volume drying up'
+    });
+
+    expect(result.direction).toBe('WAIT');
+    expect(result.state).toBe('WAIT');
+    expect(result.setup).toBe('NO_TRADE');
+    expect(result.entryZone).toBeNull();
+    expect(result.stopLoss).toBeNull();
+    expect(result.targets).toEqual([]);
+    expect(result.expectedNetR).toBeNull();
+    expect(result.missingEvidence).toContain('NO_VOLUME');
+  });
+
+  it('maps REQUIRE_TRIGGER to WATCHING state', () => {
+    const thesis = createValidLongThesis();
+    const result = applyThesisReview(thesis, {
+      action: 'REQUIRE_TRIGGER',
+      reasonCodes: ['NEEDS_CONFIRMATION'],
+      evidenceRefs: [],
+      rationale: 'Wait for 15m close'
+    });
+
+    expect(result.direction).toBe('LONG'); // direction remains
+    expect(result.state).toBe('WATCHING');
+    expect(result.missingEvidence).toContain('NEEDS_CONFIRMATION');
+    expect(result.entryZone).not.toBeNull();
+  });
+
+  it('maps REDUCE_SIZE to reduced expectedNetR based on sizeFactor', () => {
+    const thesis = createValidLongThesis();
+    thesis.expectedNetR = 2.0;
+    const result = applyThesisReview(thesis, {
+      action: 'REDUCE_SIZE',
+      sizeFactor: 0.5,
+      reasonCodes: ['HIGH_RISK'],
+      evidenceRefs: [],
+      rationale: 'Reduce risk due to news'
+    });
+
+    expect(result.direction).toBe('LONG');
+    expect(result.expectedNetR).toBe(1.0);
+    expect(result.missingEvidence).toContain('HIGH_RISK');
+  });
+
+  it('preserves fields on APPROVE', () => {
+    const thesis = createValidLongThesis();
+    const originalNetR = thesis.expectedNetR;
+    const result = applyThesisReview(thesis, {
+      action: 'APPROVE',
+      reasonCodes: [],
+      evidenceRefs: [],
+      rationale: 'Looks good'
+    });
+
+    expect(result.direction).toBe('LONG');
+    expect(result.state).toBe('PROBE_READY');
+    expect(result.expectedNetR).toBe(originalNetR);
   });
 });

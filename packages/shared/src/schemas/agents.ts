@@ -1302,3 +1302,21 @@ export type ThesisValidationResult = z.infer<
   typeof ThesisValidationResultSchema
 >;
 
+export const ThesisReviewActionSchema = z.enum([
+  'APPROVE',
+  'REDUCE_SIZE',
+  'REQUIRE_TRIGGER',
+  'CANCEL',
+]);
+export type ThesisReviewAction = z.infer<typeof ThesisReviewActionSchema>;
+
+export const ThesisReviewSchema = z
+  .object({
+    action: ThesisReviewActionSchema,
+    sizeFactor: z.number().min(0).max(1).optional(),
+    reasonCodes: z.array(z.string()),
+    evidenceRefs: z.array(EvidenceRefSchema),
+    rationale: z.string(),
+  })
+  .strict();
+export type ThesisReview = z.infer<typeof ThesisReviewSchema>;

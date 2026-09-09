@@ -31,7 +31,7 @@ import { createHash } from "node:crypto";
 import { adaptiveTradingPolicy, assetLiquidityClass, parseSpreadBps } from "../../../pipeline/domain/adaptive-trading-policy";
 import { classifyDetailedRegime, computeRegimeAdaptiveWeights } from "../../domain/analysis/regime-adaptive-weights";
 import { buildScenarioBlueprint } from "../../domain/analysis/scenario-planning-engine";
-import { ChainOfThoughtReflectionService, type ReflectionOutput } from './chain-of-thought-reflection.service';
+
 
 export type { AnalystName, Bias, ConflictLevel, RunDecisionOptions, Weighting };
 
@@ -50,7 +50,6 @@ export class DecisionService {
     private readonly fusionService: FusionService,
     @Optional() @Inject(PrismaService) private readonly prisma?: PrismaService,
     @Optional() private readonly configService?: ConfigService,
-    @Optional() private readonly reflectionService?: ChainOfThoughtReflectionService,
   ) {}
 
   public async run(options: RunDecisionOptions): Promise<DecisionOutput> {
@@ -232,58 +231,9 @@ export class DecisionService {
         : {}),
     };
 
-    // LLM Chain-of-Thought Reflection — final contrarian review
-    let reflectionResult: ReflectionOutput | undefined;
-    if (
-      this.reflectionService &&
-      calibratedDecision.decision !== 'WAIT' &&
-      this.configService?.get('LLM_REFLECTION_ENABLED', true)
-    ) {
-      try {
-        reflectionResult = await this.reflectionService.reflect(
-          {
-            symbol: rawInput.symbol,
-            candidateDecision: calibratedDecision.decision,
-            confidence: calibratedDecision.confidence,
-            regime: calibratedDecision.regime.detailed ?? calibratedDecision.regime.type,
-            anticipatorySignals: calibratedDecision.anticipatorySignals,
-            agentSummaries: this.extractAgentSummaries(rawInput),
-            recentLosses: postMortemContext?.recentLosses?.map(l => ({ symbol: l.symbol, reason: l.rootCause, regime: l.regime })),
-          },
-          userId,
-        );
-
-        if (reflectionResult && reflectionResult.trapProbability > 70) {
-          calibratedDecision.decision = 'WAIT';
-          calibratedDecision.confidence = Math.min(calibratedDecision.confidence, reflectionResult.adjustedConfidence);
-          calibratedDecision.overrides = [
-            ...calibratedDecision.overrides,
-            `LLM_REFLECTION_OVERRIDE: ${reflectionResult.overrideReason ?? 'Trap probability exceeded 70%'}`,
-          ];
-        } else if (reflectionResult) {
-          calibratedDecision.confidence = Math.min(
-            calibratedDecision.confidence,
-            reflectionResult.adjustedConfidence,
-          );
-        }
-
-        if (reflectionResult) {
-          calibratedDecision.reflection = {
-            reasoning: reflectionResult.reasoning,
-            contrarianArguments: reflectionResult.contrarianArguments,
-            trapProbability: reflectionResult.trapProbability,
-            overrideReason: reflectionResult.overrideReason,
-          };
-        }
-      } catch (reflectionError) {
-        this.logger.warn({
-          event: 'reflection_step_failed',
-          symbol: rawInput.symbol,
-          error: reflectionError instanceof Error ? reflectionError.message : String(reflectionError),
-        });
-      }
-    }
-
+    // LLM Chain-of-Thought Reflection — final contrarian review has been moved to Critic (Task 3)
+    // and is now executed on the TradeThesis in the new execution flow.
+    
     // Phase C: Shadow Mode Simulation Run
     if (config?.shadowEnabled && userId && this.prisma) {
       const shadowWeights = this.validWeights(config.shadowWeightsJson);

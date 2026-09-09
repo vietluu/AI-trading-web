@@ -4,6 +4,7 @@ import type {
   ThesisValidationReasonCode,
   ThesisValidationResult,
   TradeThesis,
+  ThesisReview,
 } from '@platform/shared';
 import { resolveSnapshotPath } from '@platform/shared';
 
@@ -301,4 +302,39 @@ export function validateTradeThesis(
     reasonCodes: uniqueReasonCodes,
     reasons,
   };
+}
+
+/**
+ * Pure function to apply a Critic review to a TradeThesis, returning a new thesis object.
+ * Maps CANCEL to WAIT state, REQUIRE_TRIGGER to WATCHING state, and reduces size.
+ */
+export function applyThesisReview(thesis: TradeThesis, review: ThesisReview): TradeThesis {
+  const result: TradeThesis = {
+    ...thesis,
+    missingEvidence: [...thesis.missingEvidence]
+  };
+
+  if (review.reasonCodes && review.reasonCodes.length > 0) {
+    result.missingEvidence.push(...review.reasonCodes);
+  }
+
+  if (review.action === 'CANCEL') {
+    result.direction = 'WAIT';
+    result.state = 'WAIT';
+    result.setup = 'NO_TRADE';
+    result.entryZone = null;
+    result.stopLoss = null;
+    result.targets = [];
+    result.expectedNetR = null;
+  } else if (review.action === 'REQUIRE_TRIGGER') {
+    result.state = 'WATCHING';
+  }
+
+  if (review.action === 'REDUCE_SIZE' && review.sizeFactor !== undefined) {
+    if (result.expectedNetR !== null) {
+      result.expectedNetR = Number((result.expectedNetR * review.sizeFactor).toFixed(2));
+    }
+  }
+
+  return result;
 }
