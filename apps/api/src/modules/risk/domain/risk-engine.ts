@@ -183,7 +183,12 @@ export function evaluateRisk(
     // Execution intentionally does not pyramid. Reject at the authoritative
     // risk stage as well, so a candidate cannot be recorded as risk-approved
     // and then encounter the same-direction guard only during submission.
-    if (isSameDirection) return reject("PYRAMIDING_NOT_ALLOWED");
+    if (isSameDirection) {
+      const isStagedEntry = input.marketData.tradePlanContext?.gateSeverity !== undefined && input.marketData.tradePlanContext?.gateSeverity !== 'BLOCK';
+      if (!isStagedEntry) {
+        return reject("PYRAMIDING_NOT_ALLOWED");
+      }
+    }
   }
 
   // A reversal replaces the position in the same symbol, so it must not consume an
@@ -264,6 +269,23 @@ export function evaluateRisk(
     configuredRiskRewardRatio: limits.riskRewardRatio,
     roundTripCostPct: limits.estimatedRoundTripCostPct,
   });
+
+  const existingSameDirection = input.currentPositions.find(p => p.side === input.decision.decision);
+  if (existingSameDirection) {
+    if (!plan.stagedEntry) {
+      return {
+        approved: false,
+        reason: 'UNPLANNED_AVERAGE_DOWN',
+        riskScore: 100,
+        exposurePct: baseExposurePct,
+        drawdownPct,
+      };
+    } else {
+      plan.stagedEntry.stage = 'CONFIRMED';
+    }
+  } else if (plan.stagedEntry) {
+    plan.stagedEntry.stage = 'PROBE';
+  }
   if (!plan.approved || !plan.stopLoss || !plan.takeProfit)
     return {
       ...reject(plan.reason ?? "TRADE_PLAN_REJECTED"),
@@ -357,8 +379,11 @@ export function evaluateRisk(
     ),
   );
   if (plan.stagedEntry) {
+    const multiplier = plan.stagedEntry.stage === 'CONFIRMED' 
+      ? plan.stagedEntry.confirmationSizePct 
+      : plan.stagedEntry.probeSizePct;
     positionSize = rounded(
-      positionSize * plan.stagedEntry.probeSizePct,
+      positionSize * multiplier,
       RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS
     );
   }

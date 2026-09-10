@@ -838,9 +838,14 @@ export class LiveTradingService {
       existingOpenPosition &&
       existingOpenPosition.side === (assessment.decision as "LONG" | "SHORT")
     ) {
-      throw new ConflictException(
-        "A position already exists in the approved direction",
-      );
+      const isConfirmedAdd = assessment.tradePlan && typeof assessment.tradePlan === 'object' && 
+                             'stagedEntry' in assessment.tradePlan && 
+                             (assessment.tradePlan as any).stagedEntry?.stage === 'CONFIRMED';
+      if (!isConfirmedAdd) {
+        throw new ConflictException(
+          "A position already exists in the approved direction and this is not a CONFIRMED add",
+        );
+      }
     }
     const sameSignalOrder = await this.prisma.liveOrder.findFirst({
       where: {
@@ -889,10 +894,16 @@ export class LiveTradingService {
     );
     const desiredSide = assessment.decision as "LONG" | "SHORT";
     const same = positions.find((position) => position.side === desiredSide);
-    if (same)
-      throw new ConflictException(
-        "A position already exists in the approved direction",
-      );
+    if (same) {
+      const isConfirmedAdd = assessment.tradePlan && typeof assessment.tradePlan === 'object' && 
+                             'stagedEntry' in assessment.tradePlan && 
+                             (assessment.tradePlan as any).stagedEntry?.stage === 'CONFIRMED';
+      if (!isConfirmedAdd) {
+        throw new ConflictException(
+          "A position already exists in the approved direction and this is not a CONFIRMED add",
+        );
+      }
+    }
     const opposite = positions.find(
       (position) => position.side !== desiredSide,
     );
@@ -1899,6 +1910,10 @@ export class LiveTradingService {
           assessment?.tradePlan === null || assessment?.tradePlan === undefined
             ? Prisma.JsonNull
             : (assessment.tradePlan as Prisma.InputJsonValue),
+        stagedEntry:
+          assessment?.tradePlan && typeof assessment.tradePlan === 'object' && 'stagedEntry' in assessment.tradePlan && assessment.tradePlan.stagedEntry !== null
+            ? (assessment.tradePlan.stagedEntry as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
         errorCode: null,
         errorMessage: null,
       };

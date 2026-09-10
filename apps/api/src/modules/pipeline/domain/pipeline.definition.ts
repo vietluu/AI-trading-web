@@ -21,6 +21,28 @@ export const FULL_ANALYSIS_DECISION = Object.freeze({
   ],
 } satisfies PipelineDefinition);
 
+export const PROACTIVE_THESIS = Object.freeze({
+  id: 'proactive-thesis',
+  version: 1,
+  description: 'AI Thesis execution flow',
+  defaultParams: { interval: '15m', lookbackCandles: 150, lookbackHours: 24, maxItems: 50 },
+  timeoutMs: 8 * 60_000,
+  maxConcurrency: 5,
+  retryPolicy: { attempts: 2, backoffMs: 5_000 },
+  enabled: true,
+  steps: [
+    { id: 'market', type: 'AGENT', ref: 'MARKET_ANALYST' },
+    { id: 'technical', type: 'AGENT', ref: 'TECHNICAL_ANALYST' },
+    { id: 'news', type: 'AGENT', ref: 'NEWS_ANALYST' },
+    { id: 'sentiment', type: 'AGENT', ref: 'SENTIMENT_ANALYST' },
+    { id: 'macro', type: 'AGENT', ref: 'MACRO_ANALYST' },
+    { id: 'onchain', type: 'AGENT', ref: 'ON_CHAIN_ANALYST' },
+    { id: 'fusion', type: 'FUSION', ref: 'FUSION_V1', dependsOn: ['market', 'technical', 'news', 'sentiment', 'macro', 'onchain'] },
+    { id: 'decision', type: 'DECISION', ref: 'DECISION_PRO', dependsOn: ['fusion'] },
+  ],
+} satisfies PipelineDefinition);
+
 export function resolvePipelineDefinition(id: string): PipelineDefinition | undefined {
+  if (id === 'proactive-thesis') return PROACTIVE_THESIS;
   return id === FULL_ANALYSIS_DECISION.id ? FULL_ANALYSIS_DECISION : undefined;
 }

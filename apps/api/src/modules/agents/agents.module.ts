@@ -104,6 +104,7 @@ import { DecisionController } from './presentation/controllers/decision.controll
     ChainOfThoughtReflectionService,
     AnticipatorySnapshotService,
     TradeResearcherService,
+    ChainOfThoughtReflectionService,
   ],
   exports: [
     AgentRegistryService,

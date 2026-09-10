@@ -77,6 +77,7 @@ export interface TradePlan {
   tp1Price?: number;
   tp2Price?: number;
   stagedEntry?: {
+    stage?: "PROBE" | "CONFIRMED";
     probeSizePct: number;
     confirmationSizePct: number;
     combinedRiskLimitPct: number;

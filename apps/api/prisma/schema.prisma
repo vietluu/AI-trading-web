@@ -410,6 +410,7 @@ model LiveOrder {
   lowestMark              Decimal?           @db.Decimal(24, 8)
   protectiveClientOrderId String?
   tradePlan               Json?
+  stagedEntry             Json?
   partialTakenAt          DateTime?
   errorCode               String?
   errorMessage            String?

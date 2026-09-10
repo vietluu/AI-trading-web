@@ -111,6 +111,9 @@ export class PipelineRunnerService {
     @Optional() private readonly quantPolicy?: QuantExecutionPolicyService,
     @Optional() private readonly portfolio?: PortfolioService,
     @Optional() private readonly confluenceCollector?: ConfluenceCollectorService,
+    @Optional() private readonly tradeResearcher?: import('../../agents/application/services/trade-researcher.service').TradeResearcherService,
+    @Optional() private readonly critic?: import('../../agents/application/services/chain-of-thought-reflection.service').ChainOfThoughtReflectionService,
+    @Optional() private readonly anticipatorySnapshot?: import('../../agents/application/services/anticipatory-snapshot.service').AnticipatorySnapshotService,
   ) {}
 
   async run(job: PipelineJob): Promise<void> {
@@ -423,16 +426,57 @@ export class PipelineRunnerService {
       }
       await this.assertNotCancelled(runId);
       await this.startStep(runId, "decision");
-      const synthesizedOutput = await this.decision.decideForUser({
-        symbol,
-        fusionOutput,
-        ...analyses,
-      }, job.userId, {
-        pipelineRunId: runId,
-        provider: job.provider,
-        timeframe: String(interval),
-        referencePrice: lastPrice,
-      });
+      let synthesizedOutput: import("@platform/shared").DecisionOutput;
+      let proactiveThesis;
+      
+      if (job.pipelineId === 'proactive-thesis' && this.tradeResearcher && this.critic && this.anticipatorySnapshot) {
+        const snapshot = await this.anticipatorySnapshot.build({
+          userId: job.userId,
+          symbol,
+          provider: job.provider as import('../../../exchange/domain/exchange.types').ExchangeProvider,
+          timeframe: String(interval) as import('../../../exchange/domain/exchange.types').ExchangeInterval,
+          sourceDataCutoff: new Date()
+        });
+        const research = await this.tradeResearcher.research(snapshot, {
+          userId: job.userId,
+          provider: job.provider,
+          model: 'claude-3-5-sonnet',
+          configHash: 'proactive-thesis-hash',
+          parentSnapshotId: runId,
+          promptVersion: 1
+        });
+        
+        const review = await this.critic.reflect({ snapshot, thesis: research.preferred }, job.userId);
+        proactiveThesis = (await import('../../agents/domain/trade-thesis-validator')).applyThesisReview(research.preferred, review);
+        
+        synthesizedOutput = {
+          decision: proactiveThesis.direction,
+          confidence: proactiveThesis.confidence,
+          regime: {
+            type: "TRENDING",
+
+          },
+          opportunityScore: 80,
+          riskScore: 50,
+          expectedReward: proactiveThesis.expectedNetR || 0,
+          expectedLoss: 1,
+          expectedValue: proactiveThesis.expectedNetR || 0,
+          reasoning: JSON.stringify(proactiveThesis.setup),
+          signals: { bullishFactors: [], bearishFactors: [] },
+          dataQuality: "GOOD", generatedAt: new Date().toISOString(), conflictLevel: "LOW", agreementScore: 100, risks: [], weighting: { technical: 0.5, market: 0.5, news: 0, sentiment: 0, macro: 0, onchain: 0 }, expectedWinProbability: 0.5, volatilityAdjustment: 0, overrides: [], profitFactorEstimate: 1, adaptiveThreshold: 50, calibrationAdjustment: 0, executionCost: 0
+        };
+      } else {
+        synthesizedOutput = await this.decision.decideForUser({
+          symbol,
+          fusionOutput,
+          ...analyses,
+        }, job.userId, {
+          pipelineRunId: runId,
+          provider: job.provider,
+          timeframe: String(interval),
+          referencePrice: lastPrice,
+        });
+      }
       // Existing short-timeframe schedules that already opted into breakout
       // automatically participate in the bounded momentum scalp candidate.
       if (
@@ -710,6 +754,8 @@ export class PipelineRunnerService {
                   ...(Number.isFinite(lastPrice) ? { currentPrice: lastPrice } : {}),
                   ...(indicatorSnapshot?.values?.squeezeState ? { squeezeState: indicatorSnapshot.values.squeezeState } : {}),
                   gateSeverity: judge?.severity === 'REDUCE_SIZE' || (quant && 'severity' in quant && quant.severity === 'REDUCE_SIZE') ? 'REDUCE_SIZE' : 'APPROVE',
+                  ...(synthesizedOutput?.anticipatorySignals?.liquiditySweep ? { liquiditySweep: synthesizedOutput.anticipatorySignals.liquiditySweep.detected } : {}),
+                  ...(synthesizedOutput?.anticipatorySignals?.derivativesImbalance?.squeezeProbability !== undefined ? { derivativesImbalance: synthesizedOutput.anticipatorySignals.derivativesImbalance.squeezeProbability } : {}),
               timeframeMs: timeframeMilliseconds(String(interval)),
               ...(Number.isFinite(Number(indicatorSnapshot?.values.rsi14))
                 ? { rsi: Number(indicatorSnapshot?.values.rsi14) }
@@ -827,6 +873,8 @@ export class PipelineRunnerService {
                   ...(Number.isFinite(lastPrice) ? { currentPrice: lastPrice } : {}),
                   ...(indicatorSnapshot?.values?.squeezeState ? { squeezeState: indicatorSnapshot.values.squeezeState } : {}),
                   gateSeverity: judge?.severity === 'REDUCE_SIZE' || (quant && 'severity' in quant && quant.severity === 'REDUCE_SIZE') ? 'REDUCE_SIZE' : 'APPROVE',
+                  ...(synthesizedOutput?.anticipatorySignals?.liquiditySweep ? { liquiditySweep: synthesizedOutput.anticipatorySignals.liquiditySweep.detected } : {}),
+                  ...(synthesizedOutput?.anticipatorySignals?.derivativesImbalance?.squeezeProbability !== undefined ? { derivativesImbalance: synthesizedOutput.anticipatorySignals.derivativesImbalance.squeezeProbability } : {}),
                   timeframeMs: timeframeMilliseconds(String(interval)),
                   ...(Number.isFinite(Number(indicatorSnapshot?.values.rsi14))
                     ? { rsi: Number(indicatorSnapshot?.values.rsi14) }
@@ -877,6 +925,9 @@ export class PipelineRunnerService {
 
             const execute = async () => {
               if (riskAssessment?.outcome === "RISK_APPROVED") {
+                if (job.pipelineId === 'proactive-thesis' && (proactiveMode === 'OBSERVE' || proactiveMode === 'SHADOW')) {
+                  return { outcome: 'ORDER_SUBMITTED', reason: 'SKIPPED_BY_PROACTIVE_MODE' };
+                }
                 submissionStartedAt = new Date();
                 const execution = await this.liveTrading.executePipeline(
                   job.userId,
