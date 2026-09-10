@@ -13,6 +13,20 @@ import type { ChainOfThoughtReflectionService } from "../../src/modules/agents/a
 import type { AnticipatorySnapshotService } from "../../src/modules/agents/application/services/anticipatory-snapshot.service";
 import type { QuantExecutionPolicyService } from "../../src/modules/pipeline/application/quant-execution-policy.service";
 
+import type { FusionService } from "../../src/modules/agents/application/services/fusion.service";
+import type { DecisionService } from "../../src/modules/agents/application/services/decision.service";
+import type { PipelineRepository } from "../../src/modules/pipeline/infrastructure/pipeline.repository";
+import type { PipelineCancellationService } from "../../src/modules/pipeline/infrastructure/pipeline-cancellation.service";
+import type { PipelineAlertService } from "../../src/modules/pipeline/application/pipeline-alert.service";
+import type { PipelineAnalyticsService } from "../../src/modules/pipeline/application/pipeline-analytics.service";
+import type { PortfolioService } from "../../src/modules/portfolio/application/portfolio.service";
+import type { ConfluenceCollectorService } from "../../src/modules/pipeline/infrastructure/confluence-collector.service";
+import type { PipelineJob } from "../../src/modules/pipeline/infrastructure/pipeline-queue.service";
+import type { MarketDataService } from "../../src/market-data/application/market-data.service";
+import type { SettingsService } from "../../src/settings/settings.service";
+import type { RedisService } from "../../src/redis/redis.service";
+import type { DecisionOutput } from "@platform/shared";
+
 // ---------------------------------------------------------------------------
 // Shared fixtures
 // ---------------------------------------------------------------------------
@@ -20,14 +34,16 @@ import type { QuantExecutionPolicyService } from "../../src/modules/pipeline/app
 const SYMBOL = "BTC-USDT";
 const PRICE = 100_000;
 
-const makeJob = () => ({
+const makeJob = (): PipelineJob => ({
   runId: "run-1",
   pipelineId: "proactive-thesis",
   userId: "user-1",
   provider: "BINANCE_FUTURES",
   symbol: SYMBOL,
   params: { interval: "15m", lookbackCandles: 150 },
-} as any);
+  trigger: "SCHEDULE",
+  createdAt: new Date().toISOString(),
+});
 
 const makeFusionResult = () => ({
   analyses: {
@@ -37,7 +53,7 @@ const makeFusionResult = () => ({
     sentiment: {},
     macro: {},
     onchain: {},
-  } as any,
+  },
   fusionOutput: {
     decision: "LONG",
     confidence: 80,
@@ -62,7 +78,7 @@ const makeFusionResult = () => ({
     adaptiveThreshold: 50,
     calibrationAdjustment: 0,
     executionCost: 0,
-  } as any,
+  },
   cacheHits: {},
 });
 
@@ -111,6 +127,7 @@ describe("Proactive Thesis Pipeline Integration", () => {
   let mockCritic: Partial<ChainOfThoughtReflectionService>;
   let mockSnapshotService: Partial<AnticipatorySnapshotService>;
   let mockQuantPolicy: Partial<QuantExecutionPolicyService>;
+  let mockCollector: { addSignal: ReturnType<typeof vi.fn> };
 
   afterEach(() => vi.unstubAllEnvs());
 
@@ -149,29 +166,31 @@ describe("Proactive Thesis Pipeline Integration", () => {
     };
 
     const fusionResult = makeFusionResult();
+    mockCollector = { addSignal: vi.fn().mockResolvedValue({ ready: true }) };
 
     pipelineRunner = new PipelineRunnerService(
       // fusion
-      { runDetailed: vi.fn().mockResolvedValue(fusionResult) } as any,
+      { runDetailed: vi.fn().mockResolvedValue(fusionResult) } as unknown as FusionService,
       // decision
       {
         decideForUser: vi.fn().mockResolvedValue(fusionResult.fusionOutput),
-        calibrateForExecution: vi.fn().mockImplementation((d: any) => Promise.resolve({ ...fusionResult.fusionOutput, ...d })),
-      } as any,
+        calibrateForExecution: vi.fn().mockImplementation((d: DecisionOutput) => Promise.resolve({ ...fusionResult.fusionOutput, ...d })),
+      } as unknown as DecisionService,
       // repository
       {
+        updateStep: vi.fn().mockResolvedValue(undefined),
         updateRun: vi.fn().mockResolvedValue(undefined),
         updateJob: vi.fn().mockResolvedValue(undefined),
         markJobFailed: vi.fn().mockResolvedValue(undefined),
         markJobCompleted: vi.fn().mockResolvedValue(undefined),
         activeStrategyKeys: vi.fn().mockResolvedValue(["ai-core"]),
         findRun: vi.fn().mockResolvedValue(null),
-      } as any,
-      {} as any, // cancellation
+      } as unknown as PipelineRepository,
+      { isCancelled: vi.fn().mockResolvedValue(false) } as unknown as PipelineCancellationService, // cancellation
       // riskPolicy — always allow through; actual risk eval happens in assessPipelineDecision
-      { evaluate: vi.fn().mockReturnValue({ actionable: true, reason: undefined }) } as any,
+      { evaluate: vi.fn().mockReturnValue({ actionable: true, reason: undefined }) },
       // signalFilter
-      { evaluate: vi.fn().mockReturnValue({ allowed: true, actionable: true }) } as any,
+      { evaluate: vi.fn().mockReturnValue({ allowed: true, actionable: true }) },
       // marketData
       {
         getLatestPrice: vi.fn().mockResolvedValue(PRICE),
@@ -191,7 +210,7 @@ describe("Proactive Thesis Pipeline Integration", () => {
           closeTime: new Date().toISOString(),
           close: PRICE, open: PRICE - 200, high: PRICE + 300, low: PRICE - 400,
         }]),
-      } as any,
+      } as unknown as MarketDataService,
       // alerts
       {
         repeatedFailure: vi.fn().mockResolvedValue(undefined),
@@ -200,33 +219,25 @@ describe("Proactive Thesis Pipeline Integration", () => {
         blockedOpportunity: vi.fn().mockResolvedValue(undefined),
         decision: vi.fn().mockResolvedValue(undefined),
         confluenceEvaluation: vi.fn().mockResolvedValue(undefined),
-      } as any,
-      { recordStageTelemetry: vi.fn() } as any,                       // analytics
-      mockLiveTrading as any,
+      } as unknown as PipelineAlertService,
+      { recordStageTelemetry: vi.fn() } as unknown as PipelineAnalyticsService,                       // analytics
+      mockLiveTrading as unknown as LiveTradingService,
       // redis
-      { setNx: vi.fn().mockResolvedValue(true), compareAndDelete: vi.fn().mockResolvedValue(undefined) } as any,
+      { setNx: vi.fn().mockResolvedValue(true), compareAndDelete: vi.fn().mockResolvedValue(undefined) } as unknown as RedisService,
       // judge
-      { evaluate: vi.fn().mockReturnValue({ verdict: "APPROVE", severity: "APPROVE", approved: true, reasons: [] }) } as any,
+      { evaluate: vi.fn().mockReturnValue({ verdict: "APPROVE", severity: "APPROVE", approved: true, reasons: [] }) },
       // settings
-      { get: vi.fn().mockResolvedValue({ preferredTimeframes: [] }), getSettings: vi.fn().mockResolvedValue({ proactiveMode: "DEMO" }) } as any,
-      mockQuantPolicy as any,
+      { get: vi.fn().mockResolvedValue({ preferredTimeframes: [] }), getSettings: vi.fn().mockResolvedValue({ proactiveMode: "DEMO" }) } as unknown as SettingsService,
+      mockQuantPolicy as unknown as QuantExecutionPolicyService,
       // portfolio
-      { ensureRegisteredStrategies: vi.fn().mockResolvedValue(undefined), assignStrategy: vi.fn(), processConfluence: vi.fn() } as any,
-      undefined, // confluenceCollector
-      mockTradeResearcher as any,
-      mockCritic as any,
-      mockSnapshotService as any,
+      { ensureRegisteredStrategies: vi.fn().mockResolvedValue(undefined), assignStrategy: vi.fn(), processConfluence: vi.fn() } as unknown as PortfolioService,
+      mockCollector as unknown as ConfluenceCollectorService,
+      mockTradeResearcher as unknown as TradeResearcherService,
+      mockCritic as unknown as ChainOfThoughtReflectionService,
+      mockSnapshotService as unknown as AnticipatorySnapshotService,
     );
 
-    // Patch infrastructure helpers that require DB / Redis / actual NestJS context.
-    // Cast to 'any' to override private visibility in tests.
-    (pipelineRunner as any).startStep = vi.fn().mockResolvedValue(undefined);
-    (pipelineRunner as any).finishStep = vi.fn().mockResolvedValue(undefined);
-    (pipelineRunner as any).assertNotCancelled = vi.fn().mockResolvedValue(undefined);
-    (pipelineRunner as any).withTimeout = vi.fn().mockImplementation((p: Promise<any>) => p);
-    (pipelineRunner as any).source = vi.fn().mockReturnValue("SCHEDULED");
-    (pipelineRunner as any).completeStep = vi.fn().mockResolvedValue(undefined);
-    (pipelineRunner as any).executeConfluenceBatch = vi.fn().mockResolvedValue(undefined);
+
   });
 
   // ── Scenario 1: Squeeze probe — full happy path ────────────────────────────
@@ -372,10 +383,9 @@ describe("Proactive Thesis Pipeline Integration", () => {
     "keeps batch-tagged proactive jobs on the guarded %s execution path",
     async (mode) => {
       vi.stubEnv("PROACTIVE_AI_MODE", mode);
-      const collector = { addSignal: vi.fn().mockResolvedValue({ ready: true }) };
-      (pipelineRunner as any).confluenceCollector = collector;
+
       const result = await pipelineRunner.run({ ...makeJob(), confluenceBatchId: "batch-1" });
-      expect(collector.addSignal).not.toHaveBeenCalled();
+      expect(mockCollector.addSignal).not.toHaveBeenCalled();
       if (mode === "DEMO") {
         expect(result).toMatchObject({ outcome: "ORDER_SUBMITTED" });
         expect(mockLiveTrading.assessPipelineDecision).toHaveBeenCalledWith(

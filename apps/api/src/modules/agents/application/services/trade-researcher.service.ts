@@ -4,11 +4,20 @@ import {
   TradeThesis,
   TradeThesisSchema,
 } from '@platform/shared';
+import type { AIProviderType, AIResponseDto } from '@platform/shared';
 import { AIOrchestratorService } from '../../../ai/application/ai-orchestrator.service';
 import { DecisionService } from './decision.service';
 import { TRADE_RESEARCHER_SYSTEM_PROMPT, TRADE_THESIS_JSON_SCHEMA } from '../../domain/prompts/trade-researcher.prompt';
 import { validateTradeThesis } from '../../domain/trade-thesis-validator';
 import { PrismaService } from '../../../../database/prisma.service';
+import { Prisma } from '@prisma/client';
+import { ExchangeProvider } from '../../../../exchange/domain/exchange.types';
+
+function asAiProvider(value: string | undefined): AIProviderType | undefined {
+  return value === 'OPENAI' || value === 'ANTHROPIC' || value === 'GEMINI' || value === 'OLLAMA'
+    ? value
+    : undefined;
+}
 
 export interface TradeResearcherContext {
   userId: string;
@@ -49,7 +58,7 @@ export class TradeResearcherService {
 
       const response = await this.aiOrchestrator.execute({
         userId: context.userId,
-        provider: context.provider as any,
+        provider: asAiProvider(context.provider),
         model: context.model,
         systemPrompt: TRADE_RESEARCHER_SYSTEM_PROMPT,
         userPrompt,
@@ -64,7 +73,7 @@ export class TradeResearcherService {
       // Parse AI response through TradeThesisSchema
       const preferred = TradeThesisSchema.parse(response.json.preferred);
       const alternatives = Array.isArray(response.json.alternatives)
-        ? response.json.alternatives.map((a: any) => TradeThesisSchema.parse(a))
+        ? response.json.alternatives.map((alternative: unknown) => TradeThesisSchema.parse(alternative))
         : [];
 
       // Validate references and basics
@@ -107,7 +116,7 @@ export class TradeResearcherService {
 
   private async persistRun(
     context: TradeResearcherContext,
-    response: any,
+    response: AIResponseDto | null,
     startedAt: Date,
     completedAt: Date,
     success: boolean,
@@ -121,22 +130,22 @@ export class TradeResearcherService {
           invocationSource: 'INTERNAL_SERVICE',
           inputHash: context.configHash, // Persist config hash
           sanitizedInput: {},
-          output: response?.json || {},
+          output: (response?.json ?? {}) as Prisma.InputJsonValue,
           promptId: 'trade-researcher',
           promptVersion: context.promptVersion, // Persist prompt version
           contextSnapshotId: context.parentSnapshotId, // Persist parent snapshot ID
-          provider: response?.provider || context.provider || 'UNKNOWN', // Persist provider
-          model: response?.model || context.model || 'UNKNOWN', // Persist model
+          provider: response?.provider ?? context.provider ?? 'UNKNOWN', // Persist provider
+          model: response?.model ?? context.model ?? 'UNKNOWN', // Persist model
           startedAt,
           completedAt,
           durationMs: completedAt.getTime() - startedAt.getTime(),
-          inputTokens: response?.usage?.promptTokens || 0,
-          outputTokens: response?.usage?.completionTokens || 0,
+          inputTokens: response?.usage?.promptTokens ?? 0,
+          outputTokens: response?.usage?.completionTokens ?? 0,
           status: success ? 'COMPLETED' : 'FAILED',
         },
       });
-    } catch (err) {
-      this.logger.error(`Failed to persist AgentRun for TradeResearcher: ${err}`);
+    } catch (err: unknown) {
+      this.logger.error(`Failed to persist AgentRun for TradeResearcher: ${String(err)}`);
     }
   }
 
@@ -150,8 +159,8 @@ export class TradeResearcherService {
       correlationId: context.parentSnapshotId,
       input: {
         symbol: snapshot.symbol,
-        provider: snapshot.provider as any,
-        interval: snapshot.timeframe as any,
+        provider: snapshot.provider as ExchangeProvider,
+        interval: snapshot.timeframe as '1m' | '5m' | '15m' | '1h',
         lookbackCandles: 150,
         lookbackHours: 6,
         maxItems: 20,

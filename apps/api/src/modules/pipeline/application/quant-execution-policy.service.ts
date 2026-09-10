@@ -139,14 +139,14 @@ export class QuantExecutionPolicyService {
     });
     
     if (gateResult.severity === 'BLOCK') {
-       let reason: any = 'QUANT_VALIDATION_MISSING';
+       let reason: NonNullable<QuantExecutionPolicyResult['reason']> = 'QUANT_VALIDATION_MISSING';
        if (!validation) reason = 'QUANT_VALIDATION_MISSING';
        else if (gateResult.reasons.includes('ASSUMPTION_MISMATCH_LIVE')) reason = 'QUANT_ASSUMPTION_MISMATCH';
        else if (gateResult.reasons.includes('NEW_COHORT_LIVE')) reason = 'QUANT_SAMPLE_TOO_SMALL';
        else if (gateResult.reasons.includes('NEGATIVE_EXACT_COHORT')) {
            reason = !validation.walkForwardStable ? 'QUANT_WALK_FORWARD_UNSTABLE' : 'QUANT_PROBABILITY_TOO_LOW';
            if (evidence) {
-               const canary = this.dislocationCanary(reason, input, evidence!);
+               const canary = this.dislocationCanary(reason, input, evidence);
                if (canary) {
                    return { ...canary, reasons: Array.from(new Set([...(canary.reasons ?? []), ...gateResult.reasons])) };
                }
@@ -185,12 +185,12 @@ export class QuantExecutionPolicyService {
       
 
     if (validation.probabilityOfRuin > 15) {
-      const canary = this.dislocationCanary("QUANT_RUIN_RISK_TOO_HIGH", input, evidence!);
+      const canary = evidence && this.dislocationCanary("QUANT_RUIN_RISK_TOO_HIGH", input, evidence);
       if (canary) return applyGate(canary);
       return applyGate({ severity: 'BLOCK', allowed: false, reason: "QUANT_RUIN_RISK_TOO_HIGH", validation: evidence });
     }
     if (validation.outOfSampleSharpe <= 0.8) {
-      const canary = this.dislocationCanary("QUANT_OUT_OF_SAMPLE_EDGE_MISSING", input, evidence!);
+      const canary = evidence && this.dislocationCanary("QUANT_OUT_OF_SAMPLE_EDGE_MISSING", input, evidence);
       if (canary) return applyGate(canary);
       return applyGate({ severity: 'BLOCK', allowed: false, reason: "QUANT_OUT_OF_SAMPLE_EDGE_MISSING", validation: evidence });
     }

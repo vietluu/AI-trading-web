@@ -1,12 +1,16 @@
-import { TradeResearcherService, TradeResearcherContext } from '../../src/modules/agents/application/services/trade-researcher.service';
-import { AnticipatoryMarketSnapshot, TradeThesis } from '@platform/shared';
-import { describe, expect, it, beforeEach, vi } from 'vitest';
+import { TradeResearcherService, type TradeResearcherContext } from '../../src/modules/agents/application/services/trade-researcher.service';
+import { type AnticipatoryMarketSnapshot, type DecisionOutput, type TradeThesis } from '@platform/shared';
+import { describe, expect, it, beforeEach, vi, type Mock } from 'vitest';
+
+import type { AIOrchestratorService } from '../../src/modules/ai/application/ai-orchestrator.service';
+import type { DecisionService } from '../../src/modules/agents/application/services/decision.service';
+import type { PrismaService } from '../../src/database/prisma.service';
 
 describe('TradeResearcherService', () => {
   let service: TradeResearcherService;
-  let aiOrchestratorService: any;
-  let decisionService: any;
-  let prismaService: any;
+  let aiOrchestratorService: { execute: Mock<AIOrchestratorService['execute']> };
+  let decisionService: { run: Mock<() => Promise<Partial<DecisionOutput>>> };
+  let prismaService: { agentRun: { create: Mock<(args: unknown) => Promise<unknown>> } };
 
   const mockSnapshot: AnticipatoryMarketSnapshot = {
     symbol: 'BTC-USDT',
@@ -16,13 +20,13 @@ describe('TradeResearcherService', () => {
     schemaVersion: 1,
     calculationVersion: 1,
     eligibility: { status: 'ELIGIBLE', reasons: [] },
-    structure: { coverage: 'UNAVAILABLE', freshness: 'UNAVAILABLE', observationAgeMs: null, unavailableFields: ['x'], reason: 'y' } as any,
-    volatility: { coverage: 'AVAILABLE', freshness: 'FRESH', observationAgeMs: 0, unavailableFields: [], atr: 1000 } as any,
-    momentum: { coverage: 'UNAVAILABLE', freshness: 'UNAVAILABLE', observationAgeMs: null, unavailableFields: ['x'], reason: 'y' } as any,
-    participation: { coverage: 'UNAVAILABLE', freshness: 'UNAVAILABLE', observationAgeMs: null, unavailableFields: ['x'], reason: 'y' } as any,
-    derivatives: { coverage: 'UNAVAILABLE', freshness: 'UNAVAILABLE', observationAgeMs: null, unavailableFields: ['x'], reason: 'y' } as any,
-    context: { coverage: 'UNAVAILABLE', freshness: 'UNAVAILABLE', observationAgeMs: null, unavailableFields: ['x'], reason: 'y' } as any,
-    execution: { coverage: 'AVAILABLE', freshness: 'FRESH', observationAgeMs: 0, unavailableFields: [], currentPrice: 60500 } as any,
+    structure: { coverage: 'UNAVAILABLE', freshness: 'UNAVAILABLE', observationAgeMs: null, unavailableFields: ['x'], reason: 'y' },
+    volatility: { coverage: 'AVAILABLE', freshness: 'FRESH', observationAgeMs: 0, freshnessThresholdMs: 60000, calculationVersion: 1, evidence: [], sourceTimestamp: new Date().toISOString(), atr: 1000, atrPercentile: 50, squeezeState: 'NOT_SQUEEZING', squeezeDurationCandles: 0, compressionSlope: 0, expansionState: 'NOT_EXPANDED' },
+    momentum: { coverage: 'UNAVAILABLE', freshness: 'UNAVAILABLE', observationAgeMs: null, unavailableFields: ['x'], reason: 'y' },
+    participation: { coverage: 'UNAVAILABLE', freshness: 'UNAVAILABLE', observationAgeMs: null, unavailableFields: ['x'], reason: 'y' },
+    derivatives: { coverage: 'UNAVAILABLE', freshness: 'UNAVAILABLE', observationAgeMs: null, unavailableFields: ['x'], reason: 'y' },
+    context: { coverage: 'UNAVAILABLE', freshness: 'UNAVAILABLE', observationAgeMs: null, unavailableFields: ['x'], reason: 'y' },
+    execution: { coverage: 'AVAILABLE', freshness: 'FRESH', observationAgeMs: 0, freshnessThresholdMs: 60000, calculationVersion: 1, evidence: [], sourceTimestamp: new Date().toISOString(), currentPrice: 60500, spread: 1, estimatedRoundTripCost: 0.001, tickSize: 0.1, lotSize: 0.001, currentExposure: 0, priceTooFarFromCandidateZones: false },
   };
 
   const mockContext: TradeResearcherContext = {
@@ -63,11 +67,11 @@ describe('TradeResearcherService', () => {
 
   beforeEach(() => {
     aiOrchestratorService = {
-      execute: vi.fn(),
+      execute: vi.fn<AIOrchestratorService['execute']>(),
     };
 
     decisionService = {
-      run: vi.fn().mockResolvedValue({
+      run: vi.fn<() => Promise<Partial<DecisionOutput>>>().mockResolvedValue({
         decision: 'WAIT',
         confidence: 50,
         regime: { type: 'RANGING' },
@@ -82,14 +86,14 @@ describe('TradeResearcherService', () => {
     
     prismaService = {
       agentRun: {
-        create: vi.fn(),
+        create: vi.fn<(args: unknown) => Promise<unknown>>(),
       }
     };
 
     service = new TradeResearcherService(
-      aiOrchestratorService, 
-      decisionService, 
-      prismaService
+      aiOrchestratorService as unknown as AIOrchestratorService,
+      decisionService as unknown as DecisionService,
+      prismaService as unknown as PrismaService
     );
   });
 
@@ -118,15 +122,15 @@ describe('TradeResearcherService', () => {
     expect(result.alternatives[0]?.direction).toBe('SHORT');
     expect(result.alternatives[1]?.direction).toBe('WAIT');
     expect(result.preferred.decisionSource).toBe('AI');
-    expect(prismaService.agentRun.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
+    expect(prismaService.agentRun.create.mock.calls[0]?.[0]).toMatchObject({
+      data: {
         inputHash: 'hash',
         contextSnapshotId: 'snapshot-id',
         promptVersion: 1,
         provider: 'OPENAI',
         model: 'gpt-4o',
-      })
-    }));
+      }
+    });
   });
 
   it('should fall back to rules and label AI_WITH_RULES_FALLBACK on AI timeout', async () => {
@@ -151,11 +155,11 @@ describe('TradeResearcherService', () => {
     expect(result.preferred.confidence).toBe(75);
     expect(result.alternatives).toHaveLength(0);
     // Should persist failure
-    expect(prismaService.agentRun.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
+    expect(prismaService.agentRun.create.mock.calls[0]?.[0]).toMatchObject({
+      data: {
         status: 'FAILED',
-      })
-    }));
+      }
+    });
   });
 
   it('should reject invalid evidence-ref and fallback to rules', async () => {

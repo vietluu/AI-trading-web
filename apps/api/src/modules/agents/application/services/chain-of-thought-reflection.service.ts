@@ -23,7 +23,7 @@ export class ChainOfThoughtReflectionService {
 
     // If disabled or WAIT decision, skip reflection
     if (!enabled || input.thesis.direction === 'WAIT' || !this.aiOrchestrator) {
-      return this.passthrough(input);
+      return this.passthrough();
     }
 
     try {
@@ -75,7 +75,7 @@ export class ChainOfThoughtReflectionService {
 
         clearTimeout(timer);
         const rawText = response.text || (response.json ? JSON.stringify(response.json) : '');
-        return this.parseResponse(rawText, input);
+        return this.parseResponse(rawText);
       } finally {
         clearTimeout(timer);
       }
@@ -94,7 +94,7 @@ export class ChainOfThoughtReflectionService {
     }
   }
 
-  private passthrough(input: CriticInput): ThesisReview {
+  private passthrough(): ThesisReview {
     return {
       action: 'APPROVE',
       reasonCodes: [],
@@ -143,7 +143,7 @@ Analyze this thesis. Identify any traps, late entry, or invalidated setups.
 If you reject, return CANCEL. If it needs confirmation, return REQUIRE_TRIGGER. If size should be reduced due to risk, return REDUCE_SIZE with sizeFactor.`;
   }
 
-  private parseResponse(raw: string, input: CriticInput): ThesisReview {
+  private parseResponse(raw: string): ThesisReview {
     try {
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
@@ -155,14 +155,18 @@ If you reject, return CANCEL. If it needs confirmation, return REQUIRE_TRIGGER. 
         };
       }
 
-      const parsed = JSON.parse(jsonMatch[0]);
+      const parsed: unknown = JSON.parse(jsonMatch[0]);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('Critic response must be an object');
+      }
+      const response = parsed as Record<string, unknown>;
 
       // Strip adjustedDecision if the model hallucinates it
-      if ('adjustedDecision' in parsed) {
-        delete parsed.adjustedDecision;
+      if ('adjustedDecision' in response) {
+        delete response.adjustedDecision;
       }
 
-      return ThesisReviewSchema.parse(parsed);
+      return ThesisReviewSchema.parse(response);
     } catch (err) {
       this.logger.warn({ event: 'reflection_parse_failed', raw: raw.slice(0, 200), error: err });
       return {

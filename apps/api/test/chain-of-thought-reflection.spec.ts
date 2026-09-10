@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
 import type { AIOrchestratorService } from '../src/modules/ai/application/ai-orchestrator.service';
 import { ChainOfThoughtReflectionService } from '../src/modules/agents/application/services/chain-of-thought-reflection.service';
-import { AnticipatoryMarketSnapshot, TradeThesis } from '@platform/shared';
+import { type AnticipatoryMarketSnapshot, type TradeThesis } from '@platform/shared';
 
 const mockOrchestrator = {
   execute: vi.fn<AIOrchestratorService['execute']>(),
@@ -75,7 +75,7 @@ describe('ChainOfThoughtReflectionService as Critic', () => {
     const result = await service.reflect({ snapshot: mockSnapshot, thesis: mockThesis });
     expect(result.action).toBe('APPROVE');
     expect(result.rationale).toContain('passthrough');
-    expect((result as any).adjustedDecision).toBeUndefined();
+    expect(result).not.toHaveProperty('adjustedDecision');
   });
 
   it('builds prompt containing scenario/thesis geometry', async () => {
@@ -104,7 +104,7 @@ describe('ChainOfThoughtReflectionService as Critic', () => {
     })));
     const result = await service.reflect({ snapshot: mockSnapshot, thesis: mockThesis });
     expect(result.action).toBe('CANCEL');
-    expect((result as any).adjustedDecision).toBeUndefined();
+    expect(result).not.toHaveProperty('adjustedDecision');
   });
   
   it('cannot output adjustedDecision', async () => {
@@ -118,7 +118,7 @@ describe('ChainOfThoughtReflectionService as Critic', () => {
     })));
     const result = await service.reflect({ snapshot: mockSnapshot, thesis: mockThesis });
     expect(result.action).toBe('CANCEL');
-    expect((result as any).adjustedDecision).toBeUndefined();
+    expect(result).not.toHaveProperty('adjustedDecision');
   });
 
   it('safely falls back to REQUIRE_TRIGGER when AI returns malformed JSON', async () => {

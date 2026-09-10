@@ -49,8 +49,8 @@ describe("proactive demo connection selection", () => {
     "never substitutes production when the pinned demo connection is %s",
     async (connectionId) => {
       const service = new LiveTradingService(
-        { riskAssessment: { findUnique: async () => ({ id: "assessment-1", userId: "user-1", approved: true, connectionId }) } } as never,
-        { list: async () => [production] } as never,
+        { riskAssessment: { findUnique: () => Promise.resolve({ id: "assessment-1", userId: "user-1", approved: true, connectionId }) } } as never,
+        { list: () => Promise.resolve([production]) } as never,
         { values: { mode: "DEMO", runtimeEnabled: true } } as never,
         {} as never, {} as never, {} as never, {} as never, {} as never,
       );

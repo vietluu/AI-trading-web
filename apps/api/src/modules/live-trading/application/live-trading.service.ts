@@ -57,6 +57,13 @@ const DEFAULT_TRADE_BACKFILL_MAX_PAGES = 100;
 const RECONCILIATION_DB_BATCH_SIZE = 10;
 const ORPHAN_PROTECTION_GRACE_MS = 120_000;
 
+function isConfirmedStagedEntry(tradePlan: unknown): boolean {
+  if (!tradePlan || typeof tradePlan !== "object" || Array.isArray(tradePlan)) return false;
+  const stagedEntry = (tradePlan as Record<string, unknown>).stagedEntry;
+  return !!stagedEntry && typeof stagedEntry === "object" && !Array.isArray(stagedEntry) &&
+    (stagedEntry as Record<string, unknown>).stage === "CONFIRMED";
+}
+
 export function isPastProtectionOrphanGrace(
   createdAt: Date,
   now = Date.now(),
@@ -109,7 +116,7 @@ export class LiveTradingService {
    */
   async hasVerifiedDemoConnection(userId: string): Promise<boolean> {
     const connections = await this.connections.list(userId);
-    return connections.some(c => c.environment === "DEMO" && c.isEnabled && c.isVerified);
+    return connections.some(c => c.environment === ExchangeEnvironment.DEMO && c.isEnabled && c.isVerified);
   }
 
   async backfillTradeLedger(
@@ -365,7 +372,7 @@ export class LiveTradingService {
     if (!connection) {
       const fallback = userConnections.find(
         (item) => item.isEnabled && item.isVerified &&
-          (!input.requiredEnvironment || item.environment === input.requiredEnvironment),
+          (!input.requiredEnvironment || item.environment === input.requiredEnvironment as ExchangeEnvironment),
       );
       if (fallback) {
         connection = fallback;
@@ -844,7 +851,7 @@ export class LiveTradingService {
     ) {
       const isConfirmedAdd = assessment.tradePlan && typeof assessment.tradePlan === 'object' && 
                              'stagedEntry' in assessment.tradePlan && 
-                             (assessment.tradePlan as any).stagedEntry?.stage === 'CONFIRMED';
+                             isConfirmedStagedEntry(assessment.tradePlan);
       if (!isConfirmedAdd) {
         throw new ConflictException(
           "A position already exists in the approved direction and this is not a CONFIRMED add",
@@ -901,7 +908,7 @@ export class LiveTradingService {
     if (same) {
       const isConfirmedAdd = assessment.tradePlan && typeof assessment.tradePlan === 'object' && 
                              'stagedEntry' in assessment.tradePlan && 
-                             (assessment.tradePlan as any).stagedEntry?.stage === 'CONFIRMED';
+                             isConfirmedStagedEntry(assessment.tradePlan);
       if (!isConfirmedAdd) {
         throw new ConflictException(
           "A position already exists in the approved direction and this is not a CONFIRMED add",
@@ -1026,7 +1033,7 @@ export class LiveTradingService {
       ? connections.find(
           (item) =>
             item.id === assessment.connectionId &&
-            (!options.requiredEnvironment || item.environment === options.requiredEnvironment) &&
+            (!options.requiredEnvironment || item.environment === options.requiredEnvironment as ExchangeEnvironment) &&
             item.isEnabled &&
             item.isVerified,
         )
@@ -1036,7 +1043,7 @@ export class LiveTradingService {
       // connectionId was not recorded on older assessments).
       connection = connections.find(
         (item) => item.isEnabled && item.isVerified &&
-          (!options.requiredEnvironment || item.environment === options.requiredEnvironment),
+          (!options.requiredEnvironment || item.environment === options.requiredEnvironment as ExchangeEnvironment),
       );
     }
     if (!connection) return { outcome: "NO_ELIGIBLE_EXCHANGE_CONNECTION" };

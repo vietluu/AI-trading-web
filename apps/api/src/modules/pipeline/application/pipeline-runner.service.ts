@@ -48,6 +48,9 @@ import {
 import { ConfluenceCollectorService } from "../infrastructure/confluence-collector.service";
 import type { DecisionOutput } from "@platform/shared";
 import type { TradePlanMarketContext } from "../../risk/domain/trade-plan-engine";
+import type { TradeResearcherService } from "../../agents/application/services/trade-researcher.service";
+import type { ChainOfThoughtReflectionService } from "../../agents/application/services/chain-of-thought-reflection.service";
+import type { AnticipatorySnapshotService } from "../../agents/application/services/anticipatory-snapshot.service";
 
 class PipelineCancelledError extends Error {}
 class PipelineExecutionLockBusyError extends Error {}
@@ -111,9 +114,9 @@ export class PipelineRunnerService {
     @Optional() private readonly quantPolicy?: QuantExecutionPolicyService,
     @Optional() private readonly portfolio?: PortfolioService,
     @Optional() private readonly confluenceCollector?: ConfluenceCollectorService,
-    @Optional() private readonly tradeResearcher?: import('../../agents/application/services/trade-researcher.service').TradeResearcherService,
-    @Optional() private readonly critic?: import('../../agents/application/services/chain-of-thought-reflection.service').ChainOfThoughtReflectionService,
-    @Optional() private readonly anticipatorySnapshot?: import('../../agents/application/services/anticipatory-snapshot.service').AnticipatorySnapshotService,
+    @Optional() private readonly tradeResearcher?: TradeResearcherService,
+    @Optional() private readonly critic?: ChainOfThoughtReflectionService,
+    @Optional() private readonly anticipatorySnapshot?: AnticipatorySnapshotService,
   ) {}
 
   async run(
@@ -434,15 +437,15 @@ export class PipelineRunnerService {
       }
       await this.assertNotCancelled(runId);
       await this.startStep(runId, "decision");
-      let synthesizedOutput: import("@platform/shared").DecisionOutput;
+      let synthesizedOutput: DecisionOutput;
       let proactiveThesis;
       
       if (job.pipelineId === 'proactive-thesis' && this.tradeResearcher && this.critic && this.anticipatorySnapshot) {
         const snapshot = await this.anticipatorySnapshot.build({
           userId: job.userId,
           symbol,
-          provider: job.provider as import('../../../exchange/domain/exchange.types').ExchangeProvider,
-          timeframe: String(interval) as import('../../../exchange/domain/exchange.types').ExchangeInterval,
+          provider: job.provider as ExchangeProvider,
+          timeframe: String(interval) as ExchangeInterval,
           sourceDataCutoff: new Date()
         });
         const research = await this.tradeResearcher.research(snapshot, {

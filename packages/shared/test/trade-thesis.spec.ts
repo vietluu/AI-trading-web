@@ -2,13 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   TradeThesisSchema,
   ThesisValidationResultSchema,
-  TradeThesisStateSchema,
-  TradeThesisDecisionSourceSchema,
-  TradeThesisSetupSchema,
 } from '../src/schemas/agents.js';
 
 describe('TradeThesis schemas', () => {
-  const cutoff = '2026-09-09T12:00:00.000Z';
   const validThesis = {
     thesisVersion: 1,
     decisionSource: 'AI' as const,

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { evaluateRisk } from "../../src/modules/risk/domain/risk-engine";
 import { RiskManagementService } from "../../src/modules/risk/application/risk-management.service";
+import type { DecisionOutput } from "@platform/shared";
+import type { PrismaService } from "../../src/database/prisma.service";
+import type { RiskConfigService } from "../../src/modules/risk/application/risk-config.service";
 import { Prisma } from "@prisma/client";
 import type { RiskInput, RiskLimits, RiskPosition } from "../../src/modules/risk/domain/risk-engine.types";
 
@@ -36,7 +39,7 @@ const getBaseInput = (decision: 'LONG' | 'SHORT', currentPositions: RiskPosition
     expectedReward: 2,
     riskScore: 20,
     opportunityScore: 80,
-  } as any,
+  } as unknown as DecisionOutput,
   marketData: {
     price: 100000,
     volatility: 0.01,
@@ -78,7 +81,7 @@ describe("Staged Entry Risk Evaluation", () => {
   it("rejects unplanned averaging down (missing stagedEntry)", () => {
     const input = getBaseInput('LONG', [{ symbol: 'BTC-USDT', side: 'LONG', size: 0.01, markPrice: 100000, entryPrice: 100000 }]);
     // Remove gateSeverity so it's not a staged entry
-    input.marketData.tradePlanContext!.gateSeverity = undefined as any;
+    delete input.marketData.tradePlanContext!.gateSeverity;
     
     const risk = evaluateRisk(input, defaultLimits);
     expect(risk.approved).toBe(false);
@@ -121,15 +124,15 @@ describe("Staged Entry Risk Evaluation", () => {
 
   it("rejects an underwater add after converting exchange positions for Risk", async () => {
     const input = getBaseInput('LONG');
-    const service = new RiskManagementService({} as never, {
-      getUserLimits: async () => defaultLimits,
-    } as never);
+    const service = new RiskManagementService({} as PrismaService, {
+      getUserLimits: () => Promise.resolve(defaultLimits),
+    } as unknown as RiskConfigService);
     const result = await service.assess({
       riskAssessment: {
-        findUnique: async () => null,
-        upsert: async ({ create }: any) => create,
+        findUnique: () => Promise.resolve(null),
+        upsert: ({ create }: Prisma.RiskAssessmentUpsertArgs) => Promise.resolve(create),
       },
-    } as never, {
+    } as unknown as Prisma.TransactionClient, {
       userId: 'user-1', pipelineRunId: 'run-1', symbol: input.symbol,
       decision: input.decision,
       account: { balance: new Prisma.Decimal(10000), equity: new Prisma.Decimal(10000), peakEquity: new Prisma.Decimal(10000) },
