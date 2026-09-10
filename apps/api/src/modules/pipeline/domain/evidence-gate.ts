@@ -30,7 +30,7 @@ export function evaluateEvidenceGate(input: EvidenceGateInput, options?: Evidenc
   if (input.missingProtection) reasons.push('MISSING_PROTECTION');
   if (input.costTooHigh) reasons.push('COST_TOO_HIGH');
   if (input.hardAccountLimit) reasons.push('HARD_ACCOUNT_LIMIT');
-  if (input.negativeExactCohort) reasons.push('NEGATIVE_EXACT_COHORT');
+  if (input.negativeExactCohort && !input.newCohort) reasons.push('NEGATIVE_EXACT_COHORT');
   
   if (input.assumptionMismatch && input.mode === 'LIVE') reasons.push('ASSUMPTION_MISMATCH_LIVE');
   if (input.newCohort && input.mode === 'LIVE') reasons.push('NEW_COHORT_LIVE');

@@ -116,7 +116,9 @@ export class QuantExecutionPolicyService {
         createdAt: validation.createdAt.toISOString(),
       };
       
-      negativeExactCohort = !validation.walkForwardStable || validation.probabilityOfProfit < 52;
+      const maxAge = Math.max(36 * 3_600_000, timeframeMilliseconds(input.timeframe) * 12);
+      const isStale = now.getTime() - validation.createdAt.getTime() > maxAge;
+      negativeExactCohort = !isStale && (!validation.walkForwardStable || validation.probabilityOfProfit < 52);
       newCohort = Number(sampleEvidence.totalTrades ?? 0) < 30 || Number(sampleEvidence.outOfSampleTrades ?? outOfSample.outOfSampleTrades ?? 0) < 10;
       assumptionMismatch = !assumptions || (liveLimits !== null && liveLimits !== undefined && (
         Number(assumptions.leverage) !== liveLimits.maxLeverage ||
@@ -139,8 +141,16 @@ export class QuantExecutionPolicyService {
        let reason: any = 'QUANT_VALIDATION_MISSING';
        if (!validation) reason = 'QUANT_VALIDATION_MISSING';
        else if (gateResult.reasons.includes('ASSUMPTION_MISMATCH_LIVE')) reason = 'QUANT_ASSUMPTION_MISMATCH';
-       else if (gateResult.reasons.includes('NEGATIVE_EXACT_COHORT')) reason = 'QUANT_WALK_FORWARD_UNSTABLE';
        else if (gateResult.reasons.includes('NEW_COHORT_LIVE')) reason = 'QUANT_SAMPLE_TOO_SMALL';
+       else if (gateResult.reasons.includes('NEGATIVE_EXACT_COHORT')) {
+           reason = !validation.walkForwardStable ? 'QUANT_WALK_FORWARD_UNSTABLE' : 'QUANT_PROBABILITY_TOO_LOW';
+           if (evidence) {
+               const canary = this.dislocationCanary(reason, input, evidence);
+               if (canary) {
+                   return { ...canary, reasons: Array.from(new Set([...(canary.reasons ?? []), ...gateResult.reasons])) };
+               }
+           }
+       }
        return { severity: 'BLOCK', allowed: false, evaluated: false, reason, validation: evidence, reasons: gateResult.reasons };
     }
     
@@ -172,17 +182,7 @@ export class QuantExecutionPolicyService {
       return applyGate({ ...this.insufficientEvidence("QUANT_SAMPLE_TOO_SMALL", input), validation: evidence });
     }
       
-    if (!validation.walkForwardStable) {
-      const canary = this.dislocationCanary("QUANT_WALK_FORWARD_UNSTABLE", input, evidence);
-      if (canary) return applyGate(canary);
-      return applyGate({ severity: 'BLOCK', allowed: false, reason: "QUANT_WALK_FORWARD_UNSTABLE", validation: evidence });
-    }
-    
-    if (validation.probabilityOfProfit < 52) {
-      const canary = this.dislocationCanary("QUANT_PROBABILITY_TOO_LOW", input, evidence);
-      if (canary) return applyGate(canary);
-      return applyGate({ severity: 'BLOCK', allowed: false, reason: "QUANT_PROBABILITY_TOO_LOW", validation: evidence });
-    }
+
     if (validation.probabilityOfRuin > 15) {
       const canary = this.dislocationCanary("QUANT_RUIN_RISK_TOO_HIGH", input, evidence);
       if (canary) return applyGate(canary);
