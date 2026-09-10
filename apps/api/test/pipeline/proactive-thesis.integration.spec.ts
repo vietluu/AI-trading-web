@@ -69,11 +69,22 @@ const makeFusionResult = () => ({
 const makeSnapshot = () => ({
   structure: {
     coverage: "AVAILABLE",
-    liquiditySweep: { detected: true, direction: "BULLISH", confidence: 80 },
+    liquiditySweep: {
+      coverage: "AVAILABLE",
+      detected: true,
+      direction: "BULLISH_SWEEP",
+      penetration: 80,
+      reclaimed: true,
+    },
   },
   derivatives: {
     coverage: "AVAILABLE",
-    derivativesImbalance: { squeezeProbability: 80, squeezeDirection: "LONG_SQUEEZE", fundingExtreme: "NORMAL" },
+    derivativesImbalance: {
+      coverage: "AVAILABLE",
+      squeezeProbability: 80,
+      squeezeDirection: "LONG_SQUEEZE",
+      fundingExtreme: "NORMAL",
+    },
   },
 });
 
@@ -312,27 +323,19 @@ describe("Proactive Thesis Pipeline Integration", () => {
 
   // ── Scenario 6: OBSERVE mode ──────────────────────────────────────────────
 
-  it("OBSERVE mode: AI agents run but executePipeline is not called", async () => {
-    process.env.PROACTIVE_AI_MODE = "OBSERVE";
+  it.each(["OBSERVE", "SHADOW"] as const)(
+    "%s mode returns SKIPPED without submitting an order",
+    async (mode) => {
+      process.env.PROACTIVE_AI_MODE = mode;
 
-    await pipelineRunner.run(makeJob());
+      const result = await pipelineRunner.run(makeJob());
 
-    expect(mockTradeResearcher.research).toHaveBeenCalled();
-    expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
-
-    delete process.env.PROACTIVE_AI_MODE;
-  });
-
-  // ── Scenario 7: SHADOW mode ───────────────────────────────────────────────
-
-  it("SHADOW mode: AI agents run but executePipeline is not called", async () => {
-    process.env.PROACTIVE_AI_MODE = "SHADOW";
-
-    await pipelineRunner.run(makeJob());
-
-    expect(mockTradeResearcher.research).toHaveBeenCalled();
-    expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
-
-    delete process.env.PROACTIVE_AI_MODE;
-  });
+      expect(mockTradeResearcher.research).toHaveBeenCalledOnce();
+      expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        outcome: "SKIPPED",
+        reason: "SKIPPED_BY_PROACTIVE_MODE",
+      });
+    },
+  );
 });

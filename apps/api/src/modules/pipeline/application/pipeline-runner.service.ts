@@ -116,7 +116,9 @@ export class PipelineRunnerService {
     @Optional() private readonly anticipatorySnapshot?: import('../../agents/application/services/anticipatory-snapshot.service').AnticipatorySnapshotService,
   ) {}
 
-  async run(job: PipelineJob): Promise<void> {
+  async run(
+    job: PipelineJob,
+  ): Promise<{ outcome: string; reason?: string } | undefined> {
     const definition = resolvePipelineDefinition(job.pipelineId);
     
     // Proactive AI Mode Guard
@@ -448,6 +450,31 @@ export class PipelineRunnerService {
         
         const review = await this.critic.reflect({ snapshot, thesis: research.preferred }, job.userId);
         proactiveThesis = (await import('../../agents/domain/trade-thesis-validator')).applyThesisReview(research.preferred, review);
+        const anticipatorySignals = {
+          ...(snapshot.structure.coverage === 'AVAILABLE' &&
+          snapshot.structure.liquiditySweep.coverage === 'AVAILABLE'
+            ? {
+                liquiditySweep: {
+                  detected: snapshot.structure.liquiditySweep.detected,
+                  direction: snapshot.structure.liquiditySweep.direction,
+                  confidence: 0,
+                },
+              }
+            : {}),
+          ...(snapshot.derivatives.coverage === 'AVAILABLE' &&
+          snapshot.derivatives.derivativesImbalance.coverage === 'AVAILABLE'
+            ? {
+                derivativesImbalance: {
+                  squeezeProbability:
+                    snapshot.derivatives.derivativesImbalance.squeezeProbability,
+                  squeezeDirection:
+                    snapshot.derivatives.derivativesImbalance.squeezeDirection,
+                  fundingExtreme:
+                    snapshot.derivatives.derivativesImbalance.fundingExtreme,
+                },
+              }
+            : {}),
+        };
         
         synthesizedOutput = {
           decision: proactiveThesis.direction,
@@ -463,6 +490,7 @@ export class PipelineRunnerService {
           expectedValue: proactiveThesis.expectedNetR || 0,
           reasoning: JSON.stringify(proactiveThesis.setup),
           signals: { bullishFactors: [], bearishFactors: [] },
+          anticipatorySignals,
           dataQuality: "GOOD", generatedAt: new Date().toISOString(), conflictLevel: "LOW", agreementScore: 100, risks: [], weighting: { technical: 0.5, market: 0.5, news: 0, sentiment: 0, macro: 0, onchain: 0 }, expectedWinProbability: 0.5, volatilityAdjustment: 0, overrides: [], profitFactorEstimate: 1, adaptiveThreshold: 50, calibrationAdjustment: 0, executionCost: 0
         };
       } else {
@@ -723,6 +751,7 @@ export class PipelineRunnerService {
       let executionGateReason: string | undefined;
       let canaryCooldownKey: string | undefined;
       let retainCanaryCooldown = false;
+      let pipelineOutcome: { outcome: string; reason?: string } | undefined;
       if (actionable && job.confluenceBatchId && this.confluenceCollector) {
         const candidateScore = computeMultiFactorCompositeScore({
           confidence: output.confidence,
@@ -926,7 +955,7 @@ export class PipelineRunnerService {
             const execute = async () => {
               if (riskAssessment?.outcome === "RISK_APPROVED") {
                 if (job.pipelineId === 'proactive-thesis' && (proactiveMode === 'OBSERVE' || proactiveMode === 'SHADOW')) {
-                  return { outcome: 'ORDER_SUBMITTED', reason: 'SKIPPED_BY_PROACTIVE_MODE' };
+                  return { outcome: 'SKIPPED' as const, reason: 'SKIPPED_BY_PROACTIVE_MODE' };
                 }
                 submissionStartedAt = new Date();
                 const execution = await this.liveTrading.executePipeline(
@@ -943,6 +972,12 @@ export class PipelineRunnerService {
               assess,
               execute,
             });
+            pipelineOutcome = {
+              outcome: finalExecution.outcome,
+              ...('reason' in finalExecution && finalExecution.reason
+                ? { reason: finalExecution.reason }
+                : {}),
+            };
             retainCanaryCooldown = dislocationCanary &&
               finalExecution.outcome === "ORDER_SUBMITTED";
 
@@ -1087,6 +1122,7 @@ export class PipelineRunnerService {
       }
       if (finalActionable && riskApproved)
         await this.alerts.decision(runId, symbol, output);
+      return pipelineOutcome;
     } catch (error) {
       const completedAt = new Date();
       const cancelled = error instanceof PipelineCancelledError;
