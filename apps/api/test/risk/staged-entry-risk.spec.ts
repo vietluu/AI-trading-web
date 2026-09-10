@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { evaluateRisk } from "../../src/modules/risk/domain/risk-engine";
-import { buildAdaptiveTradePlan } from "../../src/modules/risk/domain/trade-plan-engine";
-import type { RiskInput, RiskLimits } from "../../src/modules/risk/domain/risk-engine.types";
+import { RiskManagementService } from "../../src/modules/risk/application/risk-management.service";
+import { Prisma } from "@prisma/client";
+import type { RiskInput, RiskLimits, RiskPosition } from "../../src/modules/risk/domain/risk-engine.types";
 
 const defaultLimits: RiskLimits = {
   riskPerTrade: 0.005, // 0.50%
@@ -22,7 +23,7 @@ const defaultLimits: RiskLimits = {
   minLiquidationBufferPct: 0.01,
 };
 
-const getBaseInput = (decision: 'LONG' | 'SHORT', currentPositions: any[] = []): RiskInput => ({
+const getBaseInput = (decision: 'LONG' | 'SHORT', currentPositions: RiskPosition[] = []): RiskInput => ({
   symbol: 'BTC-USDT',
   account: { balance: 10000, equity: 10000, peakEquity: 10000 },
   currentPositions,
@@ -75,7 +76,7 @@ describe("Staged Entry Risk Evaluation", () => {
   });
 
   it("rejects unplanned averaging down (missing stagedEntry)", () => {
-    const input = getBaseInput('LONG', [{ symbol: 'BTC-USDT', side: 'LONG', size: 0.01, markPrice: 100000 }]);
+    const input = getBaseInput('LONG', [{ symbol: 'BTC-USDT', side: 'LONG', size: 0.01, markPrice: 100000, entryPrice: 100000 }]);
     // Remove gateSeverity so it's not a staged entry
     input.marketData.tradePlanContext!.gateSeverity = undefined as any;
     
@@ -85,7 +86,7 @@ describe("Staged Entry Risk Evaluation", () => {
   });
 
   it("allows CONFIRMED add and scales properly when existing position exists", () => {
-    const input = getBaseInput('LONG', [{ symbol: 'BTC-USDT', side: 'LONG', size: 0.005, markPrice: 100000 }]);
+    const input = getBaseInput('LONG', [{ symbol: 'BTC-USDT', side: 'LONG', size: 0.005, markPrice: 100000, entryPrice: 100000 }]);
     // Default base input has APPROVE which gives stagedEntry
     const risk = evaluateRisk(input, defaultLimits);
     expect(risk.approved).toBe(true);
@@ -97,8 +98,46 @@ describe("Staged Entry Risk Evaluation", () => {
   });
 
   it("caps combined risk to 0.50% implicitly", () => {
-    const input = getBaseInput('LONG', [{ symbol: 'BTC-USDT', side: 'LONG', size: 0.005, markPrice: 100000 }]);
+    const input = getBaseInput('LONG', [{ symbol: 'BTC-USDT', side: 'LONG', size: 0.005, markPrice: 100000, entryPrice: 100000 }]);
     const risk = evaluateRisk(input, defaultLimits);
     expect(risk.tradePlan?.stagedEntry?.combinedRiskLimitPct).toBe(0.005);
   });
+  it.each([undefined, 0, -1, NaN, Infinity])("rejects a staged add with unknown or invalid entry price %s", (entryPrice) => {
+    const risk = evaluateRisk(getBaseInput('LONG', [{
+      symbol: 'BTC-USDT', side: 'LONG', size: 0.005, markPrice: 100000, entryPrice,
+    }]), defaultLimits);
+    expect(risk).toMatchObject({ approved: false, reason: 'POSITION_ENTRY_PRICE_REQUIRED' });
+  });
+
+  it("uses actual entry price instead of mark price for combined probe risk", () => {
+    const risk = evaluateRisk(getBaseInput('LONG', [{
+      symbol: 'BTC-USDT', side: 'LONG', size: 0.01, markPrice: 100000, entryPrice: 99000,
+    }]), defaultLimits);
+    // Existing risk: 0.01 * (99000 - 98000) = $10; add risk is below $36.
+    // Using the $100000 mark instead would inflate total risk above the $50 cap.
+    expect(risk.approved).toBe(true);
+    expect(risk.tradePlan?.stagedEntry?.stage).toBe('CONFIRMED');
+  });
+
+  it("rejects an underwater add after converting exchange positions for Risk", async () => {
+    const input = getBaseInput('LONG');
+    const service = new RiskManagementService({} as never, {
+      getUserLimits: async () => defaultLimits,
+    } as never);
+    const result = await service.assess({
+      riskAssessment: {
+        findUnique: async () => null,
+        upsert: async ({ create }: any) => create,
+      },
+    } as never, {
+      userId: 'user-1', pipelineRunId: 'run-1', symbol: input.symbol,
+      decision: input.decision,
+      account: { balance: new Prisma.Decimal(10000), equity: new Prisma.Decimal(10000), peakEquity: new Prisma.Decimal(10000) },
+      positions: [{ symbol: 'BTC-USDT', side: 'LONG', size: new Prisma.Decimal(0.005), markPrice: new Prisma.Decimal(100000), entryPrice: new Prisma.Decimal(101000) }],
+      price: input.marketData.price, volatility: input.marketData.volatility,
+      tradePlanContext: input.marketData.tradePlanContext,
+    });
+    expect(result).toMatchObject({ approved: false, reason: 'UNPLANNED_AVERAGE_DOWN' });
+  });
+
 });

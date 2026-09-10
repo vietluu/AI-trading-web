@@ -347,11 +347,15 @@ export function evaluateRisk(
       : undefined;
 
   if (existingSameDirection) {
+    const entryPrice = existingSameDirection.entryPrice;
+    if (entryPrice === undefined || !finitePositive(entryPrice)) {
+      return reject("POSITION_ENTRY_PRICE_REQUIRED");
+    }
     // Reject if the existing position is already underwater — adding to a
     // losing position (averaging down) is explicitly prohibited.
-    const isUnderwater = existingSameDirection.side === 'LONG'
-      ? marketData.price < (existingSameDirection.entryPrice ?? marketData.price)
-      : marketData.price > (existingSameDirection.entryPrice ?? marketData.price);
+    const isUnderwater = decision.decision === 'LONG'
+      ? marketData.price < entryPrice
+      : marketData.price > entryPrice;
 
     if (isUnderwater) {
       return {
@@ -381,7 +385,7 @@ export function evaluateRisk(
     // the proposed confirmation add.  Reject if it exceeds the combined risk
     // limit expressed as a fraction of account equity.
     const existingProbeRisk = existingSameDirection.size *
-      Math.abs((existingSameDirection.entryPrice ?? marketData.price) - stopLoss);
+      Math.abs(entryPrice - stopLoss);
     const confirmationSize = rounded(
       positionSize * plan.stagedEntry.confirmationSizePct,
       RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,

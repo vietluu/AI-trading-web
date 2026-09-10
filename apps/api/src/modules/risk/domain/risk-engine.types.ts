@@ -14,6 +14,8 @@ export interface RiskPosition {
   side?: "LONG" | "SHORT";
   size: number;
   markPrice: number;
+  /** Actual average fill price; required at runtime for staged adds. */
+  entryPrice?: number;
 }
 
 export interface LastTradeRecord {

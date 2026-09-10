@@ -121,15 +121,21 @@ export class PipelineRunnerService {
   ): Promise<{ outcome: string; reason?: string } | undefined> {
     const definition = resolvePipelineDefinition(job.pipelineId);
     
-    // Proactive AI Mode Guard
-    const proactiveMode = process.env.PROACTIVE_AI_MODE || 'OBSERVE';
-    if (job.pipelineId === 'proactive-thesis') {
-      if (proactiveMode === 'DEMO') {
+    // Only the declared release modes can enter the proactive pipeline.
+    const proactiveMode = process.env.PROACTIVE_AI_MODE ?? "OBSERVE";
+    if (job.pipelineId === "proactive-thesis") {
+      if (!["OBSERVE", "SHADOW", "DEMO"].includes(proactiveMode)) {
+        await this.repository.updateRun(String(job.runId), {
+          status: "SKIPPED",
+          decision: "WAIT",
+          skippedReason: "PROACTIVE_AI_MODE_INVALID",
+          completedAt: new Date(),
+        });
+        return { outcome: "SKIPPED", reason: "PROACTIVE_AI_MODE_INVALID" };
+      }
+      if (proactiveMode === "DEMO") {
         const demoVerified = await this.liveTrading.hasVerifiedDemoConnection(job.userId);
         if (!demoVerified) throw new Error("NO_ELIGIBLE_EXCHANGE_CONNECTION: DEMO requires verified demo connection.");
-      } else if (proactiveMode === 'OBSERVE' && job.trigger !== 'EVENT') {
-         // allow it to run but maybe block execution? Or the task says: 
-         // "Guard behavior with PROACTIVE_AI_MODE=OBSERVE|SHADOW|DEMO, default OBSERVE; reject DEMO without a verified demo connection."
       }
     }
     if (!definition?.enabled) throw new Error("PIPELINE_NOT_FOUND_OR_DISABLED");
@@ -752,7 +758,9 @@ export class PipelineRunnerService {
       let canaryCooldownKey: string | undefined;
       let retainCanaryCooldown = false;
       let pipelineOutcome: { outcome: string; reason?: string } | undefined;
-      if (actionable && job.confluenceBatchId && this.confluenceCollector) {
+      // Proactive theses must retain their mode guard and pinned demo connection;
+      // generic confluence execution does not carry those release constraints.
+      if (actionable && job.pipelineId !== "proactive-thesis" && job.confluenceBatchId && this.confluenceCollector) {
         const candidateScore = computeMultiFactorCompositeScore({
           confidence: output.confidence,
           opportunityScore: output.opportunityScore,
@@ -885,6 +893,9 @@ export class PipelineRunnerService {
               riskAssessment = await this.liveTrading.assessPipelineDecision({
                 userId: job.userId,
                 pipelineRunId: runId,
+                ...(job.pipelineId === "proactive-thesis" && proactiveMode === "DEMO"
+                  ? { requiredEnvironment: "DEMO" as const }
+                  : {}),
                 symbol,
                 provider: job.provider as unknown as ExchangeProvider,
                 decision: executionDecision,
@@ -954,14 +965,13 @@ export class PipelineRunnerService {
 
             const execute = async () => {
               if (riskAssessment?.outcome === "RISK_APPROVED") {
-                if (job.pipelineId === 'proactive-thesis' && (proactiveMode === 'OBSERVE' || proactiveMode === 'SHADOW')) {
+                if (job.pipelineId === 'proactive-thesis' && proactiveMode !== 'DEMO') {
                   return { outcome: 'SKIPPED' as const, reason: 'SKIPPED_BY_PROACTIVE_MODE' };
                 }
                 submissionStartedAt = new Date();
-                const execution = await this.liveTrading.executePipeline(
-                  job.userId,
-                  runId,
-                );
+                const execution = job.pipelineId === "proactive-thesis"
+                  ? await this.liveTrading.executePipeline(job.userId, runId, { requiredEnvironment: "DEMO" })
+                  : await this.liveTrading.executePipeline(job.userId, runId);
                 liveExecution = execution;
                 return execution;
               }

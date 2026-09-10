@@ -5,7 +5,7 @@
  * dependencies and assert that the full proactive AI execution path
  * (researcher -> critic -> risk -> submission) behaves correctly.
  */
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { PipelineRunnerService } from "../../src/modules/pipeline/application/pipeline-runner.service";
 import type { LiveTradingService } from "../../src/modules/live-trading/application/live-trading.service";
 import type { TradeResearcherService } from "../../src/modules/agents/application/services/trade-researcher.service";
@@ -112,8 +112,10 @@ describe("Proactive Thesis Pipeline Integration", () => {
   let mockSnapshotService: Partial<AnticipatorySnapshotService>;
   let mockQuantPolicy: Partial<QuantExecutionPolicyService>;
 
+  afterEach(() => vi.unstubAllEnvs());
+
   beforeEach(() => {
-    delete process.env.PROACTIVE_AI_MODE;
+    vi.stubEnv("PROACTIVE_AI_MODE", "DEMO");
 
     mockLiveTrading = {
       executePipeline: vi.fn().mockResolvedValue({ outcome: "ORDER_SUBMITTED" }),
@@ -206,7 +208,7 @@ describe("Proactive Thesis Pipeline Integration", () => {
       // judge
       { evaluate: vi.fn().mockReturnValue({ verdict: "APPROVE", severity: "APPROVE", approved: true, reasons: [] }) } as any,
       // settings
-      { get: vi.fn().mockResolvedValue({ preferredTimeframes: [] }), getSettings: vi.fn().mockResolvedValue({ proactiveMode: "LIVE" }) } as any,
+      { get: vi.fn().mockResolvedValue({ preferredTimeframes: [] }), getSettings: vi.fn().mockResolvedValue({ proactiveMode: "DEMO" }) } as any,
       mockQuantPolicy as any,
       // portfolio
       { ensureRegisteredStrategies: vi.fn().mockResolvedValue(undefined), assignStrategy: vi.fn(), processConfluence: vi.fn() } as any,
@@ -230,7 +232,7 @@ describe("Proactive Thesis Pipeline Integration", () => {
   // ── Scenario 1: Squeeze probe — full happy path ────────────────────────────
 
   it("squeeze probe: thesis flows through researcher -> critic -> risk -> submission", async () => {
-    process.env.PROACTIVE_AI_MODE = "LIVE";
+    vi.stubEnv("PROACTIVE_AI_MODE", "DEMO");
 
     await pipelineRunner.run(makeJob());
 
@@ -244,11 +246,13 @@ describe("Proactive Thesis Pipeline Integration", () => {
     expect(riskCalls.length).toBeGreaterThanOrEqual(1);
     const firstCall = riskCalls[0] as [{ tradePlanContext: Record<string, unknown> }, ...unknown[]];
     const ctx = firstCall[0].tradePlanContext;
+    expect(firstCall[0]).toMatchObject({ requiredEnvironment: "DEMO" });
+    expect(mockLiveTrading.hasVerifiedDemoConnection).toHaveBeenCalledWith("user-1");
     expect(ctx.liquiditySweep).toBe(true);
     expect(ctx.derivativesImbalance).toBe(80);
 
-    // Order must be submitted when LIVE mode is active
-    expect(mockLiveTrading.executePipeline).toHaveBeenCalledOnce();
+    // Order must use a verified DEMO connection through submission as well.
+    expect(mockLiveTrading.executePipeline).toHaveBeenCalledWith("user-1", "run-1", { requiredEnvironment: "DEMO" });
 
     delete process.env.PROACTIVE_AI_MODE;
   });
@@ -256,7 +260,7 @@ describe("Proactive Thesis Pipeline Integration", () => {
   // ── Scenario 2: Confirmation add — CONFIRMED stage allowed ────────────────
 
   it("confirmation add: CONFIRMED stage is allowed when RISK_APPROVED", async () => {
-    process.env.PROACTIVE_AI_MODE = "LIVE";
+    vi.stubEnv("PROACTIVE_AI_MODE", "DEMO");
 
     (mockLiveTrading.assessPipelineDecision as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...makeApprovedRiskAssessment(),
@@ -338,4 +342,50 @@ describe("Proactive Thesis Pipeline Integration", () => {
       });
     },
   );
+  it.each(["LIVE", "live", "UNKNOWN", "demo", "", " DEMO "])(
+    "rejects unsupported mode %j before assessment or submission",
+    async (mode) => {
+      vi.stubEnv("PROACTIVE_AI_MODE", mode);
+      const result = await pipelineRunner.run(makeJob());
+      expect(result).toEqual({ outcome: "SKIPPED", reason: "PROACTIVE_AI_MODE_INVALID" });
+      expect(mockLiveTrading.assessPipelineDecision).not.toHaveBeenCalled();
+      expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
+    },
+  );
+
+  it("defaults to OBSERVE when the mode is absent", async () => {
+    delete process.env.PROACTIVE_AI_MODE;
+    expect(await pipelineRunner.run(makeJob())).toEqual({
+      outcome: "SKIPPED", reason: "SKIPPED_BY_PROACTIVE_MODE",
+    });
+    expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
+  });
+
+  it("rejects DEMO without a verified demo connection", async () => {
+    vi.mocked(mockLiveTrading.hasVerifiedDemoConnection!).mockResolvedValue(false);
+    await expect(pipelineRunner.run(makeJob())).rejects.toThrow("NO_ELIGIBLE_EXCHANGE_CONNECTION");
+    expect(mockLiveTrading.assessPipelineDecision).not.toHaveBeenCalled();
+    expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
+  });
+
+  it.each(["OBSERVE", "SHADOW", "DEMO"])(
+    "keeps batch-tagged proactive jobs on the guarded %s execution path",
+    async (mode) => {
+      vi.stubEnv("PROACTIVE_AI_MODE", mode);
+      const collector = { addSignal: vi.fn().mockResolvedValue({ ready: true }) };
+      (pipelineRunner as any).confluenceCollector = collector;
+      const result = await pipelineRunner.run({ ...makeJob(), confluenceBatchId: "batch-1" });
+      expect(collector.addSignal).not.toHaveBeenCalled();
+      if (mode === "DEMO") {
+        expect(result).toMatchObject({ outcome: "ORDER_SUBMITTED" });
+        expect(mockLiveTrading.assessPipelineDecision).toHaveBeenCalledWith(
+          expect.objectContaining({ requiredEnvironment: "DEMO" }),
+        );
+      } else {
+        expect(result).toEqual({ outcome: "SKIPPED", reason: "SKIPPED_BY_PROACTIVE_MODE" });
+        expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
+      }
+    },
+  );
+
 });

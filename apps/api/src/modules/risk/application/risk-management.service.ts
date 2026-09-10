@@ -27,6 +27,7 @@ export interface AssessRiskInput {
     side?: "LONG" | "SHORT";
     size: Prisma.Decimal;
     markPrice: Prisma.Decimal;
+    entryPrice?: Prisma.Decimal;
   }>;
   price: number;
   volatility: number;
@@ -70,6 +71,9 @@ export class RiskManagementService {
           side: position.side,
           size: Number(position.size),
           markPrice: Number(position.markPrice),
+          ...(position.entryPrice !== undefined
+            ? { entryPrice: Number(position.entryPrice) }
+            : {}),
         })),
         marketData: {
           price: input.price,

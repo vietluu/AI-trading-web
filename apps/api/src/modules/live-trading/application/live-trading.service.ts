@@ -338,6 +338,8 @@ export class LiveTradingService {
     volatilityAtr?: number;
     tradePlanContext?: TradePlanMarketContext;
     strategyKey?: string;
+    /** Pins proactive execution to a verified demo connection. */
+    requiredEnvironment?: "DEMO";
     /** Reduces, but can never increase, the risk-approved position size. */
     executionSizeFactor?: number;
   }): Promise<{ outcome: string; price: number; risk?: RiskOutput }> {
@@ -346,11 +348,11 @@ export class LiveTradingService {
       return { outcome: "EXCHANGE_MODE_REQUIRED", price: 0 };
     }
     const targetEnvironment =
-      settings.mode === "LIVE"
+      input.requiredEnvironment ?? (settings.mode === "LIVE"
         ? ExchangeEnvironment.PRODUCTION
         : input.provider === ExchangeProvider.BINANCE_FUTURES
           ? ExchangeEnvironment.TESTNET
-          : ExchangeEnvironment.DEMO;
+          : ExchangeEnvironment.DEMO);
     const userConnections = await this.connections.list(input.userId);
     let connection = userConnections.find(
       (item) =>
@@ -362,7 +364,8 @@ export class LiveTradingService {
     let effectiveProvider = input.provider;
     if (!connection) {
       const fallback = userConnections.find(
-        (item) => item.isEnabled && item.isVerified,
+        (item) => item.isEnabled && item.isVerified &&
+          (!input.requiredEnvironment || item.environment === input.requiredEnvironment),
       );
       if (fallback) {
         connection = fallback;
@@ -493,6 +496,7 @@ export class LiveTradingService {
             symbol: position.symbol,
             side: position.side as "LONG" | "SHORT",
             size: position.quantity,
+            entryPrice: position.entryPrice,
             markPrice: position.markPrice ?? position.entryPrice,
           })),
           price,
@@ -984,7 +988,11 @@ export class LiveTradingService {
     return result;
   }
 
-  async executePipeline(userId: string, pipelineRunId: string) {
+  async executePipeline(
+    userId: string,
+    pipelineRunId: string,
+    options: { requiredEnvironment?: "DEMO" } = {},
+  ) {
     const settings = this.config.values;
     if (!settings.runtimeEnabled) return { outcome: "KILL_SWITCH_ACTIVE" };
     if (settings.mode !== "DEMO" && settings.mode !== "LIVE")
@@ -1018,6 +1026,7 @@ export class LiveTradingService {
       ? connections.find(
           (item) =>
             item.id === assessment.connectionId &&
+            (!options.requiredEnvironment || item.environment === options.requiredEnvironment) &&
             item.isEnabled &&
             item.isVerified,
         )
@@ -1026,7 +1035,8 @@ export class LiveTradingService {
       // Fallback: pick any eligible connection (preserves behaviour when
       // connectionId was not recorded on older assessments).
       connection = connections.find(
-        (item) => item.isEnabled && item.isVerified,
+        (item) => item.isEnabled && item.isVerified &&
+          (!options.requiredEnvironment || item.environment === options.requiredEnvironment),
       );
     }
     if (!connection) return { outcome: "NO_ELIGIBLE_EXCHANGE_CONNECTION" };
