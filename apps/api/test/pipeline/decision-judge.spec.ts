@@ -32,6 +32,7 @@ describe('DecisionJudgeService', () => {
     } as never, { symbol: 'ALGO-USDT' });
 
     expect(result).toEqual(expect.objectContaining({ approved: false, verdict: 'REJECT' }));
+    expect(result.severity).toBe('BLOCK');
     expect(result.reasons).toContain('EXPECTED_VALUE_TOO_LOW');
   });
 
