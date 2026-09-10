@@ -17,6 +17,7 @@ describe('DecisionJudgeService', () => {
     } as never, { symbol: 'ALGO-USDT' });
 
     expect(result.approved).toBe(false);
+    expect(result.severity).toBe('BLOCK');
     expect(result.verdict).toBe('REQUEST_MORE_DATA');
   });
 
@@ -64,6 +65,7 @@ describe('DecisionJudgeService', () => {
     } as never, { symbol: 'ETH-USDT', requireCalibratedConfidence: true });
 
     expect(result.approved).toBe(false);
+    expect(result.severity).toBe('BLOCK');
     expect(result.verdict).toBe('REQUEST_MORE_DATA');
     expect(result.reasons).toContain('UNCALIBRATED_CONFIDENCE_TOO_LOW');
   });
@@ -80,6 +82,7 @@ describe('DecisionJudgeService', () => {
     } as never, { symbol: 'ETH-USDT', requireCalibratedConfidence: true });
 
     expect(result.approved).toBe(false);
+    expect(result.severity).toBe('BLOCK');
     expect(result.verdict).toBe('REQUEST_MORE_DATA');
     expect(result.reasons).toContain('PARTIAL_DATA_UNCALIBRATED');
   });
@@ -114,6 +117,7 @@ describe('DecisionJudgeService', () => {
     } as never, { symbol: 'ETH-USDT', requireCalibratedConfidence: true });
 
     expect(result.approved).toBe(false);
+    expect(result.severity).toBe('BLOCK');
     expect(result.verdict).toBe('REQUEST_MORE_DATA');
     expect(result.reasons).toContain('UNCALIBRATED_CONFIDENCE_TOO_LOW');
   });
@@ -134,6 +138,7 @@ describe('DecisionJudgeService', () => {
     } as never, { symbol: 'ETH-USDT', requireCalibratedConfidence: true });
 
     expect(result.approved).toBe(false);
+    expect(result.severity).toBe('BLOCK');
     expect(result.verdict).toBe('REQUEST_MORE_DATA');
     expect(result.reasons).toEqual(expect.arrayContaining([
       'CALIBRATED_PROBABILITY_TOO_LOW',
@@ -153,7 +158,7 @@ describe('DecisionJudgeService', () => {
       symbol: 'BTC-USDT', timeframe: '1m', sourceTimestamp: '2026-08-08T11:55:00.000Z',
     }, now);
 
-    expect(result).toEqual(expect.objectContaining({ approved: false, verdict: 'REQUEST_MORE_DATA' }));
+    expect(result).toEqual(expect.objectContaining({ approved: false, verdict: 'REQUEST_MORE_DATA', severity: 'BLOCK' }));
     expect(result.reasons).toContain('STALE_SOURCE_DATA');
   });
 
@@ -227,6 +232,7 @@ describe('DecisionJudgeService', () => {
     } as never, { symbol: 'ETH-USDT', timeframe: '15m' }, now);
 
     expect(result.approved).toBe(false);
+    expect(result.severity).toBe('BLOCK');
     expect(result.reasons).toContain('STALE_ANALYSIS');
   });
 });

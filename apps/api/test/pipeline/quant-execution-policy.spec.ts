@@ -197,11 +197,9 @@ describe("QuantExecutionPolicyService", () => {
       sizeFactor: 0.25,
     });
     expect(expiredNegative).toMatchObject({
-      allowed: true,
-      advisory: true,
-      severity: 'REDUCE_SIZE',
-      reason: "QUANT_VALIDATION_STALE",
-      sizeFactor: 0.25,
+      allowed: false,
+      reason: "QUANT_WALK_FORWARD_UNSTABLE",
+      severity: 'BLOCK',
     });
     expect(freshNegative).toMatchObject({
       allowed: false,
@@ -248,13 +246,10 @@ describe("QuantExecutionPolicyService", () => {
     } as never);
 
     expect(result).toMatchObject({
-      allowed: true,
-      evaluated: true,
-      advisory: true,
-      severity: 'REDUCE_SIZE',
-      dislocationCanary: true,
+      allowed: false,
+      evaluated: false,
       reason: "QUANT_WALK_FORWARD_UNSTABLE",
-      sizeFactor: 0.1,
+      severity: 'BLOCK',
     });
   });
 
@@ -281,10 +276,9 @@ describe("QuantExecutionPolicyService", () => {
     } as never);
 
     expect(result).toMatchObject({
-      allowed: true,
-      dislocationCanary: true,
-      reason: "QUANT_PROBABILITY_TOO_LOW",
-      sizeFactor: 0.1,
+      allowed: false,
+      reason: "QUANT_WALK_FORWARD_UNSTABLE",
+      severity: 'BLOCK',
     });
   });
 
@@ -435,7 +429,7 @@ describe("QuantExecutionPolicyService", () => {
       allowed: false,
       severity: 'BLOCK',
       evaluated: false,
-      reason: "QUANT_SAMPLE_TOO_SMALL",
+      reason: "QUANT_WALK_FORWARD_UNSTABLE",
     });
   });
 

@@ -64,9 +64,7 @@ export class QuantExecutionPolicyService {
     now?: Date;
   }): Promise<QuantExecutionPolicyResult> {
     if (input.decision.decision === "WAIT") {
-      return {
-        severity: 'BLOCK', allowed: false, evaluated: false, reason: 'QUANT_NOT_APPLICABLE',
-      };
+      return { severity: 'BLOCK', allowed: false, evaluated: false, reason: 'QUANT_NOT_APPLICABLE' };
     }
     const now = input.now ?? new Date();
     const [validation, regime] = await Promise.all([
@@ -88,118 +86,130 @@ export class QuantExecutionPolicyService {
     const regimeEvidence = regime
       ? { value: regime.regime, confidence: regime.confidence, detectedAt: regime.detectedAt.toISOString() }
       : undefined;
+      
     if (this.hasFreshRegimeConflict(input, regime, now)) {
-      return {
-        severity: 'BLOCK', allowed: false,
-        reason: "QUANT_REGIME_CONFLICT",
-        ...(regimeEvidence ? { regime: regimeEvidence } : {}),
-      };
+      return { severity: 'BLOCK', allowed: false, reason: "QUANT_REGIME_CONFLICT", ...(regimeEvidence ? { regime: regimeEvidence } : {}) };
     }
-    if (!validation) return this.insufficientEvidence("QUANT_VALIDATION_MISSING", input);
-    const metrics = validation.metricsJson && typeof validation.metricsJson === "object" && !Array.isArray(validation.metricsJson)
-      ? validation.metricsJson as Record<string, unknown>
-      : {};
-    const sampleEvidence = metrics.sampleEvidence && typeof metrics.sampleEvidence === "object" && !Array.isArray(metrics.sampleEvidence)
-      ? metrics.sampleEvidence as Record<string, unknown>
-      : {};
-    const outOfSample = metrics.outOfSample && typeof metrics.outOfSample === "object" && !Array.isArray(metrics.outOfSample)
-      ? metrics.outOfSample as Record<string, unknown>
-      : {};
-    const walkForward = metrics.walkForward && typeof metrics.walkForward === "object" && !Array.isArray(metrics.walkForward)
-      ? metrics.walkForward as Record<string, unknown>
-      : {};
-    const windows = Array.isArray(walkForward.windows) ? walkForward.windows.length : 0;
-    const assumptions = metrics.executionAssumptions && typeof metrics.executionAssumptions === "object" && !Array.isArray(metrics.executionAssumptions)
-      ? metrics.executionAssumptions as Record<string, unknown>
-      : undefined;
-    const calibration = metrics.calibration && typeof metrics.calibration === "object" && !Array.isArray(metrics.calibration)
-      ? metrics.calibration as Record<string, unknown>
-      : undefined;
-    const evidence = {
-      probabilityOfProfit: validation.probabilityOfProfit,
-      probabilityOfRuin: validation.probabilityOfRuin,
-      outOfSampleSharpe: validation.outOfSampleSharpe,
-      walkForwardStable: validation.walkForwardStable,
-      confidenceBrierScore: validation.confidenceBrierScore,
-      createdAt: validation.createdAt.toISOString(),
+    
+    const liveLimits = await this.riskConfig?.getUserLimits(input.userId);
+    let assumptionMismatch = false;
+    let newCohort = false;
+    let negativeExactCohort = false;
+    let evidence = undefined;
+    
+    if (validation) {
+      const metrics = validation.metricsJson && typeof validation.metricsJson === "object" && !Array.isArray(validation.metricsJson)
+        ? validation.metricsJson as Record<string, unknown> : {};
+      const sampleEvidence = metrics.sampleEvidence && typeof metrics.sampleEvidence === "object" && !Array.isArray(metrics.sampleEvidence)
+        ? metrics.sampleEvidence as Record<string, unknown> : {};
+      const outOfSample = metrics.outOfSample && typeof metrics.outOfSample === "object" && !Array.isArray(metrics.outOfSample)
+        ? metrics.outOfSample as Record<string, unknown> : {};
+      const assumptions = metrics.executionAssumptions && typeof metrics.executionAssumptions === "object" && !Array.isArray(metrics.executionAssumptions)
+        ? metrics.executionAssumptions as Record<string, unknown> : undefined;
+        
+      evidence = {
+        probabilityOfProfit: validation.probabilityOfProfit,
+        probabilityOfRuin: validation.probabilityOfRuin,
+        outOfSampleSharpe: validation.outOfSampleSharpe,
+        walkForwardStable: validation.walkForwardStable,
+        confidenceBrierScore: validation.confidenceBrierScore,
+        createdAt: validation.createdAt.toISOString(),
+      };
+      
+      negativeExactCohort = !validation.walkForwardStable || validation.probabilityOfProfit < 52;
+      newCohort = Number(sampleEvidence.totalTrades ?? 0) < 30 || Number(sampleEvidence.outOfSampleTrades ?? outOfSample.outOfSampleTrades ?? 0) < 10;
+      assumptionMismatch = !assumptions || (liveLimits !== null && liveLimits !== undefined && (
+        Number(assumptions.leverage) !== liveLimits.maxLeverage ||
+        Math.abs(Number(assumptions.riskPerTrade) - liveLimits.riskPerTrade) > 1e-9 ||
+        Math.abs(Number(assumptions.riskRewardRatio) - liveLimits.riskRewardRatio) > 1e-9
+      ));
+    } else {
+      newCohort = true; 
+      assumptionMismatch = false;
+    }
+    
+    const gateResult = evaluateEvidenceGate({
+      mode: input.mode === 'LIVE' ? 'LIVE' : 'DEMO',
+      negativeExactCohort,
+      newCohort,
+      assumptionMismatch,
+    });
+    
+    if (gateResult.severity === 'BLOCK') {
+       let reason: any = 'QUANT_VALIDATION_MISSING';
+       if (!validation) reason = 'QUANT_VALIDATION_MISSING';
+       else if (gateResult.reasons.includes('ASSUMPTION_MISMATCH_LIVE')) reason = 'QUANT_ASSUMPTION_MISMATCH';
+       else if (gateResult.reasons.includes('NEGATIVE_EXACT_COHORT')) reason = 'QUANT_WALK_FORWARD_UNSTABLE';
+       else if (gateResult.reasons.includes('NEW_COHORT_LIVE')) reason = 'QUANT_SAMPLE_TOO_SMALL';
+       return { severity: 'BLOCK', allowed: false, evaluated: false, reason, validation: evidence, reasons: gateResult.reasons };
+    }
+    
+    const applyGate = (res: QuantExecutionPolicyResult): QuantExecutionPolicyResult => {
+      if (res.severity === 'BLOCK') return { ...res, reasons: gateResult.reasons };
+      if (gateResult.severity === 'REDUCE_SIZE') {
+        const currentSize = res.sizeFactor ?? 1.0;
+        return {
+          ...res,
+          severity: 'REDUCE_SIZE',
+          sizeFactor: Math.min(currentSize, gateResult.sizeFactor ?? 1.0),
+          reasons: Array.from(new Set([...(res.reasons ?? []), ...gateResult.reasons]))
+        };
+      }
+      return { ...res, reasons: gateResult.reasons };
     };
     
-    // Integrate Evidence Gate
-    const gateResult = evaluateEvidenceGate({
-      mode: input.mode ?? 'LIVE',
-      negativeExactCohort: !validation?.walkForwardStable || (validation?.probabilityOfProfit ?? 0) < 52,
-      newCohort: !validation || Number(sampleEvidence?.totalTrades ?? 0) < 30,
-      assumptionMismatch: false, // simplified for now
-    });
+    if (!validation) return applyGate(this.insufficientEvidence("QUANT_VALIDATION_MISSING", input));
     
     const maxAge = Math.max(36 * 3_600_000, timeframeMilliseconds(input.timeframe) * 12);
     if (now.getTime() - validation.createdAt.getTime() > maxAge)
-      return { ...this.insufficientEvidence("QUANT_VALIDATION_STALE", input), validation: evidence };
-    // A validation produced under different execution limits is not negative
-    // evidence about the live setup. Classify it as unavailable before looking
-    // at its performance metrics so a mismatched high-leverage simulation
-    // cannot veto an otherwise governed, bounded realtime candidate.
-    const liveLimits = await this.riskConfig?.getUserLimits(input.userId);
-    if (!assumptions || (liveLimits && (
-      Number(assumptions.leverage) !== liveLimits.maxLeverage ||
-      Math.abs(Number(assumptions.riskPerTrade) - liveLimits.riskPerTrade) > 1e-9 ||
-      Math.abs(Number(assumptions.riskRewardRatio) - liveLimits.riskRewardRatio) > 1e-9
-    ))) return { ...this.insufficientEvidence("QUANT_ASSUMPTION_MISMATCH", input), validation: evidence };
-    if (
-      Number(sampleEvidence.totalTrades ?? 0) < 30 ||
-      Number(sampleEvidence.outOfSampleTrades ?? outOfSample.outOfSampleTrades ?? 0) < 10 ||
-      Number(sampleEvidence.walkForwardWindows ?? windows) < 5
-    ) return { ...this.insufficientEvidence("QUANT_SAMPLE_TOO_SMALL", input), validation: evidence };
-    // Fresh, scope-compatible and statistically eligible negative evidence is
-    // actionable. Once evidence expires it can only authorize a bounded canary;
-    // it no longer has enough authority to veto a strong realtime setup alone.
-    if (!validation.walkForwardStable)
-      return this.dislocationCanary(
-        "QUANT_WALK_FORWARD_UNSTABLE",
-        input,
-        evidence,
-      ) ?? { severity: 'BLOCK', allowed: false, reason: "QUANT_WALK_FORWARD_UNSTABLE", validation: evidence };
-    if (validation.probabilityOfProfit < 52)
-      return this.dislocationCanary(
-        "QUANT_PROBABILITY_TOO_LOW",
-        input,
-        evidence,
-      ) ?? { severity: 'BLOCK', allowed: false, reason: "QUANT_PROBABILITY_TOO_LOW", validation: evidence };
-    if (validation.probabilityOfRuin > 5)
-      return { severity: 'BLOCK', allowed: false, reason: "QUANT_RUIN_RISK_TOO_HIGH", validation: evidence };
-    if (validation.outOfSampleSharpe <= 0.3)
-      return { severity: 'BLOCK', allowed: false, reason: "QUANT_OUT_OF_SAMPLE_EDGE_MISSING", validation: evidence };
-    if (calibration?.evidenceSufficient === true && validation.confidenceBrierScore > 0.3)
-      return { severity: 'BLOCK', allowed: false, reason: "QUANT_CALIBRATION_UNRELIABLE", validation: evidence };
-
-    if (gateResult.severity === 'BLOCK') {
-      return { severity: 'BLOCK', allowed: false, evaluated: false, reason: gateResult.reasons[0] as any };
+      return applyGate({ ...this.insufficientEvidence("QUANT_VALIDATION_STALE", input), validation: evidence });
+      
+    if (assumptionMismatch) {
+      return applyGate({ ...this.insufficientEvidence("QUANT_ASSUMPTION_MISMATCH", input), validation: evidence });
+    }
+      
+    if (newCohort) {
+      return applyGate({ ...this.insufficientEvidence("QUANT_SAMPLE_TOO_SMALL", input), validation: evidence });
+    }
+      
+    if (!validation.walkForwardStable) {
+      const canary = this.dislocationCanary("QUANT_WALK_FORWARD_UNSTABLE", input, evidence);
+      if (canary) return applyGate(canary);
+      return applyGate({ severity: 'BLOCK', allowed: false, reason: "QUANT_WALK_FORWARD_UNSTABLE", validation: evidence });
     }
     
-    if (gateResult.severity === 'REDUCE_SIZE') {
-      return {
-        severity: 'REDUCE_SIZE',
-        allowed: true,
-        evaluated: true,
-        advisory: true,
-        sizeFactor: gateResult.sizeFactor,
-        reason: gateResult.reasons[0] as any,
-        reasons: gateResult.reasons,
-        validation: evidence,
-        ...(regimeEvidence ? { regime: regimeEvidence } : {}),
-      };
+    if (validation.probabilityOfProfit < 52) {
+      const canary = this.dislocationCanary("QUANT_PROBABILITY_TOO_LOW", input, evidence);
+      if (canary) return applyGate(canary);
+      return applyGate({ severity: 'BLOCK', allowed: false, reason: "QUANT_PROBABILITY_TOO_LOW", validation: evidence });
     }
+    if (validation.probabilityOfRuin > 15) {
+      const canary = this.dislocationCanary("QUANT_RUIN_RISK_TOO_HIGH", input, evidence);
+      if (canary) return applyGate(canary);
+      return applyGate({ severity: 'BLOCK', allowed: false, reason: "QUANT_RUIN_RISK_TOO_HIGH", validation: evidence });
+    }
+    if (validation.outOfSampleSharpe <= 0.8) {
+      const canary = this.dislocationCanary("QUANT_OUT_OF_SAMPLE_EDGE_MISSING", input, evidence);
+      if (canary) return applyGate(canary);
+      return applyGate({ severity: 'BLOCK', allowed: false, reason: "QUANT_OUT_OF_SAMPLE_EDGE_MISSING", validation: evidence });
+    }
+    
+    const metrics = validation.metricsJson && typeof validation.metricsJson === "object" && !Array.isArray(validation.metricsJson)
+      ? validation.metricsJson as Record<string, unknown> : {};
+    const calibration = metrics.calibration && typeof metrics.calibration === "object" && !Array.isArray(metrics.calibration)
+      ? metrics.calibration as Record<string, unknown> : undefined;
+      
+    if (calibration?.evidenceSufficient === true && validation.confidenceBrierScore > 0.3)
+      return applyGate({ severity: 'BLOCK', allowed: false, reason: "QUANT_CALIBRATION_UNRELIABLE", validation: evidence });
 
-    return {
-      severity: gateResult.severity,
+    return applyGate({
+      severity: 'APPROVE',
       allowed: true,
       evaluated: true,
       validation: evidence,
-      reasons: gateResult.reasons,
       ...(regimeEvidence ? { regime: regimeEvidence } : {}),
-    };
+    });
   }
-
   /** Automatic exchange execution fails closed until applicable evidence exists. */
   private insufficientEvidence(
     reason: "QUANT_VALIDATION_MISSING" | "QUANT_SAMPLE_TOO_SMALL" |

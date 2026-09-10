@@ -169,9 +169,9 @@ export class DecisionJudgeService {
     ) reasons.push('CALIBRATION_UNRELIABLE');
 
     if (reasons.some((reason) => reason.includes('DATA') || reason.includes('STALE') || reason.includes('USABLE') || reason.includes('CALIBRAT'))) {
-      return { verdict: 'REQUEST_MORE_DATA', severity: gateResult.severity === 'BLOCK' ? 'BLOCK' : 'REDUCE_SIZE', approved: false, reasons: Array.from(new Set(reasons)) };
+      return { verdict: 'REQUEST_MORE_DATA', severity: 'BLOCK', approved: false, reasons: Array.from(new Set(reasons)) };
     }
-    if (reasons.length > 0) return { verdict: 'REJECT', severity: gateResult.severity === 'BLOCK' ? 'BLOCK' : 'REDUCE_SIZE', approved: false, reasons: Array.from(new Set(reasons)) };
+    if (reasons.length > 0) return { verdict: 'REJECT', severity: 'BLOCK', approved: false, reasons: Array.from(new Set(reasons)) };
     return { verdict: 'APPROVE', severity: gateResult.severity, approved: true, reasons: Array.from(new Set(gateResult.reasons)) };
   }
 }
