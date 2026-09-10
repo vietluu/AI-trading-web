@@ -1,5 +1,5 @@
 import type { DecisionOutput, RiskOutput } from "@platform/shared";
-import type { TradePlan, TradePlanMarketContext } from "./trade-plan-engine";
+import type { TradePlan, TradePlanMarketContext, StoredProbe } from "./trade-plan-engine";
 
 export interface RiskAccount {
   balance: number;
@@ -16,6 +16,9 @@ export interface RiskPosition {
   markPrice: number;
   /** Actual average fill price; required at runtime for staged adds. */
   entryPrice?: number;
+  stopLoss?: number;
+  protectionVerified?: boolean;
+  stagedEntry?: StoredProbe;
 }
 
 export interface LastTradeRecord {

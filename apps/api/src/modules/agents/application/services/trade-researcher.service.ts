@@ -1,8 +1,10 @@
+import { createHash } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import {
   AnticipatoryMarketSnapshot,
   TradeThesis,
   TradeThesisSchema,
+  type ThesisReview, type ThesisValidationResult,
 } from '@platform/shared';
 import type { AIProviderType, AIResponseDto } from '@platform/shared';
 import { AIOrchestratorService } from '../../../ai/application/ai-orchestrator.service';
@@ -31,6 +33,8 @@ export interface TradeResearcherContext {
 export interface TradeResearchResult {
   preferred: TradeThesis;
   alternatives: TradeThesis[];
+  researchRunId?: string;
+  contextSnapshotId?: string;
 }
 
 @Injectable()
@@ -48,6 +52,16 @@ export class TradeResearcherService {
     context: TradeResearcherContext,
   ): Promise<TradeResearchResult> {
     const startedAt = new Date();
+    const storedSnapshot = await this.prisma.agentContextSnapshot.create({ data: {
+      userId: context.userId, symbol: snapshot.symbol, provider: snapshot.provider, timeframe: snapshot.timeframe,
+      sourceDataCutoff: new Date(snapshot.sourceDataCutoff), schemaVersion: snapshot.schemaVersion,
+      builderVersion: String(snapshot.calculationVersion),
+      contextHash: createHash('sha256').update(JSON.stringify(snapshot)).digest('hex'),
+      serializedContext: snapshot,
+    } });
+    let response: AIResponseDto | null = null;
+    let result: TradeResearchResult;
+    let failure: string | undefined;
     try {
       // Prompt must contain ONLY the versioned snapshot and cohort summary (no raw price history, no user details).
       const cohortSummary = this.buildCohortSummary(snapshot);
@@ -56,7 +70,7 @@ export class TradeResearcherService {
         cohortSummary,
       });
 
-      const response = await this.aiOrchestrator.execute({
+      response = await this.aiOrchestrator.execute({
         userId: context.userId,
         provider: asAiProvider(context.provider),
         model: context.model,
@@ -77,14 +91,14 @@ export class TradeResearcherService {
         : [];
 
       // Validate references and basics
-      const validation = validateTradeThesis(preferred, snapshot);
+      const validation = validateTradeThesis(preferred, snapshot, { now: new Date() });
       if (!validation.valid) {
         throw new Error(
           `AI thesis failed validation: ${validation.reasons.join(', ')}`,
         );
       }
       for (const alt of alternatives) {
-        const altValidation = validateTradeThesis(alt, snapshot);
+        const altValidation = validateTradeThesis(alt, snapshot, { now: new Date() });
         if (!altValidation.valid) {
           throw new Error(`AI alternative thesis failed validation: ${altValidation.reasons.join(', ')}`);
         }
@@ -100,53 +114,42 @@ export class TradeResearcherService {
       preferred.decisionSource = 'AI';
       alternatives.forEach((a: TradeThesis) => (a.decisionSource = 'AI'));
 
-      // Persist model, provider, prompt version, config hash and parent snapshot ID
-      await this.persistRun(context, response, startedAt, new Date(), true);
-
-      return { preferred, alternatives };
+      result = { preferred, alternatives };
     } catch (err: unknown) {
-      this.logger.warn(
-        `AI researcher failed, falling back to rules Decision adapter: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      // Persist failure
-      await this.persistRun(context, null, startedAt, new Date(), false);
-      return this.fallbackToRules(snapshot, context);
+      failure = err instanceof Error ? err.message : String(err);
+      this.logger.warn({ event: 'trade_researcher_rules_fallback', reason: failure });
+      result = await this.fallbackToRules(snapshot, context);
     }
+    // Audit errors propagate: execution must not outlive its pre-outcome evidence.
+    const row = await this.prisma.agentRun.create({ data: {
+      userId: context.userId, agentType: 'DECISION_SYNTHESIZER', agentVersion: 1,
+      invocationSource: 'INTERNAL_SERVICE', inputHash: context.configHash,
+      sanitizedInput: { configHash: context.configHash, sourceDataCutoff: snapshot.sourceDataCutoff },
+      output: result as unknown as Prisma.InputJsonValue,
+      contextSnapshotId: storedSnapshot.id, correlationId: context.parentSnapshotId,
+      promptId: 'trade-researcher', promptVersion: context.promptVersion,
+      provider: response?.provider ?? context.provider ?? 'UNKNOWN', model: response?.model ?? context.model ?? 'UNKNOWN',
+      startedAt, completedAt: new Date(), durationMs: Date.now() - startedAt.getTime(),
+      inputTokens: response?.usage?.promptTokens ?? 0, outputTokens: response?.usage?.completionTokens ?? 0,
+      status: failure ? 'FAILED' : 'COMPLETED', ...(failure ? { failureCode: 'RULES_FALLBACK', safeFailureMessage: failure.slice(0, 1000) } : {}),
+    } });
+    return { ...result, researchRunId: row.id, contextSnapshotId: storedSnapshot.id };
   }
 
-  private async persistRun(
-    context: TradeResearcherContext,
-    response: AIResponseDto | null,
-    startedAt: Date,
-    completedAt: Date,
-    success: boolean,
-  ): Promise<void> {
-    try {
-      await this.prisma.agentRun.create({
-        data: {
-          userId: context.userId,
-          agentType: 'DECISION_SYNTHESIZER', // Fallback type since TRADE_RESEARCHER might not be in schema enum
-          agentVersion: 1,
-          invocationSource: 'INTERNAL_SERVICE',
-          inputHash: context.configHash, // Persist config hash
-          sanitizedInput: {},
-          output: (response?.json ?? {}) as Prisma.InputJsonValue,
-          promptId: 'trade-researcher',
-          promptVersion: context.promptVersion, // Persist prompt version
-          contextSnapshotId: context.parentSnapshotId, // Persist parent snapshot ID
-          provider: response?.provider ?? context.provider ?? 'UNKNOWN', // Persist provider
-          model: response?.model ?? context.model ?? 'UNKNOWN', // Persist model
-          startedAt,
-          completedAt,
-          durationMs: completedAt.getTime() - startedAt.getTime(),
-          inputTokens: response?.usage?.promptTokens ?? 0,
-          outputTokens: response?.usage?.completionTokens ?? 0,
-          status: success ? 'COMPLETED' : 'FAILED',
-        },
-      });
-    } catch (err: unknown) {
-      this.logger.error(`Failed to persist AgentRun for TradeResearcher: ${String(err)}`);
-    }
+  async persistReview(input: {
+    context: TradeResearcherContext; research: TradeResearchResult;
+    review: ThesisReview; appliedThesis: TradeThesis; validation: ThesisValidationResult;
+  }): Promise<string> {
+    if (!input.research.researchRunId || !input.research.contextSnapshotId) throw new Error('THESIS_AUDIT_PARENT_REQUIRED');
+    const row = await this.prisma.agentRun.create({ data: {
+      userId: input.context.userId, agentType: 'DECISION_SYNTHESIZER', invocationSource: 'INTERNAL_SERVICE',
+      inputHash: input.context.configHash, contextSnapshotId: input.research.contextSnapshotId,
+      parentRunId: input.research.researchRunId, correlationId: input.context.parentSnapshotId,
+      promptId: 'thesis-critic', promptVersion: 1, status: 'COMPLETED',
+      output: { review: input.review, appliedThesis: input.appliedThesis, validation: input.validation },
+      startedAt: new Date(), completedAt: new Date(),
+    } });
+    return row.id;
   }
 
   private async fallbackToRules(
@@ -181,14 +184,14 @@ export class TradeResearcherService {
         entryZone = { lower: currentPrice - atr, upper: currentPrice };
         stopLoss = currentPrice - 2 * atr;
         invalidation = { price: stopLoss, reason: 'Fallback ATR stop' };
-        targets = [{ price: currentPrice + 2 * atr, fraction: 1 }];
-        expectedNetR = 1;
+        targets = [{ price: currentPrice + 4 * atr, fraction: 1 }];
+        expectedNetR = 1.5;
       } else {
         entryZone = { lower: currentPrice, upper: currentPrice + atr };
         stopLoss = currentPrice + 2 * atr;
         invalidation = { price: stopLoss, reason: 'Fallback ATR stop' };
-        targets = [{ price: currentPrice - 2 * atr, fraction: 1 }];
-        expectedNetR = 1;
+        targets = [{ price: currentPrice - 4 * atr, fraction: 1 }];
+        expectedNetR = 1.5;
       }
     }
 
@@ -201,20 +204,20 @@ export class TradeResearcherService {
       transitionProbability: 0.1,
       setup: rulesDecision.decision === 'WAIT' ? 'NO_TRADE' : 'TREND_PULLBACK', // simplified fallback
       entryZone,
-      trigger: [],
+      trigger: snapshot.execution.coverage === 'AVAILABLE' ? [{ type: rulesDecision.decision === 'SHORT' ? 'PRICE_BELOW' : 'PRICE_ABOVE', price: snapshot.execution.currentPrice, description: 'Rules baseline price confirmation' }] : [],
       invalidation,
       stopLoss,
       targets,
       expectedNetR,
       maximumChaseDistanceAtr: 1,
       confidence: rulesDecision.confidence,
-      evidenceFor: [],
+      evidenceFor: snapshot.structure.coverage === 'AVAILABLE' ? snapshot.structure.evidence : [],
       evidenceAgainst: [],
       missingEvidence: [],
       expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 4).toISOString(), // 4h
     };
 
-    const validation = validateTradeThesis(preferred, snapshot);
+    const validation = validateTradeThesis(preferred, snapshot, { now: new Date() });
     if (!validation.valid) {
       // Fallback geometry was invalid, force WAIT
       preferred.direction = 'WAIT';

@@ -1,3 +1,4 @@
+import { proactiveAuthorizationAllowed, ProactiveAuthorizationSchema, StoredProbeSchema, thesisTriggersSatisfied } from '../../risk/domain/thesis-execution';
 import {
   ConflictException,
   ForbiddenException,
@@ -38,8 +39,7 @@ import { RISK_ENGINE_CONSTANTS } from "../../risk/domain/risk-engine.constants";
 import { RiskManagementService } from "../../risk/application/risk-management.service";
 import { PortfolioService } from "../../portfolio/application/portfolio.service";
 import { LiveTradingGateway } from "../presentation/live-trading.gateway";
-import type { TradePlanMarketContext } from "../../risk/domain/trade-plan-engine";
-import type { TradePlan } from "../../risk/domain/trade-plan-engine";
+import type { StoredProbe, TradePlan, TradePlanMarketContext } from "../../risk/domain/trade-plan-engine";
 import { evaluatePositionManagement } from "../domain/position-manager";
 import { ExchangeTradeLedgerService } from "./exchange-trade-ledger.service";
 import {
@@ -354,8 +354,10 @@ export class LiveTradingService {
     if (settings.mode !== "DEMO" && settings.mode !== "LIVE") {
       return { outcome: "EXCHANGE_MODE_REQUIRED", price: 0 };
     }
+    const proactive = input.tradePlanContext?.proactive;
+    const requiredEnvironment = proactive ? 'DEMO' : input.requiredEnvironment;
     const targetEnvironment =
-      input.requiredEnvironment ?? (settings.mode === "LIVE"
+      requiredEnvironment ?? (settings.mode === "LIVE"
         ? ExchangeEnvironment.PRODUCTION
         : input.provider === ExchangeProvider.BINANCE_FUTURES
           ? ExchangeEnvironment.TESTNET
@@ -372,7 +374,7 @@ export class LiveTradingService {
     if (!connection) {
       const fallback = userConnections.find(
         (item) => item.isEnabled && item.isVerified &&
-          (!input.requiredEnvironment || item.environment === input.requiredEnvironment as ExchangeEnvironment),
+          (!requiredEnvironment || item.environment === requiredEnvironment as ExchangeEnvironment),
       );
       if (fallback) {
         connection = fallback;
@@ -486,6 +488,16 @@ export class LiveTradingService {
           }
         }
         await this.supersedeEarlierEntry(tx, input, price);
+        let probeProtection: { stopLoss?: Prisma.Decimal; protectionVerified?: boolean; stagedEntry?: StoredProbe } = {};
+        if (proactive?.thesis.state === 'CONFIRMED' && latestOrder?.status === 'FILLED') {
+          const stored = StoredProbeSchema.safeParse(latestOrder.stagedEntry);
+          if (stored.success && stored.data.stage === 'PROBE' && latestOrder.stopLoss && latestOrder.protectiveClientOrderId) {
+            const status = await this.connections.getProtectiveOrderStatus(input.userId, connection.id,
+              { symbol: input.symbol, protectiveClientOrderId: latestOrder.protectiveClientOrderId }, {});
+            probeProtection = { stopLoss: latestOrder.stopLoss, protectionVerified: status === 'ACTIVE', stagedEntry: stored.data };
+            proactive.parentThesisId = stored.data.thesisId;
+          }
+        }
         let risk = await this.risk.assess(tx, {
           userId: input.userId,
           connectionId: connection.id,
@@ -505,6 +517,7 @@ export class LiveTradingService {
             size: position.quantity,
             entryPrice: position.entryPrice,
             markPrice: position.markPrice ?? position.entryPrice,
+            ...(position.symbol === input.symbol && position.side === input.decision.decision ? probeProtection : {}),
           })),
           price,
           volatility: Math.max(
@@ -812,6 +825,9 @@ export class LiveTradingService {
       where: { id: dto.riskAssessmentId, userId },
     });
     if (!assessment) throw new NotFoundException("Risk assessment not found");
+    if (assessment.executionAuthorization && (!proactiveAuthorizationAllowed(assessment.executionAuthorization, dto.connectionId, connection.environment) ||
+      process.env.PROACTIVE_AI_MODE !== 'DEMO')) throw new ForbiddenException('PROACTIVE_EXECUTION_NOT_AUTHORIZED');
+    if (assessment.connectionId && assessment.connectionId !== dto.connectionId) throw new ForbiddenException('RISK_CONNECTION_MISMATCH');
     if (
       !assessment.approved ||
       !assessment.positionSize ||
@@ -849,7 +865,7 @@ export class LiveTradingService {
       existingOpenPosition &&
       existingOpenPosition.side === (assessment.decision as "LONG" | "SHORT")
     ) {
-      const isConfirmedAdd = assessment.tradePlan && typeof assessment.tradePlan === 'object' && 
+      const isConfirmedAdd = assessment.executionAuthorization && assessment.tradePlan && typeof assessment.tradePlan === 'object' &&
                              'stagedEntry' in assessment.tradePlan && 
                              isConfirmedStagedEntry(assessment.tradePlan);
       if (!isConfirmedAdd) {
@@ -906,7 +922,7 @@ export class LiveTradingService {
     const desiredSide = assessment.decision as "LONG" | "SHORT";
     const same = positions.find((position) => position.side === desiredSide);
     if (same) {
-      const isConfirmedAdd = assessment.tradePlan && typeof assessment.tradePlan === 'object' && 
+      const isConfirmedAdd = assessment.executionAuthorization && assessment.tradePlan && typeof assessment.tradePlan === 'object' &&
                              'stagedEntry' in assessment.tradePlan && 
                              isConfirmedStagedEntry(assessment.tradePlan);
       if (!isConfirmedAdd) {
@@ -1011,6 +1027,10 @@ export class LiveTradingService {
       return { outcome: "RISK_ASSESSMENT_MISSING" };
     if (!assessment.approved)
       return { outcome: "RISK_REJECTED", reason: assessment.reason };
+    const proactiveAuthorization = assessment.executionAuthorization ? ProactiveAuthorizationSchema.safeParse(assessment.executionAuthorization) : undefined;
+    if (proactiveAuthorization && (!proactiveAuthorization.success || proactiveAuthorization.data.mode !== 'DEMO' ||
+      process.env.PROACTIVE_AI_MODE !== 'DEMO')) return { outcome: 'PROACTIVE_EXECUTION_NOT_AUTHORIZED' };
+    const requiredEnvironment = proactiveAuthorization ? 'DEMO' : options.requiredEnvironment;
 
     if (settings.mode === "LIVE") {
       const selfLearning =
@@ -1033,17 +1053,18 @@ export class LiveTradingService {
       ? connections.find(
           (item) =>
             item.id === assessment.connectionId &&
-            (!options.requiredEnvironment || item.environment === options.requiredEnvironment as ExchangeEnvironment) &&
+            (!requiredEnvironment || item.environment === requiredEnvironment as ExchangeEnvironment) &&
             item.isEnabled &&
             item.isVerified,
         )
       : undefined;
+    if (!connection && proactiveAuthorization) return { outcome: 'NO_ELIGIBLE_EXCHANGE_CONNECTION' };
     if (!connection) {
       // Fallback: pick any eligible connection (preserves behaviour when
       // connectionId was not recorded on older assessments).
       connection = connections.find(
         (item) => item.isEnabled && item.isVerified &&
-          (!options.requiredEnvironment || item.environment === options.requiredEnvironment as ExchangeEnvironment),
+          (!requiredEnvironment || item.environment === requiredEnvironment as ExchangeEnvironment),
       );
     }
     if (!connection) return { outcome: "NO_ELIGIBLE_EXCHANGE_CONNECTION" };
@@ -2789,6 +2810,7 @@ export class LiveTradingService {
       referencePrice: Prisma.Decimal;
       stopLoss: Prisma.Decimal | null;
       tradePlan?: Prisma.JsonValue | null;
+      executionAuthorization?: Prisma.JsonValue | null;
     },
   ): Promise<{
     positionSize: number;
@@ -2889,10 +2911,23 @@ export class LiveTradingService {
         "Exchange preflight failed: liquidation buffer is insufficient",
       );
     }
-    const retained = positions.filter(
-      (position) => position.symbol !== assessment.symbol,
-    );
-    if (retained.length >= limits.maxPositions) {
+    const confirmed = Boolean(assessment.executionAuthorization && isConfirmedStagedEntry(assessment.tradePlan));
+    if (confirmed) {
+      const auth = ProactiveAuthorizationSchema.parse(assessment.executionAuthorization);
+      const source = await this.prisma.liveOrder.findFirst({ where: { userId, connectionId, symbol: assessment.symbol, purpose: 'OPEN', status: 'FILLED' }, orderBy: { createdAt: 'desc' } });
+      const stored = StoredProbeSchema.safeParse(source?.stagedEntry);
+      const position = positions.find((item) => item.symbol === assessment.symbol && item.side === auth.thesis.direction);
+      if (!position || !source?.stopLoss || !source.protectiveClientOrderId || !stored.success || stored.data.stage !== 'PROBE' || stored.data.setup !== auth.thesis.setup ||
+        !thesisTriggersSatisfied(stored.data.trigger, auth.snapshot, referencePrice)) throw new ForbiddenException('STORED_PROBE_REQUIRED');
+      const status = await this.connections.getProtectiveOrderStatus(userId, connectionId, { symbol: assessment.symbol, protectiveClientOrderId: source.protectiveClientOrderId }, {});
+      if (status !== 'ACTIVE') throw new ForbiddenException('POSITION_PROTECTION_REQUIRED');
+      const entry = Number(position.entryPrice);
+      if (auth.thesis.direction === 'LONG' ? referencePrice < entry : referencePrice > entry) throw new ForbiddenException('UNPLANNED_AVERAGE_DOWN');
+      const existingLoss = Math.abs(Number(position.quantity)) * (Math.abs(entry - Number(source.stopLoss)) + entry * limits.estimatedRoundTripCostPct);
+      if (existingLoss + plannedLoss > equity * Math.min(0.005, limits.riskPerTrade) + 1e-8) throw new ForbiddenException('COMBINED_THESIS_RISK_EXCEEDED');
+    }
+    const retained = positions.filter((position) => position.symbol !== assessment.symbol || confirmed);
+    if (retained.filter((position) => position.symbol !== assessment.symbol).length >= limits.maxPositions) {
       throw new ForbiddenException(
         "Exchange preflight failed: maximum open positions exceeded",
       );

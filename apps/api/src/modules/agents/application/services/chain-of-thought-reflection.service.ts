@@ -1,11 +1,14 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AIOrchestratorService } from '../../../ai/application/ai-orchestrator.service';
-import { AnticipatoryMarketSnapshot, TradeThesis, ThesisReview, ThesisReviewSchema } from '@platform/shared';
+import { AnticipatoryMarketSnapshot, TradeThesis, ThesisReview, ThesisReviewSchema, type DecisionOutput } from '@platform/shared';
 
 export interface CriticInput {
   snapshot: AnticipatoryMarketSnapshot;
   thesis: TradeThesis;
+  scenarios?: DecisionOutput['scenarios'];
+  cohortEvidence?: DecisionOutput['confidenceCalibration'];
+  recentLosses?: string[];
 }
 
 @Injectable()
@@ -121,13 +124,7 @@ Respond in JSON format matching this schema:
   }
 
   private buildPrompt(input: CriticInput): string {
-    const marketContext = {
-      execution: input.snapshot.execution,
-      volatility: input.snapshot.volatility,
-      structure: input.snapshot.structure,
-      momentum: input.snapshot.momentum,
-      derivatives: input.snapshot.derivatives,
-    };
+    const marketContext = input.snapshot;
 
     return `## Snapshot Context
 Symbol: ${input.snapshot.symbol}
@@ -135,6 +132,9 @@ Timeframe: ${input.snapshot.timeframe}
 
 ## Market Context
 ${JSON.stringify(marketContext, null, 2)}
+
+## Scenarios and Cohort Evidence
+${JSON.stringify({ scenarios: input.scenarios, cohortEvidence: input.cohortEvidence, recentLosses: input.recentLosses })}
 
 ## Proposed Thesis
 ${JSON.stringify(input.thesis, null, 2)}

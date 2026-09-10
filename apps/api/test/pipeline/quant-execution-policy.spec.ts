@@ -23,7 +23,7 @@ function service(validation: Record<string, unknown> | null, regime: Record<stri
   return { policy: new QuantExecutionPolicyService({
     researchValidationRun: { findFirst },
     marketRegimeState: { findFirst: vi.fn().mockResolvedValue(regime) },
-  } as never), findFirst };
+  } as never, { getUserLimits: () => Promise.resolve({ maxLeverage: 1, riskPerTrade: 0.02, riskRewardRatio: 1.5 }) } as never), findFirst };
 }
 
 function serviceWithLimits(validation: Record<string, unknown>, limits: Record<string, number>) {
@@ -216,7 +216,7 @@ describe("QuantExecutionPolicyService", () => {
       severity: 'BLOCK', reason: "QUANT_WALK_FORWARD_UNSTABLE" });
   });
 
-  it("allows a tenth-size DEMO canary when a confirmed market dislocation aligns with strong realtime evidence", async () => {
+  it("does not let a DEMO dislocation canary bypass unstable exact evidence", async () => {
     const result = await service(valid({
       probabilityOfProfit: 43,
       probabilityOfRuin: 9.77,
@@ -248,17 +248,14 @@ describe("QuantExecutionPolicyService", () => {
     } as never);
 
     expect(result).toMatchObject({
-      allowed: true,
-      evaluated: true,
-      advisory: true,
-      severity: 'REDUCE_SIZE',
-      dislocationCanary: true,
+      allowed: false,
+      evaluated: false,
+      severity: 'BLOCK',
       reason: "QUANT_WALK_FORWARD_UNSTABLE",
-      sizeFactor: 0.1,
     });
   });
 
-  it("treats low historical profit probability as advisory for the same bounded dislocation canary", async () => {
+  it("does not let a DEMO dislocation canary bypass low exact profit probability", async () => {
     const result = await service(valid({ probabilityOfProfit: 43 })).policy.evaluate({
       ...input,
       mode: "DEMO",
@@ -281,10 +278,9 @@ describe("QuantExecutionPolicyService", () => {
     } as never);
 
     expect(result).toMatchObject({
-      allowed: true,
-      dislocationCanary: true,
+      allowed: false,
+      severity: 'BLOCK',
       reason: "QUANT_PROBABILITY_TOO_LOW",
-      sizeFactor: 0.1,
     });
   });
 
@@ -496,4 +492,14 @@ describe("QuantExecutionPolicyService", () => {
       sizeFactor: 0.25,
     });
   });
+});
+
+
+it('cannot use a dislocation to bypass a reliable negative exact cohort', async () => {
+  const result = await service(valid({ probabilityOfProfit: 30 })).policy.evaluate({
+    userId: 'user-1', symbol: 'ETH-USDT', provider: 'OKX_FUTURES', timeframe: '15m', mode: 'DEMO', now: new Date('2026-08-12T01:00:00Z'),
+    decision: strongDecision({ expectedReward: 3, expectedLoss: 1, executionCost: 0.1 }) as never, multiTimeframeConfirmation: 100,
+    marketDislocation: { direction: 'BULLISH', confirmationCount: 3, indicatorCloseTime: '2026-08-12T01:00:00Z', reasons: ['ROLLING_HIGH_BREAKOUT', 'BULLISH_ATR_IMPULSE'] },
+  });
+  expect(result).toMatchObject({ allowed: false, severity: 'BLOCK' });
 });

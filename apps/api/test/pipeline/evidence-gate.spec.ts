@@ -91,3 +91,7 @@ describe('EvidenceGate', () => {
     expect(result.reasons).toContain('VALID_EXACT_EVIDENCE');
   });
 });
+
+it('never downgrades reliable negative evidence because another gate says new cohort', () => {
+  expect(evaluateEvidenceGate({ negativeExactCohort: true, newCohort: true, mode: 'DEMO' }).severity).toBe('BLOCK');
+});

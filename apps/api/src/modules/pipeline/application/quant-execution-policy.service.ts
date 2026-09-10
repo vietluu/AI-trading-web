@@ -44,7 +44,7 @@ export class QuantExecutionPolicyService {
     provider: string;
     timeframe: string;
     strategyKey?: string;
-    mode?: "DEMO" | "LIVE";
+    mode?: "SHADOW" | "DEMO" | "LIVE";
     decision: Pick<DecisionOutput,
       "decision" | "regime" | "confidence" | "opportunityScore" |
       "expectedValue" | "riskScore" | "volatilityAdjustment" |
@@ -119,9 +119,10 @@ export class QuantExecutionPolicyService {
       
       const maxAge = Math.max(36 * 3_600_000, timeframeMilliseconds(input.timeframe) * 12);
       const isStale = now.getTime() - validation.createdAt.getTime() > maxAge;
-      negativeExactCohort = !isStale && (!validation.walkForwardStable || validation.probabilityOfProfit < 52);
       newCohort = Number(sampleEvidence.totalTrades ?? 0) < 30 || Number(sampleEvidence.outOfSampleTrades ?? outOfSample.outOfSampleTrades ?? 0) < 10;
-      assumptionMismatch = !assumptions || (liveLimits !== null && liveLimits !== undefined && (
+      negativeExactCohort = !isStale && !newCohort && (!validation.walkForwardStable || validation.probabilityOfProfit < 52 || validation.probabilityOfRuin > 15 || validation.outOfSampleSharpe <= 0.8);
+      assumptionMismatch = !assumptions || !liveLimits ||
+        ['leverage', 'riskPerTrade', 'riskRewardRatio'].some((key) => !Number.isFinite(Number(assumptions[key]))) || (liveLimits !== null && liveLimits !== undefined && (
         Number(assumptions.leverage) !== liveLimits.maxLeverage ||
         Math.abs(Number(assumptions.riskPerTrade) - liveLimits.riskPerTrade) > 1e-9 ||
         Math.abs(Number(assumptions.riskRewardRatio) - liveLimits.riskRewardRatio) > 1e-9
@@ -132,7 +133,7 @@ export class QuantExecutionPolicyService {
     }
     
     const gateResult = evaluateEvidenceGate({
-      mode: input.mode === 'LIVE' ? 'LIVE' : 'DEMO',
+      mode: input.mode ?? 'DEMO',
       negativeExactCohort,
       newCohort,
       assumptionMismatch,
@@ -144,13 +145,8 @@ export class QuantExecutionPolicyService {
        else if (gateResult.reasons.includes('ASSUMPTION_MISMATCH_LIVE')) reason = 'QUANT_ASSUMPTION_MISMATCH';
        else if (gateResult.reasons.includes('NEW_COHORT_LIVE')) reason = 'QUANT_SAMPLE_TOO_SMALL';
        else if (gateResult.reasons.includes('NEGATIVE_EXACT_COHORT')) {
-           reason = !validation.walkForwardStable ? 'QUANT_WALK_FORWARD_UNSTABLE' : 'QUANT_PROBABILITY_TOO_LOW';
-           if (evidence) {
-               const canary = this.dislocationCanary(reason, input, evidence);
-               if (canary) {
-                   return { ...canary, reasons: Array.from(new Set([...(canary.reasons ?? []), ...gateResult.reasons])) };
-               }
-           }
+           reason = !validation.walkForwardStable ? 'QUANT_WALK_FORWARD_UNSTABLE' : validation.probabilityOfProfit < 52 ? 'QUANT_PROBABILITY_TOO_LOW' : validation.probabilityOfRuin > 15 ? 'QUANT_RUIN_RISK_TOO_HIGH' : 'QUANT_OUT_OF_SAMPLE_EDGE_MISSING';
+
        }
        return { severity: 'BLOCK', allowed: false, evaluated: false, reason, validation: evidence, reasons: gateResult.reasons };
     }
@@ -175,23 +171,19 @@ export class QuantExecutionPolicyService {
     if (now.getTime() - validation.createdAt.getTime() > maxAge)
       return applyGate({ ...this.insufficientEvidence("QUANT_VALIDATION_STALE", input), validation: evidence });
       
+    if (newCohort) {
+      return applyGate({ ...this.insufficientEvidence("QUANT_SAMPLE_TOO_SMALL", input), validation: evidence });
+    }
+
     if (assumptionMismatch) {
       return applyGate({ ...this.insufficientEvidence("QUANT_ASSUMPTION_MISMATCH", input), validation: evidence });
     }
       
-    if (newCohort) {
-      return applyGate({ ...this.insufficientEvidence("QUANT_SAMPLE_TOO_SMALL", input), validation: evidence });
-    }
-      
 
     if (validation.probabilityOfRuin > 15) {
-      const canary = evidence && this.dislocationCanary("QUANT_RUIN_RISK_TOO_HIGH", input, evidence);
-      if (canary) return applyGate(canary);
       return applyGate({ severity: 'BLOCK', allowed: false, reason: "QUANT_RUIN_RISK_TOO_HIGH", validation: evidence });
     }
     if (validation.outOfSampleSharpe <= 0.8) {
-      const canary = evidence && this.dislocationCanary("QUANT_OUT_OF_SAMPLE_EDGE_MISSING", input, evidence);
-      if (canary) return applyGate(canary);
       return applyGate({ severity: 'BLOCK', allowed: false, reason: "QUANT_OUT_OF_SAMPLE_EDGE_MISSING", validation: evidence });
     }
     
@@ -216,7 +208,7 @@ export class QuantExecutionPolicyService {
     reason: "QUANT_VALIDATION_MISSING" | "QUANT_SAMPLE_TOO_SMALL" |
       "QUANT_ASSUMPTION_MISMATCH" | "QUANT_VALIDATION_STALE",
     input: {
-      mode?: "DEMO" | "LIVE";
+      mode?: "SHADOW" | "DEMO" | "LIVE";
       decision: Pick<DecisionOutput,
         "decision" | "regime" | "confidence" | "opportunityScore" |
         "expectedValue" | "riskScore" | "volatilityAdjustment" |
@@ -276,90 +268,6 @@ export class QuantExecutionPolicyService {
     if (!eligible) return undefined;
     // News-driven entries use less risk than the generic cold-start canary.
     return eventAligned ? 0.15 : 0.25;
-  }
-
-  private dislocationCanary(
-    reason: NonNullable<QuantExecutionPolicyResult["reason"]>,
-    input: {
-      mode?: "DEMO" | "LIVE";
-      decision: Pick<DecisionOutput,
-        "decision" | "regime" | "confidence" | "opportunityScore" |
-        "expectedValue" | "riskScore" | "volatilityAdjustment" |
-        "dataQuality" | "coreDataQuality" | "directionalAgreement" |
-        "evidenceCoverage" | "conflictLevel" | "expectedReward" |
-        "expectedLoss" | "executionCost"
-      >;
-      multiTimeframeConfirmation?: number;
-      primaryRsi?: number;
-      marketDislocation?: {
-        direction: "BULLISH" | "BEARISH";
-        confirmationCount: number;
-        indicatorCloseTime: string;
-        reasons: string[];
-      };
-      now?: Date;
-    },
-    validation: NonNullable<QuantExecutionPolicyResult["validation"]>,
-  ): QuantExecutionPolicyResult | undefined {
-    const event = input.marketDislocation;
-    if (input.mode !== "DEMO" || !event) return undefined;
-    const directionAligned =
-      (input.decision.decision === "LONG" && event.direction === "BULLISH") ||
-      (input.decision.decision === "SHORT" && event.direction === "BEARISH");
-    // A plain ATR impulse was too frequent in the 2026-08-30/31 replay and
-    // behaved like ordinary momentum. A dislocation needs both range expansion
-    // and a broken rolling boundary before historical evidence becomes advisory.
-    const structuralBreakout = event.reasons.some((item) =>
-      /ROLLING_(?:HIGH_BREAKOUT|LOW_BREAKDOWN)/.test(item),
-    );
-    const atrImpulse = event.reasons.some((item) =>
-      /(?:BULLISH|BEARISH)_ATR_IMPULSE/.test(item),
-    );
-    const sourceTime = Date.parse(event.indicatorCloseTime);
-    const now = input.now ?? new Date();
-    const sourceAgeMs = now.getTime() - sourceTime;
-    const payoffRatio = input.decision.expectedReward /
-      Math.max(input.decision.expectedLoss, Number.EPSILON);
-    const neutralPriorValue =
-      0.5 * input.decision.expectedReward -
-      0.5 * input.decision.expectedLoss -
-      input.decision.executionCost;
-    const rsiSafe = input.primaryRsi === undefined ||
-      (input.decision.decision === "LONG"
-        ? input.primaryRsi < 80
-        : input.primaryRsi > 20);
-    const eligible = directionAligned &&
-      structuralBreakout &&
-      atrImpulse &&
-      event.confirmationCount >= 2 &&
-      Number.isFinite(sourceTime) &&
-      sourceAgeMs >= -60_000 &&
-      sourceAgeMs <= 10 * 60_000 &&
-      input.decision.confidence >= 74 &&
-      input.decision.opportunityScore >= 70 &&
-      input.decision.riskScore < 80 &&
-      input.decision.volatilityAdjustment > -30 &&
-      input.decision.regime.type !== "HIGH_VOLATILITY" &&
-      input.decision.dataQuality !== "INSUFFICIENT" &&
-      input.decision.coreDataQuality === "GOOD" &&
-      input.decision.conflictLevel === "LOW" &&
-      (input.decision.directionalAgreement ?? 0) >= 80 &&
-      (input.decision.evidenceCoverage ?? 0) >= 60 &&
-      (input.multiTimeframeConfirmation ?? 0) >= 80 &&
-      payoffRatio >= 1.5 &&
-      neutralPriorValue > 0 &&
-      rsiSafe;
-    if (!eligible) return undefined;
-    return {
-      severity: 'REDUCE_SIZE',
-      allowed: true,
-      evaluated: true,
-      advisory: true,
-      dislocationCanary: true,
-      reason,
-      sizeFactor: 0.1,
-      validation,
-    };
   }
 
   private hasFreshRegimeConflict(

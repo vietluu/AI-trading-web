@@ -1,4 +1,4 @@
-import type { DecisionOutput } from "@platform/shared";
+import type { DecisionOutput, TradeThesis, AnticipatoryMarketSnapshot, StructuredTrigger } from "@platform/shared";
 import { adaptiveTradingPolicy } from "../../pipeline/domain/adaptive-trading-policy";
 
 export type TradePlanRegime =
@@ -19,7 +19,25 @@ export type TradePlanStrategy =
   | "SQUEEZE_BREAKOUT"
   | "LEGACY_FALLBACK";
 
+export interface ProactiveExecutionContext {
+  thesisId: string;
+  parentThesisId?: string;
+  thesis: TradeThesis;
+  snapshot: AnticipatoryMarketSnapshot;
+  mode: 'OBSERVE' | 'SHADOW' | 'DEMO';
+  sizeFactor: number;
+}
+
+export interface StoredProbe {
+  stage: 'PROBE' | 'CONFIRMED';
+  thesisId: string;
+  setup: string;
+  trigger: StructuredTrigger[];
+  sourceDataCutoff: string;
+}
+
 export interface TradePlanMarketContext {
+  proactive?: ProactiveExecutionContext;
   atr?: number;
   rsi?: number;
   support?: number;
@@ -76,7 +94,7 @@ export interface TradePlan {
   isLiquiditySweep?: boolean;
   tp1Price?: number;
   tp2Price?: number;
-  stagedEntry?: {
+  stagedEntry?: StoredProbe & {
     stage?: "PROBE" | "CONFIRMED";
     probeSizePct: number;
     confirmationSizePct: number;
@@ -650,6 +668,29 @@ function _buildAdaptiveTradePlan(input: {
 }
 
 export function buildAdaptiveTradePlan(input: Parameters<typeof _buildAdaptiveTradePlan>[0]): TradePlan {
+  const proactive = input.market.proactive;
+  if (proactive) {
+    const thesis = proactive.thesis;
+    const entry = thesis.entryZone;
+    const regime = resolveTradePlanRegime(input.decision, input.market);
+    const strategy: TradePlanStrategy = thesis.setup === 'SQUEEZE_PROBE' ? 'SQUEEZE_BREAKOUT'
+      : thesis.setup === 'NO_TRADE' ? 'LEGACY_FALLBACK' : thesis.setup;
+    if (!entry || thesis.stopLoss === null || !['PROBE_READY', 'CONFIRMED'].includes(thesis.state)) {
+      return { approved: false, reason: 'THESIS_NOT_EXECUTABLE', regime, strategy, maxHoldingCandles: 8, breakEvenAtR: 1 };
+    }
+    const probeSizePct = 0.25;
+    return {
+      approved: true, regime, strategy, stopLoss: thesis.stopLoss,
+      takeProfit: thesis.targets.reduce((sum, target) => sum + target.price * target.fraction, 0),
+      maxHoldingCandles: 8, breakEvenAtR: 1, atr: input.market.atr,
+      timeframeMs: input.market.timeframeMs,
+      orderType: 'LIMIT', limitEntryPrice: Math.min(entry.upper, Math.max(entry.lower, input.entryPrice)), limitTtlCandles: 1,
+      stagedEntry: { stage: thesis.state === 'CONFIRMED' ? 'CONFIRMED' : 'PROBE', thesisId: proactive.thesisId,
+        setup: thesis.setup, trigger: thesis.trigger, sourceDataCutoff: proactive.snapshot.sourceDataCutoff,
+        probeSizePct, confirmationSizePct: 1 - probeSizePct, combinedRiskLimitPct: 0.005 },
+    };
+  }
+
   const plan = _buildAdaptiveTradePlan(input);
   if (!plan.approved) return plan;
 
@@ -691,15 +732,6 @@ export function buildAdaptiveTradePlan(input: Parameters<typeof _buildAdaptiveTr
     plan.takeProfit = undefined;
   }
 
-  // Staged Entry logic for Proactive Thesis
-  if (input.market.gateSeverity && input.market.gateSeverity !== 'BLOCK') {
-    const probeSizePct = input.market.gateSeverity === 'REDUCE_SIZE' ? 0.20 : 0.25;
-    plan.stagedEntry = {
-      probeSizePct,
-      confirmationSizePct: 1.0 - probeSizePct,
-      combinedRiskLimitPct: 0.005, // 0.50% combined default risk
-    };
-  }
 
   return plan;
 }

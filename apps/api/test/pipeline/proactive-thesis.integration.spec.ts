@@ -32,7 +32,8 @@ import type { DecisionOutput } from "@platform/shared";
 // ---------------------------------------------------------------------------
 
 const SYMBOL = "BTC-USDT";
-const PRICE = 100_000;
+const PRICE = 108_200;
+import { cutoff, createBaseSnapshot, createValidLongThesis } from '../helpers/thesis-fixture';
 
 const makeJob = (): PipelineJob => ({
   runId: "run-1",
@@ -82,27 +83,7 @@ const makeFusionResult = () => ({
   cacheHits: {},
 });
 
-const makeSnapshot = () => ({
-  structure: {
-    coverage: "AVAILABLE",
-    liquiditySweep: {
-      coverage: "AVAILABLE",
-      detected: true,
-      direction: "BULLISH_SWEEP",
-      penetration: 80,
-      reclaimed: true,
-    },
-  },
-  derivatives: {
-    coverage: "AVAILABLE",
-    derivativesImbalance: {
-      coverage: "AVAILABLE",
-      squeezeProbability: 80,
-      squeezeDirection: "LONG_SQUEEZE",
-      fundingExtreme: "NORMAL",
-    },
-  },
-});
+const makeSnapshot = () => createBaseSnapshot();
 
 const makeApprovedRiskAssessment = () => ({
   outcome: "RISK_APPROVED" as const,
@@ -129,9 +110,10 @@ describe("Proactive Thesis Pipeline Integration", () => {
   let mockQuantPolicy: Partial<QuantExecutionPolicyService>;
   let mockCollector: { addSignal: ReturnType<typeof vi.fn> };
 
-  afterEach(() => vi.unstubAllEnvs());
+  afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
 
   beforeEach(() => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date(cutoff));
     vi.stubEnv("PROACTIVE_AI_MODE", "DEMO");
 
     mockLiveTrading = {
@@ -141,20 +123,14 @@ describe("Proactive Thesis Pipeline Integration", () => {
     };
 
     mockTradeResearcher = {
+      persistReview: vi.fn().mockResolvedValue("review-1"),
       research: vi.fn().mockResolvedValue({
-        preferred: {
-          direction: "LONG",
-          confidence: 85,
-          expectedNetR: 3,
-          setup: {},
-          invalidation: { levels: [{ price: 95_000, reason: "structure" }] },
-          missingEvidence: [],
-        },
+        preferred: createValidLongThesis(), alternatives: [], researchRunId: 'thesis-1', contextSnapshotId: 'context-1',
       }),
     };
 
     mockCritic = {
-      reflect: vi.fn().mockResolvedValue({ valid: true, adjustments: [] }),
+      reflect: vi.fn().mockResolvedValue({ action: 'APPROVE', reasonCodes: [], evidenceRefs: [], rationale: 'valid' }),
     };
 
     mockSnapshotService = {
@@ -259,8 +235,8 @@ describe("Proactive Thesis Pipeline Integration", () => {
     const ctx = firstCall[0].tradePlanContext;
     expect(firstCall[0]).toMatchObject({ requiredEnvironment: "DEMO" });
     expect(mockLiveTrading.hasVerifiedDemoConnection).toHaveBeenCalledWith("user-1");
-    expect(ctx.liquiditySweep).toBe(true);
-    expect(ctx.derivativesImbalance).toBe(80);
+    expect(ctx.liquiditySweep).toBe(false);
+    expect(ctx.proactive).toMatchObject({ thesis: { stopLoss: 107400, state: "PROBE_READY" } });
 
     // Order must use a verified DEMO connection through submission as well.
     expect(mockLiveTrading.executePipeline).toHaveBeenCalledWith("user-1", "run-1", { requiredEnvironment: "DEMO" });
@@ -397,5 +373,20 @@ describe("Proactive Thesis Pipeline Integration", () => {
       }
     },
   );
+
+  it('REQUIRE_TRIGGER cannot submit a directional WATCHING thesis', async () => {
+    vi.mocked(mockCritic.reflect!).mockResolvedValue({ action: 'REQUIRE_TRIGGER', reasonCodes: [], evidenceRefs: [], rationale: 'wait' });
+    await pipelineRunner.run(makeJob());
+    expect(mockLiveTrading.assessPipelineDecision).not.toHaveBeenCalled();
+    expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
+  });
+  it('revalidates expiry after critic review', async () => {
+    vi.mocked(mockCritic.reflect!).mockImplementation(() => {
+      vi.setSystemTime(new Date('2026-09-09T13:00:00Z'));
+      return Promise.resolve({ action: 'APPROVE', reasonCodes: [], evidenceRefs: [], rationale: 'valid' });
+    });
+    await pipelineRunner.run(makeJob());
+    expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
+  });
 
 });

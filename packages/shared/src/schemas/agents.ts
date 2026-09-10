@@ -616,6 +616,7 @@ export const DecisionOutputSchema = z
     adaptiveThreshold: z.number().min(0).max(100),
     calibrationAdjustment: z.number(),
     executionCost: z.number().min(0),
+    decisionSource: z.enum(['AI', 'RULES', 'AI_WITH_RULES_FALLBACK']).optional(),
     scenarios: z.array(TradingScenarioSchema).optional(),
     regimeDetailed: DetailedRegimeTypeSchema.optional(),
     anticipatorySignals: z.object({

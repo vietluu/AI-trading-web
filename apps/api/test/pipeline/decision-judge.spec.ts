@@ -237,3 +237,13 @@ describe('DecisionJudgeService', () => {
     expect(result.reasons).toContain('STALE_ANALYSIS');
   });
 });
+
+
+describe('explicit evidence release modes', () => {
+  it.each(['DEMO', 'SHADOW'] as const)('reduces uncertain evidence in %s', (mode) => {
+    const good = { dataQuality: 'GOOD', generatedAt: new Date().toISOString(), trend: { direction: 'UP' } };
+    const result = new DecisionJudgeService().evaluate({ decision: 'LONG', dataQuality: 'PARTIAL', conflictLevel: 'LOW', confidence: 75, expectedValue: 0.8, profitFactorEstimate: 1.8, riskScore: 30 } as never,
+      { market: good, technical: good, news: good, sentiment: good, macro: good, onchain: good } as never, { symbol: 'BTC-USDT', mode, requireCalibratedConfidence: true });
+    expect(result).toMatchObject({ approved: true, severity: 'REDUCE_SIZE', sizeFactor: 0.25 });
+  });
+});

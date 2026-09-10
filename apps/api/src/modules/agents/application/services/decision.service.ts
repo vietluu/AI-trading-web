@@ -1,3 +1,5 @@
+import type { AnticipatoryMarketSnapshot } from '@platform/shared';
+import { anticipatoryDecisionContext } from '../../domain/analysis/anticipatory-decision-context';
 import { buildPostMortemContext } from "../../domain/analysis/post-mortem-memory-injector";
 import { Injectable, Logger, Inject, Optional } from "@nestjs/common";
 import {
@@ -79,6 +81,7 @@ export class DecisionService {
       provider?: "BINANCE_FUTURES" | "OKX_FUTURES";
       timeframe?: string;
       referencePrice?: number;
+      anticipatorySnapshot?: AnticipatoryMarketSnapshot;
     } = {},
   ): Promise<DecisionOutput> {
     const config =
@@ -139,6 +142,8 @@ export class DecisionService {
         confidenceThreshold: finalConfidenceThreshold,
         volatilityPenalty: config?.volatilityPenalty ?? undefined,
         penalties: customPenalties,
+        referencePrice: metadata.referencePrice,
+        anticipatorySnapshot: metadata.anticipatorySnapshot,
       }
     );
     const confidenceCalibration = await this.confidenceCalibration(
@@ -556,13 +561,15 @@ export class DecisionService {
       confidenceThreshold?: number;
       volatilityPenalty?: number;
       penalties?: Partial<Record<keyof Weighting, number>>;
+      referencePrice?: number;
+      anticipatorySnapshot?: AnticipatoryMarketSnapshot;
     },
   ): DecisionOutput {
     const input = DecisionInputSchema.parse(rawInput);
     const names = (Object.keys(BASE_WEIGHTS) as AnalystName[]).filter(
       (name) => name !== "macro" || this.macroConfigured(input),
     );
-    const regime = this.detectRegime(input);
+    const regime = this.detectRegime(input, customOptions?.anticipatorySnapshot);
     const weighting = this.dynamicWeights(regime, customOptions?.weights, customOptions?.penalties);
     const active = names.filter((name) => {
       const output = input[name];
@@ -875,14 +882,16 @@ export class DecisionService {
         ? "BEARISH"
         : undefined;
 
+    const anticipatory = customOptions?.anticipatorySnapshot ? anticipatoryDecisionContext(customOptions.anticipatorySnapshot) : undefined;
     const scenarios = buildScenarioBlueprint({
       decision: finalDecision,
       confidence: Math.round(calibratedConfidence),
       regime,
-      currentPrice: undefined,
-      atr: undefined,
-      supportLevel: undefined,
-      resistanceLevel: undefined,
+      currentPrice: anticipatory?.market.currentPrice ?? customOptions?.referencePrice,
+      atr: anticipatory?.market.atr,
+      supportLevel: anticipatory?.market.support,
+      resistanceLevel: anticipatory?.market.resistance,
+      anticipatorySignals: anticipatory?.signals,
       hasSfpWick,
       sfpType,
       directionalAgreement,
@@ -916,6 +925,8 @@ export class DecisionService {
       calibrationAdjustment: Number(calibrationAdjustment.toFixed(2)),
       executionCost: Number(executionCost.toFixed(3)),
       scenarios,
+      anticipatorySignals: anticipatory?.signals,
+      decisionSource: "RULES",
       regimeDetailed: regime.detailed,
       generatedAt: new Date().toISOString(),
     });
@@ -944,7 +955,7 @@ export class DecisionService {
     return output;
   }
 
-  private detectRegime(input: DecisionInput): MarketRegime {
+  private detectRegime(input: DecisionInput, snapshot?: AnticipatoryMarketSnapshot): MarketRegime {
     const volatilityEvidence = [
       input.market?.volatility.atr,
       ...(input.market?.anomalies ?? []),
@@ -984,6 +995,7 @@ export class DecisionService {
       trendStrength: input.technical?.trend.strength ?? input.market?.trend.strength,
       volatilityLevel: input.market?.volatility.level,
       isSfpWick,
+      ...(snapshot?.volatility.coverage === 'AVAILABLE' ? { isSqueezing: snapshot.volatility.squeezeState === 'SQUEEZING', squeezeDuration: snapshot.volatility.squeezeDurationCandles, atrPercentile: snapshot.volatility.atrPercentile } : {}),
     });
 
     return {

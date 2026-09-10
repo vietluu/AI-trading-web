@@ -13,7 +13,7 @@ export interface ScenarioPlanningInput {
   directionalAgreement?: number;
   anticipatorySignals?: {
     squeeze?: { active: boolean; breakoutProbability: number; breakoutBias: string };
-    liquiditySweep?: { detected: boolean; direction: string; confidence: number };
+    liquiditySweep?: { detected: boolean; direction: string | null; confidence: number };
     derivativesImbalance?: { squeezeProbability: number; squeezeDirection: string };
   };
 }

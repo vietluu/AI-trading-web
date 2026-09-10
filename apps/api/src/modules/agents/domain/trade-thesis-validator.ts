@@ -6,7 +6,7 @@ import type {
   TradeThesis,
   ThesisReview,
 } from '@platform/shared';
-import { resolveSnapshotPath } from '@platform/shared';
+import { resolveSnapshotPath, TradeThesisSchema } from '@platform/shared';
 
 export interface TradeThesisValidatorOptions {
   now?: Date | string | number;
@@ -121,7 +121,46 @@ export function validateTradeThesis(
   const evaluationTimeMs =
     options?.now !== undefined
       ? new Date(options.now).getTime()
-      : cutoffMs;
+      : Date.now();
+
+  if (!TradeThesisSchema.safeParse(thesis).success) {
+    return { valid: false, status: 'INVALID', reasonCodes: ['GEOMETRY_INVALID'], reasons: ['THESIS_SCHEMA_INVALID'] };
+  }
+  if (!Number.isFinite(evaluationTimeMs) || !Number.isFinite(cutoffMs) || cutoffMs > evaluationTimeMs) {
+    return { valid: false, status: 'INVALID', reasonCodes: ['THESIS_STALE'], reasons: ['INVALID_EVALUATION_TIME'] };
+  }
+  if (isActionable && (snapshot.eligibility.status !== 'ELIGIBLE' ||
+    [snapshot.structure, snapshot.volatility, snapshot.momentum, snapshot.participation, snapshot.execution].some((field) =>
+      field.coverage !== 'AVAILABLE' || field.freshness !== 'FRESH' ||
+      !Number.isFinite(Date.parse(field.sourceTimestamp)) ||
+      Date.parse(field.sourceTimestamp) > cutoffMs ||
+      evaluationTimeMs - Date.parse(field.sourceTimestamp) > field.freshnessThresholdMs))) {
+    reasonCodes.push('THESIS_STALE');
+    reasons.push('Core snapshot evidence is unavailable, ineligible or stale at evaluation time');
+  }
+  if (isActionable && thesis.trigger.length === 0) {
+    reasonCodes.push('GEOMETRY_INVALID');
+    reasons.push('Actionable thesis requires declared confirmation triggers');
+  }
+  if (isActionable && thesis.evidenceFor.length === 0) {
+    reasonCodes.push('EVIDENCE_REF_INVALID');
+    reasons.push('Actionable thesis requires supporting evidence');
+  }
+  if (isActionable && thesis.entryZone && thesis.invalidation && thesis.stopLoss !== null) {
+    const invalid = thesis.direction === 'LONG'
+      ? thesis.invalidation.price >= thesis.entryZone.lower || thesis.invalidation.price < thesis.stopLoss
+      : thesis.invalidation.price <= thesis.entryZone.upper || thesis.invalidation.price > thesis.stopLoss;
+    if (invalid) {
+      reasonCodes.push('GEOMETRY_INVALID');
+      reasons.push('Invalidation must lie between the protective stop and entry zone');
+    }
+    if (snapshot.execution.coverage === 'AVAILABLE' && (thesis.direction === 'LONG'
+      ? snapshot.execution.currentPrice <= thesis.invalidation.price
+      : snapshot.execution.currentPrice >= thesis.invalidation.price)) {
+      reasonCodes.push('GEOMETRY_INVALID');
+      reasons.push('Thesis is already invalidated');
+    }
+  }
 
   // 1. Freshness / Expiry validation (THESIS_STALE)
   const expiresAtMs = Date.parse(thesis.expiresAt);
@@ -171,7 +210,7 @@ export function validateTradeThesis(
       (sum, target) => sum + target.fraction,
       0,
     );
-    if (fractionSum > 1.0 + FLOAT_EPSILON) {
+    if (Math.abs(fractionSum - 1) > FLOAT_EPSILON || thesis.targets.some((target) => target.fraction <= 0)) {
       reasonCodes.push('GEOMETRY_INVALID');
       reasons.push(
         `Target fractions sum to ${fractionSum.toFixed(4)}, which exceeds 1.0`,
@@ -208,7 +247,7 @@ export function validateTradeThesis(
 
       if (thesis.entryZone !== null) {
         for (const target of thesis.targets) {
-          if (target.price <= thesis.entryZone.lower) {
+          if (target.price <= thesis.entryZone.upper) {
             reasonCodes.push('GEOMETRY_INVALID');
             reasons.push(
               `LONG target price (${target.price}) must be above entryZone.lower (${thesis.entryZone.lower})`,
@@ -230,7 +269,7 @@ export function validateTradeThesis(
 
       if (thesis.entryZone !== null) {
         for (const target of thesis.targets) {
-          if (target.price >= thesis.entryZone.upper) {
+          if (target.price >= thesis.entryZone.lower) {
             reasonCodes.push('GEOMETRY_INVALID');
             reasons.push(
               `SHORT target price (${target.price}) must be below entryZone.upper (${thesis.entryZone.upper})`,
@@ -244,7 +283,8 @@ export function validateTradeThesis(
   // 5. Net R policy validation (NET_R_TOO_LOW)
   if (isActionable) {
     const minNetR = options?.minNetR ?? DEFAULT_MIN_NET_R;
-    if (thesis.expectedNetR === null || thesis.expectedNetR < minNetR) {
+    const computedNetR = calculateThesisNetR(thesis, snapshot);
+    if (thesis.expectedNetR === null || thesis.expectedNetR < minNetR || computedNetR === null || computedNetR < minNetR) {
       reasonCodes.push('NET_R_TOO_LOW');
       reasons.push(
         `Expected net R (${thesis.expectedNetR ?? 'null'}) is below policy threshold (${minNetR})`,
@@ -330,11 +370,20 @@ export function applyThesisReview(thesis: TradeThesis, review: ThesisReview): Tr
     result.state = 'WATCHING';
   }
 
-  if (review.action === 'REDUCE_SIZE' && review.sizeFactor !== undefined) {
-    if (result.expectedNetR !== null) {
-      result.expectedNetR = Number((result.expectedNetR * review.sizeFactor).toFixed(2));
-    }
-  }
 
   return result;
+}
+
+
+/** Weighted target payoff at the worst allowed entry, including round-trip costs. */
+export function calculateThesisNetR(thesis: TradeThesis, snapshot: AnticipatoryMarketSnapshot): number | null {
+  if (!thesis.entryZone || thesis.stopLoss === null || snapshot.execution.coverage !== 'AVAILABLE') return null;
+  const entry = thesis.direction === 'LONG'
+    ? Math.max(thesis.entryZone.upper, snapshot.execution.currentPrice)
+    : Math.min(thesis.entryZone.lower, snapshot.execution.currentPrice);
+  const cost = snapshot.execution.estimatedRoundTripCost;
+  const reward = thesis.targets.reduce((sum, target) => sum + target.fraction *
+    (thesis.direction === 'LONG' ? target.price - entry : entry - target.price), 0);
+  const risk = Math.abs(entry - thesis.stopLoss) + cost;
+  return risk > 0 ? (reward - cost) / risk : null;
 }

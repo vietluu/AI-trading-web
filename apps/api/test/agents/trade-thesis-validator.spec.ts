@@ -1,258 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import type { AnticipatoryMarketSnapshot, TradeThesis } from '@platform/shared';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
+import type { TradeThesis } from '@platform/shared';
 import { validateTradeThesis, applyThesisReview } from '../../src/modules/agents/domain/trade-thesis-validator';
 
-const cutoff = '2026-09-09T12:00:00.000Z';
-const observedAt = '2026-09-09T11:59:00.000Z';
+import { cutoff, observedAt, createBaseSnapshot, createValidLongThesis } from '../helpers/thesis-fixture';
 
-const createBaseSnapshot = (): AnticipatoryMarketSnapshot => ({
-  symbol: 'BTC-USDT',
-  provider: 'BINANCE_FUTURES',
-  timeframe: '15m',
-  sourceDataCutoff: cutoff,
-  schemaVersion: 1,
-  calculationVersion: 1,
-  eligibility: { status: 'ELIGIBLE', reasons: [] },
-  structure: {
-    coverage: 'AVAILABLE',
-    freshness: 'FRESH',
-    observationAgeMs: 60_000,
-    freshnessThresholdMs: 300_000,
-    sourceTimestamp: observedAt,
-    calculationVersion: 1,
-    evidence: [
-      {
-        snapshotField: 'structure',
-        source: 'BINANCE_FUTURES',
-        sourceTimestamp: observedAt,
-        calculationVersion: 1,
-      },
-    ],
-    confirmedPivots: [
-      {
-        kind: 'HIGH',
-        price: 112_000,
-        occurredAt: '2026-09-09T11:00:00.000Z',
-        confirmedAt: cutoff,
-      },
-    ],
-    rangeBoundaries: { lower: 108_000, upper: 112_000 },
-    equalHighs: [112_000],
-    equalLows: [108_000],
-    distanceToNearestBoundaryAtr: 0.25,
-    invalidationCandidates: [
-      { direction: 'LONG', price: 107_750, reason: 'RANGE_LOW_LOSS' },
-    ],
-    liquiditySweep: {
-      coverage: 'AVAILABLE',
-      freshness: 'FRESH',
-      observationAgeMs: 60_000,
-      freshnessThresholdMs: 300_000,
-      sourceTimestamp: observedAt,
-      calculationVersion: 1,
-      evidence: [
-        {
-          snapshotField: 'structure.liquiditySweep',
-          source: 'BINANCE_FUTURES',
-          sourceTimestamp: observedAt,
-          calculationVersion: 1,
-        },
-      ],
-      detected: false,
-      direction: null,
-      sweepZone: null,
-      penetration: 0,
-      reclaimed: false,
-    },
-  },
-  volatility: {
-    coverage: 'AVAILABLE',
-    freshness: 'FRESH',
-    observationAgeMs: 60_000,
-    freshnessThresholdMs: 300_000,
-    sourceTimestamp: observedAt,
-    calculationVersion: 1,
-    evidence: [
-      {
-        snapshotField: 'volatility',
-        source: 'BINANCE_FUTURES',
-        sourceTimestamp: observedAt,
-        calculationVersion: 1,
-      },
-    ],
-    atr: 200,
-    atrPercentile: 25,
-    squeezeState: 'SQUEEZING',
-    squeezeDurationCandles: 6,
-    compressionSlope: -0.1,
-    expansionState: 'NOT_EXPANDED',
-  },
-  momentum: {
-    coverage: 'AVAILABLE',
-    freshness: 'FRESH',
-    observationAgeMs: 60_000,
-    freshnessThresholdMs: 300_000,
-    sourceTimestamp: observedAt,
-    calculationVersion: 1,
-    evidence: [
-      {
-        snapshotField: 'momentum',
-        source: 'BINANCE_FUTURES',
-        sourceTimestamp: observedAt,
-        calculationVersion: 1,
-      },
-    ],
-    rsi: 52,
-    macd: { value: 10, signal: 5, histogram: 5 },
-    pivotOscillators: [],
-    momentumState: 'STABLE',
-  },
-  participation: {
-    coverage: 'AVAILABLE',
-    freshness: 'FRESH',
-    observationAgeMs: 60_000,
-    freshnessThresholdMs: 300_000,
-    sourceTimestamp: observedAt,
-    calculationVersion: 1,
-    evidence: [
-      {
-        snapshotField: 'participation',
-        source: 'BINANCE_FUTURES',
-        sourceTimestamp: observedAt,
-        calculationVersion: 1,
-      },
-    ],
-    volumeState: 'COMPRESSING',
-    volumeRatio: 0.8,
-    orderBook: {
-      coverage: 'UNAVAILABLE',
-      freshness: 'UNAVAILABLE',
-      observationAgeMs: null,
-      unavailableFields: ['participation.orderBook'],
-      reason: 'UNAVAILABLE',
-    },
-  },
-  derivatives: {
-    coverage: 'AVAILABLE',
-    freshness: 'FRESH',
-    observationAgeMs: 60_000,
-    freshnessThresholdMs: 300_000,
-    sourceTimestamp: observedAt,
-    calculationVersion: 1,
-    evidence: [
-      {
-        snapshotField: 'derivatives',
-        source: 'BINANCE_FUTURES',
-        sourceTimestamp: observedAt,
-        calculationVersion: 1,
-      },
-    ],
-    fundingRate: 0.0001,
-    fundingRatePercentile: 50,
-    openInterest: 1_000_000,
-    openInterestChangePct: 1.2,
-    priceOpenInterestDivergence: 'ALIGNED',
-    liquidationContext: {
-      coverage: 'UNAVAILABLE',
-      freshness: 'UNAVAILABLE',
-      observationAgeMs: null,
-      unavailableFields: ['derivatives.liquidationContext'],
-      reason: 'UNAVAILABLE',
-    },
-    derivativesImbalance: {
-      coverage: 'AVAILABLE',
-      freshness: 'FRESH',
-      observationAgeMs: 60_000,
-      freshnessThresholdMs: 300_000,
-      sourceTimestamp: observedAt,
-      calculationVersion: 1,
-      evidence: [
-        {
-          snapshotField: 'derivatives.derivativesImbalance',
-          source: 'BINANCE_FUTURES',
-          sourceTimestamp: observedAt,
-          calculationVersion: 1,
-        },
-      ],
-      fundingExtreme: 'NORMAL',
-      oiPriceDivergence: 'ALIGNED',
-      squeezeProbability: 10,
-      squeezeDirection: 'NONE',
-      signals: ['Balanced derivatives'],
-    },
-  },
-  context: {
-    coverage: 'UNAVAILABLE',
-    freshness: 'UNAVAILABLE',
-    observationAgeMs: null,
-    unavailableFields: ['context.news', 'context.sentiment', 'context.macro', 'context.onChain'],
-    reason: 'UNAVAILABLE',
-  },
-  execution: {
-    coverage: 'AVAILABLE',
-    freshness: 'FRESH',
-    observationAgeMs: 60_000,
-    freshnessThresholdMs: 300_000,
-    sourceTimestamp: observedAt,
-    calculationVersion: 1,
-    evidence: [
-      {
-        snapshotField: 'execution',
-        source: 'BINANCE_FUTURES',
-        sourceTimestamp: observedAt,
-        calculationVersion: 1,
-      },
-    ],
-    currentPrice: 108_200,
-    spread: 1.0,
-    estimatedRoundTripCost: 3.5,
-    tickSize: 0.1,
-    lotSize: 0.001,
-    currentExposure: 0,
-    priceTooFarFromCandidateZones: false,
-  },
-});
-
-const createValidLongThesis = (): TradeThesis => ({
-  thesisVersion: 1,
-  decisionSource: 'AI',
-  state: 'PROBE_READY',
-  direction: 'LONG',
-  regime: 'PRE_BREAKOUT_ACCUMULATION',
-  transitionProbability: 0.85,
-  setup: 'RANGE_REVERSAL',
-  entryZone: { lower: 108_000, upper: 108_500 },
-  trigger: [
-    {
-      type: 'PRICE_RECLAIM',
-      price: 108_250,
-      description: 'Reclaim range low after sweep',
-    },
-  ],
-  invalidation: {
-    price: 107_500,
-    reason: 'Loss of range low structural support',
-  },
-  stopLoss: 107_400,
-  targets: [
-    { price: 110_000, fraction: 0.5 },
-    { price: 112_000, fraction: 0.5 },
-  ],
-  expectedNetR: 2.4,
-  maximumChaseDistanceAtr: 0.6,
-  confidence: 80,
-  evidenceFor: [
-    {
-      snapshotField: 'structure',
-      source: 'BINANCE_FUTURES',
-      sourceTimestamp: observedAt,
-      calculationVersion: 1,
-    },
-  ],
-  evidenceAgainst: [],
-  missingEvidence: [],
-  expiresAt: '2026-09-09T12:30:00.000Z',
-});
+beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date(cutoff)); });
+afterEach(() => vi.useRealTimers());
 
 describe('TradeThesisValidator', () => {
   it('validates a correct LONG thesis', () => {
@@ -571,7 +324,7 @@ describe('applyThesisReview', () => {
     expect(result.entryZone).not.toBeNull();
   });
 
-  it('maps REDUCE_SIZE to reduced expectedNetR based on sizeFactor', () => {
+  it('preserves expectedNetR for REDUCE_SIZE', () => {
     const thesis = createValidLongThesis();
     thesis.expectedNetR = 2.0;
     const result = applyThesisReview(thesis, {
@@ -583,7 +336,7 @@ describe('applyThesisReview', () => {
     });
 
     expect(result.direction).toBe('LONG');
-    expect(result.expectedNetR).toBe(1.0);
+    expect(result.expectedNetR).toBe(2.0);
     expect(result.missingEvidence).toContain('HIGH_RISK');
   });
 
@@ -600,5 +353,32 @@ describe('applyThesisReview', () => {
     expect(result.direction).toBe('LONG');
     expect(result.state).toBe('PROBE_READY');
     expect(result.expectedNetR).toBe(originalNetR);
+  });
+});
+
+
+describe('review safety regressions', () => {
+  it.each(['structure', 'volatility', 'momentum', 'participation', 'execution'] as const)('rejects stale %s core evidence', (field) => {
+    const snapshot = createBaseSnapshot();
+    snapshot[field].freshness = 'STALE';
+    expect(validateTradeThesis(createValidLongThesis(), snapshot, { now: cutoff }).valid).toBe(false);
+  });
+  it('rejects an ineligible snapshot', () => {
+    const snapshot = createBaseSnapshot();
+    snapshot.eligibility.status = 'INELIGIBLE';
+    expect(validateTradeThesis(createValidLongThesis(), snapshot, { now: cutoff }).valid).toBe(false);
+  });
+  it.each([
+    { trigger: [] }, { evidenceFor: [] },
+    { invalidation: { price: 109000, reason: 'Wrong side' } },
+    { targets: [{ price: 108250, fraction: 1 }] },
+    { targets: [{ price: 112000, fraction: 0 }] },
+    { targets: [{ price: 108600, fraction: 1 }], expectedNetR: 100 },
+  ])('rejects incomplete or economically invalid thesis %j', (change) => {
+    expect(validateTradeThesis({ ...createValidLongThesis(), ...change }, createBaseSnapshot(), { now: cutoff }).valid).toBe(false);
+  });
+  it('does not change net R when critic reduces size', () => {
+    const thesis = createValidLongThesis();
+    expect(applyThesisReview(thesis, { action: 'REDUCE_SIZE', sizeFactor: 0.25, reasonCodes: [], evidenceRefs: [], rationale: 'uncertain' }).expectedNetR).toBe(thesis.expectedNetR);
   });
 });

@@ -30,7 +30,7 @@ export function evaluateEvidenceGate(input: EvidenceGateInput, options?: Evidenc
   if (input.missingProtection) reasons.push('MISSING_PROTECTION');
   if (input.costTooHigh) reasons.push('COST_TOO_HIGH');
   if (input.hardAccountLimit) reasons.push('HARD_ACCOUNT_LIMIT');
-  if (input.negativeExactCohort && !input.newCohort) reasons.push('NEGATIVE_EXACT_COHORT');
+  if (input.negativeExactCohort) reasons.push('NEGATIVE_EXACT_COHORT');
   
   if (input.assumptionMismatch && input.mode === 'LIVE') reasons.push('ASSUMPTION_MISMATCH_LIVE');
   if (input.newCohort && input.mode === 'LIVE') reasons.push('NEW_COHORT_LIVE');
@@ -65,4 +65,15 @@ export function evaluateEvidenceGate(input: EvidenceGateInput, options?: Evidenc
 
   reasons.push('VALID_EXACT_EVIDENCE');
   return { severity: 'APPROVE', reasons };
+}
+
+
+/** Compose independent reductions once. A zero factor or any BLOCK stays blocked. */
+export function composeEvidenceSize(gates: EvidenceGateResult[], options: EvidenceGateOptions = {}): EvidenceGateResult {
+  const reasons = [...new Set(gates.flatMap((gate) => gate.reasons))];
+  if (gates.some((gate) => gate.severity === 'BLOCK' || gate.sizeFactor === 0)) return { severity: 'BLOCK', sizeFactor: 0, reasons };
+  const raw = gates.reduce((factor, gate) => factor * (gate.sizeFactor ?? 1), 1);
+  if (!Number.isFinite(raw) || raw <= 0 || raw > 1) return { severity: 'BLOCK', sizeFactor: 0, reasons: [...reasons, 'INVALID_SIZE_FACTOR'] };
+  const sizeFactor = Math.min(raw, Math.max(options.minSizeFactor ?? 0.05, Math.min(options.maxSizeFactor ?? 1, raw)));
+  return { severity: sizeFactor < 1 ? 'REDUCE_SIZE' : 'APPROVE', sizeFactor, reasons };
 }

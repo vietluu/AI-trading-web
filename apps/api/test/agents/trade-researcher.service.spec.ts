@@ -1,7 +1,8 @@
 import { TradeResearcherService, type TradeResearcherContext } from '../../src/modules/agents/application/services/trade-researcher.service';
-import { type AnticipatoryMarketSnapshot, type DecisionOutput, type TradeThesis } from '@platform/shared';
-import { describe, expect, it, beforeEach, vi, type Mock } from 'vitest';
+import { type DecisionOutput, type TradeThesis } from '@platform/shared';
+import { describe, expect, it, beforeEach, afterEach, vi, type Mock } from 'vitest';
 
+import { createBaseSnapshot, cutoff } from '../helpers/thesis-fixture';
 import type { AIOrchestratorService } from '../../src/modules/ai/application/ai-orchestrator.service';
 import type { DecisionService } from '../../src/modules/agents/application/services/decision.service';
 import type { PrismaService } from '../../src/database/prisma.service';
@@ -10,24 +11,9 @@ describe('TradeResearcherService', () => {
   let service: TradeResearcherService;
   let aiOrchestratorService: { execute: Mock<AIOrchestratorService['execute']> };
   let decisionService: { run: Mock<() => Promise<Partial<DecisionOutput>>> };
-  let prismaService: { agentRun: { create: Mock<(args: unknown) => Promise<unknown>> } };
+  let prismaService: { agentRun: { create: Mock<(args: unknown) => Promise<unknown>> }; agentContextSnapshot: { create: Mock } };
 
-  const mockSnapshot: AnticipatoryMarketSnapshot = {
-    symbol: 'BTC-USDT',
-    provider: 'BINANCE_FUTURES',
-    timeframe: '15m',
-    sourceDataCutoff: new Date().toISOString(),
-    schemaVersion: 1,
-    calculationVersion: 1,
-    eligibility: { status: 'ELIGIBLE', reasons: [] },
-    structure: { coverage: 'UNAVAILABLE', freshness: 'UNAVAILABLE', observationAgeMs: null, unavailableFields: ['x'], reason: 'y' },
-    volatility: { coverage: 'AVAILABLE', freshness: 'FRESH', observationAgeMs: 0, freshnessThresholdMs: 60000, calculationVersion: 1, evidence: [], sourceTimestamp: new Date().toISOString(), atr: 1000, atrPercentile: 50, squeezeState: 'NOT_SQUEEZING', squeezeDurationCandles: 0, compressionSlope: 0, expansionState: 'NOT_EXPANDED' },
-    momentum: { coverage: 'UNAVAILABLE', freshness: 'UNAVAILABLE', observationAgeMs: null, unavailableFields: ['x'], reason: 'y' },
-    participation: { coverage: 'UNAVAILABLE', freshness: 'UNAVAILABLE', observationAgeMs: null, unavailableFields: ['x'], reason: 'y' },
-    derivatives: { coverage: 'UNAVAILABLE', freshness: 'UNAVAILABLE', observationAgeMs: null, unavailableFields: ['x'], reason: 'y' },
-    context: { coverage: 'UNAVAILABLE', freshness: 'UNAVAILABLE', observationAgeMs: null, unavailableFields: ['x'], reason: 'y' },
-    execution: { coverage: 'AVAILABLE', freshness: 'FRESH', observationAgeMs: 0, freshnessThresholdMs: 60000, calculationVersion: 1, evidence: [], sourceTimestamp: new Date().toISOString(), currentPrice: 60500, spread: 1, estimatedRoundTripCost: 0.001, tickSize: 0.1, lotSize: 0.001, currentExposure: 0, priceTooFarFromCandidateZones: false },
-  };
+  const mockSnapshot = createBaseSnapshot();
 
   const mockContext: TradeResearcherContext = {
     userId: '123',
@@ -46,26 +32,28 @@ describe('TradeResearcherService', () => {
     regime: 'TRENDING',
     transitionProbability: 0.1,
     setup: direction === 'WAIT' ? 'NO_TRADE' : 'TREND_PULLBACK',
-    entryZone: direction === 'WAIT' ? null : { lower: 60000, upper: 61000 },
-    trigger: [],
+    entryZone: direction === 'WAIT' ? null : { lower: 108000, upper: 108500 },
+    trigger: [{ type: 'PRICE_ABOVE', price: 108100, description: 'Reclaim' }],
     invalidation: direction === 'WAIT' ? null : { 
-      price: direction === 'SHORT' ? 62000 : 59000, 
+      price: direction === 'SHORT' ? 109000 : 107400,
       reason: 'x' 
     },
-    stopLoss: direction === 'WAIT' ? null : (direction === 'SHORT' ? 62000 : 59000),
+    stopLoss: direction === 'WAIT' ? null : (direction === 'SHORT' ? 109000 : 107400),
     targets: direction === 'WAIT' ? [] : [
-      { price: direction === 'SHORT' ? 59000 : 63000, fraction: 1 }
+      { price: direction === 'SHORT' ? 104000 : 112000, fraction: 1 }
     ],
     expectedNetR: direction === 'WAIT' ? null : 2,
     maximumChaseDistanceAtr: 1,
     confidence: 80,
-    evidenceFor: [],
+    evidenceFor: mockSnapshot.structure.coverage === 'AVAILABLE' ? mockSnapshot.structure.evidence : [],
     evidenceAgainst: [],
     missingEvidence: [],
     expiresAt: new Date(Date.now() + 86400000).toISOString(),
   });
 
+  afterEach(() => vi.useRealTimers());
   beforeEach(() => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date(cutoff));
     aiOrchestratorService = {
       execute: vi.fn<AIOrchestratorService['execute']>(),
     };
@@ -85,8 +73,9 @@ describe('TradeResearcherService', () => {
     };
     
     prismaService = {
+      agentContextSnapshot: { create: vi.fn().mockResolvedValue({ id: 'context-snapshot-id' }) },
       agentRun: {
-        create: vi.fn<(args: unknown) => Promise<unknown>>(),
+        create: vi.fn<(args: unknown) => Promise<unknown>>().mockResolvedValue({ id: 'research-run-id' }),
       }
     };
 
@@ -125,7 +114,7 @@ describe('TradeResearcherService', () => {
     expect(prismaService.agentRun.create.mock.calls[0]?.[0]).toMatchObject({
       data: {
         inputHash: 'hash',
-        contextSnapshotId: 'snapshot-id',
+        contextSnapshotId: 'context-snapshot-id',
         promptVersion: 1,
         provider: 'OPENAI',
         model: 'gpt-4o',
@@ -304,4 +293,15 @@ describe('TradeResearcherService', () => {
     expect(result.preferred.decisionSource).toBe('AI_WITH_RULES_FALLBACK');
     expect(result.preferred.direction).toBe('WAIT');
   });
+  it('fails closed when audit persistence fails', async () => {
+    aiOrchestratorService.execute.mockRejectedValue(new Error('timeout'));
+    prismaService.agentRun.create.mockRejectedValue(new Error('audit offline'));
+    await expect(service.research(mockSnapshot, mockContext)).rejects.toThrow('audit offline');
+  });
+  it('persists the produced fallback thesis, not an empty provider response', async () => {
+    aiOrchestratorService.execute.mockRejectedValue(new Error('timeout'));
+    const result = await service.research(mockSnapshot, mockContext);
+    expect(prismaService.agentRun.create.mock.calls[0]?.[0]).toMatchObject({ data: { output: { preferred: result.preferred } } });
+  });
+
 });

@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { evaluateRisk } from "../../src/modules/risk/domain/risk-engine";
-import { RiskManagementService } from "../../src/modules/risk/application/risk-management.service";
 import type { DecisionOutput } from "@platform/shared";
-import type { PrismaService } from "../../src/database/prisma.service";
-import type { RiskConfigService } from "../../src/modules/risk/application/risk-config.service";
-import { Prisma } from "@prisma/client";
 import type { RiskInput, RiskLimits, RiskPosition } from "../../src/modules/risk/domain/risk-engine.types";
 
 const defaultLimits: RiskLimits = {
@@ -55,92 +51,84 @@ const getBaseInput = (decision: 'LONG' | 'SHORT', currentPositions: RiskPosition
   now: new Date(),
 });
 
-describe("Staged Entry Risk Evaluation", () => {
-  it("calculates probe order size at 25% if APPROVE gate severity", () => {
-    const input = getBaseInput('LONG');
-    const risk = evaluateRisk(input, defaultLimits);
-    if (!risk.approved) console.log(risk);
+describe('ordinary pipeline regressions', () => {
+  it('does not infer a staged probe from gate severity', () => {
+    const risk = evaluateRisk(getBaseInput('LONG'), defaultLimits);
     expect(risk.approved).toBe(true);
-    expect(risk.tradePlan?.stagedEntry).toBeDefined();
-    expect(risk.tradePlan?.stagedEntry?.probeSizePct).toBe(0.25);
+    expect(risk.tradePlan?.stagedEntry).toBeUndefined();
+  });
+  it('does not authorize adding to an ordinary position with an APPROVE gate', () => {
+    const risk = evaluateRisk(getBaseInput('LONG', [{ symbol: 'BTC-USDT', side: 'LONG', size: 0.005, markPrice: 100000, entryPrice: 100000 }]), defaultLimits);
+    expect(risk).toMatchObject({ approved: false, reason: 'PYRAMIDING_NOT_ALLOWED' });
+  });
+});
+
+
+import { cutoff, createBaseSnapshot, createValidLongThesis } from '../helpers/thesis-fixture';
+
+function proactiveInput(state: 'PROBE_READY' | 'CONFIRMED' | 'WATCHING' = 'PROBE_READY'): RiskInput {
+  const snapshot = createBaseSnapshot();
+  const thesis = createValidLongThesis();
+  thesis.state = state;
+  thesis.setup = 'TREND_PULLBACK';
+  thesis.trigger = [{ type: 'PRICE_ABOVE', price: 108100, description: 'Declared reclaim' }];
+  const input = getBaseInput('LONG');
+  input.marketData.price = 108200;
+  input.marketData.tradePlanContext = { atr: 200, proactive: { thesisId: 'thesis-1', thesis, snapshot, mode: 'DEMO', sizeFactor: 1 } };
+  input.now = new Date(cutoff);
+  return input;
+}
+function probePosition(size = 0.005): RiskPosition {
+  return { symbol: 'BTC-USDT', side: 'LONG', size, markPrice: 108200, entryPrice: 108100, stopLoss: 107400, protectionVerified: true,
+    stagedEntry: { stage: 'PROBE', thesisId: 'thesis-1', setup: 'TREND_PULLBACK', trigger: [{ type: 'PRICE_ABOVE', price: 108100, description: 'Declared reclaim' }], sourceDataCutoff: '2026-09-09T11:45:00.000Z' } };
+}
+describe('governed staged theses', () => {
+  it('uses the thesis stop and a quarter risk probe', () => {
+    const risk = evaluateRisk(proactiveInput(), defaultLimits);
+    expect(risk.approved).toBe(true);
+    expect(risk.stopLoss).toBe(107400);
     expect(risk.tradePlan?.stagedEntry?.stage).toBe('PROBE');
-    // Position size check: 0.25 scaling
-    expect(risk.positionSize).toBeGreaterThan(0.005);
-    expect(risk.positionSize).toBeLessThan(0.007); // ~0.00625
+    expect(risk.plannedEquityRiskPct).toBeLessThanOrEqual(0.00125);
   });
-
-  it("calculates probe order size at 20% if REDUCE_SIZE gate severity", () => {
-    const input = getBaseInput('LONG');
-    input.marketData.tradePlanContext!.gateSeverity = 'REDUCE_SIZE';
-    const risk = evaluateRisk(input, defaultLimits);
-    expect(risk.approved).toBe(true);
-    expect(risk.tradePlan?.stagedEntry?.probeSizePct).toBe(0.20);
-    expect(risk.positionSize).toBeLessThan(0.0052); // ~0.005
+  it('does not execute WATCHING even with a directional thesis', () => {
+    expect(evaluateRisk(proactiveInput('WATCHING'), defaultLimits).approved).toBe(false);
   });
-
-  it("rejects unplanned averaging down (missing stagedEntry)", () => {
-    const input = getBaseInput('LONG', [{ symbol: 'BTC-USDT', side: 'LONG', size: 0.01, markPrice: 100000, entryPrice: 100000 }]);
-    // Remove gateSeverity so it's not a staged entry
-    delete input.marketData.tradePlanContext!.gateSeverity;
-    
-    const risk = evaluateRisk(input, defaultLimits);
-    expect(risk.approved).toBe(false);
-    expect(risk.reason).toBe('PYRAMIDING_NOT_ALLOWED');
+  it('requires a stored probe for confirmation', () => {
+    expect(evaluateRisk(proactiveInput('CONFIRMED'), defaultLimits).approved).toBe(false);
   });
-
-  it("allows CONFIRMED add and scales properly when existing position exists", () => {
-    const input = getBaseInput('LONG', [{ symbol: 'BTC-USDT', side: 'LONG', size: 0.005, markPrice: 100000, entryPrice: 100000 }]);
-    // Default base input has APPROVE which gives stagedEntry
+  it('requires declared trigger satisfaction before adding', () => {
+    const input = proactiveInput('CONFIRMED');
+    const position = probePosition();
+    position.stagedEntry!.trigger[0]!.price = 110000;
+    input.currentPositions = [position];
+    expect(evaluateRisk(input, defaultLimits).approved).toBe(false);
+  });
+  it('allows confirmed add with stored probe protection and trigger', () => {
+    const input = proactiveInput('CONFIRMED'); input.currentPositions = [probePosition()];
     const risk = evaluateRisk(input, defaultLimits);
     expect(risk.approved).toBe(true);
     expect(risk.tradePlan?.stagedEntry?.stage).toBe('CONFIRMED');
-    
-    // confirmation size is 75% for APPROVE (probe 25%)
-    expect(risk.tradePlan?.stagedEntry?.confirmationSizePct).toBe(0.75);
-    expect(risk.positionSize).toBeGreaterThan(0.015); // ~0.01875
   });
-
-  it("caps combined risk to 0.50% implicitly", () => {
-    const input = getBaseInput('LONG', [{ symbol: 'BTC-USDT', side: 'LONG', size: 0.005, markPrice: 100000, entryPrice: 100000 }]);
+  it('includes existing exposure when sizing a confirmation add', () => {
+    const input = proactiveInput('CONFIRMED'); input.currentPositions = [probePosition(0.04)];
     const risk = evaluateRisk(input, defaultLimits);
-    expect(risk.tradePlan?.stagedEntry?.combinedRiskLimitPct).toBe(0.005);
-  });
-  it.each([undefined, 0, -1, NaN, Infinity])("rejects a staged add with unknown or invalid entry price %s", (entryPrice) => {
-    const risk = evaluateRisk(getBaseInput('LONG', [{
-      symbol: 'BTC-USDT', side: 'LONG', size: 0.005, markPrice: 100000, entryPrice,
-    }]), defaultLimits);
-    expect(risk).toMatchObject({ approved: false, reason: 'POSITION_ENTRY_PRICE_REQUIRED' });
-  });
-
-  it("uses actual entry price instead of mark price for combined probe risk", () => {
-    const risk = evaluateRisk(getBaseInput('LONG', [{
-      symbol: 'BTC-USDT', side: 'LONG', size: 0.01, markPrice: 100000, entryPrice: 99000,
-    }]), defaultLimits);
-    // Existing risk: 0.01 * (99000 - 98000) = $10; add risk is below $36.
-    // Using the $100000 mark instead would inflate total risk above the $50 cap.
     expect(risk.approved).toBe(true);
-    expect(risk.tradePlan?.stagedEntry?.stage).toBe('CONFIRMED');
+    expect((0.04 + risk.positionSize!) * 108200 / 10000).toBeLessThanOrEqual(0.500001);
   });
-
-  it("rejects an underwater add after converting exchange positions for Risk", async () => {
-    const input = getBaseInput('LONG');
-    const service = new RiskManagementService({} as PrismaService, {
-      getUserLimits: () => Promise.resolve(defaultLimits),
-    } as unknown as RiskConfigService);
-    const result = await service.assess({
-      riskAssessment: {
-        findUnique: () => Promise.resolve(null),
-        upsert: ({ create }: Prisma.RiskAssessmentUpsertArgs) => Promise.resolve(create),
-      },
-    } as unknown as Prisma.TransactionClient, {
-      userId: 'user-1', pipelineRunId: 'run-1', symbol: input.symbol,
-      decision: input.decision,
-      account: { balance: new Prisma.Decimal(10000), equity: new Prisma.Decimal(10000), peakEquity: new Prisma.Decimal(10000) },
-      positions: [{ symbol: 'BTC-USDT', side: 'LONG', size: new Prisma.Decimal(0.005), markPrice: new Prisma.Decimal(100000), entryPrice: new Prisma.Decimal(101000) }],
-      price: input.marketData.price, volatility: input.marketData.volatility,
-      tradePlanContext: input.marketData.tradePlanContext,
-    });
-    expect(result).toMatchObject({ approved: false, reason: 'UNPLANNED_AVERAGE_DOWN' });
+  it.each([undefined, 0, 100000])('rejects missing protection or combined loss using actual stop %s', (stopLoss) => {
+    const input = proactiveInput('CONFIRMED'); const position = probePosition(0.04); position.stopLoss = stopLoss; input.currentPositions = [position];
+    expect(evaluateRisk(input, defaultLimits).approved).toBe(false);
   });
-
+  it('counts absolute signed quantities and costs in combined loss', () => {
+    const input = proactiveInput('CONFIRMED'); const position = probePosition(-0.04); position.stopLoss = 107000; input.currentPositions = [position];
+    expect(evaluateRisk(input, defaultLimits).approved).toBe(false);
+  });
+  it('applies critic/evidence reduction without changing geometry', () => {
+    const full = evaluateRisk(proactiveInput(), defaultLimits);
+    const input = proactiveInput(); input.marketData.tradePlanContext!.proactive!.sizeFactor = 0.2;
+    const small = evaluateRisk(input, defaultLimits);
+    expect(small.approved).toBe(true);
+    expect(small.stopLoss).toBe(full.stopLoss);
+    expect(small.positionSize!).toBeCloseTo(full.positionSize! * 0.2, 8);
+  });
 });

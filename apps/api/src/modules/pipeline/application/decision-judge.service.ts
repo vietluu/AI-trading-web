@@ -9,12 +9,14 @@ import {
 
 export interface JudgeDecision {
   severity: 'BLOCK' | 'REDUCE_SIZE' | 'APPROVE';
+  sizeFactor?: number;
   verdict: 'APPROVE' | 'REJECT' | 'REQUEST_MORE_DATA';
   approved: boolean;
   reasons: string[];
 }
 
 export interface JudgeContext {
+  mode?: 'SHADOW' | 'DEMO' | 'LIVE';
   symbol: string;
   provider?: 'BINANCE_FUTURES' | 'OKX_FUTURES';
   timeframe?: string;
@@ -81,8 +83,9 @@ export class DecisionJudgeService {
     
     // Integrate Evidence Gate
     const gateResult = evaluateEvidenceGate({
-      mode: 'LIVE',
-      coreDataStale: staleCoreAnalysis,
+      mode: context.mode ?? 'LIVE',
+      newCohort: context.mode !== undefined && decision.confidenceCalibration?.status !== 'CALIBRATED',
+      coreDataStale: staleCoreAnalysis || !coreTechnicalEvidence,
       unsafeGeometry: decision.decision !== 'WAIT' && (
         decision.expectedValue <= policy.minExpectedValue ||
         decision.profitFactorEstimate < policy.minProfitFactor ||
@@ -143,6 +146,7 @@ export class DecisionJudgeService {
         ? calibration
         : exactCalibration;
     if (
+      context.mode !== 'DEMO' && context.mode !== 'SHADOW' &&
       context?.requireCalibratedConfidence &&
       decision.decision !== 'WAIT' &&
       (!calibration || calibration.status !== 'CALIBRATED' || !hardGateCalibration) &&
@@ -150,6 +154,7 @@ export class DecisionJudgeService {
       !executionCoreGood
     ) reasons.push('PARTIAL_DATA_UNCALIBRATED');
     if (
+      context.mode !== 'DEMO' && context.mode !== 'SHADOW' &&
       context?.requireCalibratedConfidence &&
       decision.decision !== 'WAIT' &&
       (!calibration || calibration.status !== 'CALIBRATED' || !hardGateCalibration) &&
@@ -172,6 +177,6 @@ export class DecisionJudgeService {
       return { verdict: 'REQUEST_MORE_DATA', severity: 'BLOCK', approved: false, reasons: Array.from(new Set(reasons)) };
     }
     if (reasons.length > 0) return { verdict: 'REJECT', severity: 'BLOCK', approved: false, reasons: Array.from(new Set(reasons)) };
-    return { verdict: 'APPROVE', severity: gateResult.severity, approved: true, reasons: Array.from(new Set(gateResult.reasons)) };
+    return { verdict: 'APPROVE', severity: gateResult.severity, ...(gateResult.sizeFactor !== undefined ? { sizeFactor: gateResult.sizeFactor } : {}), approved: true, reasons: Array.from(new Set(gateResult.reasons)) };
   }
 }

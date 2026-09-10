@@ -1,3 +1,5 @@
+import { validateTradeThesis } from '../../agents/domain/trade-thesis-validator';
+import { thesisTriggersSatisfied } from './thesis-execution';
 import type {
   LastTradeRecord,
   RiskAccount,
@@ -173,14 +175,28 @@ export function evaluateRisk(
     return reject("ABNORMAL_VOLATILITY");
   if (drawdownPct >= limits.maxDrawdown) return reject("MAX_DRAWDOWN_EXCEEDED");
 
+  const proactive = marketData.tradePlanContext?.proactive;
+  if (proactive) {
+    if (!['OBSERVE', 'SHADOW', 'DEMO'].includes(proactive.mode)) return reject('PROACTIVE_MODE_INVALID');
+    if (!['PROBE_READY', 'CONFIRMED'].includes(proactive.thesis.state) || proactive.thesis.direction !== decision.decision) return reject('THESIS_NOT_EXECUTABLE');
+    if (!Number.isFinite(proactive.sizeFactor) || proactive.sizeFactor <= 0 || proactive.sizeFactor > 1) return reject('THESIS_SIZE_FACTOR_INVALID');
+    const snapshot = structuredClone(proactive.snapshot);
+    if (snapshot.execution.coverage === 'AVAILABLE') snapshot.execution.currentPrice = marketData.price;
+    const validation = validateTradeThesis(proactive.thesis, snapshot, { now: input.now ?? new Date() });
+    if (!validation.valid) return reject(validation.reasonCodes[0] ?? 'THESIS_INVALID');
+  }
   const sameSymbolPosition = input.currentPositions.find(
     (position) => position.symbol === input.symbol,
   );
   // Determine whether this is a legitimate staged-entry confirmation add
   // (probe already placed; this is the CONFIRMED add at the same direction).
-  const isStagedEntry = sameSymbolPosition !== undefined &&
-    input.marketData.tradePlanContext?.gateSeverity !== undefined &&
-    input.marketData.tradePlanContext?.gateSeverity !== 'BLOCK';
+  const storedProbe = sameSymbolPosition?.stagedEntry;
+  const isStagedEntry = Boolean(proactive && proactive.thesis.state === 'CONFIRMED' &&
+    storedProbe?.stage === 'PROBE' && storedProbe.thesisId === (proactive.parentThesisId ?? proactive.thesisId) &&
+    storedProbe.setup === proactive.thesis.setup &&
+    Date.parse(storedProbe.sourceDataCutoff) < Date.parse(proactive.snapshot.sourceDataCutoff));
+  if (proactive?.thesis.state === 'CONFIRMED' && !isStagedEntry) return reject('STORED_PROBE_REQUIRED');
+  if (isStagedEntry && storedProbe && !thesisTriggersSatisfied(storedProbe.trigger, proactive!.snapshot, marketData.price)) return reject('THESIS_TRIGGER_REQUIRED');
 
   if (sameSymbolPosition) {
     const existingDirection = sameSymbolPosition.side ??
@@ -378,28 +394,8 @@ export function evaluateRisk(
       };
     }
 
-    // Promote to CONFIRMED stage for the position-size multiplier below.
-    plan.stagedEntry.stage = 'CONFIRMED';
+    if (!existingSameDirection.protectionVerified || !finitePositive(existingSameDirection.stopLoss ?? 0)) return reject('POSITION_PROTECTION_REQUIRED');
 
-    // Calculate combined worst-case dollar loss across the existing probe and
-    // the proposed confirmation add.  Reject if it exceeds the combined risk
-    // limit expressed as a fraction of account equity.
-    const existingProbeRisk = existingSameDirection.size *
-      Math.abs(entryPrice - stopLoss);
-    const confirmationSize = rounded(
-      positionSize * plan.stagedEntry.confirmationSizePct,
-      RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
-    );
-    const newAddRisk = confirmationSize * Math.abs(marketData.price - stopLoss);
-    const combinedRisk = existingProbeRisk + newAddRisk;
-    const combinedRiskLimit = account.equity * plan.stagedEntry.combinedRiskLimitPct;
-
-    if (combinedRisk > combinedRiskLimit) {
-      return {
-        ...reject("MAX_DRAWDOWN_EXCEEDED"),
-        tradePlan: plan,
-      };
-    }
   } else if (plan.stagedEntry) {
     // No existing same-direction position: this is the initial PROBE entry.
     plan.stagedEntry.stage = 'PROBE';
@@ -429,30 +425,18 @@ export function evaluateRisk(
       RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
     );
   }
-  const retainedExposure = retainedPositions.reduce(
+  const exposurePositions = input.currentPositions.filter((position) => position.symbol !== input.symbol ||
+    (position.side ?? (position.size >= 0 ? 'LONG' : 'SHORT')) === decision.decision);
+  const retainedExposure = exposurePositions.reduce(
     (sum, position) => sum + Math.abs(position.size * position.markPrice),
     0,
   );
-  const availableExposure = Math.max(
-    0,
-    account.equity * limits.maxExposure - retainedExposure,
-  );
-  positionSize = Math.min(
-    positionSize,
-    rounded(
-      availableExposure / marketData.price,
-      RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
-    ),
-  );
   if (plan.stagedEntry) {
-    const multiplier = plan.stagedEntry.stage === 'CONFIRMED' 
-      ? plan.stagedEntry.confirmationSizePct 
-      : plan.stagedEntry.probeSizePct;
-    positionSize = rounded(
-      positionSize * multiplier,
-      RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS
-    );
+    const multiplier = plan.stagedEntry.stage === 'CONFIRMED' ? plan.stagedEntry.confirmationSizePct : plan.stagedEntry.probeSizePct;
+    positionSize *= multiplier * (proactive?.sizeFactor ?? 1);
   }
+  const availableExposure = Math.max(0, account.equity * limits.maxExposure - retainedExposure);
+  positionSize = Math.floor(Math.min(positionSize, availableExposure / marketData.price) * 1e12) / 1e12;
   if (lossStreakSizeFactor < 1) {
     positionSize = rounded(
       positionSize * lossStreakSizeFactor,
@@ -516,6 +500,13 @@ export function evaluateRisk(
     return reject("MAX_PORTFOLIO_EXPOSURE_EXCEEDED", leverage);
 
   const plannedLoss = positionSize * marketData.price * lossPctOfNotional;
+  if (existingSameDirection && plan.stagedEntry) {
+    const existingRisk = Math.abs(existingSameDirection.size) *
+      (Math.abs(existingSameDirection.entryPrice! - existingSameDirection.stopLoss!) +
+        existingSameDirection.entryPrice! * limits.estimatedRoundTripCostPct);
+    if (existingRisk + plannedLoss > account.equity * Math.min(limits.riskPerTrade, plan.stagedEntry.combinedRiskLimitPct) + 1e-8)
+      return reject('COMBINED_THESIS_RISK_EXCEEDED');
+  }
   const plannedEquityRiskPct = plannedLoss / account.equity;
   const plannedMarginRoe = plannedLoss / ((positionSize * marketData.price) / leverage);
   if (plannedEquityRiskPct > limits.riskPerTrade + 1e-8)
