@@ -8,6 +8,11 @@ export interface CandleInput {
 
 export type ZoneType = 'SWING_HIGH' | 'SWING_LOW' | 'EQUAL_HIGHS' | 'EQUAL_LOWS';
 export type SweepDirection = 'BULLISH_SWEEP' | 'BEARISH_SWEEP';
+export type NoSweepReason =
+  | 'NO_CANDLES'
+  | 'NO_KNOWN_ZONE'
+  | 'NO_PENETRATION'
+  | 'NO_CLOSE_RECLAIM';
 
 export interface LiquidityZone {
   price: number;
@@ -19,12 +24,63 @@ export interface LiquidityZone {
 
 export interface SweepSignal {
   detected: boolean;
-  direction: SweepDirection;
-  sweepZone: LiquidityZone;
-  sweepDepth: number;
+  direction: SweepDirection | null;
+  sweepZone: LiquidityZone | null;
+  penetration: number;
   reclaimed: boolean;
   volumeConfirmation: boolean;
   confidence: number;
+  reason: NoSweepReason | null;
+}
+
+export interface ConfirmedPivot {
+  kind: 'HIGH' | 'LOW';
+  price: number;
+  index: number;
+  confirmedIndex: number;
+}
+
+export function identifyConfirmedPivots(
+  candles: CandleInput[],
+  lookback: number = 100,
+  pivotStrength: number = 5,
+): ConfirmedPivot[] {
+  if (candles.length < pivotStrength * 2 + 1 || pivotStrength < 1) return [];
+
+  const startIndex = Math.max(pivotStrength, candles.length - lookback);
+  const lastConfirmableIndex = candles.length - pivotStrength - 1;
+  const pivots: ConfirmedPivot[] = [];
+
+  for (let index = startIndex; index <= lastConfirmableIndex; index++) {
+    const candle = candles[index]!;
+    let isSwingHigh = true;
+    let isSwingLow = true;
+
+    for (let neighbor = index - pivotStrength; neighbor <= index + pivotStrength; neighbor++) {
+      if (neighbor === index) continue;
+      if (candles[neighbor]!.high >= candle.high) isSwingHigh = false;
+      if (candles[neighbor]!.low <= candle.low) isSwingLow = false;
+    }
+
+    if (isSwingHigh) {
+      pivots.push({
+        kind: 'HIGH',
+        price: candle.high,
+        index,
+        confirmedIndex: index + pivotStrength,
+      });
+    }
+    if (isSwingLow) {
+      pivots.push({
+        kind: 'LOW',
+        price: candle.low,
+        index,
+        confirmedIndex: index + pivotStrength,
+      });
+    }
+  }
+
+  return pivots.sort((left, right) => left.index - right.index);
 }
 
 export function identifyLiquidityZones(
@@ -32,38 +88,13 @@ export function identifyLiquidityZones(
   lookback: number = 100,
   pivotStrength: number = 5
 ): LiquidityZone[] {
-  if (candles.length < 2) return [];
-
-  const startIndex = Math.max(0, candles.length - lookback);
-
-  const swingHighs: { price: number; index: number }[] = [];
-  const swingLows: { price: number; index: number }[] = [];
-
-  for (let i = startIndex; i < candles.length; i++) {
-    const currentHigh = candles[i]!.high;
-    const currentLow = candles[i]!.low;
-    let isSwingHigh = true;
-    let isSwingLow = true;
-
-    // Check left
-    for (let j = Math.max(0, i - pivotStrength); j < i; j++) {
-      if (candles[j]!.high >= currentHigh) isSwingHigh = false;
-      if (candles[j]!.low <= currentLow) isSwingLow = false;
-    }
-
-    // Check right
-    for (let j = i + 1; j <= Math.min(candles.length - 1, i + pivotStrength); j++) {
-      if (candles[j]!.high >= currentHigh) isSwingHigh = false;
-      if (candles[j]!.low <= currentLow) isSwingLow = false;
-    }
-
-    if (isSwingHigh) {
-      swingHighs.push({ price: currentHigh, index: i });
-    }
-    if (isSwingLow) {
-      swingLows.push({ price: currentLow, index: i });
-    }
-  }
+  const confirmedPivots = identifyConfirmedPivots(candles, lookback, pivotStrength);
+  const swingHighs = confirmedPivots
+    .filter((pivot) => pivot.kind === 'HIGH')
+    .map((pivot) => ({ price: pivot.price, index: pivot.index }));
+  const swingLows = confirmedPivots
+    .filter((pivot) => pivot.kind === 'LOW')
+    .map((pivot) => ({ price: pivot.price, index: pivot.index }));
 
   // Cluster highs
   const highZones: LiquidityZone[] = [];
@@ -156,8 +187,20 @@ export function detectLiquiditySweep(
   candles: CandleInput[],
   zones: LiquidityZone[],
   orderBookImbalance?: number
-): SweepSignal | null {
-  if (candles.length === 0 || zones.length === 0) return null;
+): SweepSignal {
+  const noSignal = (reason: NoSweepReason): SweepSignal => ({
+    detected: false,
+    direction: null,
+    sweepZone: null,
+    penetration: 0,
+    reclaimed: false,
+    volumeConfirmation: false,
+    confidence: 0,
+    reason,
+  });
+
+  if (candles.length === 0) return noSignal('NO_CANDLES');
+  if (zones.length === 0) return noSignal('NO_KNOWN_ZONE');
 
   const lastCandle = candles[candles.length - 1]!;
   
@@ -171,6 +214,7 @@ export function detectLiquiditySweep(
   
   let bestSignal: SweepSignal | null = null;
   let highestConfidence = -1;
+  let penetratedKnownZone = false;
 
   for (const zone of zones) {
     let isSweep = false;
@@ -189,6 +233,7 @@ export function detectLiquiditySweep(
           obAligned = true;
         }
       }
+      if (lastCandle.high > zone.price) penetratedKnownZone = true;
     } else if (zone.type === 'SWING_LOW' || zone.type === 'EQUAL_LOWS') {
       if (lastCandle.low < zone.price && lastCandle.close > zone.price) {
         isSweep = true;
@@ -199,6 +244,7 @@ export function detectLiquiditySweep(
           obAligned = true;
         }
       }
+      if (lastCandle.low < zone.price) penetratedKnownZone = true;
     }
 
     if (isSweep && direction) {
@@ -216,14 +262,17 @@ export function detectLiquiditySweep(
           detected: true,
           direction,
           sweepZone: zone,
-          sweepDepth,
+          penetration: sweepDepth,
           reclaimed,
           volumeConfirmation,
-          confidence
+          confidence,
+          reason: null,
         };
       }
     }
   }
 
-  return bestSignal;
+  return bestSignal ?? noSignal(
+    penetratedKnownZone ? 'NO_CLOSE_RECLAIM' : 'NO_PENETRATION',
+  );
 }

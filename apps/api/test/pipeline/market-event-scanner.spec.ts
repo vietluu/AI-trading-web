@@ -80,7 +80,12 @@ describe("MarketEventScannerService", () => {
     const duplicate = await scanner.reserveAnchor({ ...input, provider: input.provider as never });
 
     expect(first).toMatchObject({ run: true });
-    expect(duplicate).toEqual({ run: false, fingerprint: first.fingerprint });
+    expect(first.sourceDataCutoff).toBeInstanceOf(Date);
+    expect(duplicate).toEqual({
+      run: false,
+      fingerprint: first.fingerprint,
+      sourceDataCutoff: first.sourceDataCutoff,
+    });
   });
 
   it("requires two scans and triggers only once for the same 5m fingerprint", async () => {

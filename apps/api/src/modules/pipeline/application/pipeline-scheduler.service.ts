@@ -19,6 +19,8 @@ import { PipelineConfigService } from "./pipeline-config.service";
 import { DistributedTaskLockService } from "../../../redis/distributed-task-lock.service";
 import { MarketEventScannerService } from "./market-event-scanner.service";
 import { PortfolioService } from "../../portfolio/application/portfolio.service";
+import { OpportunityWatcherService } from "./opportunity-watcher.service";
+import { ExchangeInterval } from "../../../exchange/domain/exchange.types";
 
 @Injectable()
 export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
@@ -34,6 +36,7 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
     @Optional() private readonly taskLock?: DistributedTaskLockService,
     @Optional() private readonly eventScanner?: MarketEventScannerService,
     @Optional() private readonly portfolio?: PortfolioService,
+    @Optional() private readonly opportunityWatcher?: OpportunityWatcherService,
   ) {}
   onModuleInit() {
     if (process.env.CLI_DISABLE_SCHEDULERS === 'true') return;
@@ -222,6 +225,25 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
                   // candle is not reconsidered every five seconds.
                   triggerPromises.push(Promise.resolve(true));
                   continue;
+                }
+                if (anchor.sourceDataCutoff && this.opportunityWatcher) {
+                  try {
+                    await this.opportunityWatcher.observe({
+                      userId: schedule.userId,
+                      provider: schedule.provider as ExchangeProvider,
+                      symbol,
+                      timeframe: ExchangeInterval.FIFTEEN_MINUTES,
+                      sourceDataCutoff: anchor.sourceDataCutoff,
+                    });
+                  } catch (error) {
+                    this.logger.warn({
+                      event: "opportunity_observation_failed",
+                      scheduleId: schedule.id,
+                      symbol,
+                      sourceDataCutoff: anchor.sourceDataCutoff.toISOString(),
+                      message: error instanceof Error ? error.message : String(error),
+                    });
+                  }
                 }
               } catch (error) {
                 // Fingerprinting is an optimization. The pipeline freshness

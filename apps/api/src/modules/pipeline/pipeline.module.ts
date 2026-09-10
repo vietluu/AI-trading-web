@@ -38,6 +38,7 @@ import { SettingsModule } from "../../settings/settings.module";
 import { PortfolioModule } from "../portfolio/portfolio.module";
 import { ExternalDataModule } from "../external-data/external-data.module";
 import { HighImportanceNewsTriggerService } from "./application/high-importance-news-trigger.service";
+import { OpportunityWatcherService } from "./application/opportunity-watcher.service";
 
 @Module({
   imports: [
@@ -69,6 +70,7 @@ import { HighImportanceNewsTriggerService } from "./application/high-importance-
     QuantExecutionPolicyService,
     PipelineService,
     PipelineSchedulerService,
+    OpportunityWatcherService,
     MarketEventScannerService,
     PipelineHealthService,
     PipelineAnalyticsService,

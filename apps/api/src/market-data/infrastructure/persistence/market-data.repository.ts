@@ -475,7 +475,7 @@ export class MarketDataRepository {
         symbol: query.symbol,
         interval: toDbInterval(query.interval),
         isClosed: true,
-        ...(query.beforeTime ? { openTime: { lt: query.beforeTime } } : {}),
+        ...(query.beforeTime ? { closeTime: { lte: query.beforeTime } } : {}),
       },
       orderBy: { openTime: "desc" },
       take: query.limit,
@@ -783,12 +783,16 @@ export class MarketDataRepository {
     provider: ExchangeProvider,
     symbol: string,
     interval: ExchangeInterval,
+    atOrBefore?: Date,
+    status?: IndicatorStatus,
   ): Promise<IndicatorSnapshot | null> {
     const row = await this.prisma.indicatorSnapshotRecord.findFirst({
       where: {
         provider,
         symbol,
         interval: toDbInterval(interval),
+        ...(atOrBefore ? { candleCloseTime: { lte: atOrBefore } } : {}),
+        ...(status ? { status } : {}),
       },
       orderBy: { candleCloseTime: "desc" },
     });

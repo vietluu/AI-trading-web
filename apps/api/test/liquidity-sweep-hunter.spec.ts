@@ -28,6 +28,16 @@ describe('Liquidity Sweep Hunter', () => {
     expect(swingLow?.price).toBe(50);
   });
 
+  it('does not publish a pivot until all right-hand confirmation bars have closed', () => {
+    const candles: CandleInput[] = [
+      { open: 100, high: 101, low: 99, close: 100, volume: 100 },
+      { open: 100, high: 110, low: 99, close: 105, volume: 100 },
+      { open: 105, high: 106, low: 100, close: 102, volume: 100 },
+    ];
+
+    expect(identifyLiquidityZones(candles, 100, 2)).toEqual([]);
+  });
+
   it('Equal highs detection', () => {
     const candles: CandleInput[] = Array.from({ length: 30 }, (_, i) => {
       let high = 100;
@@ -89,7 +99,7 @@ describe('Liquidity Sweep Hunter', () => {
     expect(signal?.confidence).toBeGreaterThanOrEqual(90); // 40 + 20(reclaimed) + 20(vol) + 10(strength>50) = 90
   });
 
-  it('Returns null when no sweep', () => {
+  it('returns explicit no-signal evidence when a known zone is not penetrated', () => {
     const zones = [
       { price: 150, type: 'SWING_HIGH' as const, strength: 60, touchCount: 1, lastTestedIndex: 10 }
     ];
@@ -98,7 +108,47 @@ describe('Liquidity Sweep Hunter', () => {
       { open: 100, high: 110, low: 90, close: 105, volume: 100 } // Doesn't reach 150
     ];
 
-    expect(detectLiquiditySweep(candles, zones)).toBeNull();
+    expect(detectLiquiditySweep(candles, zones)).toMatchObject({
+      detected: false,
+      direction: null,
+      sweepZone: null,
+      penetration: 0,
+      reclaimed: false,
+      reason: 'NO_PENETRATION',
+    });
+  });
+
+  it('rejects wick penetration without a close reclaim', () => {
+    const zones = [
+      { price: 150, type: 'SWING_HIGH' as const, strength: 60, touchCount: 1, lastTestedIndex: 10 },
+    ];
+    const candles: CandleInput[] = [
+      { open: 145, high: 155, low: 140, close: 152, volume: 100 },
+    ];
+
+    expect(detectLiquiditySweep(candles, zones)).toMatchObject({
+      detected: false,
+      direction: null,
+      sweepZone: null,
+      penetration: 0,
+      reclaimed: false,
+      reason: 'NO_CLOSE_RECLAIM',
+    });
+  });
+
+  it('returns explicit no-signal evidence when no known zone exists', () => {
+    const candles: CandleInput[] = [
+      { open: 100, high: 110, low: 90, close: 105, volume: 100 },
+    ];
+
+    expect(detectLiquiditySweep(candles, [])).toMatchObject({
+      detected: false,
+      direction: null,
+      sweepZone: null,
+      penetration: 0,
+      reclaimed: false,
+      reason: 'NO_KNOWN_ZONE',
+    });
   });
 
   it('Returns highest confidence signal', () => {
@@ -113,6 +163,6 @@ describe('Liquidity Sweep Hunter', () => {
 
     const signal = detectLiquiditySweep(candles, zones);
     // Should pick the 151 zone because strength > 50 gives +10 confidence
-    expect(signal?.sweepZone.price).toBe(151);
+    expect(signal.sweepZone?.price).toBe(151);
   });
 });
