@@ -36,10 +36,14 @@ export interface TradePlanMarketContext {
   candleLow?: number;
   candleClose?: number;
   volumeRatio?: number;
+  currentPrice?: number;
+  liquiditySweep?: boolean;
+  derivativesImbalance?: number;
+  gateSeverity?: "APPROVE" | "REDUCE_SIZE" | "BLOCK";
   squeezeState?: {
     isSqueezing: boolean;
     breakoutProbability: number;
-    breakoutBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    momentumDirection: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
     consecutiveSqueezeBars: number;
   };
 }
@@ -72,6 +76,11 @@ export interface TradePlan {
   isLiquiditySweep?: boolean;
   tp1Price?: number;
   tp2Price?: number;
+  stagedEntry?: {
+    probeSizePct: number;
+    confirmationSizePct: number;
+    combinedRiskLimitPct: number;
+  };
 }
 
 const finitePositive = (value: number | undefined): value is number =>
@@ -680,5 +689,16 @@ export function buildAdaptiveTradePlan(input: Parameters<typeof _buildAdaptiveTr
   if (input.useLimitlessTrailing) {
     plan.takeProfit = undefined;
   }
+
+  // Staged Entry logic for Proactive Thesis
+  if (input.market.gateSeverity && input.market.gateSeverity !== 'BLOCK') {
+    const probeSizePct = input.market.gateSeverity === 'REDUCE_SIZE' ? 0.20 : 0.25;
+    plan.stagedEntry = {
+      probeSizePct,
+      confirmationSizePct: 1.0 - probeSizePct,
+      combinedRiskLimitPct: 0.005, // 0.50% combined default risk
+    };
+  }
+
   return plan;
 }

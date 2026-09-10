@@ -107,6 +107,11 @@ export class LiveTradingService {
    * deliberately stays small; this operation is intended for an explicit
    * recovery/backfill and is idempotent through the exchange-fill unique key.
    */
+  async hasVerifiedDemoConnection(userId: string): Promise<boolean> {
+    const connections = await this.connections.list(userId);
+    return connections.some(c => c.environment === "DEMO" && c.isEnabled && c.isVerified);
+  }
+
   async backfillTradeLedger(
     userId: string,
     connectionId: string,

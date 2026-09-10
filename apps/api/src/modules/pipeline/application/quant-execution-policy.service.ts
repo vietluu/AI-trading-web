@@ -18,6 +18,7 @@ export interface QuantExecutionPolicyResult {
     "QUANT_CALIBRATION_UNRELIABLE" | "QUANT_REGIME_CONFLICT" |
     "QUANT_POLICY_UNAVAILABLE" | "QUANT_NOT_APPLICABLE" |
     "QUANT_SAMPLE_TOO_SMALL" | "QUANT_ASSUMPTION_MISMATCH";
+  reasons?: string[];
   validation?: {
     probabilityOfProfit: number;
     probabilityOfRuin: number;
@@ -145,7 +146,7 @@ export class QuantExecutionPolicyService {
        else if (gateResult.reasons.includes('NEGATIVE_EXACT_COHORT')) {
            reason = !validation.walkForwardStable ? 'QUANT_WALK_FORWARD_UNSTABLE' : 'QUANT_PROBABILITY_TOO_LOW';
            if (evidence) {
-               const canary = this.dislocationCanary(reason, input, evidence);
+               const canary = this.dislocationCanary(reason, input, evidence!);
                if (canary) {
                    return { ...canary, reasons: Array.from(new Set([...(canary.reasons ?? []), ...gateResult.reasons])) };
                }
@@ -184,12 +185,12 @@ export class QuantExecutionPolicyService {
       
 
     if (validation.probabilityOfRuin > 15) {
-      const canary = this.dislocationCanary("QUANT_RUIN_RISK_TOO_HIGH", input, evidence);
+      const canary = this.dislocationCanary("QUANT_RUIN_RISK_TOO_HIGH", input, evidence!);
       if (canary) return applyGate(canary);
       return applyGate({ severity: 'BLOCK', allowed: false, reason: "QUANT_RUIN_RISK_TOO_HIGH", validation: evidence });
     }
     if (validation.outOfSampleSharpe <= 0.8) {
-      const canary = this.dislocationCanary("QUANT_OUT_OF_SAMPLE_EDGE_MISSING", input, evidence);
+      const canary = this.dislocationCanary("QUANT_OUT_OF_SAMPLE_EDGE_MISSING", input, evidence!);
       if (canary) return applyGate(canary);
       return applyGate({ severity: 'BLOCK', allowed: false, reason: "QUANT_OUT_OF_SAMPLE_EDGE_MISSING", validation: evidence });
     }

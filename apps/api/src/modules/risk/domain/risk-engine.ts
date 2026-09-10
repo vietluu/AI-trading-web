@@ -356,6 +356,12 @@ export function evaluateRisk(
       RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
     ),
   );
+  if (plan.stagedEntry) {
+    positionSize = rounded(
+      positionSize * plan.stagedEntry.probeSizePct,
+      RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS
+    );
+  }
   if (lossStreakSizeFactor < 1) {
     positionSize = rounded(
       positionSize * lossStreakSizeFactor,

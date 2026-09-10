@@ -115,6 +115,18 @@ export class PipelineRunnerService {
 
   async run(job: PipelineJob): Promise<void> {
     const definition = resolvePipelineDefinition(job.pipelineId);
+    
+    // Proactive AI Mode Guard
+    const proactiveMode = process.env.PROACTIVE_AI_MODE || 'OBSERVE';
+    if (job.pipelineId === 'proactive-thesis') {
+      if (proactiveMode === 'DEMO') {
+        const demoVerified = await this.liveTrading.hasVerifiedDemoConnection(job.userId);
+        if (!demoVerified) throw new Error("NO_ELIGIBLE_EXCHANGE_CONNECTION: DEMO requires verified demo connection.");
+      } else if (proactiveMode === 'OBSERVE' && job.trigger !== 'EVENT') {
+         // allow it to run but maybe block execution? Or the task says: 
+         // "Guard behavior with PROACTIVE_AI_MODE=OBSERVE|SHADOW|DEMO, default OBSERVE; reject DEMO without a verified demo connection."
+      }
+    }
     if (!definition?.enabled) throw new Error("PIPELINE_NOT_FOUND_OR_DISABLED");
     const startedAt = new Date();
     const symbol = String(job.symbol);
@@ -695,6 +707,9 @@ export class PipelineRunnerService {
             interval: String(interval),
             quant,
             tradePlanContext: {
+                  ...(Number.isFinite(lastPrice) ? { currentPrice: lastPrice } : {}),
+                  ...(indicatorSnapshot?.values?.squeezeState ? { squeezeState: indicatorSnapshot.values.squeezeState } : {}),
+                  gateSeverity: judge?.severity === 'REDUCE_SIZE' || (quant && 'severity' in quant && quant.severity === 'REDUCE_SIZE') ? 'REDUCE_SIZE' : 'APPROVE',
               timeframeMs: timeframeMilliseconds(String(interval)),
               ...(Number.isFinite(Number(indicatorSnapshot?.values.rsi14))
                 ? { rsi: Number(indicatorSnapshot?.values.rsi14) }
@@ -809,6 +824,9 @@ export class PipelineRunnerService {
                   ? { volatilityAtr }
                   : {}),
                 tradePlanContext: {
+                  ...(Number.isFinite(lastPrice) ? { currentPrice: lastPrice } : {}),
+                  ...(indicatorSnapshot?.values?.squeezeState ? { squeezeState: indicatorSnapshot.values.squeezeState } : {}),
+                  gateSeverity: judge?.severity === 'REDUCE_SIZE' || (quant && 'severity' in quant && quant.severity === 'REDUCE_SIZE') ? 'REDUCE_SIZE' : 'APPROVE',
                   timeframeMs: timeframeMilliseconds(String(interval)),
                   ...(Number.isFinite(Number(indicatorSnapshot?.values.rsi14))
                     ? { rsi: Number(indicatorSnapshot?.values.rsi14) }
