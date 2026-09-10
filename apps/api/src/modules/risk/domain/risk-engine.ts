@@ -176,6 +176,12 @@ export function evaluateRisk(
   const sameSymbolPosition = input.currentPositions.find(
     (position) => position.symbol === input.symbol,
   );
+  // Determine whether this is a legitimate staged-entry confirmation add
+  // (probe already placed; this is the CONFIRMED add at the same direction).
+  const isStagedEntry = sameSymbolPosition !== undefined &&
+    input.marketData.tradePlanContext?.gateSeverity !== undefined &&
+    input.marketData.tradePlanContext?.gateSeverity !== 'BLOCK';
+
   if (sameSymbolPosition) {
     const existingDirection = sameSymbolPosition.side ??
       (sameSymbolPosition.size >= 0 ? "LONG" : "SHORT");
@@ -183,19 +189,23 @@ export function evaluateRisk(
     // Execution intentionally does not pyramid. Reject at the authoritative
     // risk stage as well, so a candidate cannot be recorded as risk-approved
     // and then encounter the same-direction guard only during submission.
-    if (isSameDirection) {
-      const isStagedEntry = input.marketData.tradePlanContext?.gateSeverity !== undefined && input.marketData.tradePlanContext?.gateSeverity !== 'BLOCK';
-      if (!isStagedEntry) {
-        return reject("PYRAMIDING_NOT_ALLOWED");
-      }
+    if (isSameDirection && !isStagedEntry) {
+      return reject("PYRAMIDING_NOT_ALLOWED");
     }
   }
 
   // A reversal replaces the position in the same symbol, so it must not consume an
   // additional slot or be counted twice in projected exposure.
-  const retainedPositions = input.currentPositions.filter(
-    (position) => position.symbol !== input.symbol,
-  );
+  // For a staged-entry confirmation add, also exclude the existing same-direction position
+  // from slot / direction counting — it is being augmented, not added as a new position.
+  const retainedPositions = input.currentPositions.filter((position) => {
+    if (position.symbol !== input.symbol) return true;
+    const posDir = position.side ?? (position.size >= 0 ? "LONG" : "SHORT");
+    // Exclude existing same-direction position when doing a staged confirmation add
+    if (isStagedEntry && posDir === decision.decision) return false;
+    // Keep same-symbol position only if it's the same direction (i.e. a reversal scenario)
+    return posDir === decision.decision;
+  });
   if (retainedPositions.length >= limits.maxPositions)
     return reject("MAX_OPEN_POSITIONS_EXCEEDED");
   const sameDirectionPositions = retainedPositions.filter(
@@ -207,6 +217,7 @@ export function evaluateRisk(
     sameDirectionPositions.length >=
       (limits.maxSameDirectionPositions ?? 1)
   ) return reject("MAX_SAME_DIRECTION_POSITIONS_EXCEEDED");
+
   const cooldownWindow = input.lastTrades?.find(
     (trade) =>
       trade.symbol === input.symbol && trade.direction === decision.decision &&
@@ -270,22 +281,7 @@ export function evaluateRisk(
     roundTripCostPct: limits.estimatedRoundTripCostPct,
   });
 
-  const existingSameDirection = input.currentPositions.find(p => p.side === input.decision.decision);
-  if (existingSameDirection) {
-    if (!plan.stagedEntry) {
-      return {
-        approved: false,
-        reason: 'UNPLANNED_AVERAGE_DOWN',
-        riskScore: 100,
-        exposurePct: baseExposurePct,
-        drawdownPct,
-      };
-    } else {
-      plan.stagedEntry.stage = 'CONFIRMED';
-    }
-  } else if (plan.stagedEntry) {
-    plan.stagedEntry.stage = 'PROBE';
-  }
+
   if (!plan.approved || !plan.stopLoss || !plan.takeProfit)
     return {
       ...reject(plan.reason ?? "TRADE_PLAN_REJECTED"),
@@ -340,6 +336,72 @@ export function evaluateRisk(
     stopLoss,
     limits.estimatedRoundTripCostPct,
   );
+  
+  // Identify the existing same-symbol same-direction position (if any).
+  // `sameSymbolPosition` was computed earlier; we now know it's safe to use it
+  // because if it existed and was same-direction WITHOUT staged-entry intent,
+  // we already rejected above (PYRAMIDING_NOT_ALLOWED).
+  const existingSameDirection = sameSymbolPosition &&
+    (sameSymbolPosition.side ?? (sameSymbolPosition.size >= 0 ? "LONG" : "SHORT")) === decision.decision
+      ? sameSymbolPosition
+      : undefined;
+
+  if (existingSameDirection) {
+    // Reject if the existing position is already underwater — adding to a
+    // losing position (averaging down) is explicitly prohibited.
+    const isUnderwater = existingSameDirection.side === 'LONG'
+      ? marketData.price < (existingSameDirection.entryPrice ?? marketData.price)
+      : marketData.price > (existingSameDirection.entryPrice ?? marketData.price);
+
+    if (isUnderwater) {
+      return {
+        approved: false,
+        reason: 'UNPLANNED_AVERAGE_DOWN',
+        riskScore: 100,
+        exposurePct: rounded(baseExposurePct, 6),
+        drawdownPct: rounded(drawdownPct, 6),
+      };
+    }
+
+    if (!plan.stagedEntry) {
+      // Staged entry metadata is required for any same-direction add.
+      return {
+        approved: false,
+        reason: 'UNPLANNED_AVERAGE_DOWN',
+        riskScore: 100,
+        exposurePct: rounded(baseExposurePct, 6),
+        drawdownPct: rounded(drawdownPct, 6),
+      };
+    }
+
+    // Promote to CONFIRMED stage for the position-size multiplier below.
+    plan.stagedEntry.stage = 'CONFIRMED';
+
+    // Calculate combined worst-case dollar loss across the existing probe and
+    // the proposed confirmation add.  Reject if it exceeds the combined risk
+    // limit expressed as a fraction of account equity.
+    const existingProbeRisk = existingSameDirection.size *
+      Math.abs((existingSameDirection.entryPrice ?? marketData.price) - stopLoss);
+    const confirmationSize = rounded(
+      positionSize * plan.stagedEntry.confirmationSizePct,
+      RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
+    );
+    const newAddRisk = confirmationSize * Math.abs(marketData.price - stopLoss);
+    const combinedRisk = existingProbeRisk + newAddRisk;
+    const combinedRiskLimit = account.equity * plan.stagedEntry.combinedRiskLimitPct;
+
+    if (combinedRisk > combinedRiskLimit) {
+      return {
+        ...reject("MAX_DRAWDOWN_EXCEEDED"),
+        tradePlan: plan,
+      };
+    }
+  } else if (plan.stagedEntry) {
+    // No existing same-direction position: this is the initial PROBE entry.
+    plan.stagedEntry.stage = 'PROBE';
+  }
+
+
   const lossStreakSizeFactor = lossCount <= 0
     ? 1
     : lossCount === 1
