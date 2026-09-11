@@ -1047,12 +1047,14 @@ export function resolveSnapshotPath(snapshot: unknown, path: string): boolean {
 
   let current: unknown = snapshot;
   for (const segment of segments) {
-    const match = /^([A-Za-z_][A-Za-z0-9_]*)(.*)$/u.exec(segment);
-    if (match === null) return false;
+    const bracketIndex = segment.indexOf('[');
+    const property = bracketIndex === -1 ? segment : segment.slice(0, bracketIndex);
+    const indexSuffix = bracketIndex === -1 ? '' : segment.slice(bracketIndex);
 
-    const property = match[1];
-    const indexSuffix = match[2];
-    if (property === undefined || indexSuffix === undefined) return false;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(property)) {
+      return false;
+    }
+
     if (
       current === null ||
       typeof current !== 'object' ||
@@ -1062,18 +1064,20 @@ export function resolveSnapshotPath(snapshot: unknown, path: string): boolean {
     }
     current = (current as Record<string, unknown>)[property];
 
-    const indexPattern = /\[(\d+)\]/gu;
-    let consumed = '';
-    for (const indexMatch of indexSuffix.matchAll(indexPattern)) {
-      consumed += indexMatch[0];
-      if (!Array.isArray(current)) return false;
-      const index = Number(indexMatch[1]);
-      if (!Number.isInteger(index) || index < 0 || index >= current.length) {
+    if (indexSuffix.length > 0) {
+      if (!/^(\[\d+\])+$/u.test(indexSuffix)) {
         return false;
       }
-      current = current[index];
+      const indexPattern = /\[(\d+)\]/gu;
+      for (const indexMatch of indexSuffix.matchAll(indexPattern)) {
+        if (!Array.isArray(current)) return false;
+        const index = Number(indexMatch[1]);
+        if (!Number.isInteger(index) || index < 0 || index >= current.length) {
+          return false;
+        }
+        current = current[index];
+      }
     }
-    if (consumed !== indexSuffix) return false;
   }
 
   return current !== undefined;

@@ -124,4 +124,22 @@ describe('TradeThesis schemas', () => {
     };
     expect(ThesisValidationResultSchema.safeParse(badCodeResult).success).toBe(false);
   });
+
+  describe('resolveSnapshotPath', () => {
+    it('resolves nested object and array paths correctly', async () => {
+      const { resolveSnapshotPath } = await import('../src/schemas/agents.js');
+      const obj = {
+        structure: {
+          invalidationCandidates: [{ price: 100 }, { price: 200 }],
+        },
+      };
+      expect(resolveSnapshotPath(obj, 'structure')).toBe(true);
+      expect(resolveSnapshotPath(obj, 'structure.invalidationCandidates[0].price')).toBe(true);
+      expect(resolveSnapshotPath(obj, 'structure.invalidationCandidates[1].price')).toBe(true);
+      expect(resolveSnapshotPath(obj, 'structure.invalidationCandidates[2].price')).toBe(false);
+      expect(resolveSnapshotPath(obj, 'structure.nonexistent')).toBe(false);
+      expect(resolveSnapshotPath(obj, 'structure.invalidationCandidates[invalid]')).toBe(false);
+      expect(resolveSnapshotPath(obj, 'A' + '0'.repeat(1000) + '!')).toBe(false);
+    });
+  });
 });

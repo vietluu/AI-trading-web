@@ -59,7 +59,9 @@ describe("adaptive trade plan engine", () => {
 
   it("rejects a range-reversal thesis with degenerate range boundaries", () => {
     const snapshot = createBaseSnapshot();
-    snapshot.structure.rangeBoundaries = { lower: 112_000, upper: 108_000, touchCountLower: 2, touchCountUpper: 2 };
+    if (snapshot.structure.coverage === 'AVAILABLE') {
+      snapshot.structure.rangeBoundaries = { lower: 112_000, upper: 108_000 };
+    }
     const thesis = {
       ...createValidLongThesis(),
       setup: "RANGE_REVERSAL" as const,
