@@ -143,5 +143,7 @@ export interface PerformanceMetrics {
   confidenceAccuracyCorrelation: number | null;
   decisionDistribution: { LONG: number; SHORT: number; WAIT: number };
   horizonDistribution: { M15: number; M30: number; SHORT: number; MID: number; H2: number; H4: number; LONG: number };
+  shadowCandidates?: number;
+  executedDecisions?: number;
 }
 

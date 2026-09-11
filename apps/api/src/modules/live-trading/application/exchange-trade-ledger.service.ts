@@ -179,8 +179,23 @@ export class ExchangeTradeLedgerService {
       settlementAsset,
     );
     const entryPrice = allocation.complete ? allocation.entryPrice : derivedEntryPrice;
+    const closedAt = fills.at(-1)!.executedAt;
+    const posSide: "LONG" | "SHORT" =
+      fills[0]!.positionSide === "SHORT" ||
+      (fills[0]!.positionSide == null && fills[0]!.side === "BUY")
+        ? "SHORT"
+        : "LONG";
+    const accruedFunding = await this.calculateAccruedFunding(
+      connection.provider,
+      fills[0]!.symbol,
+      posSide,
+      quantity,
+      allocation.openedAt,
+      closedAt,
+      entryPrice ?? exitPrice,
+    );
     const fee = closingFee + allocation.openingFee;
-    const netPnl = grossPnl + fee;
+    const netPnl = grossPnl + fee + accruedFunding;
     const sourceOrder = fills.find((fill) => fill.liveOrderId)?.liveOrderId
       ? await this.prisma.liveOrder.findUnique({
           where: { id: fills.find((fill) => fill.liveOrderId)!.liveOrderId! },
@@ -206,7 +221,6 @@ export class ExchangeTradeLedgerService {
       allocation.strategyId ??
       fills.find((fill) => fill.strategyId)?.strategyId ??
       null;
-    const closedAt = fills.at(-1)!.executedAt;
     const sourceDataComplete = allocation.complete && feesConvertible;
     const returnPct = entryPrice && entryPrice > 0
       ? netPnl / (entryPrice * quantity)
@@ -486,6 +500,55 @@ export class ExchangeTradeLedgerService {
         reproducibleHash,
       },
     });
+  }
+
+  private async calculateAccruedFunding(
+    provider: ExchangeConnection["provider"],
+    symbol: string,
+    positionSide: "LONG" | "SHORT",
+    quantity: number,
+    openedAt: Date | null,
+    closedAt: Date,
+    price: number | null,
+  ): Promise<number> {
+    if (
+      !openedAt ||
+      !(quantity > 0) ||
+      !price ||
+      !(price > 0) ||
+      openedAt >= closedAt
+    ) {
+      return 0;
+    }
+    if (!this.prisma.fundingRateSnapshot?.findMany) {
+      return 0;
+    }
+    try {
+      const snapshots = await this.prisma.fundingRateSnapshot.findMany({
+        where: {
+          provider,
+          symbol,
+          fundingTime: {
+            gt: openedAt,
+            lte: closedAt,
+          },
+        },
+        orderBy: { fundingTime: "asc" },
+      });
+      if (!snapshots || snapshots.length === 0) return 0;
+      let totalSignedFunding = 0;
+      const notional = quantity * price;
+      for (const snap of snapshots) {
+        const rate = Number(snap.fundingRate);
+        if (!Number.isFinite(rate) || rate === 0) continue;
+        const signedFunding =
+          positionSide === "LONG" ? -notional * rate : notional * rate;
+        totalSignedFunding += signedFunding;
+      }
+      return totalSignedFunding;
+    } catch {
+      return 0;
+    }
   }
 }
 
