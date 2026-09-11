@@ -10,6 +10,8 @@ import { AlternativeMeFearGreedAdapter } from "./infrastructure/providers/fear-g
 import { RedditAdapter } from "./infrastructure/providers/reddit/reddit.adapter";
 import { ManualMacroAdapter } from "./infrastructure/providers/macro/manual-macro.adapter";
 import { OfficialMacroCalendarAdapter } from "./infrastructure/providers/macro/official-macro-calendar.adapter";
+import { TreeNewsMacroAdapter } from "./infrastructure/providers/macro/tree-news-macro.adapter";
+import { TreeNewsListenerService } from "./application/services/tree-news-listener.service";
 import { UrlCanonicalizer } from "./application/services/url-canonicalizer.service";
 import { DeduplicationService } from "./application/services/deduplication.service";
 import { MetadataExtractor } from "./application/services/metadata-extractor.service";
@@ -73,6 +75,8 @@ import { ExternalDataEventBus } from "./application/services/external-data-event
     ExternalDataIngestionProcessor,
     ExternalDataSchedulerService,
     ExternalDataGateway,
+    TreeNewsMacroAdapter,
+    TreeNewsListenerService,
   ],
   exports: [
     ExternalHttpClient,
@@ -83,6 +87,8 @@ import { ExternalDataEventBus } from "./application/services/external-data-event
     MacroImportService,
     ExternalDataEventPublisher,
     ExternalDataEventBus,
+    TreeNewsMacroAdapter,
+    TreeNewsListenerService,
   ],
 })
 export class ExternalDataModule {}
