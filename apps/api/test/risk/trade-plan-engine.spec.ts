@@ -57,6 +57,55 @@ describe("adaptive trade plan engine", () => {
     expect(plan).toMatchObject({ approved: false, reason: "RANGE_MIDPOINT_ENTRY_BLOCKED" });
   });
 
+  it("rejects a range-reversal thesis with degenerate range boundaries", () => {
+    const snapshot = createBaseSnapshot();
+    snapshot.structure.rangeBoundaries = { lower: 112_000, upper: 108_000, touchCountLower: 2, touchCountUpper: 2 };
+    const thesis = {
+      ...createValidLongThesis(),
+      setup: "RANGE_REVERSAL" as const,
+      entryZone: { lower: 108_000, upper: 108_500 },
+    };
+    const plan = buildAdaptiveTradePlan({
+      side: "LONG",
+      entryPrice: 108_200,
+      decision: decision("LONG", "RANGING"),
+      market: {
+        atr: 1_000,
+        support: 108_000,
+        resistance: 112_000,
+        proactive: { thesisId: "thesis-1", thesis, snapshot, mode: "DEMO", sizeFactor: 1 },
+      },
+      configuredStopLossPct: 0.02,
+      configuredRiskRewardRatio: 1.5,
+    });
+
+    expect(plan).toMatchObject({ approved: false, reason: "THESIS_RANGE_BOUNDARY_REQUIRED" });
+  });
+
+  it("rejects a range-reversal thesis when entry price is outside range boundaries", () => {
+    const snapshot = createBaseSnapshot();
+    const thesis = {
+      ...createValidLongThesis(),
+      setup: "RANGE_REVERSAL" as const,
+      entryZone: { lower: 105_000, upper: 106_000 },
+    };
+    const plan = buildAdaptiveTradePlan({
+      side: "LONG",
+      entryPrice: 105_500, // outside [108_000, 112_000]
+      decision: decision("LONG", "RANGING"),
+      market: {
+        atr: 1_000,
+        support: 108_000,
+        resistance: 112_000,
+        proactive: { thesisId: "thesis-1", thesis, snapshot, mode: "DEMO", sizeFactor: 1 },
+      },
+      configuredStopLossPct: 0.02,
+      configuredRiskRewardRatio: 1.5,
+    });
+
+    expect(plan).toMatchObject({ approved: false, reason: "THESIS_RANGE_DIRECTION_INVALID" });
+  });
+
   it("places a ranging LONG target before resistance", () => {
     const plan = buildAdaptiveTradePlan({
       side: "LONG",
