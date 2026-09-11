@@ -247,3 +247,107 @@ describe('explicit evidence release modes', () => {
     expect(result).toMatchObject({ approved: true, severity: 'REDUCE_SIZE', sizeFactor: 0.25 });
   });
 });
+
+describe('macro news blackout and direction alignment gates', () => {
+  const judge = new DecisionJudgeService();
+  const baseAnalyses = () => {
+    const good = { dataQuality: 'GOOD', generatedAt: new Date().toISOString(), trend: { direction: 'UP' } };
+    return {
+      market: good,
+      technical: good,
+      news: good,
+      sentiment: good,
+      macro: { dataQuality: 'GOOD', generatedAt: new Date().toISOString(), riskFactors: [] as string[], macroTrend: 'NEUTRAL' },
+      onchain: good,
+    };
+  };
+
+  it('blocks directional trade with MACRO_NEWS_BLACKOUT during pre-news window', () => {
+    const analyses = baseAnalyses();
+    analyses.macro.riskFactors = ['MACRO_NEWS_BLACKOUT: High-impact release pending within window without actual figures.'];
+    const result = judge.evaluate(
+      {
+        decision: 'SHORT',
+        dataQuality: 'GOOD',
+        conflictLevel: 'LOW',
+        confidence: 82,
+        expectedValue: 0.8,
+        profitFactorEstimate: 1.8,
+        riskScore: 30,
+      } as never,
+      analyses as never,
+      { symbol: 'ARB-USDT' },
+    );
+
+    expect(result.approved).toBe(false);
+    expect(result.severity).toBe('BLOCK');
+    expect(result.reasons).toContain('MACRO_NEWS_BLACKOUT');
+  });
+
+  it('blocks SHORT when macroTrend is RISK_ON with MACRO_DIRECTION_CONFLICT', () => {
+    const analyses = baseAnalyses();
+    analyses.macro.macroTrend = 'RISK_ON';
+    const result = judge.evaluate(
+      {
+        decision: 'SHORT',
+        dataQuality: 'GOOD',
+        conflictLevel: 'LOW',
+        confidence: 82,
+        expectedValue: 0.8,
+        profitFactorEstimate: 1.8,
+        riskScore: 30,
+      } as never,
+      analyses as never,
+      { symbol: 'ARB-USDT' },
+    );
+
+    expect(result.approved).toBe(false);
+    expect(result.severity).toBe('BLOCK');
+    expect(result.reasons).toContain('MACRO_DIRECTION_CONFLICT');
+  });
+
+  it('blocks LONG when macroTrend is RISK_OFF with MACRO_DIRECTION_CONFLICT', () => {
+    const analyses = baseAnalyses();
+    analyses.macro.macroTrend = 'RISK_OFF';
+    const result = judge.evaluate(
+      {
+        decision: 'LONG',
+        dataQuality: 'GOOD',
+        conflictLevel: 'LOW',
+        confidence: 82,
+        expectedValue: 0.8,
+        profitFactorEstimate: 1.8,
+        riskScore: 30,
+      } as never,
+      analyses as never,
+      { symbol: 'ETH-USDT' },
+    );
+
+    expect(result.approved).toBe(false);
+    expect(result.severity).toBe('BLOCK');
+    expect(result.reasons).toContain('MACRO_DIRECTION_CONFLICT');
+  });
+
+  it('approves LONG when macroTrend is RISK_ON and technicals align', () => {
+    const analyses = baseAnalyses();
+    analyses.macro.macroTrend = 'RISK_ON';
+    const result = judge.evaluate(
+      {
+        decision: 'LONG',
+        dataQuality: 'GOOD',
+        conflictLevel: 'LOW',
+        confidence: 82,
+        expectedValue: 0.8,
+        profitFactorEstimate: 1.8,
+        riskScore: 30,
+      } as never,
+      analyses as never,
+      { symbol: 'ETH-USDT' },
+    );
+
+    expect(result.approved).toBe(true);
+    expect(result.reasons).not.toContain('MACRO_DIRECTION_CONFLICT');
+    expect(result.reasons).not.toContain('MACRO_NEWS_BLACKOUT');
+  });
+});
+

@@ -24,6 +24,9 @@ import {
   MacroImportConfirmRequest,
   macroImportConfirmRequestSchema,
 } from '@platform/shared';
+import { ExternalDataEventBus } from '../../application/services/external-data-event-bus.service';
+import { scoreMacroTrend } from '../../../agents/domain/definitions/macro-analyst.definition';
+import { Optional } from '@nestjs/common';
 
 @ApiTags('External Data - Macroeconomic Calendar')
 @Controller('external-data/macro')
@@ -31,6 +34,7 @@ export class MacroController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly macroImportService: MacroImportService,
+    @Optional() private readonly eventBus?: ExternalDataEventBus,
   ) {}
 
   @Get('events')
@@ -156,4 +160,144 @@ export class MacroController {
     const validatedRequest = macroImportConfirmRequestSchema.parse(body);
     return this.macroImportService.confirmImport(user.id, validatedRequest);
   }
+
+  @Post('live-release')
+  @ApiOperation({ summary: 'Ingest immediate real-time macroeconomic event release' })
+  async ingestLiveRelease(
+    @Body()
+    body: {
+      name: string;
+      category?: MacroEventCategory;
+      importance?: MacroImportance;
+      country?: string;
+      currency?: string;
+      actual: string | number;
+      forecast?: string | number | null;
+      previous?: string | number | null;
+      unit?: string | null;
+      scheduledAt?: string;
+      sourceUrl?: string;
+    },
+  ) {
+    if (!body || !body.name || body.actual === undefined || body.actual === null || body.actual === '') {
+      throw new BadRequestException('Event name and actual release value are required');
+    }
+
+    const actualStr = String(body.actual).trim();
+    const forecastStr = body.forecast !== undefined && body.forecast !== null ? String(body.forecast).trim() : null;
+    const previousStr = body.previous !== undefined && body.previous !== null ? String(body.previous).trim() : null;
+
+    let scheduledAtDate: Date;
+    if (body.scheduledAt) {
+      scheduledAtDate = new Date(body.scheduledAt);
+      if (Number.isNaN(scheduledAtDate.getTime())) {
+        throw new BadRequestException('scheduledAt must be a valid ISO date');
+      }
+    } else {
+      scheduledAtDate = new Date();
+    }
+
+    const category: MacroEventCategory = body.category ?? (
+      /consumer price|\bcpi\b/i.test(body.name) ? 'CPI' :
+      /producer price|\bppi\b/i.test(body.name) ? 'PPI' :
+      /nonfarm|payroll/i.test(body.name) ? 'NONFARM_PAYROLLS' :
+      /unemployment/i.test(body.name) ? 'UNEMPLOYMENT' :
+      /retail sales/i.test(body.name) ? 'RETAIL_SALES' : 'OTHER'
+    );
+
+    const importance: MacroImportance = body.importance ?? (
+      ['CPI', 'PPI', 'NONFARM_PAYROLLS', 'UNEMPLOYMENT'].includes(category) ||
+      /fomc|interest rate|fed/i.test(body.name)
+        ? 'HIGH'
+        : 'MEDIUM'
+    );
+
+    // Look for existing scheduled event around this date (+- 12 hours)
+    const existing = await this.prisma.macroEconomicEvent.findFirst({
+      where: {
+        name: { contains: body.name.split(' ')[0], mode: 'insensitive' },
+        scheduledAt: {
+          gte: new Date(scheduledAtDate.getTime() - 12 * 60 * 60_000),
+          lte: new Date(scheduledAtDate.getTime() + 12 * 60 * 60_000),
+        },
+      },
+      orderBy: { scheduledAt: 'asc' },
+    });
+
+    let savedEvent;
+    if (existing) {
+      savedEvent = await this.prisma.macroEconomicEvent.update({
+        where: { id: existing.id },
+        data: {
+          actual: actualStr,
+          ...(forecastStr !== null ? { forecast: forecastStr } : {}),
+          ...(previousStr !== null ? { previous: previousStr } : {}),
+          status: 'RELEASED',
+          updatedAt: new Date(),
+        },
+      });
+    } else {
+      savedEvent = await this.prisma.macroEconomicEvent.create({
+        data: {
+          provider: 'LIVE_FEED',
+          name: body.name,
+          category,
+          importance,
+          country: body.country ?? 'US',
+          currency: body.currency ?? 'USD',
+          scheduledAt: scheduledAtDate,
+          actual: actualStr,
+          forecast: forecastStr,
+          previous: previousStr,
+          unit: body.unit ?? null,
+          status: 'RELEASED',
+          sourceUrl: body.sourceUrl ?? null,
+        },
+      });
+    }
+
+    const macroTrend = scoreMacroTrend([{
+      name: savedEvent.name,
+      importance: savedEvent.importance,
+      actual: savedEvent.actual,
+      forecast: savedEvent.forecast,
+    }]);
+
+    const actualNum = parseFloat(actualStr);
+    const forecastNum = forecastStr ? parseFloat(forecastStr) : NaN;
+    const surprise = Number.isFinite(actualNum) && Number.isFinite(forecastNum)
+      ? actualNum - forecastNum
+      : null;
+
+    if (this.eventBus) {
+      this.eventBus.emitMacroRelease({
+        id: savedEvent.id,
+        name: savedEvent.name,
+        category: savedEvent.category,
+        importance: savedEvent.importance,
+        actual: savedEvent.actual!,
+        forecast: savedEvent.forecast,
+        previous: savedEvent.previous,
+        unit: savedEvent.unit,
+        country: savedEvent.country,
+        currency: savedEvent.currency,
+        scheduledAt: savedEvent.scheduledAt.toISOString(),
+        releasedAt: new Date().toISOString(),
+        macroTrend,
+        surprise,
+      });
+    }
+
+    return {
+      success: true,
+      eventId: savedEvent.id,
+      name: savedEvent.name,
+      actual: savedEvent.actual,
+      forecast: savedEvent.forecast,
+      macroTrend,
+      surprise,
+      pipelineTriggered: Boolean(this.eventBus),
+    };
+  }
 }
+

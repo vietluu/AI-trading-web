@@ -129,6 +129,27 @@ export class DecisionJudgeService {
     if (decision.decision !== 'WAIT' && decision.profitFactorEstimate < policy.minProfitFactor) reasons.push('PROFIT_FACTOR_TOO_LOW');
     if (decision.riskScore >= policy.maxRiskScore) reasons.push('DECISION_RISK_TOO_HIGH');
     if (spreadBps !== undefined && spreadBps > policy.maxSpreadBps) reasons.push('SPREAD_TOO_WIDE');
+
+    // Macro Pre-News Blackout Gate & Direction Alignment Guard
+    if (decision.decision !== 'WAIT' && analyses.macro) {
+      const macroRiskFactors = Array.isArray(analyses.macro.riskFactors) ? analyses.macro.riskFactors : [];
+      const hasBlackoutRisk = macroRiskFactors.some((r: unknown) =>
+        typeof r === 'string' && r.includes('MACRO_NEWS_BLACKOUT'),
+      );
+      const hasBlackoutSummary = typeof analyses.macro.summary === 'string' &&
+        analyses.macro.summary.includes('[MACRO_NEWS_BLACKOUT ACTIVE]');
+
+      if (hasBlackoutRisk || hasBlackoutSummary) {
+        reasons.push('MACRO_NEWS_BLACKOUT');
+      }
+
+      const macroTrend = analyses.macro.macroTrend;
+      if (decision.decision === 'SHORT' && macroTrend === 'RISK_ON') {
+        reasons.push('MACRO_DIRECTION_CONFLICT');
+      } else if (decision.decision === 'LONG' && macroTrend === 'RISK_OFF') {
+        reasons.push('MACRO_DIRECTION_CONFLICT');
+      }
+    }
     // Automatic exchange execution must respect reliable negative evidence
     // even when the calibration falls back to the user's global history. Exact
     // calibration remains the only hard gate for non-execution callers.

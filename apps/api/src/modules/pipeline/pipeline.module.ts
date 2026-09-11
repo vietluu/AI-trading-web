@@ -38,6 +38,7 @@ import { SettingsModule } from "../../settings/settings.module";
 import { PortfolioModule } from "../portfolio/portfolio.module";
 import { ExternalDataModule } from "../external-data/external-data.module";
 import { HighImportanceNewsTriggerService } from "./application/high-importance-news-trigger.service";
+import { MacroEventTriggerService } from "./application/macro-event-trigger.service";
 import { OpportunityWatcherService } from "./application/opportunity-watcher.service";
 
 @Module({
@@ -80,6 +81,7 @@ import { OpportunityWatcherService } from "./application/opportunity-watcher.ser
     PipelineCancellationService,
     PipelineProcessor,
     HighImportanceNewsTriggerService,
+    MacroEventTriggerService,
     ConfluenceCollectorService,
     ConfluenceTimeoutProcessor,
   ],

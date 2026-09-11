@@ -15,7 +15,7 @@ import {
 
 export const MACRO_ANALYST_ALLOWED_TOOLS = ["macro.events.list"] as const;
 
-function scoreMacroTrend(
+export function scoreMacroTrend(
   events: Record<string, unknown>[],
 ): "RISK_ON" | "RISK_OFF" | "NEUTRAL" {
   let riskOffScore = 0;
@@ -40,13 +40,24 @@ function scoreMacroTrend(
     if (
       name.includes("cpi") ||
       name.includes("pce") ||
-      name.includes("inflation")
+      name.includes("inflation") ||
+      name.includes("consumer price")
     ) {
       if (isComparable) {
         if (actual > forecast + 0.1) {
           riskOffScore += 2;
         } else if (actual < forecast - 0.1) {
           riskOnScore += 2;
+        }
+      }
+    }
+    // PPI / Producer Price
+    if (name.includes("ppi") || name.includes("producer price")) {
+      if (isComparable) {
+        if (actual > forecast + 0.1) {
+          riskOffScore += 1;
+        } else if (actual < forecast - 0.1) {
+          riskOnScore += 1;
         }
       }
     }
@@ -113,13 +124,49 @@ function deterministicMacro(
     };
   }
 
+  const safe = (v: unknown): number => {
+    if (typeof v === "number") return v;
+    if (typeof v === "string") {
+      const parsed = parseFloat(v);
+      return Number.isFinite(parsed) ? parsed : NaN;
+    }
+    return NaN;
+  };
+
   const highImpact = events.filter((e) => e.importance === "HIGH");
   const macroTrend = scoreMacroTrend(events);
   const safeText = (v: unknown, fb: string) =>
     typeof v === "string" || typeof v === "number" ? String(v) : fb;
 
+  const nowMs = Date.now();
+  const blackoutWindowMs = 30 * 60_000;
+  const postReleaseGraceMs = 5 * 60_000;
+  const pendingBlackoutEvents = highImpact.filter((e) => {
+    const actual = safe(e.actual);
+    if (Number.isFinite(actual)) return false;
+    const sched = typeof e.scheduledAt === "string" || e.scheduledAt instanceof Date
+      ? new Date(e.scheduledAt).getTime()
+      : NaN;
+    if (!Number.isFinite(sched)) return false;
+    return nowMs >= (sched - blackoutWindowMs) && nowMs <= (sched + postReleaseGraceMs);
+  });
+
+  const blackoutActive = pendingBlackoutEvents.length > 0;
+  const riskFactors = highImpact.map(
+    (e) =>
+      `High-impact: ${safeText(e.name, "macro release")} actual=${safeText(e.actual, "N/A")} vs forecast=${safeText(e.forecast, "N/A")}`,
+  );
+
+  if (blackoutActive) {
+    riskFactors.unshift(
+      "MACRO_NEWS_BLACKOUT: High-impact release pending within window without actual figures.",
+    );
+  }
+
+  const prefix = blackoutActive ? "[MACRO_NEWS_BLACKOUT ACTIVE] " : "";
+
   return {
-    summary: `${events.length} macro event(s) in window; ${highImpact.length} high-impact. Macro regime: ${macroTrend}.`,
+    summary: `${prefix}${events.length} macro event(s) in window; ${highImpact.length} high-impact. Macro regime: ${macroTrend}.`,
     macroTrend,
     keyEvents: events
       .slice(0, 10)
@@ -127,10 +174,7 @@ function deterministicMacro(
         (e) =>
           `${safeText(e.name, "Macro event")} at ${safeText(e.scheduledAt, "unknown time")} (actual: ${safeText(e.actual, "N/A")}, forecast: ${safeText(e.forecast, "N/A")})`,
       ),
-    riskFactors: highImpact.map(
-      (e) =>
-        `High-impact: ${safeText(e.name, "macro release")} actual=${safeText(e.actual, "N/A")} vs forecast=${safeText(e.forecast, "N/A")}`,
-    ),
+    riskFactors,
     dataQuality: "GOOD",
     generatedAt: new Date().toISOString(),
   };
