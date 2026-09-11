@@ -208,6 +208,16 @@ export interface EvaluateCohortOptions {
   minBroaderSamples?: number;
   maxFallbackSizeFactor?: number;
   minPositiveExpectancy?: number;
+  asOf?: Date;
+}
+
+function matchesPolicyVersion(outcome: TradeLifecycleOutcome, policyVersion: string): boolean {
+  if (!policyVersion) return true;
+  if (outcome.configurationHash && outcome.configurationHash === policyVersion) return true;
+  const cleanParam = policyVersion.trim().toLowerCase().replace(/^v/, '');
+  const cleanCalc = outcome.calculationVersion?.toString().trim().toLowerCase().replace(/^v/, '');
+  const cleanSchema = outcome.schemaVersion?.toString().trim().toLowerCase().replace(/^v/, '');
+  return cleanParam === cleanCalc || cleanParam === cleanSchema;
 }
 
 /**
@@ -232,7 +242,15 @@ export function evaluateThesisCohort(
   const maxFallbackSizeFactor = Math.min(0.75, Math.max(0.1, options?.maxFallbackSizeFactor ?? 0.5));
   const minPositiveExpectancy = options?.minPositiveExpectancy ?? 0.05;
 
-  const deduplicated = deduplicateLifecycleOutcomes(allOutcomes);
+  // Enforce point-in-time cutoff if asOf is provided
+  const timeFilteredOutcomes = options?.asOf
+    ? allOutcomes.filter((o) => {
+        const time = o.closedAt?.getTime() ?? o.sourceDataCutoff?.getTime() ?? o.openedAt.getTime();
+        return time <= options.asOf!.getTime();
+      })
+    : allOutcomes;
+
+  const deduplicated = deduplicateLifecycleOutcomes(timeFilteredOutcomes);
   const finalized = deduplicated.filter(
     (o) => o.status === 'FINALIZED' && o.netR !== null && typeof o.netR === 'number',
   );
@@ -244,11 +262,7 @@ export function evaluateThesisCohort(
     const regimeMatch = !o.regime || o.regime === params.regime;
     const directionMatch = o.direction === params.direction;
     const setupMatch = !o.setup || o.setup === params.setup;
-    const policyMatch =
-      !o.configurationHash ||
-      o.configurationHash === params.executionPolicyVersion ||
-      o.calculationVersion.toString() === params.executionPolicyVersion ||
-      params.executionPolicyVersion === 'v1';
+    const policyMatch = matchesPolicyVersion(o, params.executionPolicyVersion);
     return symbolMatch && timeframeMatch && regimeMatch && directionMatch && setupMatch && policyMatch;
   });
 
@@ -295,7 +309,8 @@ export function evaluateThesisCohort(
     const regimeMatch = !o.regime || o.regime === params.regime;
     const directionMatch = o.direction === params.direction;
     const setupMatch = !o.setup || o.setup === params.setup;
-    return timeframeMatch && regimeMatch && directionMatch && setupMatch;
+    const policyMatch = matchesPolicyVersion(o, params.executionPolicyVersion);
+    return timeframeMatch && regimeMatch && directionMatch && setupMatch && policyMatch;
   });
 
   const broaderMetrics = calibrateCohortFromLifecycle(broaderOutcomes, { minSampleSize: minBroaderSamples });
@@ -335,7 +350,7 @@ export interface PairedCandidateLiftInput {
   symbol: string;
   rulesNetR?: number | null;
   aiResearcherNetR: number;
-  criticAction: 'APPROVE' | 'REDUCE_SIZE' | 'BLOCK' | 'CANCEL';
+  criticAction: 'APPROVE' | 'REDUCE_SIZE' | 'BLOCK' | 'CANCEL' | 'REQUIRE_TRIGGER';
   criticSizeFactor?: number;
 }
 
@@ -344,7 +359,7 @@ export interface PairedCandidateLift {
   symbol: string;
   rulesNetR: number;
   aiResearcherNetR: number;
-  criticAction: 'APPROVE' | 'REDUCE_SIZE' | 'BLOCK' | 'CANCEL';
+  criticAction: 'APPROVE' | 'REDUCE_SIZE' | 'BLOCK' | 'CANCEL' | 'REQUIRE_TRIGGER';
   criticSizeFactor: number;
   aiWithCriticNetR: number;
   avoidedLossR: number;
@@ -423,13 +438,14 @@ export function calculateCriticLift(
     if (c.criticAction === 'BLOCK' || c.criticAction === 'CANCEL') {
       effectiveSize = 0;
       blockedCount++;
-    } else if (c.criticAction === 'REDUCE_SIZE') {
+    } else if (c.criticAction === 'REDUCE_SIZE' || c.criticAction === 'REQUIRE_TRIGGER') {
       effectiveSize = Math.max(0, Math.min(1, c.criticSizeFactor ?? 0.5));
       reducedCount++;
     } else {
       effectiveSize = 1.0;
       approvedCount++;
     }
+
 
     const aiWithCriticNetR = Number((rawR * effectiveSize).toFixed(4));
     let avoidedLossR = 0;

@@ -575,5 +575,241 @@ describe('Thesis Cohort Calibration & AI Lift Domain', () => {
     expect(liftReport.totalMissedWinR).toBe(0);
     expect(liftReport.netLiftR).toBeCloseTo(1.5, 2);
   });
+
+  it('9. Preserves break-even scratch trades (netR === 0) without dropping them as falsy', async () => {
+    const { SelfLearningService } = await import(
+      '../../src/modules/reflection/application/self-learning.service'
+    );
+
+    // Create 20 scratch trades with netR = 0
+    const scratchOutcomes: TradeLifecycleOutcome[] = Array.from({ length: 20 }, (_, i) => ({
+      thesisId: `scratch-${i}`,
+      symbol: 'BTC-USDT',
+      provider: 'BINANCE',
+      timeframe: '15m',
+      direction: 'LONG' as const,
+      setup: 'BREAKOUT',
+      regime: 'TRENDING_UP',
+      status: 'FINALIZED' as const,
+      sourceDataCutoff: new Date('2026-09-10T00:00:00.000Z'),
+      openedAt: new Date('2026-09-10T01:00:00.000Z'),
+      closedAt: new Date('2026-09-10T02:00:00.000Z'),
+      totalEnteredQuantity: 1,
+      totalExitedQuantity: 1,
+      averageEntryPrice: 100,
+      averageExitPrice: 100,
+      realizedGrossPnl: 0,
+      signedFees: 0,
+      signedFunding: 0,
+      realizedNetPnl: 0,
+      initialRisk: 10,
+      netR: 0, // Exactly zero
+      schemaVersion: 1,
+      calculationVersion: 1,
+      configurationHash: 'v1',
+    }));
+
+    const calibration = calibrateCohortFromLifecycle(scratchOutcomes, { minSampleSize: 20 });
+    expect(calibration.sampleSize).toBe(20);
+    expect(calibration.scratchCount).toBe(20);
+    expect(calibration.winCount).toBe(0);
+    expect(calibration.lossCount).toBe(0);
+    expect(calibration.meanNetR).toBe(0);
+    expect(calibration.status).toBe('CALIBRATED');
+
+    // Also test SelfLearningService preserves netR = 0
+    const prismaMock = {
+      tradeLifecycleOutcome: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: 'scratch-1',
+            thesisId: 'scratch-1',
+            symbol: 'BTC-USDT',
+            provider: 'BINANCE',
+            timeframe: '15m',
+            direction: 'LONG',
+            setup: 'BREAKOUT',
+            regime: 'TRENDING_UP',
+            status: 'FINALIZED',
+            sourceDataCutoff: new Date(),
+            openedAt: new Date(),
+            closedAt: new Date(),
+            totalEnteredQuantity: 1,
+            totalExitedQuantity: 1,
+            averageEntryPrice: 100,
+            averageExitPrice: 100,
+            realizedGrossPnl: 0,
+            signedFees: 0,
+            signedFunding: 0,
+            realizedNetPnl: 0,
+            initialRisk: 10,
+            netR: 0, // Zero net R
+            configurationHash: 'v1',
+            schemaVersion: 1,
+            calculationVersion: 1,
+          },
+        ]),
+      },
+    };
+    const service = new SelfLearningService(prismaMock as never, {} as never);
+    const evalResult = await service.evaluateCohortForThesis('BTC-USDT|15m|TRENDING_UP|LONG|BREAKOUT|v1');
+    expect(evalResult.metrics?.meanNetR).toBe(0);
+    expect(evalResult.metrics?.scratchCount).toBe(1);
+  });
+
+  it('10. Enforces strict execution policy matching and prevents version short-circuiting', () => {
+    // 25 mature trades under execution policy v2
+    const v2Outcomes: TradeLifecycleOutcome[] = Array.from({ length: 25 }, (_, i) => ({
+      thesisId: `v2-${i}`,
+      symbol: 'BTC-USDT',
+      provider: 'BINANCE',
+      timeframe: '15m',
+      direction: 'LONG' as const,
+      setup: 'BREAKOUT',
+      regime: 'TRENDING_UP',
+      status: 'FINALIZED' as const,
+      sourceDataCutoff: new Date('2026-09-10T00:00:00.000Z'),
+      openedAt: new Date('2026-09-10T01:00:00.000Z'),
+      closedAt: new Date('2026-09-10T02:00:00.000Z'),
+      totalEnteredQuantity: 1,
+      totalExitedQuantity: 1,
+      averageEntryPrice: 100,
+      averageExitPrice: 110,
+      realizedGrossPnl: 10,
+      signedFees: 0,
+      signedFunding: 0,
+      realizedNetPnl: 10,
+      initialRisk: 5,
+      netR: 2.0,
+      schemaVersion: 2,
+      calculationVersion: 2,
+      configurationHash: 'policy-hash-v2',
+    }));
+
+    // Target is policy v1: v2 history must NOT match policy v1
+    const v1Decision = evaluateThesisCohort(
+      'BTC-USDT|15m|TRENDING_UP|LONG|BREAKOUT|v1',
+      v2Outcomes,
+      { minExactSamples: 20 },
+    );
+    // With 0 matching v1 exact samples, it must fall back to REDUCE_SIZE (never APPROVE based on v2)
+    expect(v1Decision.action).toBe('REDUCE_SIZE');
+    expect(v1Decision.scope).not.toBe('EXACT');
+
+    // Target is policy v2: matches exactly
+    const v2Decision = evaluateThesisCohort(
+      'BTC-USDT|15m|TRENDING_UP|LONG|BREAKOUT|v2',
+      v2Outcomes,
+      { minExactSamples: 20 },
+    );
+    expect(v2Decision.action).toBe('APPROVE');
+    expect(v2Decision.scope).toBe('EXACT');
+    expect(v2Decision.sampleSize).toBe(25);
+  });
+
+  it('11. Point-in-time cutoff (asOf): excludes future lifecycle outcomes from cohort calibration', () => {
+    const cutoffDate = new Date('2026-09-10T12:00:00.000Z');
+
+    const pastOutcome: TradeLifecycleOutcome = {
+      thesisId: 'past-1',
+      symbol: 'BTC-USDT',
+      provider: 'BINANCE',
+      timeframe: '15m',
+      direction: 'LONG',
+      setup: 'BREAKOUT',
+      regime: 'TRENDING_UP',
+      status: 'FINALIZED',
+      sourceDataCutoff: new Date('2026-09-10T10:00:00.000Z'),
+      openedAt: new Date('2026-09-10T10:15:00.000Z'),
+      closedAt: new Date('2026-09-10T11:00:00.000Z'),
+      totalEnteredQuantity: 1,
+      totalExitedQuantity: 1,
+      averageEntryPrice: 100,
+      averageExitPrice: 110,
+      realizedGrossPnl: 10,
+      signedFees: 0,
+      signedFunding: 0,
+      realizedNetPnl: 10,
+      initialRisk: 5,
+      netR: 2.0,
+      schemaVersion: 1,
+      calculationVersion: 1,
+      configurationHash: 'v1',
+    };
+
+    const futureOutcome: TradeLifecycleOutcome = {
+      thesisId: 'future-1',
+      symbol: 'BTC-USDT',
+      provider: 'BINANCE',
+      timeframe: '15m',
+      direction: 'LONG',
+      setup: 'BREAKOUT',
+      regime: 'TRENDING_UP',
+      status: 'FINALIZED',
+      sourceDataCutoff: new Date('2026-09-10T13:00:00.000Z'),
+      openedAt: new Date('2026-09-10T13:15:00.000Z'),
+      closedAt: new Date('2026-09-10T14:00:00.000Z'),
+      totalEnteredQuantity: 1,
+      totalExitedQuantity: 1,
+      averageEntryPrice: 100,
+      averageExitPrice: 90,
+      realizedGrossPnl: -10,
+      signedFees: 0,
+      signedFunding: 0,
+      realizedNetPnl: -10,
+      initialRisk: 5,
+      netR: -2.0,
+      schemaVersion: 1,
+      calculationVersion: 1,
+      configurationHash: 'v1',
+    };
+
+    const decision = evaluateThesisCohort(
+      'BTC-USDT|15m|TRENDING_UP|LONG|BREAKOUT|v1',
+      [pastOutcome, futureOutcome],
+      { asOf: cutoffDate },
+    );
+
+    // Future outcome must be excluded, only pastOutcome should be evaluated
+    expect(decision.metrics?.sampleSize).toBe(1);
+    expect(decision.metrics?.meanNetR).toBe(2.0);
+  });
+
+  it('12. Explicitly maps REQUIRE_TRIGGER in Critic Lift as bounded/reduced confirmation', () => {
+    const candidates = [
+      {
+        candidateId: 'cand-req-trigger',
+        symbol: 'BTC-USDT',
+        rulesNetR: 0,
+        aiResearcherNetR: 2.0,
+        criticAction: 'REQUIRE_TRIGGER' as const,
+        criticSizeFactor: 0.5,
+      },
+      {
+        candidateId: 'cand-req-trigger-loss',
+        symbol: 'ETH-USDT',
+        rulesNetR: 0,
+        aiResearcherNetR: -1.0,
+        criticAction: 'REQUIRE_TRIGGER' as const, // default 0.5 factor
+      },
+    ];
+
+    const report = calculateCriticLift(candidates);
+    expect(report.aiWithCritic.reducedCount).toBe(2);
+    expect(report.aiWithCritic.approvedCount).toBe(0);
+
+    const c1 = report.candidates[0]!;
+    expect(c1.criticAction).toBe('REQUIRE_TRIGGER');
+    expect(c1.criticSizeFactor).toBe(0.5);
+    expect(c1.aiWithCriticNetR).toBeCloseTo(1.0, 2);
+    expect(c1.missedWinR).toBeCloseTo(1.0, 2);
+
+    const c2 = report.candidates[1]!;
+    expect(c2.criticAction).toBe('REQUIRE_TRIGGER');
+    expect(c2.criticSizeFactor).toBe(0.5);
+    expect(c2.aiWithCriticNetR).toBeCloseTo(-0.5, 2);
+    expect(c2.avoidedLossR).toBeCloseTo(0.5, 2);
+  });
 });
+
 

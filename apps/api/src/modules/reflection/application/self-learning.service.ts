@@ -16,6 +16,7 @@ import { createHash } from 'node:crypto';
 import {
   evaluateThesisCohort,
   calculateCriticLift,
+  parseThesisCohortKey,
   type ThesisCohortKeyParams,
   type CohortEvaluationResult,
   type EvaluateCohortOptions,
@@ -1238,10 +1239,15 @@ export class SelfLearningService {
     cohortKey: string | ThesisCohortKeyParams,
     options?: EvaluateCohortOptions,
   ): Promise<CohortEvaluationResult> {
+    const params = typeof cohortKey === 'string' ? parseThesisCohortKey(cohortKey) : cohortKey;
+
     const rows = await this.prisma.tradeLifecycleOutcome.findMany({
       where: {
         status: 'FINALIZED',
         netR: { not: null },
+        ...(params.setup ? { setup: params.setup } : {}),
+        ...(params.timeframe ? { timeframe: params.timeframe } : {}),
+        ...(options?.asOf ? { closedAt: { lte: options.asOf } } : {}),
       },
       orderBy: { closedAt: 'desc' },
       take: 1000,
@@ -1263,13 +1269,13 @@ export class SelfLearningService {
       totalEnteredQuantity: Number(r.totalEnteredQuantity),
       totalExitedQuantity: Number(r.totalExitedQuantity),
       averageEntryPrice: Number(r.averageEntryPrice),
-      averageExitPrice: r.averageExitPrice ? Number(r.averageExitPrice) : null,
+      averageExitPrice: r.averageExitPrice != null ? Number(r.averageExitPrice) : null,
       realizedGrossPnl: Number(r.realizedGrossPnl),
       signedFees: Number(r.signedFees),
       signedFunding: Number(r.signedFunding),
       realizedNetPnl: Number(r.realizedNetPnl),
-      initialRisk: r.initialRisk ? Number(r.initialRisk) : null,
-      netR: r.netR ? Number(r.netR) : null,
+      initialRisk: r.initialRisk != null ? Number(r.initialRisk) : null,
+      netR: r.netR != null ? Number(r.netR) : null,
       configurationHash: r.configurationHash,
       schemaVersion: r.schemaVersion,
       calculationVersion: r.calculationVersion,
@@ -1308,14 +1314,15 @@ export class SelfLearningService {
     });
 
     const candidates: PairedCandidateLiftInput[] = theses.map((t) => {
-      const netR = Number(t.lifecycleOutcome?.netR ?? 0);
+      const netR = t.lifecycleOutcome?.netR != null ? Number(t.lifecycleOutcome.netR) : 0;
       const review = t.reviews[0];
-      const action = (review?.action as 'APPROVE' | 'REDUCE_SIZE' | 'BLOCK' | 'CANCEL') ?? 'APPROVE';
+      const rawAction = review?.action as 'APPROVE' | 'REDUCE_SIZE' | 'BLOCK' | 'CANCEL' | 'REQUIRE_TRIGGER' | undefined;
+      const action = rawAction ?? 'APPROVE';
       const sizeFactor =
         review?.sizeFactor ??
         (action === 'BLOCK' || action === 'CANCEL'
           ? 0
-          : action === 'REDUCE_SIZE'
+          : action === 'REDUCE_SIZE' || action === 'REQUIRE_TRIGGER'
             ? 0.5
             : 1.0);
       const isRules = t.decisionSource === 'RULES';
