@@ -449,12 +449,13 @@ export class PipelineRunnerService {
       let criticSizeFactor = 1;
       
       if (job.pipelineId === 'proactive-thesis' && this.tradeResearcher && this.critic && this.anticipatorySnapshot) {
+        const executionEvidence = await this.liveTrading.proactiveExecutionEvidence(job.userId, job.provider as ExchangeProvider, symbol);
         const snapshot = await this.anticipatorySnapshot.build({
           userId: job.userId,
           symbol,
           provider: job.provider as ExchangeProvider,
           timeframe: String(interval) as ExchangeInterval,
-          sourceDataCutoff: new Date()
+          sourceDataCutoff: new Date(), execution: executionEvidence,
         });
         const context = {
           userId: job.userId,

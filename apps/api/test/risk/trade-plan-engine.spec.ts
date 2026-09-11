@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DecisionOutput } from "@platform/shared";
 import { buildAdaptiveTradePlan } from "../../src/modules/risk/domain/trade-plan-engine";
+import { createBaseSnapshot, createValidLongThesis } from "../helpers/thesis-fixture";
 
 const decision = (
   side: "LONG" | "SHORT",
@@ -32,6 +33,30 @@ const decision = (
 });
 
 describe("adaptive trade plan engine", () => {
+  it("rejects a proactive range-reversal thesis in the middle of its range", () => {
+    const snapshot = createBaseSnapshot();
+    const thesis = {
+      ...createValidLongThesis(),
+      setup: "RANGE_REVERSAL" as const,
+      entryZone: { lower: 109_900, upper: 110_100 },
+    };
+    const plan = buildAdaptiveTradePlan({
+      side: "LONG",
+      entryPrice: 110_000,
+      decision: decision("LONG", "RANGING"),
+      market: {
+        atr: 1_000,
+        support: 108_000,
+        resistance: 112_000,
+        proactive: { thesisId: "thesis-1", thesis, snapshot, mode: "DEMO", sizeFactor: 1 },
+      },
+      configuredStopLossPct: 0.02,
+      configuredRiskRewardRatio: 1.5,
+    });
+
+    expect(plan).toMatchObject({ approved: false, reason: "RANGE_MIDPOINT_ENTRY_BLOCKED" });
+  });
+
   it("places a ranging LONG target before resistance", () => {
     const plan = buildAdaptiveTradePlan({
       side: "LONG",
@@ -496,4 +521,3 @@ describe("adaptive trade plan engine", () => {
     expect(plan.expectedNetRewardPct).toBeGreaterThan(0.5);
   });
 });
-

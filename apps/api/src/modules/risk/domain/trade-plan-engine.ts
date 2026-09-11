@@ -91,6 +91,9 @@ export interface TradePlan {
   limitEntryPrice?: number;
   orderType?: "MARKET" | "LIMIT";
   limitTtlCandles?: number;
+  timeInForce?: 'IOC';
+  expiresAt?: string;
+  targets?: TradeThesis['targets'];
   isLiquiditySweep?: boolean;
   tp1Price?: number;
   tp2Price?: number;
@@ -678,12 +681,46 @@ export function buildAdaptiveTradePlan(input: Parameters<typeof _buildAdaptiveTr
     if (!entry || thesis.stopLoss === null || !['PROBE_READY', 'CONFIRMED'].includes(thesis.state)) {
       return { approved: false, reason: 'THESIS_NOT_EXECUTABLE', regime, strategy, maxHoldingCandles: 8, breakEvenAtR: 1 };
     }
+    const reject = (reason: string): TradePlan => ({ approved: false, reason, regime, strategy, maxHoldingCandles: 8, breakEvenAtR: 1, targets: thesis.targets });
+    const snapshot = proactive.snapshot;
+    const structure = snapshot.structure.coverage === 'AVAILABLE' ? snapshot.structure : undefined;
+    const volatility = snapshot.volatility.coverage === 'AVAILABLE' ? snapshot.volatility : undefined;
+    const boundary = structure?.rangeBoundaries;
+    if (thesis.setup === 'RANGE_REVERSAL') {
+      if (!boundary) return reject('THESIS_RANGE_BOUNDARY_REQUIRED');
+      const location = (input.entryPrice - boundary.lower) / (boundary.upper - boundary.lower);
+      if (location > 0.3 && location < 0.7) return reject('RANGE_MIDPOINT_ENTRY_BLOCKED');
+      if (thesis.direction === 'LONG' ? location > 0.3 : location < 0.7) return reject('THESIS_RANGE_DIRECTION_INVALID');
+    }
+    const fresh = (field: { freshness: string; sourceTimestamp: string; freshnessThresholdMs: number }) => field.freshness === 'FRESH' &&
+      Date.parse(snapshot.sourceDataCutoff) - Date.parse(field.sourceTimestamp) <= field.freshnessThresholdMs;
+    const sweep = structure?.liquiditySweep.coverage === 'AVAILABLE' ? structure.liquiditySweep : undefined;
+    const alignedSweep = sweep && fresh(sweep) && sweep.detected && sweep.reclaimed && sweep.sweepZone &&
+      sweep.direction === (thesis.direction === 'LONG' ? 'BULLISH_SWEEP' : 'BEARISH_SWEEP');
+    if (thesis.setup === 'LIQUIDITY_SWEEP_REVERSAL' && !alignedSweep) return reject('THESIS_SWEEP_EVIDENCE_REQUIRED');
+    if (thesis.setup === 'SQUEEZE_PROBE') {
+      if (!volatility || !fresh(volatility) || volatility.squeezeState !== 'SQUEEZING' || volatility.squeezeDurationCandles < 3) return reject('THESIS_COMPRESSION_REQUIRED');
+      const structureAligned = structure?.invalidationCandidates.some((candidate) => candidate.direction === thesis.direction &&
+        (thesis.direction === 'LONG' ? candidate.price < entry.lower : candidate.price > entry.upper));
+      const participation = snapshot.participation.coverage === 'AVAILABLE' ? snapshot.participation : undefined;
+      const book = participation?.orderBook.coverage === 'AVAILABLE' ? participation.orderBook : undefined;
+      const participationAligned = book && fresh(book) && (thesis.direction === 'LONG' ? book.imbalance >= 0.2 : book.imbalance <= -0.2);
+      const derivatives = snapshot.derivatives.coverage === 'AVAILABLE' && snapshot.derivatives.derivativesImbalance.coverage === 'AVAILABLE' ? snapshot.derivatives.derivativesImbalance : undefined;
+      const derivativesAligned = derivatives && fresh(derivatives) && derivatives.squeezeProbability >= 65 &&
+        derivatives.squeezeDirection === (thesis.direction === 'LONG' ? 'SHORT_SQUEEZE' : 'LONG_SQUEEZE');
+      if ([structureAligned, participationAligned, derivativesAligned].filter(Boolean).length < 2) return reject('THESIS_DIRECTIONAL_EVIDENCE_REQUIRED');
+    }
+    // Native protection currently implements one full-position TP. Preserve and reject unsupported fractions.
+    if (thesis.targets.length !== 1 || thesis.targets[0]?.fraction !== 1) return reject('THESIS_MULTI_TARGET_EXECUTION_UNSUPPORTED');
+    const timeframeMs = input.market.timeframeMs ?? 15 * 60_000;
+    const expiresAt = new Date(Math.min(Date.parse(thesis.expiresAt), Date.parse(snapshot.sourceDataCutoff) + timeframeMs)).toISOString();
     const probeSizePct = 0.25;
     return {
       approved: true, regime, strategy, stopLoss: thesis.stopLoss,
-      takeProfit: thesis.targets.reduce((sum, target) => sum + target.price * target.fraction, 0),
+      takeProfit: thesis.targets[0].price, targets: thesis.targets,
       maxHoldingCandles: 8, breakEvenAtR: 1, atr: input.market.atr,
       timeframeMs: input.market.timeframeMs,
+      timeInForce: 'IOC', expiresAt,
       orderType: 'LIMIT', limitEntryPrice: Math.min(entry.upper, Math.max(entry.lower, input.entryPrice)), limitTtlCandles: 1,
       stagedEntry: { stage: thesis.state === 'CONFIRMED' ? 'CONFIRMED' : 'PROBE', thesisId: proactive.thesisId,
         setup: thesis.setup, trigger: thesis.trigger, sourceDataCutoff: proactive.snapshot.sourceDataCutoff,

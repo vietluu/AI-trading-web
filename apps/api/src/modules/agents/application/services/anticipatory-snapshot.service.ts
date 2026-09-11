@@ -17,6 +17,7 @@ import {
   buildAnticipatoryMarketSnapshot,
   type AnticipatoryDerivativesInput,
   type AnticipatorySnapshotInput,
+  type AnticipatoryExecutionInput,
 } from '../../domain/analysis/anticipatory-snapshot-builder';
 import { predictDerivativesImbalance } from '../../domain/analysis/derivatives-imbalance-predictor';
 import { AgentContextSnapshotRepository } from '../../infrastructure/persistence/agent-context-snapshot.repository';
@@ -27,6 +28,7 @@ export interface BuildAnticipatorySnapshotInput {
   symbol: string;
   timeframe: ExchangeInterval;
   sourceDataCutoff: Date;
+  execution?: AnticipatoryExecutionInput;
 }
 
 function finiteNumber(value: string | undefined): number | undefined {
@@ -240,6 +242,7 @@ export class AnticipatorySnapshotService {
         cutoff,
       ),
       context,
+      execution: input.execution,
     });
 
     await this.snapshotRepository.saveAnticipatorySnapshot({

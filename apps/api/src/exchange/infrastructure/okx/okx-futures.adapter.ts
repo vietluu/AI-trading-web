@@ -1,3 +1,4 @@
+import { assertDeclaredLimitOrder } from '../../domain/declared-limit-order';
 import { Injectable, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { z } from "zod";
@@ -777,6 +778,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     credentials: ExchangeCredentials,
     command: PlaceOrderCommand,
   ): Promise<ExchangeOrder> {
+    const declaredLimit = assertDeclaredLimitOrder(command, this.provider);
     const normalizedSymbol = mapSymbol(command.symbol, this.provider);
     const instId = normalizedSymbol;
     const searchSymbol = command.symbol.toUpperCase().replace("/", "-");
@@ -803,6 +805,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       : undefined;
 
     if (!command.reduceOnly) {
+      assertDeclaredLimitOrder(command, this.provider);
       try {
         await this.client.signedPost("/api/v5/account/set-leverage", credentials, {
           instId,
@@ -867,12 +870,12 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     let protectiveClientOrderId = (command.stopLoss || command.takeProfit)
       ? normalizeClientOrderId(`${clOrdId.slice(0, 28)}pm`)
       : undefined;
-    let marketPrice: string | undefined = undefined;
+    let marketPrice: string | undefined = declaredLimit ? command.limitPrice : undefined;
     const makerFirst =
-      !command.reduceOnly &&
+      !declaredLimit && !command.reduceOnly &&
       (this.config?.get<boolean>("OKX_MAKER_FIRST_ENABLED") ?? false);
     let ordType = command.reduceOnly ? "market" : "ioc";
-    if (!command.reduceOnly) {
+    if (!declaredLimit && !command.reduceOnly) {
       try {
         const ticker = await this.bestBidAsk(command.symbol);
         this.assertEntryPriceDrift(command, ticker.askPrice, ticker.bidPrice);
@@ -990,6 +993,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       requestBody: Record<string, unknown>,
     ): Promise<unknown> => {
       try {
+        assertDeclaredLimitOrder(command, this.provider);
         return await this.client.signedPost(
           "/api/v5/trade/order",
           credentials,
@@ -1026,7 +1030,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       ackPayload = await placeOrderAttempt(body);
     } catch (error) {
       if (
-        (body.ordType === "limit" || body.ordType === "ioc") &&
+        !declaredLimit && (body.ordType === "limit" || body.ordType === "ioc") &&
         this.shouldRetryAsMarketOrder(error, body)
       ) {
         const fallbackBody = {
@@ -1055,7 +1059,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     let ack = z.array(orderAckSchema).min(1).parse(ackPayload)[0]!;
     if (ack.sCode !== "0") {
       if (
-        (body.ordType === "limit" || body.ordType === "ioc") &&
+        !declaredLimit && (body.ordType === "limit" || body.ordType === "ioc") &&
         this.shouldRetryAsMarketOrder(ack, body)
       ) {
         const fallbackBody = {
@@ -1183,6 +1187,7 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       clientOrderId: ack.clOrdId ?? clOrdId ?? command.clientOrderId,
       side: command.side,
       type: submittedOrderType === "market" ? "MARKET" : "LIMIT",
+      ...(declaredLimit ? { timeInForce: command.timeInForce, price: command.limitPrice } : {}),
       status: "NEW",
       originalQuantity: submittedBaseQuantity,
       executedQuantity: "0",

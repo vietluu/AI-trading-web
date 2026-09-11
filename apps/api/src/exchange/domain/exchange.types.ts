@@ -295,6 +295,12 @@ export interface OpenOrderQuery {
 }
 
 export interface PlaceOrderCommand {
+  /** Governed thesis entries use a fixed price and immediate cancellation of unfilled quantity. */
+  orderType?: 'LIMIT';
+  limitPrice?: string;
+  timeInForce?: 'IOC';
+  /** Latest permitted submission time, bounded by thesis expiry and plan TTL. */
+  expiresAt?: string;
   symbol: string;
   side: OrderSide;
   quantity: string;

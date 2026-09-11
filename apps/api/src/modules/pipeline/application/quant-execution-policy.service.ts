@@ -120,13 +120,14 @@ export class QuantExecutionPolicyService {
       const maxAge = Math.max(36 * 3_600_000, timeframeMilliseconds(input.timeframe) * 12);
       const isStale = now.getTime() - validation.createdAt.getTime() > maxAge;
       newCohort = Number(sampleEvidence.totalTrades ?? 0) < 30 || Number(sampleEvidence.outOfSampleTrades ?? outOfSample.outOfSampleTrades ?? 0) < 10;
-      negativeExactCohort = !isStale && !newCohort && (!validation.walkForwardStable || validation.probabilityOfProfit < 52 || validation.probabilityOfRuin > 15 || validation.outOfSampleSharpe <= 0.8);
       assumptionMismatch = !assumptions || !liveLimits ||
         ['leverage', 'riskPerTrade', 'riskRewardRatio'].some((key) => !Number.isFinite(Number(assumptions[key]))) || (liveLimits !== null && liveLimits !== undefined && (
         Number(assumptions.leverage) !== liveLimits.maxLeverage ||
         Math.abs(Number(assumptions.riskPerTrade) - liveLimits.riskPerTrade) > 1e-9 ||
         Math.abs(Number(assumptions.riskRewardRatio) - liveLimits.riskRewardRatio) > 1e-9
       ));
+      negativeExactCohort = !isStale && !newCohort && !assumptionMismatch &&
+        (!validation.walkForwardStable || validation.probabilityOfProfit < 52 || validation.probabilityOfRuin > 15 || validation.outOfSampleSharpe <= 0.8);
     } else {
       newCohort = true; 
       assumptionMismatch = false;

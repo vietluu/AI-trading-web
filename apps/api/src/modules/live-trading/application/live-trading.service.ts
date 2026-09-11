@@ -1,4 +1,6 @@
-import { proactiveAuthorizationAllowed, ProactiveAuthorizationSchema, StoredProbeSchema, thesisTriggersSatisfied } from '../../risk/domain/thesis-execution';
+import { assertDeclaredLimitOrder } from '../../../exchange/domain/declared-limit-order';
+import type { AnticipatoryExecutionInput } from '../../agents/domain/analysis/anticipatory-snapshot-builder';
+import { proactiveOrderTerms, proactiveAuthorizationAllowed, ProactiveAuthorizationSchema, StoredProbeSchema, thesisTriggersSatisfied } from '../../risk/domain/thesis-execution';
 import {
   ConflictException,
   ForbiddenException,
@@ -114,6 +116,36 @@ export class LiveTradingService {
    * deliberately stays small; this operation is intended for an explicit
    * recovery/backfill and is idempotent through the exchange-fill unique key.
    */
+  async proactiveExecutionEvidence(userId: string, provider: ExchangeProvider, symbol: string): Promise<AnticipatoryExecutionInput | undefined> {
+    try {
+      const connection = (await this.connections.list(userId)).find((item) => item.provider === provider && item.environment === ExchangeEnvironment.DEMO && item.isEnabled && item.isVerified);
+      if (!connection) return undefined;
+      const [ticker, instrument, positions, limits] = await Promise.all([
+        this.publicExchanges.ticker(provider, symbol), this.connections.instrument(userId, connection.id, symbol, {}),
+        this.connections.positions(userId, connection.id, {}), this.riskConfig.getUserLimits(userId),
+      ]);
+      const observedAt = new Date();
+      const currentPrice = Number(ticker.markPrice ?? ticker.lastPrice);
+      const bid = Number(ticker.bidPrice); const ask = Number(ticker.askPrice);
+      const tickSize = Number(instrument.tickSize); const lotSize = Number(instrument.stepSize);
+      const costPct = limits.estimatedRoundTripCostPct;
+      if (ticker.provider !== provider || ticker.symbol !== symbol || ![currentPrice, bid, ask, tickSize, lotSize].every((value) => Number.isFinite(value) && value > 0) || ask < bid || !Number.isFinite(costPct) || costPct < 0) return undefined;
+      const positionExposure = positions.map((position) => Math.abs(Number(position.quantity)) * Number(position.markPrice));
+      if (!positionExposure.every((value) => Number.isFinite(value) && value >= 0)) return undefined;
+      const timestamps = [ticker.timestamp.getTime(), observedAt.getTime(), ...positions.map((position) => position.updatedAt.getTime())];
+      if (!timestamps.every((value) => Number.isFinite(value) && value <= observedAt.getTime())) return undefined;
+      return {
+        timestamp: new Date(Math.min(...timestamps)), currentPrice, spread: ask - bid,
+        estimatedRoundTripCost: currentPrice * costPct, tickSize, lotSize,
+        currentExposure: positionExposure.reduce((sum, value) => sum + value, 0), freshnessThresholdMs: 60_000,
+        source: `QUOTE:${provider}:${ticker.timestamp.toISOString()};POSITIONS:${connection.id}:${observedAt.toISOString()};INSTRUMENT:${connection.id}:${observedAt.toISOString()};RISK_COST_PCT:${costPct}`,
+      };
+    } catch (error) {
+      this.logger.warn({ event: 'proactive_execution_evidence_unavailable', symbol, reason: error instanceof Error ? error.message : String(error) });
+      return undefined;
+    }
+  }
+
   async hasVerifiedDemoConnection(userId: string): Promise<boolean> {
     const connections = await this.connections.list(userId);
     return connections.some(c => c.environment === ExchangeEnvironment.DEMO && c.isEnabled && c.isVerified);
@@ -827,6 +859,7 @@ export class LiveTradingService {
     if (!assessment) throw new NotFoundException("Risk assessment not found");
     if (assessment.executionAuthorization && (!proactiveAuthorizationAllowed(assessment.executionAuthorization, dto.connectionId, connection.environment) ||
       process.env.PROACTIVE_AI_MODE !== 'DEMO')) throw new ForbiddenException('PROACTIVE_EXECUTION_NOT_AUTHORIZED');
+    if (assessment.executionAuthorization) proactiveOrderTerms(assessment.tradePlan, assessment.executionAuthorization);
     if (assessment.connectionId && assessment.connectionId !== dto.connectionId) throw new ForbiddenException('RISK_CONNECTION_MISMATCH');
     if (
       !assessment.approved ||
@@ -1900,11 +1933,17 @@ export class LiveTradingService {
       stopLoss: Prisma.Decimal | null;
       takeProfit: Prisma.Decimal | null;
       tradePlan?: Prisma.JsonValue | null;
+      executionAuthorization?: Prisma.JsonValue | null;
     } | null,
     strategyId: string | null | undefined,
     context: RequestMetadata,
     options: { skipInstrumentCheck?: boolean } = {},
   ) {
+    if (!command.reduceOnly && assessment?.executionAuthorization) {
+      if (!proactiveAuthorizationAllowed(assessment.executionAuthorization, connection.id, connection.environment) || process.env.PROACTIVE_AI_MODE !== 'DEMO') throw new ForbiddenException('PROACTIVE_EXECUTION_NOT_AUTHORIZED');
+      command = { ...command, ...proactiveOrderTerms(assessment.tradePlan, assessment.executionAuthorization) };
+    }
+    assertDeclaredLimitOrder(command, connection.provider);
     // Validate against the connection's actual environment before reserving a
     // risk approval or creating a SUBMITTING row. OKX Demo exposes a smaller
     // instrument set than production (for example OKB-USDT-SWAP).
@@ -1935,6 +1974,7 @@ export class LiveTradingService {
         provider: connection.provider,
         environment: connection.environment,
         symbol: command.symbol,
+        type: command.orderType ?? "MARKET",
         side: command.side,
         quantity: command.quantity,
         leverage: command.leverage,
@@ -1974,6 +2014,7 @@ export class LiveTradingService {
       throw error;
     }
     try {
+      assertDeclaredLimitOrder(command, connection.provider);
       const order = await this.connections.placeOrder(
         userId,
         connection.id,

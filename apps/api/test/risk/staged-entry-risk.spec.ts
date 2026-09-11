@@ -68,7 +68,7 @@ import { cutoff, createBaseSnapshot, createValidLongThesis } from '../helpers/th
 
 function proactiveInput(state: 'PROBE_READY' | 'CONFIRMED' | 'WATCHING' = 'PROBE_READY'): RiskInput {
   const snapshot = createBaseSnapshot();
-  const thesis = createValidLongThesis();
+  const thesis = createValidLongThesis(); thesis.targets = [{ price: 112000, fraction: 1 }];
   thesis.state = state;
   thesis.setup = 'TREND_PULLBACK';
   thesis.trigger = [{ type: 'PRICE_ABOVE', price: 108100, description: 'Declared reclaim' }];

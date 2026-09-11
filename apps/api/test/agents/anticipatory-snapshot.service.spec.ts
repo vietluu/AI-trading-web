@@ -45,6 +45,16 @@ function candles() {
   });
 }
 
+function instruments() {
+  return [{
+    provider: ExchangeProvider.BINANCE_FUTURES,
+    symbol: 'BTC-USDT',
+    status: 'ACTIVE',
+    tickSize: '0.1',
+    stepSize: '0.001',
+  }];
+}
+
 describe('AnticipatorySnapshotService', () => {
   it('loads cutoff-bounded evidence concurrently and persists a runtime-valid snapshot', async () => {
     const calls: string[] = [];
@@ -89,6 +99,10 @@ describe('AnticipatorySnapshotService', () => {
         calls.push('open-interest');
         expect(query).toMatchObject({ endTime: cutoff });
         return oiResult.promise;
+      }),
+      getInstruments: vi.fn(() => {
+        calls.push('instruments');
+        return Promise.resolve(instruments());
       }),
     };
     const snapshots = {
@@ -187,6 +201,10 @@ describe('AnticipatorySnapshotService', () => {
       coverage: 'AVAILABLE',
       news: { coverage: 'AVAILABLE', freshness: 'STALE' },
     });
+    expect(snapshot.execution).toMatchObject({
+      coverage: 'UNAVAILABLE',
+      reason: 'EXECUTION_CONTEXT_UNAVAILABLE',
+    });
     expect(saveAnticipatorySnapshot).toHaveBeenCalledWith({
       userId: '00000000-0000-4000-8000-000000000001',
       provider: ExchangeProvider.BINANCE_FUTURES,
@@ -218,6 +236,7 @@ describe('AnticipatorySnapshotService', () => {
             timestamp: cutoff,
           },
         ]),
+        getInstruments: vi.fn().mockResolvedValue(instruments()),
       } as never,
       {
         findLatestAnticipatoryContext: vi.fn().mockResolvedValue(undefined),
@@ -265,6 +284,7 @@ describe('AnticipatorySnapshotService', () => {
           { openInterest: '110', timestamp: cutoff },
           { openInterest: '100', timestamp: new Date(cutoff.getTime() - minute) },
         ]),
+        getInstruments: vi.fn().mockResolvedValue(instruments()),
       } as never,
       {
         findLatestAnticipatoryContext: vi.fn().mockResolvedValue(undefined),
@@ -309,6 +329,7 @@ describe('AnticipatorySnapshotService', () => {
           { openInterest: '110', timestamp: cutoff },
           { openInterest: '100', timestamp: new Date(cutoff.getTime() - minute) },
         ]),
+        getInstruments: vi.fn().mockResolvedValue(instruments()),
       } as never,
       {
         findLatestAnticipatoryContext: vi.fn().mockResolvedValue(undefined),

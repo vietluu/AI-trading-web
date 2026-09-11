@@ -139,12 +139,9 @@ export class DecisionJudgeService {
       calibration.fallbackUsed !== true
         ? calibration
         : undefined;
-    const hardGateCalibration =
-      calibration?.status === 'CALIBRATED' &&
-      (calibration.scope === 'EXACT' || calibration.scope === 'BLENDED') &&
-      calibration.hardGateEligible !== false
-        ? calibration
-        : exactCalibration;
+    const hardGateCalibration = exactCalibration?.hardGateEligible !== false
+      ? exactCalibration
+      : undefined;
     if (
       context.mode !== 'DEMO' && context.mode !== 'SHADOW' &&
       context?.requireCalibratedConfidence &&

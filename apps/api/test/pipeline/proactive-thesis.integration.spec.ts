@@ -117,6 +117,7 @@ describe("Proactive Thesis Pipeline Integration", () => {
     vi.stubEnv("PROACTIVE_AI_MODE", "DEMO");
 
     mockLiveTrading = {
+      proactiveExecutionEvidence: vi.fn().mockResolvedValue(undefined),
       executePipeline: vi.fn().mockResolvedValue({ outcome: "ORDER_SUBMITTED" }),
       assessPipelineDecision: vi.fn().mockResolvedValue(makeApprovedRiskAssessment()),
       hasVerifiedDemoConnection: vi.fn().mockResolvedValue(true),
@@ -125,7 +126,7 @@ describe("Proactive Thesis Pipeline Integration", () => {
     mockTradeResearcher = {
       persistReview: vi.fn().mockResolvedValue("review-1"),
       research: vi.fn().mockResolvedValue({
-        preferred: createValidLongThesis(), alternatives: [], researchRunId: 'thesis-1', contextSnapshotId: 'context-1',
+        preferred: { ...createValidLongThesis(), targets: [{ price: 112000, fraction: 1 }] }, alternatives: [], researchRunId: 'thesis-1', contextSnapshotId: 'context-1',
       }),
     };
 
