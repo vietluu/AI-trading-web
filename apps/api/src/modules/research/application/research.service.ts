@@ -61,6 +61,11 @@ import {
   runSensitivityEngine,
   runWalkForwardEngine,
 } from '../domain/validation-engines';
+import {
+  replayExecution,
+  type ExecutionReplayInput,
+  type ExecutionReplayReport,
+} from '../domain/execution-replay-engine';
 
 @Injectable()
 export class ResearchService {
@@ -485,5 +490,9 @@ export class ResearchService {
       recommendedStrategy: strategy,
       recommendations,
     };
+  }
+
+  replayExecution(input: ExecutionReplayInput): ExecutionReplayReport {
+    return replayExecution(input);
   }
 }

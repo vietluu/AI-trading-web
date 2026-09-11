@@ -81,6 +81,7 @@ model User {
   selfLearningConfiguration SelfLearningConfiguration?
   selfLearningExperiments   SelfLearningExperiment[]
   opportunities             Opportunity[]
+  tradeTheses               TradeThesis[]
 
   @@map("users")
 }
@@ -2364,6 +2365,7 @@ model AnticipatoryMarketSnapshot {
   snapshotJson       Json
   createdAt          DateTime                @default(now())
   transitions        OpportunityTransition[]
+  theses             TradeThesis[]
 
   @@unique([provider, symbol, timeframe, sourceDataCutoff])
   @@index([symbol, timeframe, sourceDataCutoff])
@@ -2388,6 +2390,7 @@ model Opportunity {
   updatedAt          DateTime                @updatedAt
   user               User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   transitions        OpportunityTransition[]
+  theses             TradeThesis[]
 
   @@unique([userId, provider, symbol, timeframe, setup, thesisVersion])
   @@index([userId, state, expiresAt])
@@ -2396,20 +2399,179 @@ model Opportunity {
 }
 
 model OpportunityTransition {
-  id               String                      @id @default(uuid()) @db.Uuid
-  opportunityId    String                      @db.Uuid
-  snapshotId       String                      @db.Uuid
-  fromState        OpportunityState
-  toState          OpportunityState
-  reasonCode       String
-  sourceDataCutoff DateTime
-  idempotencyKey   String                      @unique
-  createdAt        DateTime                    @default(now())
-  opportunity      Opportunity                 @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
-  snapshot         AnticipatoryMarketSnapshot  @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+  id                 String                      @id @default(uuid()) @db.Uuid
+  opportunityId      String                      @db.Uuid
+  snapshotId         String                      @db.Uuid
+  parentTransitionId String?                     @db.Uuid
+  thesisId           String?                     @db.Uuid
+  fromState          OpportunityState
+  toState            OpportunityState
+  reasonCode         String
+  sourceDataCutoff   DateTime
+  calculationVersion Int                         @default(1)
+  configurationHash  String?
+  idempotencyKey     String                      @unique
+  createdAt          DateTime                    @default(now())
+  opportunity        Opportunity                 @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  snapshot           AnticipatoryMarketSnapshot  @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+  parentTransition   OpportunityTransition?      @relation("OpportunityTransitionHistory", fields: [parentTransitionId], references: [id], onDelete: SetNull)
+  childTransitions   OpportunityTransition[]     @relation("OpportunityTransitionHistory")
+  thesis             TradeThesis?                @relation(fields: [thesisId], references: [id], onDelete: SetNull)
 
   @@unique([opportunityId, sourceDataCutoff])
   @@index([opportunityId, createdAt])
   @@index([snapshotId])
+  @@index([thesisId])
   @@map("opportunity_transitions")
+}
+
+model TradeThesis {
+  id                      String                   @id @default(uuid()) @db.Uuid
+  userId                  String?                  @db.Uuid
+  parentThesisId          String?                  @db.Uuid
+  snapshotId              String?                  @db.Uuid
+  opportunityId           String?                  @db.Uuid
+  symbol                  String
+  provider                String
+  timeframe               String
+  thesisVersion           Int                      @default(1)
+  decisionSource          String                   // AI, RULES, AI_WITH_RULES_FALLBACK
+  state                   String                   // WATCHING, PROBE_READY, CONFIRMED, TOO_LATE, WAIT
+  direction               String                   // LONG, SHORT, WAIT
+  regime                  String
+  setup                   String
+  transitionProbability   Float                    @default(0)
+  entryZone               Json?
+  trigger                 Json?
+  invalidation            Json?
+  stopLoss                Decimal?                 @db.Decimal(24, 8)
+  targets                 Json?
+  expectedNetR            Decimal?                 @db.Decimal(24, 8)
+  maximumChaseDistanceAtr Decimal?                 @db.Decimal(24, 8)
+  confidence              Float                    @default(0)
+  evidenceFor             Json?
+  evidenceAgainst         Json?
+  missingEvidence         Json?
+  sourceDataCutoff        DateTime
+  schemaVersion           Int                      @default(1)
+  calculationVersion      Int                      @default(1)
+  modelProvider           String?
+  model                   String?
+  promptVersion           Int?
+  configurationHash       String
+  thesisJson              Json?
+  expiresAt               DateTime
+  createdAt               DateTime                 @default(now())
+
+  user                    User?                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  snapshot                AnticipatoryMarketSnapshot? @relation(fields: [snapshotId], references: [id], onDelete: SetNull)
+  opportunity             Opportunity?             @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  parentThesis            TradeThesis?             @relation("TradeThesisVersions", fields: [parentThesisId], references: [id], onDelete: SetNull)
+  childTheses             TradeThesis[]            @relation("TradeThesisVersions")
+  reviews                 ThesisReview[]
+  executionPlans          ExecutionPlanVersion[]
+  lifecycleOutcome        TradeLifecycleOutcome?
+  opportunityTransitions  OpportunityTransition[]
+
+  @@unique([symbol, provider, timeframe, thesisVersion, sourceDataCutoff])
+  @@index([symbol, timeframe, sourceDataCutoff])
+  @@index([userId, state, expiresAt])
+  @@index([configurationHash])
+  @@map("trade_theses")
+}
+
+model ThesisReview {
+  id                 String       @id @default(uuid()) @db.Uuid
+  thesisId           String       @db.Uuid
+  parentReviewId     String?      @db.Uuid
+  action             String       // APPROVE, REDUCE_SIZE, REQUIRE_TRIGGER, CANCEL
+  sizeFactor         Float?
+  reasonCodes        Json         // array of string reason codes
+  evidenceRefs       Json         // array of evidence refs
+  rationale          String       @db.Text
+  sourceDataCutoff   DateTime
+  modelProvider      String?
+  model              String?
+  promptVersion      Int?
+  configurationHash  String
+  schemaVersion      Int          @default(1)
+  calculationVersion Int          @default(1)
+  reviewJson         Json?
+  createdAt          DateTime     @default(now())
+
+  thesis             TradeThesis  @relation(fields: [thesisId], references: [id], onDelete: Cascade)
+  parentReview       ThesisReview? @relation("ThesisReviewVersions", fields: [parentReviewId], references: [id], onDelete: SetNull)
+  childReviews       ThesisReview[] @relation("ThesisReviewVersions")
+
+  @@index([thesisId, createdAt])
+  @@index([configurationHash])
+  @@map("thesis_reviews")
+}
+
+model ExecutionPlanVersion {
+  id                 String                @id @default(uuid()) @db.Uuid
+  thesisId           String                @db.Uuid
+  parentPlanId       String?               @db.Uuid
+  version            Int                   @default(1)
+  status             String                // DRAFT, AUTHORIZED, ACTIVE, EXECUTED, CANCELLED, SUPERSEDED
+  planJson           Json
+  sourceDataCutoff   DateTime
+  modelProvider      String?
+  model              String?
+  promptVersion      Int?
+  configurationHash  String
+  schemaVersion      Int                   @default(1)
+  calculationVersion Int                   @default(1)
+  createdAt          DateTime              @default(now())
+
+  thesis             TradeThesis           @relation(fields: [thesisId], references: [id], onDelete: Cascade)
+  parentPlan         ExecutionPlanVersion? @relation("ExecutionPlanVersions", fields: [parentPlanId], references: [id], onDelete: SetNull)
+  childPlans         ExecutionPlanVersion[] @relation("ExecutionPlanVersions")
+
+  @@unique([thesisId, version])
+  @@index([thesisId, createdAt])
+  @@index([configurationHash])
+  @@map("execution_plan_versions")
+}
+
+model TradeLifecycleOutcome {
+  id                   String       @id @default(uuid()) @db.Uuid
+  thesisId             String       @unique @db.Uuid
+  symbol               String
+  provider             String
+  timeframe            String
+  direction            String       // LONG, SHORT
+  setup                String?
+  regime               String?
+  status               String       // OPEN, FINALIZED, CANCELLED
+  sourceDataCutoff     DateTime
+  openedAt             DateTime
+  closedAt             DateTime?
+  totalEnteredQuantity Decimal      @db.Decimal(30, 12)
+  totalExitedQuantity  Decimal      @db.Decimal(30, 12)
+  averageEntryPrice    Decimal      @db.Decimal(24, 8)
+  averageExitPrice     Decimal?     @db.Decimal(24, 8)
+  realizedGrossPnl     Decimal      @db.Decimal(24, 8)
+  signedFees           Decimal      @db.Decimal(24, 8)
+  signedFunding        Decimal      @db.Decimal(24, 8)
+  realizedNetPnl       Decimal      @db.Decimal(24, 8)
+  initialRisk          Decimal?     @db.Decimal(24, 8)
+  netR                 Decimal?     @db.Decimal(24, 8)
+  mfe                  Decimal?     @db.Decimal(24, 8)
+  mae                  Decimal?     @db.Decimal(24, 8)
+  finalStopLoss        Decimal?     @db.Decimal(24, 8)
+  exitReason           String?
+  schemaVersion        Int          @default(1)
+  calculationVersion   Int          @default(1)
+  configurationHash    String
+  metadata             Json?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  thesis               TradeThesis  @relation(fields: [thesisId], references: [id], onDelete: Cascade)
+
+  @@index([symbol, timeframe, sourceDataCutoff])
+  @@index([configurationHash])
+  @@index([status, closedAt])
+  @@map("trade_lifecycle_outcomes")
 }

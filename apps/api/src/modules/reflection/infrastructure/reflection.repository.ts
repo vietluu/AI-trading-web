@@ -42,6 +42,16 @@ export class ReflectionRepository {
       take,
     });
   }
+  lifecycleOutcomes(symbol?: string, take = 500) {
+    return this.prisma.tradeLifecycleOutcome.findMany({
+      where: {
+        status: "FINALIZED",
+        ...(symbol ? { symbol } : {}),
+      },
+      orderBy: { closedAt: "desc" },
+      take,
+    });
+  }
   completedRuns(
     cutoff: Date,
     cursor?: { completedAt: Date; id: string },
