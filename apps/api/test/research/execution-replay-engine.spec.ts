@@ -780,4 +780,237 @@ describe('Portfolio-aware Execution Replay Engine', () => {
     expect(report.outcomes).toHaveLength(0);
     expect(report.executionAssumptions).toBeDefined();
   });
+
+  it('10. Adverse gap handling on stop-loss: fills at gap market open instead of pre-gap stop', () => {
+    const cutoffTime = new Date('2026-09-09T10:00:00.000Z');
+    const candles: ReplayCandle[] = [
+      {
+        symbol: 'BTC-USDT',
+        openTime: new Date('2026-09-09T10:00:00.000Z'),
+        closeTime: new Date('2026-09-09T10:15:00.000Z'),
+        open: 100,
+        high: 101,
+        low: 99,
+        close: 100,
+      },
+      {
+        // Entry fills here at 100
+        symbol: 'BTC-USDT',
+        openTime: new Date('2026-09-09T10:15:00.000Z'),
+        closeTime: new Date('2026-09-09T10:30:00.000Z'),
+        open: 100,
+        high: 101,
+        low: 99,
+        close: 100,
+      },
+      {
+        // Adverse gap down: market gaps down to 85, far past the SL of 95!
+        symbol: 'BTC-USDT',
+        openTime: new Date('2026-09-09T10:30:00.000Z'),
+        closeTime: new Date('2026-09-09T10:45:00.000Z'),
+        open: 85,
+        high: 86,
+        low: 80,
+        close: 82,
+      },
+    ];
+
+    const thesis: ReplayCandidateThesis = {
+      thesisId: 'thesis-gap-down-sl',
+      symbol: 'BTC-USDT',
+      direction: 'LONG',
+      sourceDataCutoff: cutoffTime,
+      orderType: 'MARKET',
+      stopLoss: 95,
+      takeProfit: 120,
+    };
+
+    const report = replayExecution({
+      initialBalance: 10000,
+      theses: [thesis],
+      candles,
+      assumptions: { slippageRate: 0.001, feeRate: 0 },
+      provenance: defaultProvenance,
+    });
+
+    expect(report.outcomes).toHaveLength(1);
+    const outcome = report.outcomes[0]!;
+    expect(outcome.exitReason).toBe('STOP_LOSS');
+    // Must fill bounded by open price (85 with 0.1% slippage = 84.915), NOT at pre-gap stop of 95!
+    expect(outcome.averageExitPrice).toBeCloseTo(85 * (1 - 0.001), 2);
+    expect(outcome.averageExitPrice).toBeLessThan(90);
+  });
+
+  it('11. Intra-candle limit fill followed by same-bar take-profit: deferred without finer quotes, allowed with finer quotes', () => {
+    const cutoffTime = new Date('2026-09-09T10:00:00.000Z');
+    // Entry bar candle where limit price 95 is reached (low 90), but bar also has high 115 (TP is 110)
+    const candlesWithoutQuotes: ReplayCandle[] = [
+      {
+        symbol: 'BTC-USDT',
+        openTime: new Date('2026-09-09T10:00:00.000Z'),
+        closeTime: new Date('2026-09-09T10:15:00.000Z'),
+        open: 100,
+        high: 101,
+        low: 99,
+        close: 100,
+      },
+      {
+        // Entry bar for limit order at 95: open 105, low 90, high 115, close 102
+        symbol: 'BTC-USDT',
+        openTime: new Date('2026-09-09T10:15:00.000Z'),
+        closeTime: new Date('2026-09-09T10:30:00.000Z'),
+        open: 105,
+        high: 115,
+        low: 90,
+        close: 102,
+      },
+      {
+        // Subsequent bar: now rallies to 115
+        symbol: 'BTC-USDT',
+        openTime: new Date('2026-09-09T10:30:00.000Z'),
+        closeTime: new Date('2026-09-09T10:45:00.000Z'),
+        open: 102,
+        high: 115,
+        low: 101,
+        close: 112,
+      },
+    ];
+
+    const thesis: ReplayCandidateThesis = {
+      thesisId: 'thesis-limit-intra-tp',
+      symbol: 'BTC-USDT',
+      direction: 'LONG',
+      sourceDataCutoff: cutoffTime,
+      orderType: 'LIMIT',
+      limitPrice: 95,
+      stopLoss: 80,
+      takeProfit: 110,
+    };
+
+    // Case A: Without finer quotes, same-bar TP on limit entry candle is NOT assumed
+    const reportWithoutQuotes = replayExecution({
+      initialBalance: 10000,
+      theses: [thesis],
+      candles: candlesWithoutQuotes,
+      assumptions: { slippageRate: 0, feeRate: 0 },
+      provenance: defaultProvenance,
+    });
+
+    expect(reportWithoutQuotes.outcomes).toHaveLength(1);
+    const outcomeA = reportWithoutQuotes.outcomes[0]!;
+    // Closed on subsequent candle 3 (10:30), not same-bar on entry candle 2 (10:15)
+    expect(outcomeA.closedAt).toEqual(candlesWithoutQuotes[2]!.openTime);
+    expect(outcomeA.closedAt).not.toEqual(candlesWithoutQuotes[1]!.openTime);
+
+    // Case B: With finer quotes proving limit fill at 10:18 occurred BEFORE TP at 10:25
+    const candlesWithQuotes: ReplayCandle[] = [
+      candlesWithoutQuotes[0]!,
+      {
+        ...candlesWithoutQuotes[1]!,
+        finerQuotes: [
+          { timestamp: new Date('2026-09-09T10:16:00.000Z'), price: 104 },
+          { timestamp: new Date('2026-09-09T10:18:00.000Z'), price: 94 }, // limit fill
+          { timestamp: new Date('2026-09-09T10:25:00.000Z'), price: 112 }, // TP reached AFTER fill
+        ],
+      },
+    ];
+
+    const reportWithQuotes = replayExecution({
+      initialBalance: 10000,
+      theses: [thesis],
+      candles: candlesWithQuotes,
+      assumptions: { slippageRate: 0, feeRate: 0 },
+      provenance: defaultProvenance,
+    });
+
+    expect(reportWithQuotes.outcomes).toHaveLength(1);
+    const outcomeB = reportWithQuotes.outcomes[0]!;
+    expect(outcomeB.exitReason).toBe('TAKE_PROFIT');
+    expect(outcomeB.closedAt).toEqual(candlesWithQuotes[1]!.openTime);
+  });
+
+  it('12. Staged confirmation add attribution & unique thesis count in metrics', () => {
+    const cutoffTime = new Date('2026-09-09T10:00:00.000Z');
+    const candles: ReplayCandle[] = [
+      {
+        symbol: 'BTC-USDT',
+        openTime: new Date('2026-09-09T10:00:00.000Z'),
+        closeTime: new Date('2026-09-09T10:15:00.000Z'),
+        open: 100,
+        high: 101,
+        low: 99,
+        close: 100,
+      },
+      {
+        // Probe fills
+        symbol: 'BTC-USDT',
+        openTime: new Date('2026-09-09T10:15:00.000Z'),
+        closeTime: new Date('2026-09-09T10:30:00.000Z'),
+        open: 100,
+        high: 102,
+        low: 99,
+        close: 101,
+      },
+      {
+        // Confirmation add fills
+        symbol: 'BTC-USDT',
+        openTime: new Date('2026-09-09T10:30:00.000Z'),
+        closeTime: new Date('2026-09-09T10:45:00.000Z'),
+        open: 102,
+        high: 104,
+        low: 101,
+        close: 103,
+      },
+      {
+        // Exit
+        symbol: 'BTC-USDT',
+        openTime: new Date('2026-09-09T10:45:00.000Z'),
+        closeTime: new Date('2026-09-09T11:00:00.000Z'),
+        open: 103,
+        high: 115,
+        low: 102,
+        close: 114,
+      },
+    ];
+
+    const probeThesis: ReplayCandidateThesis = {
+      thesisId: 'thesis-staged-parent',
+      symbol: 'BTC-USDT',
+      direction: 'LONG',
+      sourceDataCutoff: cutoffTime,
+      orderType: 'MARKET',
+      stopLoss: 90,
+      takeProfit: 110,
+      stagedEntry: { stage: 'PROBE', probeSizePct: 0.5 },
+    };
+
+    const addThesis: ReplayCandidateThesis = {
+      thesisId: 'thesis-staged-add',
+      symbol: 'BTC-USDT',
+      direction: 'LONG',
+      sourceDataCutoff: new Date('2026-09-09T10:15:00.000Z'),
+      orderType: 'MARKET',
+      stopLoss: 92,
+      takeProfit: 110,
+      stagedEntry: { stage: 'CONFIRMED', parentThesisId: 'thesis-staged-parent', confirmationSizePct: 0.5 },
+    };
+
+    const report = replayExecution({
+      initialBalance: 10000,
+      theses: [probeThesis, addThesis],
+      candles,
+      assumptions: { slippageRate: 0, feeRate: 0 },
+      provenance: defaultProvenance,
+    });
+
+    // Probe and Add are grouped under single parent thesis outcome
+    expect(report.outcomes).toHaveLength(1);
+    expect(report.outcomes[0]!.thesisId).toBe('thesis-staged-parent');
+    expect(report.metrics.totalThesesCount).toBe(1); // deduplicated unique theses count
+    expect(report.metrics.executedThesesCount).toBe(1);
+
+    const eventTypes = report.events.map((e) => e.type);
+    expect(eventTypes).toContain('PROBE');
+    expect(eventTypes).toContain('ADD');
+  });
 });

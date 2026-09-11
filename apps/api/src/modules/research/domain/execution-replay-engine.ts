@@ -477,9 +477,13 @@ export function replayExecution(input: ExecutionReplayInput): ExecutionReplayRep
 
         const initialRisk = roundToDecimals(Math.abs(executedEntryPrice - stopLoss) * positionSize);
         const eventType = isStagedAdd ? 'ADD' : 'PROBE';
+        const assignedThesisId =
+          isStagedAdd && existingSameSymbol
+            ? existingSameSymbol.thesisId
+            : (thesis.stagedEntry?.parentThesisId ?? thesis.thesisId);
 
         events.push({
-          thesisId: thesis.thesisId,
+          thesisId: assignedThesisId,
           symbol: thesis.symbol,
           provider: thesis.provider ?? 'UNKNOWN',
           timeframe: thesis.timeframe ?? '15m',
@@ -550,6 +554,36 @@ export function replayExecution(input: ExecutionReplayInput): ExecutionReplayRep
 
       for (const pos of positionsForSymbol) {
         const isEntryBar = pos.openedAt.getTime() === timestamp;
+        const isLimitEntry = pos.thesis.orderType === 'LIMIT';
+
+        // For entry-bar limit fills without finer quotes, same-bar TP evaluation is deferred
+        // because the bar's high cannot be assumed to have occurred after the intra-candle limit fill.
+        let allowSameBarTp = !isEntryBar || !isLimitEntry;
+        if (isEntryBar && isLimitEntry && candle.finerQuotes && candle.finerQuotes.length > 0) {
+          const sortedQuotes = [...candle.finerQuotes].sort(
+            (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+          );
+          let filledAt: number | null = null;
+          let tpAt: number | null = null;
+          const targetLimit = pos.thesis.limitPrice ?? pos.entryPrice;
+          for (const q of sortedQuotes) {
+            const qTime = new Date(q.timestamp).getTime();
+            const limitHit =
+              pos.direction === 'LONG' ? q.price <= targetLimit : q.price >= targetLimit;
+            if (filledAt === null && limitHit) {
+              filledAt = qTime;
+            }
+            const tpHitQuote =
+              pos.takeProfit !== undefined &&
+              (pos.direction === 'LONG' ? q.price >= pos.takeProfit : q.price <= pos.takeProfit);
+            if (tpAt === null && tpHitQuote) {
+              tpAt = qTime;
+            }
+          }
+          if (filledAt !== null && tpAt !== null && filledAt < tpAt) {
+            allowSameBarTp = true;
+          }
+        }
 
         // 1. First, check SL and TP breaches on the candle's [low, high]
         // using the ACTIVE stop loss and take profit at the start of the candle
@@ -559,6 +593,7 @@ export function replayExecution(input: ExecutionReplayInput): ExecutionReplayRep
             : candle.high >= pos.currentStopLoss;
 
         const tpHit =
+          allowSameBarTp &&
           pos.takeProfit !== undefined &&
           (pos.direction === 'LONG'
             ? candle.high >= pos.takeProfit
@@ -594,10 +629,14 @@ export function replayExecution(input: ExecutionReplayInput): ExecutionReplayRep
           }
 
           if (trigger === 'SL') {
+            const baseStopPrice =
+              pos.direction === 'LONG'
+                ? Math.min(pos.currentStopLoss, candle.open)
+                : Math.max(pos.currentStopLoss, candle.open);
             const exitPrice = roundToDecimals(
               pos.direction === 'LONG'
-                ? pos.currentStopLoss * (1 - assumptions.slippageRate)
-                : pos.currentStopLoss * (1 + assumptions.slippageRate),
+                ? baseStopPrice * (1 - assumptions.slippageRate)
+                : baseStopPrice * (1 + assumptions.slippageRate),
             );
             const grossPnl = roundToDecimals(
               pos.direction === 'LONG'
@@ -659,10 +698,14 @@ export function replayExecution(input: ExecutionReplayInput): ExecutionReplayRep
             continue;
           }
         } else if (slHit) {
+          const baseStopPrice =
+            pos.direction === 'LONG'
+              ? Math.min(pos.currentStopLoss, candle.open)
+              : Math.max(pos.currentStopLoss, candle.open);
           const exitPrice = roundToDecimals(
             pos.direction === 'LONG'
-              ? pos.currentStopLoss * (1 - assumptions.slippageRate)
-              : pos.currentStopLoss * (1 + assumptions.slippageRate),
+              ? baseStopPrice * (1 - assumptions.slippageRate)
+              : baseStopPrice * (1 + assumptions.slippageRate),
           );
           const grossPnl = roundToDecimals(
             pos.direction === 'LONG'
@@ -942,8 +985,17 @@ export function replayExecution(input: ExecutionReplayInput): ExecutionReplayRep
       ? roundToDecimals(netRValues.reduce((s, v) => s + v, 0) / netRValues.length, 4)
       : null;
 
-  const executedThesesCount = outcomes.length;
-  const unfilledThesesCount = Math.max(0, input.theses.length - executedThesesCount - rejections.length);
+  const executedThesisIds = new Set(outcomes.map((o) => o.thesisId));
+  const rejectedThesisIds = new Set(rejections.map((r) => r.thesisId));
+  const allUniqueThesisIds = new Set(
+    input.theses.map((t) => t.stagedEntry?.parentThesisId ?? t.thesisId),
+  );
+  const totalThesesCount = allUniqueThesisIds.size;
+  const executedThesesCount = executedThesisIds.size;
+  const rejectedThesesCount = rejectedThesisIds.size;
+  const unfilledThesesCount = Array.from(allUniqueThesisIds).filter(
+    (id) => !executedThesisIds.has(id) && !rejectedThesisIds.has(id),
+  ).length;
 
   const metrics: ReplayMetrics = {
     initialBalance,
@@ -955,10 +1007,10 @@ export function replayExecution(input: ExecutionReplayInput): ExecutionReplayRep
     unrealizedPnl: 0,
     totalSignedFees,
     totalSignedFunding,
-    totalThesesCount: input.theses.length,
+    totalThesesCount,
     executedThesesCount,
     unfilledThesesCount,
-    rejectedThesesCount: rejections.length,
+    rejectedThesesCount,
     winRate,
     profitFactor,
     maxDrawdownPct: roundToDecimals(maxDrawdownPct, 4),
