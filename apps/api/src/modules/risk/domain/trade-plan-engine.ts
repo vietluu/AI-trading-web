@@ -98,7 +98,7 @@ export interface TradePlan {
   tp1Price?: number;
   tp2Price?: number;
   stagedEntry?: StoredProbe & {
-    stage?: "PROBE" | "CONFIRMED";
+    stage: "PROBE" | "CONFIRMED";
     probeSizePct: number;
     confirmationSizePct: number;
     combinedRiskLimitPct: number;
@@ -687,7 +687,12 @@ export function buildAdaptiveTradePlan(input: Parameters<typeof _buildAdaptiveTr
     const volatility = snapshot.volatility.coverage === 'AVAILABLE' ? snapshot.volatility : undefined;
     const boundary = structure?.rangeBoundaries;
     if (thesis.setup === 'RANGE_REVERSAL') {
-      if (!boundary) return reject('THESIS_RANGE_BOUNDARY_REQUIRED');
+      if (!boundary || !Number.isFinite(boundary.upper) || !Number.isFinite(boundary.lower) || boundary.upper <= boundary.lower) {
+        return reject('THESIS_RANGE_BOUNDARY_REQUIRED');
+      }
+      if (input.entryPrice < boundary.lower || input.entryPrice > boundary.upper) {
+        return reject('THESIS_RANGE_DIRECTION_INVALID');
+      }
       const location = (input.entryPrice - boundary.lower) / (boundary.upper - boundary.lower);
       if (location > 0.3 && location < 0.7) return reject('RANGE_MIDPOINT_ENTRY_BLOCKED');
       if (thesis.direction === 'LONG' ? location > 0.3 : location < 0.7) return reject('THESIS_RANGE_DIRECTION_INVALID');
