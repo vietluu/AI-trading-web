@@ -213,7 +213,9 @@ export function aggregateLifecycle(
       if (event.type === 'FINAL_CLOSE' || currentPositionQty <= 1e-8) {
         status = 'FINALIZED';
         closedAt = eventTime;
-        exitReason = event.type === 'FINAL_CLOSE' ? 'FINAL_CLOSE' : 'FULL_EXIT';
+        exitReason =
+          (event.metadata?.exitReason as string) ??
+          (event.type === 'FINAL_CLOSE' ? 'FINAL_CLOSE' : 'FULL_EXIT');
       }
     }
   }

@@ -34,18 +34,18 @@ describe('proactive LIMIT execution adapters', () => {
   });
   it('does not retry a governed OKX limit as market when the exchange rejects it', async () => {
     const { adapter, signedPost } = fixture('OKX');
-    signedPost.mockImplementation((path: string) => Promise.resolve(path.includes('leverage') ? [{ lever: '2' }] : [{ ordId: '1', clOrdId: 'thesis1', sCode: '1', sMsg: 'All operations failed' }]));
+    signedPost.mockImplementation(((path: string) => Promise.resolve(path.includes('leverage') ? [{ lever: '2' }] : [{ ordId: '1', clOrdId: 'thesis1', sCode: '1', sMsg: 'All operations failed' }])) as never);
     await expect(adapter.placeOrder(credentials, command)).rejects.toThrow('All operations failed');
     expect(signedPost.mock.calls.filter(([path]) => path.endsWith('/order'))).toHaveLength(1);
   });
   it.each(['BINANCE', 'OKX'] as const)('%s rechecks deadline after exchange preflight IO', async (provider) => {
     const { adapter, signedPost } = fixture(provider);
     const prior = signedPost.getMockImplementation()!;
-    signedPost.mockImplementation(async (path: string, creds: unknown, body?: Record<string, unknown>) => {
+    signedPost.mockImplementation((async (path: string, creds: unknown, body?: Record<string, unknown>) => {
       const result = await prior(path, creds, body);
       if (path.includes('leverage')) vi.setSystemTime(new Date(command.expiresAt));
       return result;
-    });
+    }) as never);
     await expect(adapter.placeOrder(credentials, command)).rejects.toThrow('THESIS_ORDER_EXPIRED');
     expect(signedPost.mock.calls.filter(([path]) => path.endsWith('/order'))).toHaveLength(0);
   });
