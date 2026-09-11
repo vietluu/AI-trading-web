@@ -31,6 +31,9 @@ import {
   type OpenOrderQuery,
   type PlaceOrderCommand,
   type CancelOrderCommand,
+  type PlaceProtectiveOrderCommand,
+  type CancelProtectiveOrderCommand,
+  type ProtectiveOrderStatus,
   type OrderStatus,
   type OrderType,
   type PositionSide,
@@ -657,6 +660,12 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
         }
       }
       assertDeclaredLimitOrder(command, this.provider);
+      const clOrdId = normalizeClientOrderId(command.clientOrderId) ?? "";
+      const protectiveClientOrderId =
+        command.stopLoss || command.takeProfit
+          ? normalizeClientOrderId(`${clOrdId.slice(0, 28)}pm`)
+          : undefined;
+
       const value = orderSchema.parse(
         await this.client.signedPost("/fapi/v1/order", credentials, {
           symbol,
@@ -665,13 +674,16 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
           ...(timeInForce ? { timeInForce } : {}),
           ...(price ? { price } : {}),
           quantity: command.quantity,
-          newClientOrderId: normalizeClientOrderId(command.clientOrderId),
+          newClientOrderId: clOrdId || undefined,
           reduceOnly: command.reduceOnly,
           positionSide: command.positionSide,
           newOrderRespType: "RESULT",
         }),
       );
-      return this.order(value);
+      return {
+        ...this.order(value),
+        ...(protectiveClientOrderId ? { protectiveClientOrderId } : {}),
+      };
     } catch (caught) {
       const error = this.exchangeError(caught);
       this.logger.warn({
@@ -697,6 +709,152 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
       }),
     );
     return this.order(value);
+  }
+
+  async placeProtectiveOrder(
+    credentials: ExchangeCredentials,
+    command: PlaceProtectiveOrderCommand,
+  ): Promise<void> {
+    const numericStop = Number(command.stopLoss);
+    const numericTake = Number(command.takeProfit);
+    const hasStop = Number.isFinite(numericStop) && numericStop > 0;
+    const hasTake = Number.isFinite(numericTake) && numericTake > 0;
+    if (!hasStop && !hasTake) {
+      throw ExchangeError.invalidRequest(
+        this.provider,
+        "A protective price is required",
+      );
+    }
+    const symbol = toBinanceSymbol(command.symbol);
+    const instruments = await this.getInstruments({
+      symbol: command.symbol,
+      environment: credentials.environment,
+    });
+    const searchSymbol = command.symbol.toUpperCase().replace("/", "");
+    const instrument = instruments.find(
+      (candidate) =>
+        candidate.symbol === searchSymbol ||
+        candidate.symbol === command.symbol ||
+        mapSymbol(candidate.symbol, this.provider) === symbol,
+    ) ?? instruments[0];
+    const precision = instrument?.pricePrecision ?? 2;
+
+    const side = command.positionSide === "LONG" ? "SELL" : "BUY";
+    const positionSide =
+      command.positionMode === "HEDGE" ? command.positionSide : "BOTH";
+    const clOrdId = normalizeClientOrderId(command.protectiveClientOrderId);
+
+    if (hasStop) {
+      await this.client.signedPost("/fapi/v1/order", credentials, {
+        symbol,
+        side,
+        positionSide,
+        type: "STOP_MARKET",
+        stopPrice: numericStop.toFixed(precision),
+        closePosition: "true",
+        workingType: "MARK_PRICE",
+        ...(clOrdId ? { newClientOrderId: clOrdId } : {}),
+      });
+    }
+
+    if (hasTake) {
+      const tpClOrdId =
+        hasStop && clOrdId
+          ? normalizeClientOrderId(`${clOrdId.slice(0, 32)}tp`)
+          : clOrdId;
+      try {
+        await this.client.signedPost("/fapi/v1/order", credentials, {
+          symbol,
+          side,
+          positionSide,
+          type: "TAKE_PROFIT_MARKET",
+          stopPrice: numericTake.toFixed(precision),
+          closePosition: "true",
+          workingType: "MARK_PRICE",
+          ...(tpClOrdId ? { newClientOrderId: tpClOrdId } : {}),
+        });
+      } catch (error) {
+        if (!hasStop) throw error;
+        this.logger.warn({
+          event: "binance_take_profit_placement_warning",
+          symbol,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  async getProtectiveOrderStatus(
+    credentials: ExchangeCredentials,
+    command: CancelProtectiveOrderCommand,
+  ): Promise<ProtectiveOrderStatus> {
+    try {
+      const response = await this.client.signedGet(
+        "/fapi/v1/order",
+        credentials,
+        {
+          symbol: toBinanceSymbol(command.symbol),
+          origClientOrderId: normalizeClientOrderId(
+            command.protectiveClientOrderId,
+          ),
+        },
+      );
+      const order = orderSchema.parse(response);
+      if (["NEW", "PARTIALLY_FILLED"].includes(order.status)) {
+        return "ACTIVE";
+      }
+      if (order.status === "FILLED") {
+        return "TERMINAL";
+      }
+      return "MISSING";
+    } catch (error) {
+      if (
+        error instanceof ExchangeError &&
+        (error.exchangeCode === "-2011" ||
+          error.code === ExchangeErrorCode.INVALID_REQUEST)
+      ) {
+        return "MISSING";
+      }
+      throw error;
+    }
+  }
+
+  async cancelProtectiveOrder(
+    credentials: ExchangeCredentials,
+    command: CancelProtectiveOrderCommand,
+  ): Promise<void> {
+    const symbol = toBinanceSymbol(command.symbol);
+    const clOrdId = normalizeClientOrderId(command.protectiveClientOrderId);
+    try {
+      await this.client.signedDelete("/fapi/v1/order", credentials, {
+        symbol,
+        origClientOrderId: clOrdId,
+      });
+    } catch (error) {
+      if (
+        !(
+          error instanceof ExchangeError &&
+          (error.exchangeCode === "-2011" ||
+            error.code === ExchangeErrorCode.INVALID_REQUEST)
+        )
+      ) {
+        throw error;
+      }
+    }
+
+    if (clOrdId) {
+      const tpClOrdId = normalizeClientOrderId(`${clOrdId.slice(0, 32)}tp`);
+      if (tpClOrdId && tpClOrdId !== clOrdId) {
+        try {
+          await this.client.signedDelete("/fapi/v1/order", credentials, {
+            symbol,
+            origClientOrderId: tpClOrdId,
+          });
+        } catch {
+          // Swallow if already filled, cancelled, or never placed
+        }
+      }
+    }
   }
 
   private instrument(item: z.infer<typeof symbolSchema>): ExchangeInstrument {
