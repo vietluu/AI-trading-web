@@ -626,26 +626,45 @@ export class DecisionService {
     )
       candidate = "SHORT";
 
-    if (
+    const isMacroRiskOn = input.macro?.macroTrend === "RISK_ON";
+    const isMacroRiskOff = input.macro?.macroTrend === "RISK_OFF";
+    const isHighNewsPositive =
       input.news?.impact.level === "HIGH" &&
-      input.news.impact.direction === "NEGATIVE"
-    ) {
-      candidate = rawDirectionalBias <= 10 ? "SHORT" : "WAIT";
-      overrides.push(
-        candidate === "SHORT"
-          ? "High-impact negative news overrode the normal weighted candidate toward SHORT."
-          : "High-impact negative news conflicted with bullish evidence and forced WAIT.",
-      );
-    } else if (
+      input.news.impact.direction === "POSITIVE";
+    const isHighNewsNegative =
       input.news?.impact.level === "HIGH" &&
-      input.news.impact.direction === "POSITIVE" &&
-      directionalBias >= DECISION_THRESHOLDS.DIRECTIONAL_BIAS_THRESHOLD &&
-      bullishCount >= bearishCount
-    ) {
-      candidate = "LONG";
-      overrides.push(
-        "High-impact positive news increased the bias toward LONG.",
-      );
+      input.news.impact.direction === "NEGATIVE";
+
+    // News & Macro Dominance: High-impact macro or news overrides candidate symmetrically
+    // without requiring lagging indicators (e.g. 15m EMAs) to already have flipped.
+    if ((isHighNewsPositive || isMacroRiskOn) && !isMacroRiskOff) {
+      if (rawDirectionalBias >= -15 || directionalBias >= DECISION_THRESHOLDS.DIRECTIONAL_BIAS_THRESHOLD) {
+        candidate = "LONG";
+        overrides.push(
+          isHighNewsPositive
+            ? "High-impact positive news increased the bias toward LONG."
+            : "Macro RISK_ON trend overrode candidate toward LONG.",
+        );
+      } else {
+        candidate = "WAIT";
+        overrides.push(
+          "High-impact positive news/macro conflicted with heavy bearish technicals and forced WAIT.",
+        );
+      }
+    } else if ((isHighNewsNegative || isMacroRiskOff) && !isMacroRiskOn) {
+      if (rawDirectionalBias <= 15 || directionalBias <= -DECISION_THRESHOLDS.DIRECTIONAL_BIAS_THRESHOLD) {
+        candidate = "SHORT";
+        overrides.push(
+          isHighNewsNegative
+            ? "High-impact negative news overrode the normal weighted candidate toward SHORT."
+            : "Macro RISK_OFF trend overrode candidate toward SHORT.",
+        );
+      } else {
+        candidate = "WAIT";
+        overrides.push(
+          "High-impact negative news conflicted with bullish evidence and forced WAIT.",
+        );
+      }
     }
 
     const alignedCount =
@@ -1022,16 +1041,37 @@ export class DecisionService {
   }
 
   private newsShock(input: DecisionInput, overrides: string[]): number {
-    if (input.news?.impact.level !== "HIGH") return 0;
-    if (input.news.impact.direction === "NEGATIVE") {
-      overrides.push("Applied a -20 directional news-shock adjustment.");
-      return DECISION_THRESHOLDS.NEWS_NEGATIVE_SHOCK;
+    let shock = 0;
+
+    // Macro shock: Macro Trend (e.g. fresh CPI, FOMC, NFP) is the highest-level market driver
+    if (input.macro?.macroTrend === "RISK_ON") {
+      shock += DECISION_THRESHOLDS.MACRO_SHOCK;
+      overrides.push("Applied a +25 directional macro-shock adjustment for RISK_ON regime.");
+    } else if (input.macro?.macroTrend === "RISK_OFF") {
+      shock -= DECISION_THRESHOLDS.MACRO_SHOCK;
+      overrides.push("Applied a -25 directional macro-shock adjustment for RISK_OFF regime.");
     }
-    if (input.news.impact.direction === "POSITIVE") {
-      overrides.push("Applied a +10 directional news-shock adjustment.");
-      return DECISION_THRESHOLDS.NEWS_POSITIVE_SHOCK;
+
+    if (input.news?.impact.level === "HIGH") {
+      // If macro is RISK_ON, do not let stale/generic negative news reverse the macro momentum
+      if (input.news.impact.direction === "NEGATIVE") {
+        if (input.macro?.macroTrend === "RISK_ON") {
+          overrides.push("Negative news shock suppressed due to dominant macro RISK_ON regime.");
+        } else {
+          overrides.push("Applied a -20 directional news-shock adjustment.");
+          shock += DECISION_THRESHOLDS.NEWS_NEGATIVE_SHOCK;
+        }
+      } else if (input.news.impact.direction === "POSITIVE") {
+        if (input.macro?.macroTrend === "RISK_OFF") {
+          overrides.push("Positive news shock suppressed due to dominant macro RISK_OFF regime.");
+        } else {
+          overrides.push("Applied a +10 directional news-shock adjustment.");
+          shock += DECISION_THRESHOLDS.NEWS_POSITIVE_SHOCK;
+        }
+      }
     }
-    return 0;
+
+    return shock;
   }
 
   private volatilityFilter(
