@@ -125,3 +125,116 @@ export function calibrateConfidenceWithFallback(
     hardGateEligible: false,
   };
 }
+
+export interface LifecycleCalibrationOutcome {
+  thesisId?: string;
+  confidence?: number;
+  netR: number | null;
+  status: string;
+}
+
+export function convertLifecycleToCalibrationRecords(
+  outcomes: LifecycleCalibrationOutcome[],
+): CalibrationRecord[] {
+  return outcomes
+    .filter((o) => o.status === 'FINALIZED' && o.netR !== null && typeof o.netR === 'number')
+    .map((o) => ({
+      confidence: o.confidence ?? 50,
+      outcome:
+        (o.netR as number) > 0
+          ? ('CORRECT' as const)
+          : (o.netR as number) < 0
+            ? ('WRONG' as const)
+            : ('NEUTRAL' as const),
+    }));
+}
+
+export interface HierarchicalLifecycleCalibrationResult {
+  status: 'CALIBRATED' | 'INSUFFICIENT_HISTORY';
+  action: 'APPROVE' | 'REDUCE_SIZE' | 'BLOCK';
+  sizeFactor: number;
+  rawScore: number;
+  empiricalProbability: number | null;
+  sampleSize: number;
+  bucketSampleSize: number;
+  brierScore: number | null;
+  scope: CalibrationScope;
+  fallbackUsed: boolean;
+  hardGateEligible: boolean;
+  reason: string;
+}
+
+/**
+ * Calibrates confidence from finalized lifecycle outcomes with net R.
+ * When exact cohort evidence is insufficient, hierarchical fallback returns REDUCE_SIZE
+ * with a bounded size factor, NEVER full approval.
+ */
+export function calibrateLifecycleWithHierarchicalFallback(
+  rawScore: number,
+  scopes: Array<{ scope: Exclude<CalibrationScope, 'NONE'>; outcomes: LifecycleCalibrationOutcome[] }>,
+  options?: { minExactSamples?: number; maxFallbackSizeFactor?: number },
+): HierarchicalLifecycleCalibrationResult {
+  const minExactSamples = options?.minExactSamples ?? 20;
+  const maxFallbackSize = options?.maxFallbackSizeFactor ?? 0.5;
+
+  const recordsScopes = scopes.map((s) => ({
+    scope: s.scope,
+    records: convertLifecycleToCalibrationRecords(s.outcomes),
+  }));
+
+  const exactScope = recordsScopes.find((s) => s.scope === 'EXACT');
+  const exactCount = exactScope?.records.length ?? 0;
+
+  // 1. Mature exact scope
+  if (exactScope && exactCount >= minExactSamples) {
+    const calib = calibrateConfidence(rawScore, exactScope.records);
+    if (calib.status === 'CALIBRATED' && calib.empiricalProbability !== null) {
+      if (calib.empiricalProbability >= 0.55) {
+        return {
+          ...calib,
+          action: 'APPROVE',
+          sizeFactor: 1.0,
+          scope: 'EXACT',
+          fallbackUsed: false,
+          hardGateEligible: true,
+          reason: 'CALIBRATED_EXACT_EVIDENCE',
+        };
+      } else if (calib.empiricalProbability < 0.4) {
+        return {
+          ...calib,
+          action: 'BLOCK',
+          sizeFactor: 0,
+          scope: 'EXACT',
+          fallbackUsed: false,
+          hardGateEligible: true,
+          reason: 'NEGATIVE_EXACT_EVIDENCE',
+        };
+      } else {
+        return {
+          ...calib,
+          action: 'REDUCE_SIZE',
+          sizeFactor: 0.5,
+          scope: 'EXACT',
+          fallbackUsed: false,
+          hardGateEligible: true,
+          reason: 'MARGINAL_EXACT_EVIDENCE',
+        };
+      }
+    }
+  }
+
+  // 2. Hierarchical fallback when exact evidence is insufficient (< minExactSamples).
+  // CRITICAL SPEC REQUIREMENT: Returns REDUCE_SIZE (bounded size factor), NEVER APPROVE!
+  const fallbackCalib = calibrateConfidenceWithFallback(rawScore, recordsScopes);
+
+  return {
+    ...fallbackCalib,
+    action: 'REDUCE_SIZE',
+    sizeFactor: Math.min(maxFallbackSize, 0.5),
+    scope: fallbackCalib.scope,
+    fallbackUsed: true,
+    hardGateEligible: false,
+    reason: `HIERARCHICAL_FALLBACK: exact samples (${exactCount}/${minExactSamples}) insufficient; size bounded to ${Math.min(maxFallbackSize, 0.5)}`,
+  };
+}
+

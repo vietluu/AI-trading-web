@@ -13,6 +13,17 @@ import {
 } from '../domain/live-eligibility';
 import type { LiveEligibilityReviewInput } from '@platform/shared';
 import { createHash } from 'node:crypto';
+import {
+  evaluateThesisCohort,
+  calculateCriticLift,
+  type ThesisCohortKeyParams,
+  type CohortEvaluationResult,
+  type EvaluateCohortOptions,
+  type CriticLiftReport,
+  type PairedCandidateLiftInput,
+} from '../domain/thesis-cohort';
+import type { TradeLifecycleOutcome } from '../../research/domain/trade-lifecycle';
+
 
 export interface ShadowPerformance {
   tradesCount: number;
@@ -1218,4 +1229,108 @@ export class SelfLearningService {
     }
     return grouped;
   }
+
+  /**
+   * Evaluates calibration and sizing action for a thesis cohort key using finalized
+   * TradeLifecycleOutcome records. Employs hierarchical fallback when exact evidence is insufficient.
+   */
+  async evaluateCohortForThesis(
+    cohortKey: string | ThesisCohortKeyParams,
+    options?: EvaluateCohortOptions,
+  ): Promise<CohortEvaluationResult> {
+    const rows = await this.prisma.tradeLifecycleOutcome.findMany({
+      where: {
+        status: 'FINALIZED',
+        netR: { not: null },
+      },
+      orderBy: { closedAt: 'desc' },
+      take: 1000,
+    });
+
+    const outcomes: TradeLifecycleOutcome[] = rows.map((r) => ({
+      id: r.id,
+      thesisId: r.thesisId,
+      symbol: r.symbol,
+      provider: r.provider,
+      timeframe: r.timeframe,
+      direction: r.direction as 'LONG' | 'SHORT',
+      setup: r.setup ?? undefined,
+      regime: r.regime ?? undefined,
+      status: r.status as 'FINALIZED',
+      sourceDataCutoff: r.sourceDataCutoff,
+      openedAt: r.openedAt,
+      closedAt: r.closedAt,
+      totalEnteredQuantity: Number(r.totalEnteredQuantity),
+      totalExitedQuantity: Number(r.totalExitedQuantity),
+      averageEntryPrice: Number(r.averageEntryPrice),
+      averageExitPrice: r.averageExitPrice ? Number(r.averageExitPrice) : null,
+      realizedGrossPnl: Number(r.realizedGrossPnl),
+      signedFees: Number(r.signedFees),
+      signedFunding: Number(r.signedFunding),
+      realizedNetPnl: Number(r.realizedNetPnl),
+      initialRisk: r.initialRisk ? Number(r.initialRisk) : null,
+      netR: r.netR ? Number(r.netR) : null,
+      configurationHash: r.configurationHash,
+      schemaVersion: r.schemaVersion,
+      calculationVersion: r.calculationVersion,
+      metadata: (r.metadata as Record<string, unknown>) ?? undefined,
+    }));
+
+    return evaluateThesisCohort(cohortKey, outcomes, options);
+  }
+
+  /**
+   * Calculates paired Critic Lift (avoided loss, missed win, net lift) across Rules vs
+   * AI Researcher vs AI+Critic from persisted TradeThesis, ThesisReview, and TradeLifecycleOutcome records.
+   */
+  async calculateCriticLift(
+    userId?: string,
+    filter?: { symbol?: string; since?: Date },
+  ): Promise<CriticLiftReport> {
+    const theses = await this.prisma.tradeThesis.findMany({
+      where: {
+        ...(userId ? { userId } : {}),
+        ...(filter?.symbol ? { symbol: filter.symbol } : {}),
+        ...(filter?.since ? { createdAt: { gte: filter.since } } : {}),
+        lifecycleOutcome: {
+          status: 'FINALIZED',
+          netR: { not: null },
+        },
+      },
+      include: {
+        lifecycleOutcome: true,
+        reviews: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+      },
+      take: 500,
+    });
+
+    const candidates: PairedCandidateLiftInput[] = theses.map((t) => {
+      const netR = Number(t.lifecycleOutcome?.netR ?? 0);
+      const review = t.reviews[0];
+      const action = (review?.action as 'APPROVE' | 'REDUCE_SIZE' | 'BLOCK' | 'CANCEL') ?? 'APPROVE';
+      const sizeFactor =
+        review?.sizeFactor ??
+        (action === 'BLOCK' || action === 'CANCEL'
+          ? 0
+          : action === 'REDUCE_SIZE'
+            ? 0.5
+            : 1.0);
+      const isRules = t.decisionSource === 'RULES';
+
+      return {
+        candidateId: t.id,
+        symbol: t.symbol,
+        rulesNetR: isRules ? netR : 0,
+        aiResearcherNetR: netR,
+        criticAction: action,
+        criticSizeFactor: sizeFactor,
+      };
+    });
+
+    return calculateCriticLift(candidates);
+  }
 }
+
