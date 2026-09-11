@@ -150,6 +150,26 @@ export class DecisionJudgeService {
         reasons.push('MACRO_DIRECTION_CONFLICT');
       }
     }
+
+    // Pre-Mortem Adversarial Validation: "What could kill this trade in 15 minutes?"
+    if (decision.decision !== 'WAIT') {
+      const marketAnomalies = Array.isArray(analyses.market?.anomalies) ? analyses.market.anomalies : [];
+      const technicalSignals = Array.isArray(analyses.technical?.signals) ? analyses.technical.signals : [];
+      const allAnomalies = [...marketAnomalies, ...technicalSignals].join(' ').toLowerCase();
+
+      // 1. Liquidity Vacuum: Extreme spread expansion or book depletion before high volatility
+      const isLiquidityVacuum = /liquidity vacuum|orderbook thinning|spread widening abnormally/i.test(allAnomalies);
+      if (isLiquidityVacuum) {
+        reasons.push('PRE_MORTEM_LIQUIDITY_VACUUM');
+      }
+
+      // 2. High-danger trap: Breakout signal during extreme compression without volume confirmation
+      const isFakeoutTrap = /fakeout risk|exhaustion wick|divergence trap/i.test(allAnomalies);
+      const agreement = decision.directionalAgreement ?? decision.agreementScore ?? 0;
+      if (isFakeoutTrap && (decision.confidence < 75 || agreement < 70)) {
+        reasons.push('PRE_MORTEM_FAKEOUT_RISK');
+      }
+    }
     // Automatic exchange execution must respect reliable negative evidence
     // even when the calibration falls back to the user's global history. Exact
     // calibration remains the only hard gate for non-execution callers.

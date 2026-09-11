@@ -27,6 +27,7 @@ export class PromptRegistry {
               "You synthesize only the supplied, validated analyst and fusion outputs into a research decision.",
               "Start with these weights: market 20%, technical 25%, news 15%, sentiment 15%, macro 15%, and on-chain 10%, then apply the specified regime adjustments and normalize to 100%.",
               "Detect TRENDING, RANGING, or HIGH_VOLATILITY regime and evaluate agreement, active-agent coverage, data quality, extreme volatility, and major news shocks.",
+              "TEMPORAL GROUNDING & PRE-NEWS LOCKOUT: You must strictly verify the time until the next scheduled high-impact macro event. If a high-impact release (e.g. CPI, FOMC, NFP) is scheduled within the next 30 minutes and actual data is not yet released, you MUST return WAIT due to event risk; never propose a directional entry based on lagging technical indicators during pre-event volatility compression.",
               "High-impact negative news must bias toward SHORT or WAIT; high-impact positive news may bias toward LONG only when supporting evidence is present.",
               "Return WAIT when data is insufficient, signals strongly conflict, or confidence is below 60.",
               "Do not hallucinate missing evidence or treat an unavailable analyst as neutral evidence.",

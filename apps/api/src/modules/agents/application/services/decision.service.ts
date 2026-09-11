@@ -570,7 +570,7 @@ export class DecisionService {
       (name) => name !== "macro" || this.macroConfigured(input),
     );
     const regime = this.detectRegime(input, customOptions?.anticipatorySnapshot);
-    const weighting = this.dynamicWeights(regime, customOptions?.weights, customOptions?.penalties);
+    const weighting = this.dynamicWeights(regime, customOptions?.weights, customOptions?.penalties, input);
     const active = names.filter((name) => {
       const output = input[name];
       return output !== undefined && output.dataQuality !== "INSUFFICIENT";
@@ -1028,16 +1028,35 @@ export class DecisionService {
     regime: MarketRegime,
     customWeights?: Weighting,
     penalties?: Partial<Record<keyof Weighting, number>>,
+    input?: DecisionInput,
   ): Weighting {
+    // If a dominant high-impact news or active macro shock event is present, shift weight dynamically
+    // away from lagging 15m/1h indicators toward the catalyst (Macro & News).
+    const hasHighImpactNews = input?.news?.impact.level === "HIGH";
+    const hasHighImpactMacro = input?.macro?.riskFactors?.some((r: unknown) =>
+      typeof r === "string" && /cpi|fomc|fed|interest rate|nfp|nonfarm/i.test(r) && !/policy uncertainty/i.test(r),
+    );
+
+    let eventModifiers = penalties;
+    if ((hasHighImpactNews || hasHighImpactMacro) && !customWeights) {
+      eventModifiers = {
+        ...penalties,
+        technical: (penalties?.technical ?? 0) - 10, // reduce lagging technical weight
+        market: (penalties?.market ?? 0) - 5,
+        macro: (penalties?.macro ?? 0) + 10,        // boost macro catalyst
+        news: (penalties?.news ?? 0) + 5,           // boost news catalyst
+      };
+    }
+
     if (regime.detailed) {
-      return computeRegimeAdaptiveWeights(regime.detailed, penalties, customWeights);
+      return computeRegimeAdaptiveWeights(regime.detailed, eventModifiers, customWeights);
     }
     const detailedFallback = regime.type === "HIGH_VOLATILITY"
       ? "VOLATILE_LIQUIDITY_EXPANSION"
       : regime.type === "TRENDING"
         ? "TRENDING_BULL"
         : "RANGING_CONSOLIDATION";
-    return computeRegimeAdaptiveWeights(detailedFallback, penalties, customWeights);
+    return computeRegimeAdaptiveWeights(detailedFallback, eventModifiers, customWeights);
   }
 
   private newsShock(input: DecisionInput, overrides: string[]): number {
