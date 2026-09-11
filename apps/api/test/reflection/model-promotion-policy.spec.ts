@@ -544,6 +544,9 @@ describe('ModelPromotionPolicy state machine', () => {
       expect(metrics.profitFactor).toBeCloseTo(4.85, 2);
       // Chase rate = 1 chase out of 3 = 0.333
       expect(metrics.chaseRate).toBeCloseTo(0.333, 2);
+      // Mark-to-market drawdown is a percentage relative to equity curve (e.g. ~4.44%), NOT raw nominal dollars ($510)
+      expect(metrics.markToMarketDrawdownPct).toBeCloseTo(4.44, 1);
+      expect(metrics.markToMarketDrawdownPct).toBeLessThan(10);
       // Protection failures = 0 (all had stopLoss)
       expect(metrics.protectionFailuresCount).toBe(0);
       expect(metrics.cohortStabilityScore).toBeGreaterThan(0);
@@ -551,6 +554,41 @@ describe('ModelPromotionPolicy state machine', () => {
       expect(metrics.legacyFixedHorizon).toBeDefined();
       expect(metrics.legacyFixedHorizon?.accuracy).toBeCloseTo(66.67, 1);
       expect(metrics.legacyFixedHorizon?.tradesCount).toBe(3);
+    });
+
+    it('calculates markToMarketDrawdownPct as percentage of equity rather than raw dollar drawdown', () => {
+      const losingOutcomes: TradeLifecycleOutcome[] = [
+        {
+          thesisId: 'thesis-loss-1',
+          symbol: 'BTCUSDT',
+          provider: 'BINANCE_FUTURES',
+          timeframe: '1h',
+          direction: 'LONG',
+          status: 'FINALIZED',
+          sourceDataCutoff: new Date('2026-09-01T00:00:00Z'),
+          openedAt: new Date('2026-09-01T01:00:00Z'),
+          closedAt: new Date('2026-09-01T02:00:00Z'),
+          totalEnteredQuantity: 1,
+          totalExitedQuantity: 1,
+          averageEntryPrice: 50000,
+          averageExitPrice: 49500,
+          realizedGrossPnl: -500,
+          signedFees: -10,
+          signedFunding: 0,
+          realizedNetPnl: -510,
+          initialRisk: 500,
+          netR: -1.02,
+          finalStopLoss: 49500,
+          schemaVersion: 1,
+          calculationVersion: 1,
+          configurationHash: frozenConfigHash,
+        },
+      ];
+
+      // On $10,000 capital, -$510 net loss is 5.1% drawdown, NOT 510%!
+      const metrics = calculateLifecycleHeadlineMetrics(losingOutcomes, { initialCapital: 10_000 });
+      expect(metrics.markToMarketDrawdownPct).toBeCloseTo(5.1, 1);
+      expect(metrics.markToMarketDrawdownPct).toBeLessThan(10);
     });
 
     it('detects protection failure when an outcome omitted mandatory stopLoss', () => {

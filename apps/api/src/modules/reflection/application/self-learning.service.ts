@@ -25,6 +25,7 @@ import {
 } from '../domain/thesis-cohort';
 import type { TradeLifecycleOutcome } from '../../research/domain/trade-lifecycle';
 import {
+  evaluatePromotionTransition,
   calculateLifecycleHeadlineMetrics,
   type ModelPromotionStage,
 } from '../domain/model-promotion-policy';
@@ -831,13 +832,57 @@ export class SelfLearningService {
       return shadow.accuracy >= live.accuracy &&
         shadow.totalReturn / shadow.tradesCount >= live.totalReturn / live.tradesCount;
     });
-    const shouldPromote = promotion.promote && regimeGatePassed;
+
+    const forwardSampleIds = lifecycleOutcomes.length > 0
+      ? lifecycleHeadline.forwardSampleIds
+      : pendingSignals.map((s) => s.id);
+    const candidateConfigHash = config.eligibleConfigurationHash ?? (config.shadowWeightsJson ? computeConfigurationHash({
+      version: candidateVersion,
+      weights: config.shadowWeightsJson as Record<string, number>,
+      confidenceThreshold: config.shadowThreshold ?? config.confidenceThreshold,
+      policyVersion: LIVE_ELIGIBILITY_POLICY_VERSION,
+      advisoryPolicyHash: 'advisory-disabled',
+    }) : '0'.repeat(64));
+
+    const sampleSize = Math.max(lifecycleHeadline.sampleSize, updatedPerf.tradesCount);
+    const transitionMetrics = {
+      sampleSize,
+      forwardSampleIds: forwardSampleIds.length > 0
+        ? forwardSampleIds
+        : Array.from({ length: sampleSize }, (_, i) => `shadow-signal-${i}`),
+      lifecycleExpectancyNetR: updatedPerf.lifecycleExpectancyNetR ?? (updatedPerf.tradesCount > 0 ? updatedPerf.totalReturn / updatedPerf.tradesCount : 0),
+      profitFactor: lifecycleOutcomes.length > 0 ? lifecycleHeadline.profitFactor : updatedPerf.profitFactor,
+      markToMarketDrawdownPct: updatedPerf.markToMarketDrawdownPct ?? updatedPerf.maxDrawdown,
+      chaseRate: updatedPerf.chaseRate ?? 0,
+      cohortStabilityScore: updatedPerf.cohortStabilityScore ?? 1.0,
+      protectionFailuresCount: updatedPerf.protectionFailuresCount ?? 0,
+      legacyFixedHorizon: updatedPerf.legacyMetrics,
+    };
+
+    const promotionTransition = evaluatePromotionTransition({
+      currentStage: 'SHADOW',
+      candidateVersion,
+      configurationHash: candidateConfigHash,
+      metrics: transitionMetrics,
+      thresholds: {
+        minSampleSize: minTrades,
+        minProfitFactor,
+        maxDrawdownPct: maxDrawdown,
+      },
+    });
+
+    const shouldPromote = promotionTransition.allowed && (comparableRegimes.length === 0 || regimeGatePassed);
     const shadowExpired = Boolean(
       config.shadowStartedAt &&
       Date.now() - config.shadowStartedAt.getTime() >= maxShadowDays * 24 * 60 * 60_000,
     );
-    const shouldReject = !shouldPromote &&
-      (updatedPerf.tradesCount >= rejectAfterTrades || shadowExpired);
+    const shouldReject = !shouldPromote && (
+      promotionTransition.failures.includes('DRAWDOWN_BREACH') ||
+      promotionTransition.failures.includes('PROTECTION_FAILURE') ||
+      promotionTransition.failures.includes('MODEL_DRIFT_DETECTED') ||
+      updatedPerf.tradesCount >= rejectAfterTrades ||
+      shadowExpired
+    );
 
     if (shouldPromote) {
       this.logger.log({
@@ -847,6 +892,7 @@ export class SelfLearningService {
         shadow: updatedPerf,
         live: livePerf,
         accuracyZScore: promotion.accuracyZScore,
+        promotionTransition,
       });
       const experiment = await this.prisma.selfLearningExperiment.findUnique({
         where: { userId_version: { userId, version: candidateVersion } },

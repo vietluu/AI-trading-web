@@ -389,6 +389,7 @@ export function evaluatePromotionTransition(
 
 export interface CalculateLifecycleHeadlineOptions {
   legacyHorizonRecords?: Array<{ outcome: string; returnPct: number }>;
+  initialCapital?: number;
 }
 
 /**
@@ -443,23 +444,34 @@ export function calculateLifecycleHeadlineMetrics(
       ? 99
       : 0;
 
-  // 3. Mark-to-market drawdown %
-  let cumulativePnl = 0;
-  let peakPnl = 0;
-  let maxCumulativeDrawdown = 0;
-  let maxReportedMarkDrawdown = 0;
+  // 3. Mark-to-market drawdown % (percentage drawdown relative to initial/peak equity curve or reported intra-trade mark drawdown %)
+  const initialCapital = options?.initialCapital && options.initialCapital > 0
+    ? options.initialCapital
+    : 10_000;
+  let currentEquity = initialCapital;
+  let peakEquity = initialCapital;
+  let maxCumulativeDrawdownPct = 0;
+  let maxReportedMarkDrawdownPct = 0;
 
   for (const o of outcomes) {
-    cumulativePnl += Number(o.realizedNetPnl);
-    peakPnl = Math.max(peakPnl, cumulativePnl);
-    maxCumulativeDrawdown = Math.max(maxCumulativeDrawdown, peakPnl - cumulativePnl);
+    currentEquity += Number(o.realizedNetPnl);
+    peakEquity = Math.max(peakEquity, currentEquity);
+    if (peakEquity > 0) {
+      const dropPct = ((peakEquity - currentEquity) / peakEquity) * 100;
+      maxCumulativeDrawdownPct = Math.max(maxCumulativeDrawdownPct, dropPct);
+    }
 
     const m = o.metadata;
-    if (typeof m?.maxDrawdownPct === 'number') {
-      maxReportedMarkDrawdown = Math.max(maxReportedMarkDrawdown, m.maxDrawdownPct);
+    const reportedDd = typeof m?.maxDrawdownPct === 'number'
+      ? m.maxDrawdownPct
+      : typeof m?.markToMarketDrawdownPct === 'number'
+        ? m.markToMarketDrawdownPct
+        : null;
+    if (reportedDd !== null && Number.isFinite(reportedDd)) {
+      maxReportedMarkDrawdownPct = Math.max(maxReportedMarkDrawdownPct, reportedDd);
     }
   }
-  const markToMarketDrawdownPct = Math.max(maxCumulativeDrawdown, maxReportedMarkDrawdown);
+  const markToMarketDrawdownPct = Math.max(maxCumulativeDrawdownPct, maxReportedMarkDrawdownPct);
 
   // 4. Chase rate (fraction of trades entering on chase)
   const chaseCount = outcomes.filter((o) => {
