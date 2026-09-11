@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import type { DecisionOutput, FusionInput } from '@platform/shared';
 import {
   adaptiveTradingPolicy,
+  isAltcoin,
   parseSpreadBps,
   timeframeMilliseconds,
 } from '../domain/adaptive-trading-policy';
@@ -63,12 +64,13 @@ export class DecisionJudgeService {
     const coreTechnicalEvidence =
       analyses.market.dataQuality !== 'INSUFFICIENT' &&
       analyses.technical.dataQuality !== 'INSUFFICIENT';
-    const shortTerm = timeframeMilliseconds(context.timeframe) <= 60 * 60_000;
-    // For short-term trades, fresh Market + Technical evidence plus one valid
-    // auxiliary observation is a sufficient quorum. Missing Macro/Social data
-    // still lowers confidence, but no longer has an unconditional veto.
+    const isAlt = isAltcoin(context?.symbol);
+    const shortTerm = timeframeMilliseconds(context?.timeframe) <= 60 * 60_000;
+    // For altcoins or short-term trades with core technical evidence,
+    // fresh Market + Technical evidence plus one valid auxiliary observation (or core triad)
+    // is a sufficient quorum. Missing Macro/Social/Onchain data no longer has an unconditional veto.
     const minimumUsable = Math.min(
-      coreTechnicalEvidence && shortTerm ? 3 : 4,
+      isAlt || (coreTechnicalEvidence && shortTerm) ? 3 : 4,
       configured.length,
     );
     const freshUsable = usable.filter(([, analysis]) => {
@@ -189,7 +191,8 @@ export class DecisionJudgeService {
       decision.decision !== 'WAIT' &&
       (!calibration || calibration.status !== 'CALIBRATED' || !hardGateCalibration) &&
       decision.dataQuality === 'PARTIAL' &&
-      !executionCoreGood
+      !executionCoreGood &&
+      !isAlt
     ) reasons.push('PARTIAL_DATA_UNCALIBRATED');
     if (
       context.mode !== 'DEMO' && context.mode !== 'SHADOW' &&

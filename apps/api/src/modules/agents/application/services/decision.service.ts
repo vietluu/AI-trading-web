@@ -81,6 +81,7 @@ export class DecisionService {
       provider?: "BINANCE_FUTURES" | "OKX_FUTURES";
       timeframe?: string;
       referencePrice?: number;
+      currentPrice?: number;
       anticipatorySnapshot?: AnticipatoryMarketSnapshot;
     } = {},
   ): Promise<DecisionOutput> {
@@ -143,6 +144,7 @@ export class DecisionService {
         volatilityPenalty: config?.volatilityPenalty ?? undefined,
         penalties: customPenalties,
         referencePrice: metadata.referencePrice,
+        currentPrice: metadata.currentPrice,
         anticipatorySnapshot: metadata.anticipatorySnapshot,
       }
     );
@@ -562,6 +564,7 @@ export class DecisionService {
       volatilityPenalty?: number;
       penalties?: Partial<Record<keyof Weighting, number>>;
       referencePrice?: number;
+      currentPrice?: number;
       anticipatorySnapshot?: AnticipatoryMarketSnapshot;
     },
   ): DecisionOutput {
@@ -570,6 +573,9 @@ export class DecisionService {
       (name) => name !== "macro" || this.macroConfigured(input),
     );
     const regime = this.detectRegime(input, customOptions?.anticipatorySnapshot);
+    const anticipatory = customOptions?.anticipatorySnapshot
+      ? anticipatoryDecisionContext(customOptions.anticipatorySnapshot)
+      : undefined;
     const weighting = this.dynamicWeights(regime, customOptions?.weights, customOptions?.penalties, input);
     const active = names.filter((name) => {
       const output = input[name];
@@ -638,7 +644,26 @@ export class DecisionService {
     // News & Macro Dominance: High-impact macro or news overrides candidate symmetrically
     // without requiring lagging indicators (e.g. 15m EMAs) to already have flipped.
     if ((isHighNewsPositive || isMacroRiskOn) && !isMacroRiskOff) {
-      if (rawDirectionalBias >= -15 || directionalBias >= DECISION_THRESHOLDS.DIRECTIONAL_BIAS_THRESHOLD) {
+      const atrRaw = input.market?.volatility.atr;
+      const atr = atrRaw ? Number(String(atrRaw).replace(/[$,]/g, "")) : undefined;
+      const refPrice = customOptions?.referencePrice;
+      const currentPrice =
+        customOptions?.currentPrice ??
+        anticipatory?.market.currentPrice ??
+        refPrice;
+      const marketAnomalies = (input.market?.anomalies ?? []).join(" ").toLowerCase();
+      const isExhaustion = /exhaustion|parabolic chase|overextended|blow-off/i.test(marketAnomalies);
+      const priceRunUp =
+        currentPrice !== undefined && refPrice !== undefined && atr !== undefined && atr > 0
+          ? (currentPrice - refPrice) > 2.0 * atr
+          : false;
+
+      if (isHighNewsPositive && (isExhaustion || priceRunUp)) {
+        candidate = "WAIT";
+        overrides.push(
+          "High-impact positive news arrived after major price run-up (> 2 ATR); trade delayed to avoid liquidity exit trap.",
+        );
+      } else if (rawDirectionalBias >= -15 || directionalBias >= DECISION_THRESHOLDS.DIRECTIONAL_BIAS_THRESHOLD) {
         candidate = "LONG";
         overrides.push(
           isHighNewsPositive
@@ -652,7 +677,26 @@ export class DecisionService {
         );
       }
     } else if ((isHighNewsNegative || isMacroRiskOff) && !isMacroRiskOn) {
-      if (rawDirectionalBias <= 15 || directionalBias <= -DECISION_THRESHOLDS.DIRECTIONAL_BIAS_THRESHOLD) {
+      const atrRaw = input.market?.volatility.atr;
+      const atr = atrRaw ? Number(String(atrRaw).replace(/[$,]/g, "")) : undefined;
+      const refPrice = customOptions?.referencePrice;
+      const currentPrice =
+        customOptions?.currentPrice ??
+        anticipatory?.market.currentPrice ??
+        refPrice;
+      const marketAnomalies = (input.market?.anomalies ?? []).join(" ").toLowerCase();
+      const isExhaustion = /exhaustion|parabolic dump|overextended|selling climax/i.test(marketAnomalies);
+      const priceRunDown =
+        currentPrice !== undefined && refPrice !== undefined && atr !== undefined && atr > 0
+          ? (refPrice - currentPrice) > 2.0 * atr
+          : false;
+
+      if (isHighNewsNegative && (isExhaustion || priceRunDown)) {
+        candidate = "WAIT";
+        overrides.push(
+          "High-impact negative news arrived after major price dump (> 2 ATR); trade delayed to avoid selling climax trap.",
+        );
+      } else if (rawDirectionalBias <= 15 || directionalBias <= -DECISION_THRESHOLDS.DIRECTIONAL_BIAS_THRESHOLD) {
         candidate = "SHORT";
         overrides.push(
           isHighNewsNegative
@@ -688,8 +732,11 @@ export class DecisionService {
       : candidate === "SHORT"
         ? (directionalCount ? Math.round((bearishCount / directionalCount) * 100) : 0)
         : agreementScore;
-    const evidenceCoverage = Math.round(
-      (active.length / Math.max(this.expectedAnalystCount(input), 1)) * 100,
+    const evidenceCoverage = Math.min(
+      100,
+      Math.round(
+        (active.length / Math.max(this.expectedAnalystCount(input), 1)) * 100,
+      ),
     );
     const alignedWeight =
       candidate === "LONG"
@@ -901,7 +948,6 @@ export class DecisionService {
         ? "BEARISH"
         : undefined;
 
-    const anticipatory = customOptions?.anticipatorySnapshot ? anticipatoryDecisionContext(customOptions.anticipatorySnapshot) : undefined;
     const scenarios = buildScenarioBlueprint({
       decision: finalDecision,
       confidence: Math.round(calibratedConfidence),
@@ -1186,7 +1232,7 @@ export class DecisionService {
     }
     if (
       input.fusionOutput.dataQuality === "GOOD" &&
-      active.length === expectedCount &&
+      active.length >= expectedCount &&
       active.every((name) => input[name]?.dataQuality === "GOOD")
     )
       return "GOOD";
@@ -1203,6 +1249,11 @@ export class DecisionService {
   }
 
   private expectedAnalystCount(input: DecisionInput): number {
+    const isAlt = assetLiquidityClass(input.symbol) !== "MAJOR";
+    if (isAlt) {
+      // For altcoins, OnChain & Social are optional context; core expectation is 3 (Market + Technical + News) + Macro if configured
+      return 3 + (this.macroConfigured(input) ? 1 : 0);
+    }
     const onChainConfigured = !input.onchain?.signals.some((signal) =>
       /no verified on-chain (?:provider|analysis)|coin metrics returned no verified coverage/i.test(
         signal,
@@ -1213,7 +1264,7 @@ export class DecisionService {
   }
 
   private macroConfigured(input: DecisionInput): boolean {
-    return !/no imported macro data/i.test(input.macro?.summary ?? "");
+    return Boolean(input.macro) && !/no imported macro data/i.test(input.macro?.summary ?? "");
   }
 
   private calculateOpportunityScore(
