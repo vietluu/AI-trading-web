@@ -24,7 +24,10 @@ import {
   type PairedCandidateLiftInput,
 } from '../domain/thesis-cohort';
 import type { TradeLifecycleOutcome } from '../../research/domain/trade-lifecycle';
-
+import {
+  calculateLifecycleHeadlineMetrics,
+  type ModelPromotionStage,
+} from '../domain/model-promotion-policy';
 
 export interface ShadowPerformance {
   tradesCount: number;
@@ -39,6 +42,18 @@ export interface ShadowPerformance {
   maxDrawdown: number;
   returnSumSquares: number;
   sharpeRatio: number;
+  lifecycleExpectancyNetR?: number;
+  markToMarketDrawdownPct?: number;
+  chaseRate?: number;
+  cohortStabilityScore?: number;
+  protectionFailuresCount?: number;
+  sampleSize?: number;
+  legacyMetrics?: {
+    accuracy: number;
+    sharpeRatio: number;
+    totalReturn: number;
+    tradesCount: number;
+  };
 }
 
 export const EMPTY_SHADOW_PERFORMANCE: ShadowPerformance = {
@@ -99,6 +114,13 @@ function toShadowPerformanceJson(value: ShadowPerformance): Prisma.InputJsonObje
     maxDrawdown: value.maxDrawdown,
     returnSumSquares: value.returnSumSquares,
     sharpeRatio: value.sharpeRatio,
+    ...(typeof value.lifecycleExpectancyNetR === 'number' ? { lifecycleExpectancyNetR: value.lifecycleExpectancyNetR } : {}),
+    ...(typeof value.markToMarketDrawdownPct === 'number' ? { markToMarketDrawdownPct: value.markToMarketDrawdownPct } : {}),
+    ...(typeof value.chaseRate === 'number' ? { chaseRate: value.chaseRate } : {}),
+    ...(typeof value.cohortStabilityScore === 'number' ? { cohortStabilityScore: value.cohortStabilityScore } : {}),
+    ...(typeof value.protectionFailuresCount === 'number' ? { protectionFailuresCount: value.protectionFailuresCount } : {}),
+    ...(typeof value.sampleSize === 'number' ? { sampleSize: value.sampleSize } : {}),
+    ...(value.legacyMetrics ? { legacyMetrics: value.legacyMetrics } : {}),
   };
 }
 
@@ -118,6 +140,13 @@ function parseShadowPerformance(value: Prisma.JsonValue | null | undefined): Sha
       maxDrawdown: typeof candidate.maxDrawdown === 'number' ? candidate.maxDrawdown : 0,
       returnSumSquares: typeof candidate.returnSumSquares === 'number' ? candidate.returnSumSquares : 0,
       sharpeRatio: typeof candidate.sharpeRatio === 'number' ? candidate.sharpeRatio : 0,
+      lifecycleExpectancyNetR: typeof candidate.lifecycleExpectancyNetR === 'number' ? candidate.lifecycleExpectancyNetR : undefined,
+      markToMarketDrawdownPct: typeof candidate.markToMarketDrawdownPct === 'number' ? candidate.markToMarketDrawdownPct : undefined,
+      chaseRate: typeof candidate.chaseRate === 'number' ? candidate.chaseRate : undefined,
+      cohortStabilityScore: typeof candidate.cohortStabilityScore === 'number' ? candidate.cohortStabilityScore : undefined,
+      protectionFailuresCount: typeof candidate.protectionFailuresCount === 'number' ? candidate.protectionFailuresCount : undefined,
+      sampleSize: typeof candidate.sampleSize === 'number' ? candidate.sampleSize : undefined,
+      legacyMetrics: candidate.legacyMetrics,
     };
   }
 
@@ -253,6 +282,35 @@ export class SelfLearningService {
         : config.eligibleVersion
           ? 'LIVE_ELIGIBLE'
           : 'LIVE';
+    const promotionStage: ModelPromotionStage = config.approvedVersion && config.approvedConfigurationHash
+      ? 'APPROVED_LIVE_CANARY'
+      : config.eligibleVersion
+        ? 'ELIGIBLE'
+        : config.canaryEnabled
+          ? 'DEMO_CANARY'
+          : config.shadowEnabled
+            ? 'SHADOW'
+            : 'OBSERVE';
+    const rawShadowPerf = parseShadowPerformance(config.shadowPerformance);
+    const shadowHeadlineMetrics = {
+      lifecycleExpectancyNetR: typeof rawShadowPerf.lifecycleExpectancyNetR === 'number'
+        ? rawShadowPerf.lifecycleExpectancyNetR
+        : (rawShadowPerf.tradesCount > 0 ? Number((rawShadowPerf.totalReturn / rawShadowPerf.tradesCount).toFixed(4)) : 0),
+      profitFactor: typeof rawShadowPerf.profitFactor === 'number' ? rawShadowPerf.profitFactor : 0,
+      markToMarketDrawdownPct: typeof rawShadowPerf.markToMarketDrawdownPct === 'number'
+        ? rawShadowPerf.markToMarketDrawdownPct
+        : rawShadowPerf.maxDrawdown,
+      chaseRate: typeof rawShadowPerf.chaseRate === 'number' ? rawShadowPerf.chaseRate : 0,
+      cohortStabilityScore: typeof rawShadowPerf.cohortStabilityScore === 'number' ? rawShadowPerf.cohortStabilityScore : 1.0,
+      sampleSize: typeof rawShadowPerf.sampleSize === 'number' ? rawShadowPerf.sampleSize : rawShadowPerf.tradesCount,
+      protectionFailuresCount: typeof rawShadowPerf.protectionFailuresCount === 'number' ? rawShadowPerf.protectionFailuresCount : 0,
+      legacyMetrics: {
+        accuracy: rawShadowPerf.accuracy,
+        sharpeRatio: rawShadowPerf.sharpeRatio,
+        totalReturn: rawShadowPerf.totalReturn,
+        tradesCount: rawShadowPerf.tradesCount,
+      },
+    };
     const eligibleCandidate = config.eligibleVersion && config.eligibleConfigurationHash ? {
       version: config.eligibleVersion,
       weights: config.eligibleWeightsJson as Record<string, number>,
@@ -268,12 +326,24 @@ export class SelfLearningService {
     } : null;
     return {
       stage,
+      promotionStage,
       isEnabled: config.isEnabled,
       liveVersion: config.liveVersion,
       candidateVersion: config.canaryVersion ?? config.shadowVersion ?? config.eligibleVersion,
       liveImpactPct: stage === 'CANARY' ? 100 - canaryPercent : 100,
       candidateImpactPct: stage === 'CANARY' ? canaryPercent : 0,
-      shadowPerformance: stage === 'SHADOW' ? parseShadowPerformance(config.shadowPerformance) : null,
+      shadowPerformance: stage === 'SHADOW' ? {
+        ...rawShadowPerf,
+        lifecycleExpectancyNetR: shadowHeadlineMetrics.lifecycleExpectancyNetR,
+        profitFactor: shadowHeadlineMetrics.profitFactor,
+        markToMarketDrawdownPct: shadowHeadlineMetrics.markToMarketDrawdownPct,
+        chaseRate: shadowHeadlineMetrics.chaseRate,
+        cohortStabilityScore: shadowHeadlineMetrics.cohortStabilityScore,
+        protectionFailuresCount: shadowHeadlineMetrics.protectionFailuresCount,
+        sampleSize: shadowHeadlineMetrics.sampleSize,
+        legacyMetrics: shadowHeadlineMetrics.legacyMetrics,
+      } : null,
+      headlineMetrics: shadowHeadlineMetrics,
       evidence: { pendingShadowSignals, evaluatedShadowSignals, canaryRecords, liveRecords },
       startedAt: config.canaryStartedAt ?? config.shadowStartedAt ?? config.eligibleAt,
       lastPromotionAt: config.lastPromotionAt,
@@ -639,6 +709,67 @@ export class SelfLearningService {
       });
     }
 
+    const lifecycleOutcomes = await this.prisma.tradeLifecycleOutcome.findMany({
+      where: {
+        status: 'FINALIZED',
+        ...(candidateVersion ? { calculationVersion: candidateVersion } : {}),
+      },
+      orderBy: { closedAt: 'desc' },
+      take: 500,
+    });
+
+    const lifecycleHeadline = calculateLifecycleHeadlineMetrics(
+      lifecycleOutcomes.map((r) => ({
+        id: r.id,
+        thesisId: r.thesisId,
+        symbol: r.symbol,
+        provider: r.provider,
+        timeframe: r.timeframe,
+        direction: r.direction as 'LONG' | 'SHORT',
+        setup: r.setup ?? undefined,
+        regime: r.regime ?? undefined,
+        status: r.status as 'FINALIZED',
+        sourceDataCutoff: r.sourceDataCutoff,
+        openedAt: r.openedAt,
+        closedAt: r.closedAt,
+        totalEnteredQuantity: Number(r.totalEnteredQuantity),
+        totalExitedQuantity: Number(r.totalExitedQuantity),
+        averageEntryPrice: Number(r.averageEntryPrice),
+        averageExitPrice: r.averageExitPrice != null ? Number(r.averageExitPrice) : null,
+        realizedGrossPnl: Number(r.realizedGrossPnl),
+        signedFees: Number(r.signedFees),
+        signedFunding: Number(r.signedFunding),
+        realizedNetPnl: Number(r.realizedNetPnl),
+        initialRisk: r.initialRisk != null ? Number(r.initialRisk) : null,
+        netR: r.netR != null ? Number(r.netR) : null,
+        finalStopLoss: r.finalStopLoss != null ? Number(r.finalStopLoss) : null,
+        schemaVersion: r.schemaVersion,
+        calculationVersion: r.calculationVersion,
+        configurationHash: r.configurationHash,
+        metadata: (r.metadata as Record<string, unknown>) ?? undefined,
+      })),
+      {
+        legacyHorizonRecords: [
+          { outcome: updatedPerf.correctCount > 0 ? 'CORRECT' : 'WRONG', returnPct: updatedPerf.totalReturn },
+        ],
+      },
+    );
+
+    updatedPerf.lifecycleExpectancyNetR = lifecycleOutcomes.length > 0
+      ? lifecycleHeadline.lifecycleExpectancyNetR
+      : (updatedPerf.tradesCount > 0 ? Number((updatedPerf.totalReturn / updatedPerf.tradesCount).toFixed(4)) : 0);
+    updatedPerf.markToMarketDrawdownPct = Math.max(updatedPerf.maxDrawdown, lifecycleHeadline.markToMarketDrawdownPct);
+    updatedPerf.chaseRate = lifecycleHeadline.chaseRate;
+    updatedPerf.cohortStabilityScore = lifecycleHeadline.cohortStabilityScore;
+    updatedPerf.protectionFailuresCount = lifecycleHeadline.protectionFailuresCount;
+    updatedPerf.sampleSize = Math.max(updatedPerf.tradesCount, lifecycleHeadline.sampleSize);
+    updatedPerf.legacyMetrics = {
+      accuracy: updatedPerf.accuracy,
+      sharpeRatio: updatedPerf.sharpeRatio,
+      totalReturn: updatedPerf.totalReturn,
+      tradesCount: updatedPerf.tradesCount,
+    };
+
     const liveRecords = await this.prisma.performanceRecord.findMany({
       where: {
         userId,
@@ -909,6 +1040,8 @@ export class SelfLearningService {
       await this.prisma.selfLearningConfiguration.update({
         where: { userId },
         data: {
+          shadowEnabled: true,
+          shadowVersion: config.canaryVersion,
           canaryEnabled: false,
           canaryVersion: null,
           canaryWeightsJson: Prisma.DbNull,
@@ -919,7 +1052,7 @@ export class SelfLearningService {
           previousVersion: null,
         },
       });
-      if (experiment) await this.appendExperimentEvent(experiment.id, 'CANARY_ROLLED_BACK', { canary, live, severeRegression, expired });
+      if (experiment) await this.appendExperimentEvent(experiment.id, 'CANARY_ROLLED_BACK_TO_SHADOW', { canary, live, severeRegression, expired });
       if (experiment?.recommendationId) await this.prisma.quantRecommendation.update({ where: { id: experiment.recommendationId }, data: { status: 'ROLLED_BACK', rejectionReason: expired ? 'CANARY_EXPIRED' : 'CANARY_REGRESSION' } });
     }
   }
@@ -1107,6 +1240,8 @@ export class SelfLearningService {
     await this.prisma.selfLearningConfiguration.update({
       where: { userId },
       data: {
+        shadowEnabled: true,
+        shadowVersion: failedVersion,
         weightsJson: config.previousWeightsJson,
         confidenceThreshold: config.previousThreshold ?? config.confidenceThreshold,
         liveVersion: config.previousVersion,
@@ -1119,7 +1254,7 @@ export class SelfLearningService {
       where: { userId_version: { userId, version: failedVersion } },
       select: { id: true, recommendationId: true },
     });
-    if (experiment) await this.appendExperimentEvent(experiment.id, 'LIVE_AUTO_ROLLED_BACK', { current, previous });
+    if (experiment) await this.appendExperimentEvent(experiment.id, 'LIVE_AUTO_ROLLED_BACK_TO_SHADOW', { current, previous });
     if (experiment?.recommendationId) await this.prisma.quantRecommendation.update({ where: { id: experiment.recommendationId }, data: { status: 'ROLLED_BACK', rejectionReason: 'LIVE_REGRESSION' } });
     return true;
   }

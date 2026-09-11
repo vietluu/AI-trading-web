@@ -11,6 +11,11 @@ import { ReflectionRepository } from "../infrastructure/reflection.repository";
 import { buildReliabilityCurve } from "../domain/confidence-calibration";
 import { timeframeMilliseconds } from "../../pipeline/domain/adaptive-trading-policy";
 import { performanceDriftToleranceMs } from "../domain/performance-provenance";
+import {
+  calculateLifecycleHeadlineMetrics,
+  type LifecyclePromotionMetrics,
+} from "../domain/model-promotion-policy";
+import type { TradeLifecycleOutcome } from "../../research/domain/trade-lifecycle";
 
 const FIXED_HORIZONS: Array<{ horizon: EvaluationHorizon; ms: number }> = [
   { horizon: "M15", ms: 15 * 60_000 },
@@ -216,6 +221,46 @@ export class PerformanceService {
     return calculatePerformanceMetrics(
       await this.list(userId, horizon, symbol),
     );
+  }
+  async lifecycleMetrics(userId?: string, symbol?: string): Promise<LifecyclePromotionMetrics> {
+    const rawOutcomes = await this.repository.lifecycleOutcomes(symbol);
+    const outcomes: TradeLifecycleOutcome[] = rawOutcomes.map((r) => ({
+      id: r.id,
+      thesisId: r.thesisId,
+      symbol: r.symbol,
+      provider: r.provider,
+      timeframe: r.timeframe,
+      direction: r.direction as 'LONG' | 'SHORT',
+      setup: r.setup ?? undefined,
+      regime: r.regime ?? undefined,
+      status: r.status as 'FINALIZED',
+      sourceDataCutoff: r.sourceDataCutoff,
+      openedAt: r.openedAt,
+      closedAt: r.closedAt,
+      totalEnteredQuantity: Number(r.totalEnteredQuantity),
+      totalExitedQuantity: Number(r.totalExitedQuantity),
+      averageEntryPrice: Number(r.averageEntryPrice),
+      averageExitPrice: r.averageExitPrice != null ? Number(r.averageExitPrice) : null,
+      realizedGrossPnl: Number(r.realizedGrossPnl),
+      signedFees: Number(r.signedFees),
+      signedFunding: Number(r.signedFunding),
+      realizedNetPnl: Number(r.realizedNetPnl),
+      initialRisk: r.initialRisk != null ? Number(r.initialRisk) : null,
+      netR: r.netR != null ? Number(r.netR) : null,
+      finalStopLoss: r.finalStopLoss != null ? Number(r.finalStopLoss) : null,
+      schemaVersion: r.schemaVersion,
+      calculationVersion: r.calculationVersion,
+      configurationHash: r.configurationHash,
+      metadata: (r.metadata as Record<string, unknown>) ?? undefined,
+    }));
+
+    const fixedRecords = userId ? await this.list(userId, undefined, symbol) : [];
+    return calculateLifecycleHeadlineMetrics(outcomes, {
+      legacyHorizonRecords: fixedRecords.map((r) => ({
+        outcome: r.outcome,
+        returnPct: r.returnPct,
+      })),
+    });
   }
   async calibration(userId: string, symbol?: string) {
     const rows = await this.repository.records(userId, "MID", 500, symbol, true);
