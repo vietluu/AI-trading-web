@@ -1,3 +1,5 @@
+import type { AnticipatoryMarketSnapshot } from '@platform/shared';
+import { anticipatoryDecisionContext } from '../../domain/analysis/anticipatory-decision-context';
 import { buildPostMortemContext } from "../../domain/analysis/post-mortem-memory-injector";
 import { Injectable, Logger, Inject, Optional } from "@nestjs/common";
 import {
@@ -31,7 +33,7 @@ import { createHash } from "node:crypto";
 import { adaptiveTradingPolicy, assetLiquidityClass, parseSpreadBps } from "../../../pipeline/domain/adaptive-trading-policy";
 import { classifyDetailedRegime, computeRegimeAdaptiveWeights } from "../../domain/analysis/regime-adaptive-weights";
 import { buildScenarioBlueprint } from "../../domain/analysis/scenario-planning-engine";
-import { ChainOfThoughtReflectionService, type ReflectionOutput } from './chain-of-thought-reflection.service';
+
 
 export type { AnalystName, Bias, ConflictLevel, RunDecisionOptions, Weighting };
 
@@ -50,7 +52,6 @@ export class DecisionService {
     private readonly fusionService: FusionService,
     @Optional() @Inject(PrismaService) private readonly prisma?: PrismaService,
     @Optional() private readonly configService?: ConfigService,
-    @Optional() private readonly reflectionService?: ChainOfThoughtReflectionService,
   ) {}
 
   public async run(options: RunDecisionOptions): Promise<DecisionOutput> {
@@ -80,6 +81,7 @@ export class DecisionService {
       provider?: "BINANCE_FUTURES" | "OKX_FUTURES";
       timeframe?: string;
       referencePrice?: number;
+      anticipatorySnapshot?: AnticipatoryMarketSnapshot;
     } = {},
   ): Promise<DecisionOutput> {
     const config =
@@ -140,6 +142,8 @@ export class DecisionService {
         confidenceThreshold: finalConfidenceThreshold,
         volatilityPenalty: config?.volatilityPenalty ?? undefined,
         penalties: customPenalties,
+        referencePrice: metadata.referencePrice,
+        anticipatorySnapshot: metadata.anticipatorySnapshot,
       }
     );
     const confidenceCalibration = await this.confidenceCalibration(
@@ -232,58 +236,9 @@ export class DecisionService {
         : {}),
     };
 
-    // LLM Chain-of-Thought Reflection — final contrarian review
-    let reflectionResult: ReflectionOutput | undefined;
-    if (
-      this.reflectionService &&
-      calibratedDecision.decision !== 'WAIT' &&
-      this.configService?.get('LLM_REFLECTION_ENABLED', true)
-    ) {
-      try {
-        reflectionResult = await this.reflectionService.reflect(
-          {
-            symbol: rawInput.symbol,
-            candidateDecision: calibratedDecision.decision,
-            confidence: calibratedDecision.confidence,
-            regime: calibratedDecision.regime.detailed ?? calibratedDecision.regime.type,
-            anticipatorySignals: calibratedDecision.anticipatorySignals,
-            agentSummaries: this.extractAgentSummaries(rawInput),
-            recentLosses: postMortemContext?.recentLosses?.map(l => ({ symbol: l.symbol, reason: l.rootCause, regime: l.regime })),
-          },
-          userId,
-        );
-
-        if (reflectionResult && reflectionResult.trapProbability > 70) {
-          calibratedDecision.decision = 'WAIT';
-          calibratedDecision.confidence = Math.min(calibratedDecision.confidence, reflectionResult.adjustedConfidence);
-          calibratedDecision.overrides = [
-            ...calibratedDecision.overrides,
-            `LLM_REFLECTION_OVERRIDE: ${reflectionResult.overrideReason ?? 'Trap probability exceeded 70%'}`,
-          ];
-        } else if (reflectionResult) {
-          calibratedDecision.confidence = Math.min(
-            calibratedDecision.confidence,
-            reflectionResult.adjustedConfidence,
-          );
-        }
-
-        if (reflectionResult) {
-          calibratedDecision.reflection = {
-            reasoning: reflectionResult.reasoning,
-            contrarianArguments: reflectionResult.contrarianArguments,
-            trapProbability: reflectionResult.trapProbability,
-            overrideReason: reflectionResult.overrideReason,
-          };
-        }
-      } catch (reflectionError) {
-        this.logger.warn({
-          event: 'reflection_step_failed',
-          symbol: rawInput.symbol,
-          error: reflectionError instanceof Error ? reflectionError.message : String(reflectionError),
-        });
-      }
-    }
-
+    // LLM Chain-of-Thought Reflection — final contrarian review has been moved to Critic (Task 3)
+    // and is now executed on the TradeThesis in the new execution flow.
+    
     // Phase C: Shadow Mode Simulation Run
     if (config?.shadowEnabled && userId && this.prisma) {
       const shadowWeights = this.validWeights(config.shadowWeightsJson);
@@ -606,13 +561,15 @@ export class DecisionService {
       confidenceThreshold?: number;
       volatilityPenalty?: number;
       penalties?: Partial<Record<keyof Weighting, number>>;
+      referencePrice?: number;
+      anticipatorySnapshot?: AnticipatoryMarketSnapshot;
     },
   ): DecisionOutput {
     const input = DecisionInputSchema.parse(rawInput);
     const names = (Object.keys(BASE_WEIGHTS) as AnalystName[]).filter(
       (name) => name !== "macro" || this.macroConfigured(input),
     );
-    const regime = this.detectRegime(input);
+    const regime = this.detectRegime(input, customOptions?.anticipatorySnapshot);
     const weighting = this.dynamicWeights(regime, customOptions?.weights, customOptions?.penalties);
     const active = names.filter((name) => {
       const output = input[name];
@@ -925,14 +882,16 @@ export class DecisionService {
         ? "BEARISH"
         : undefined;
 
+    const anticipatory = customOptions?.anticipatorySnapshot ? anticipatoryDecisionContext(customOptions.anticipatorySnapshot) : undefined;
     const scenarios = buildScenarioBlueprint({
       decision: finalDecision,
       confidence: Math.round(calibratedConfidence),
       regime,
-      currentPrice: undefined,
-      atr: undefined,
-      supportLevel: undefined,
-      resistanceLevel: undefined,
+      currentPrice: anticipatory?.market.currentPrice ?? customOptions?.referencePrice,
+      atr: anticipatory?.market.atr,
+      supportLevel: anticipatory?.market.support,
+      resistanceLevel: anticipatory?.market.resistance,
+      anticipatorySignals: anticipatory?.signals,
       hasSfpWick,
       sfpType,
       directionalAgreement,
@@ -966,6 +925,8 @@ export class DecisionService {
       calibrationAdjustment: Number(calibrationAdjustment.toFixed(2)),
       executionCost: Number(executionCost.toFixed(3)),
       scenarios,
+      anticipatorySignals: anticipatory?.signals,
+      decisionSource: "RULES",
       regimeDetailed: regime.detailed,
       generatedAt: new Date().toISOString(),
     });
@@ -994,7 +955,7 @@ export class DecisionService {
     return output;
   }
 
-  private detectRegime(input: DecisionInput): MarketRegime {
+  private detectRegime(input: DecisionInput, snapshot?: AnticipatoryMarketSnapshot): MarketRegime {
     const volatilityEvidence = [
       input.market?.volatility.atr,
       ...(input.market?.anomalies ?? []),
@@ -1034,6 +995,7 @@ export class DecisionService {
       trendStrength: input.technical?.trend.strength ?? input.market?.trend.strength,
       volatilityLevel: input.market?.volatility.level,
       isSfpWick,
+      ...(snapshot?.volatility.coverage === 'AVAILABLE' ? { isSqueezing: snapshot.volatility.squeezeState === 'SQUEEZING', squeezeDuration: snapshot.volatility.squeezeDurationCandles, atrPercentile: snapshot.volatility.atrPercentile } : {}),
     });
 
     return {

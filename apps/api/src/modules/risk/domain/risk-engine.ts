@@ -1,3 +1,5 @@
+import { validateTradeThesis } from '../../agents/domain/trade-thesis-validator';
+import { thesisTriggersSatisfied } from './thesis-execution';
 import type {
   LastTradeRecord,
   RiskAccount,
@@ -173,9 +175,29 @@ export function evaluateRisk(
     return reject("ABNORMAL_VOLATILITY");
   if (drawdownPct >= limits.maxDrawdown) return reject("MAX_DRAWDOWN_EXCEEDED");
 
+  const proactive = marketData.tradePlanContext?.proactive;
+  if (proactive) {
+    if (!['OBSERVE', 'SHADOW', 'DEMO'].includes(proactive.mode)) return reject('PROACTIVE_MODE_INVALID');
+    if (!['PROBE_READY', 'CONFIRMED'].includes(proactive.thesis.state) || proactive.thesis.direction !== decision.decision) return reject('THESIS_NOT_EXECUTABLE');
+    if (!Number.isFinite(proactive.sizeFactor) || proactive.sizeFactor <= 0 || proactive.sizeFactor > 1) return reject('THESIS_SIZE_FACTOR_INVALID');
+    const snapshot = structuredClone(proactive.snapshot);
+    if (snapshot.execution.coverage === 'AVAILABLE') snapshot.execution.currentPrice = marketData.price;
+    const validation = validateTradeThesis(proactive.thesis, snapshot, { now: input.now ?? new Date() });
+    if (!validation.valid) return reject(validation.reasonCodes[0] ?? 'THESIS_INVALID');
+  }
   const sameSymbolPosition = input.currentPositions.find(
     (position) => position.symbol === input.symbol,
   );
+  // Determine whether this is a legitimate staged-entry confirmation add
+  // (probe already placed; this is the CONFIRMED add at the same direction).
+  const storedProbe = sameSymbolPosition?.stagedEntry;
+  const isStagedEntry = Boolean(proactive && proactive.thesis.state === 'CONFIRMED' &&
+    storedProbe?.stage === 'PROBE' && storedProbe.thesisId === (proactive.parentThesisId ?? proactive.thesisId) &&
+    storedProbe.setup === proactive.thesis.setup &&
+    Date.parse(storedProbe.sourceDataCutoff) < Date.parse(proactive.snapshot.sourceDataCutoff));
+  if (proactive?.thesis.state === 'CONFIRMED' && !isStagedEntry) return reject('STORED_PROBE_REQUIRED');
+  if (isStagedEntry && storedProbe && !thesisTriggersSatisfied(storedProbe.trigger, proactive!.snapshot, marketData.price)) return reject('THESIS_TRIGGER_REQUIRED');
+
   if (sameSymbolPosition) {
     const existingDirection = sameSymbolPosition.side ??
       (sameSymbolPosition.size >= 0 ? "LONG" : "SHORT");
@@ -183,14 +205,23 @@ export function evaluateRisk(
     // Execution intentionally does not pyramid. Reject at the authoritative
     // risk stage as well, so a candidate cannot be recorded as risk-approved
     // and then encounter the same-direction guard only during submission.
-    if (isSameDirection) return reject("PYRAMIDING_NOT_ALLOWED");
+    if (isSameDirection && !isStagedEntry) {
+      return reject("PYRAMIDING_NOT_ALLOWED");
+    }
   }
 
   // A reversal replaces the position in the same symbol, so it must not consume an
   // additional slot or be counted twice in projected exposure.
-  const retainedPositions = input.currentPositions.filter(
-    (position) => position.symbol !== input.symbol,
-  );
+  // For a staged-entry confirmation add, also exclude the existing same-direction position
+  // from slot / direction counting — it is being augmented, not added as a new position.
+  const retainedPositions = input.currentPositions.filter((position) => {
+    if (position.symbol !== input.symbol) return true;
+    const posDir = position.side ?? (position.size >= 0 ? "LONG" : "SHORT");
+    // Exclude existing same-direction position when doing a staged confirmation add
+    if (isStagedEntry && posDir === decision.decision) return false;
+    // Keep same-symbol position only if it's the same direction (i.e. a reversal scenario)
+    return posDir === decision.decision;
+  });
   if (retainedPositions.length >= limits.maxPositions)
     return reject("MAX_OPEN_POSITIONS_EXCEEDED");
   const sameDirectionPositions = retainedPositions.filter(
@@ -202,6 +233,7 @@ export function evaluateRisk(
     sameDirectionPositions.length >=
       (limits.maxSameDirectionPositions ?? 1)
   ) return reject("MAX_SAME_DIRECTION_POSITIONS_EXCEEDED");
+
   const cooldownWindow = input.lastTrades?.find(
     (trade) =>
       trade.symbol === input.symbol && trade.direction === decision.decision &&
@@ -264,6 +296,8 @@ export function evaluateRisk(
     configuredRiskRewardRatio: limits.riskRewardRatio,
     roundTripCostPct: limits.estimatedRoundTripCostPct,
   });
+
+
   if (!plan.approved || !plan.stopLoss || !plan.takeProfit)
     return {
       ...reject(plan.reason ?? "TRADE_PLAN_REJECTED"),
@@ -318,6 +352,56 @@ export function evaluateRisk(
     stopLoss,
     limits.estimatedRoundTripCostPct,
   );
+  
+  // Identify the existing same-symbol same-direction position (if any).
+  // `sameSymbolPosition` was computed earlier; we now know it's safe to use it
+  // because if it existed and was same-direction WITHOUT staged-entry intent,
+  // we already rejected above (PYRAMIDING_NOT_ALLOWED).
+  const existingSameDirection = sameSymbolPosition &&
+    (sameSymbolPosition.side ?? (sameSymbolPosition.size >= 0 ? "LONG" : "SHORT")) === decision.decision
+      ? sameSymbolPosition
+      : undefined;
+
+  if (existingSameDirection) {
+    const entryPrice = existingSameDirection.entryPrice;
+    if (entryPrice === undefined || !finitePositive(entryPrice)) {
+      return reject("POSITION_ENTRY_PRICE_REQUIRED");
+    }
+    // Reject if the existing position is already underwater — adding to a
+    // losing position (averaging down) is explicitly prohibited.
+    const isUnderwater = decision.decision === 'LONG'
+      ? marketData.price < entryPrice
+      : marketData.price > entryPrice;
+
+    if (isUnderwater) {
+      return {
+        approved: false,
+        reason: 'UNPLANNED_AVERAGE_DOWN',
+        riskScore: 100,
+        exposurePct: rounded(baseExposurePct, 6),
+        drawdownPct: rounded(drawdownPct, 6),
+      };
+    }
+
+    if (!plan.stagedEntry) {
+      // Staged entry metadata is required for any same-direction add.
+      return {
+        approved: false,
+        reason: 'UNPLANNED_AVERAGE_DOWN',
+        riskScore: 100,
+        exposurePct: rounded(baseExposurePct, 6),
+        drawdownPct: rounded(drawdownPct, 6),
+      };
+    }
+
+    if (!existingSameDirection.protectionVerified || !finitePositive(existingSameDirection.stopLoss ?? 0)) return reject('POSITION_PROTECTION_REQUIRED');
+
+  } else if (plan.stagedEntry) {
+    // No existing same-direction position: this is the initial PROBE entry.
+    plan.stagedEntry.stage = 'PROBE';
+  }
+
+
   const lossStreakSizeFactor = lossCount <= 0
     ? 1
     : lossCount === 1
@@ -341,21 +425,18 @@ export function evaluateRisk(
       RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
     );
   }
-  const retainedExposure = retainedPositions.reduce(
+  const exposurePositions = input.currentPositions.filter((position) => position.symbol !== input.symbol ||
+    (position.side ?? (position.size >= 0 ? 'LONG' : 'SHORT')) === decision.decision);
+  const retainedExposure = exposurePositions.reduce(
     (sum, position) => sum + Math.abs(position.size * position.markPrice),
     0,
   );
-  const availableExposure = Math.max(
-    0,
-    account.equity * limits.maxExposure - retainedExposure,
-  );
-  positionSize = Math.min(
-    positionSize,
-    rounded(
-      availableExposure / marketData.price,
-      RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
-    ),
-  );
+  if (plan.stagedEntry) {
+    const multiplier = plan.stagedEntry.stage === 'CONFIRMED' ? plan.stagedEntry.confirmationSizePct : plan.stagedEntry.probeSizePct;
+    positionSize *= multiplier * (proactive?.sizeFactor ?? 1);
+  }
+  const availableExposure = Math.max(0, account.equity * limits.maxExposure - retainedExposure);
+  positionSize = Math.floor(Math.min(positionSize, availableExposure / marketData.price) * 1e12) / 1e12;
   if (lossStreakSizeFactor < 1) {
     positionSize = rounded(
       positionSize * lossStreakSizeFactor,
@@ -419,6 +500,13 @@ export function evaluateRisk(
     return reject("MAX_PORTFOLIO_EXPOSURE_EXCEEDED", leverage);
 
   const plannedLoss = positionSize * marketData.price * lossPctOfNotional;
+  if (existingSameDirection && plan.stagedEntry) {
+    const existingRisk = Math.abs(existingSameDirection.size) *
+      (Math.abs(existingSameDirection.entryPrice! - existingSameDirection.stopLoss!) +
+        existingSameDirection.entryPrice! * limits.estimatedRoundTripCostPct);
+    if (existingRisk + plannedLoss > account.equity * Math.min(limits.riskPerTrade, plan.stagedEntry.combinedRiskLimitPct) + 1e-8)
+      return reject('COMBINED_THESIS_RISK_EXCEEDED');
+  }
   const plannedEquityRiskPct = plannedLoss / account.equity;
   const plannedMarginRoe = plannedLoss / ((positionSize * marketData.price) / leverage);
   if (plannedEquityRiskPct > limits.riskPerTrade + 1e-8)

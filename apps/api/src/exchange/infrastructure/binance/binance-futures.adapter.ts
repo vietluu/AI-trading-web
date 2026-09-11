@@ -1,3 +1,4 @@
+import { assertDeclaredLimitOrder } from '../../domain/declared-limit-order';
 import { Injectable, Logger } from "@nestjs/common";
 import { z } from "zod";
 
@@ -614,6 +615,7 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
     credentials: ExchangeCredentials,
     command: PlaceOrderCommand,
   ): Promise<ExchangeOrder> {
+    const declaredLimit = assertDeclaredLimitOrder(command, this.provider);
     const normalizedSymbol = mapSymbol(command.symbol, this.provider);
     const symbol = normalizedSymbol;
     const leverage = Math.max(
@@ -625,11 +627,11 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
       leverage,
     });
     try {
-      let type = "MARKET";
-      let timeInForce = undefined;
-      let price = undefined;
+      let type = declaredLimit ? 'LIMIT' : 'MARKET';
+      let timeInForce = declaredLimit ? command.timeInForce : undefined;
+      let price = declaredLimit ? command.limitPrice : undefined;
 
-      if (!command.reduceOnly && Number.isFinite(Number(command.referencePrice)) && Number(command.referencePrice) > 0 && Number.isFinite(Number(command.maxAdverseDriftBps)) && Number(command.maxAdverseDriftBps) > 0) {
+      if (!declaredLimit && !command.reduceOnly && Number.isFinite(Number(command.referencePrice)) && Number(command.referencePrice) > 0 && Number.isFinite(Number(command.maxAdverseDriftBps)) && Number(command.maxAdverseDriftBps) > 0) {
         const instruments = await this.getInstruments({
           symbol: command.symbol,
           environment: credentials.environment,
@@ -654,18 +656,7 @@ export class BinanceFuturesAdapter implements ExchangeAdapter {
           price = worstPrice.toFixed(instrument.pricePrecision);
         }
       }
-      console.error("BINANCE RAW MOCK VALUE:", await this.client.signedPost("/fapi/v1/order", credentials, {
-          symbol,
-          side: command.side,
-          type,
-          ...(timeInForce ? { timeInForce } : {}),
-          ...(price ? { price } : {}),
-          quantity: command.quantity,
-          newClientOrderId: normalizeClientOrderId(command.clientOrderId),
-          reduceOnly: command.reduceOnly,
-          positionSide: command.positionSide,
-          newOrderRespType: "RESULT",
-        }));
+      assertDeclaredLimitOrder(command, this.provider);
       const value = orderSchema.parse(
         await this.client.signedPost("/fapi/v1/order", credentials, {
           symbol,

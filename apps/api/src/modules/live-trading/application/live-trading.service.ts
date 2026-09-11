@@ -1,3 +1,6 @@
+import { assertDeclaredLimitOrder } from '../../../exchange/domain/declared-limit-order';
+import type { AnticipatoryExecutionInput } from '../../agents/domain/analysis/anticipatory-snapshot-builder';
+import { proactiveOrderTerms, proactiveAuthorizationAllowed, ProactiveAuthorizationSchema, StoredProbeSchema, thesisTriggersSatisfied } from '../../risk/domain/thesis-execution';
 import {
   ConflictException,
   ForbiddenException,
@@ -38,8 +41,7 @@ import { RISK_ENGINE_CONSTANTS } from "../../risk/domain/risk-engine.constants";
 import { RiskManagementService } from "../../risk/application/risk-management.service";
 import { PortfolioService } from "../../portfolio/application/portfolio.service";
 import { LiveTradingGateway } from "../presentation/live-trading.gateway";
-import type { TradePlanMarketContext } from "../../risk/domain/trade-plan-engine";
-import type { TradePlan } from "../../risk/domain/trade-plan-engine";
+import type { StoredProbe, TradePlan, TradePlanMarketContext } from "../../risk/domain/trade-plan-engine";
 import { evaluatePositionManagement } from "../domain/position-manager";
 import { ExchangeTradeLedgerService } from "./exchange-trade-ledger.service";
 import {
@@ -56,6 +58,13 @@ const TRADE_BACKFILL_PAGE_SIZE = 1000;
 const DEFAULT_TRADE_BACKFILL_MAX_PAGES = 100;
 const RECONCILIATION_DB_BATCH_SIZE = 10;
 const ORPHAN_PROTECTION_GRACE_MS = 120_000;
+
+function isConfirmedStagedEntry(tradePlan: unknown): boolean {
+  if (!tradePlan || typeof tradePlan !== "object" || Array.isArray(tradePlan)) return false;
+  const stagedEntry = (tradePlan as Record<string, unknown>).stagedEntry;
+  return !!stagedEntry && typeof stagedEntry === "object" && !Array.isArray(stagedEntry) &&
+    (stagedEntry as Record<string, unknown>).stage === "CONFIRMED";
+}
 
 export function isPastProtectionOrphanGrace(
   createdAt: Date,
@@ -107,6 +116,41 @@ export class LiveTradingService {
    * deliberately stays small; this operation is intended for an explicit
    * recovery/backfill and is idempotent through the exchange-fill unique key.
    */
+  async proactiveExecutionEvidence(userId: string, provider: ExchangeProvider, symbol: string): Promise<AnticipatoryExecutionInput | undefined> {
+    try {
+      const connection = (await this.connections.list(userId)).find((item) => item.provider === provider && item.environment === ExchangeEnvironment.DEMO && item.isEnabled && item.isVerified);
+      if (!connection) return undefined;
+      const [ticker, instrument, positions, limits] = await Promise.all([
+        this.publicExchanges.ticker(provider, symbol), this.connections.instrument(userId, connection.id, symbol, {}),
+        this.connections.positions(userId, connection.id, {}), this.riskConfig.getUserLimits(userId),
+      ]);
+      const observedAt = new Date();
+      const currentPrice = Number(ticker.markPrice ?? ticker.lastPrice);
+      const bid = Number(ticker.bidPrice); const ask = Number(ticker.askPrice);
+      const tickSize = Number(instrument.tickSize); const lotSize = Number(instrument.stepSize);
+      const costPct = limits.estimatedRoundTripCostPct;
+      if (ticker.provider !== provider || ticker.symbol !== symbol || ![currentPrice, bid, ask, tickSize, lotSize].every((value) => Number.isFinite(value) && value > 0) || ask < bid || !Number.isFinite(costPct) || costPct < 0) return undefined;
+      const positionExposure = positions.map((position) => Math.abs(Number(position.quantity)) * Number(position.markPrice));
+      if (!positionExposure.every((value) => Number.isFinite(value) && value >= 0)) return undefined;
+      const timestamps = [ticker.timestamp.getTime(), observedAt.getTime(), ...positions.map((position) => position.updatedAt.getTime())];
+      if (!timestamps.every((value) => Number.isFinite(value) && value <= observedAt.getTime())) return undefined;
+      return {
+        timestamp: new Date(Math.min(...timestamps)), currentPrice, spread: ask - bid,
+        estimatedRoundTripCost: currentPrice * costPct, tickSize, lotSize,
+        currentExposure: positionExposure.reduce((sum, value) => sum + value, 0), freshnessThresholdMs: 60_000,
+        source: `QUOTE:${provider}:${ticker.timestamp.toISOString()};POSITIONS:${connection.id}:${observedAt.toISOString()};INSTRUMENT:${connection.id}:${observedAt.toISOString()};RISK_COST_PCT:${costPct}`,
+      };
+    } catch (error) {
+      this.logger.warn({ event: 'proactive_execution_evidence_unavailable', symbol, reason: error instanceof Error ? error.message : String(error) });
+      return undefined;
+    }
+  }
+
+  async hasVerifiedDemoConnection(userId: string): Promise<boolean> {
+    const connections = await this.connections.list(userId);
+    return connections.some(c => c.environment === ExchangeEnvironment.DEMO && c.isEnabled && c.isVerified);
+  }
+
   async backfillTradeLedger(
     userId: string,
     connectionId: string,
@@ -333,6 +377,8 @@ export class LiveTradingService {
     volatilityAtr?: number;
     tradePlanContext?: TradePlanMarketContext;
     strategyKey?: string;
+    /** Pins proactive execution to a verified demo connection. */
+    requiredEnvironment?: "DEMO";
     /** Reduces, but can never increase, the risk-approved position size. */
     executionSizeFactor?: number;
   }): Promise<{ outcome: string; price: number; risk?: RiskOutput }> {
@@ -340,12 +386,14 @@ export class LiveTradingService {
     if (settings.mode !== "DEMO" && settings.mode !== "LIVE") {
       return { outcome: "EXCHANGE_MODE_REQUIRED", price: 0 };
     }
+    const proactive = input.tradePlanContext?.proactive;
+    const requiredEnvironment = proactive ? 'DEMO' : input.requiredEnvironment;
     const targetEnvironment =
-      settings.mode === "LIVE"
+      requiredEnvironment ?? (settings.mode === "LIVE"
         ? ExchangeEnvironment.PRODUCTION
         : input.provider === ExchangeProvider.BINANCE_FUTURES
           ? ExchangeEnvironment.TESTNET
-          : ExchangeEnvironment.DEMO;
+          : ExchangeEnvironment.DEMO);
     const userConnections = await this.connections.list(input.userId);
     let connection = userConnections.find(
       (item) =>
@@ -357,7 +405,8 @@ export class LiveTradingService {
     let effectiveProvider = input.provider;
     if (!connection) {
       const fallback = userConnections.find(
-        (item) => item.isEnabled && item.isVerified,
+        (item) => item.isEnabled && item.isVerified &&
+          (!requiredEnvironment || item.environment === requiredEnvironment as ExchangeEnvironment),
       );
       if (fallback) {
         connection = fallback;
@@ -471,6 +520,16 @@ export class LiveTradingService {
           }
         }
         await this.supersedeEarlierEntry(tx, input, price);
+        let probeProtection: { stopLoss?: Prisma.Decimal; protectionVerified?: boolean; stagedEntry?: StoredProbe } = {};
+        if (proactive?.thesis.state === 'CONFIRMED' && latestOrder?.status === 'FILLED') {
+          const stored = StoredProbeSchema.safeParse(latestOrder.stagedEntry);
+          if (stored.success && stored.data.stage === 'PROBE' && latestOrder.stopLoss && latestOrder.protectiveClientOrderId) {
+            const status = await this.connections.getProtectiveOrderStatus(input.userId, connection.id,
+              { symbol: input.symbol, protectiveClientOrderId: latestOrder.protectiveClientOrderId }, {});
+            probeProtection = { stopLoss: latestOrder.stopLoss, protectionVerified: status === 'ACTIVE', stagedEntry: stored.data };
+            proactive.parentThesisId = stored.data.thesisId;
+          }
+        }
         let risk = await this.risk.assess(tx, {
           userId: input.userId,
           connectionId: connection.id,
@@ -488,7 +547,9 @@ export class LiveTradingService {
             symbol: position.symbol,
             side: position.side as "LONG" | "SHORT",
             size: position.quantity,
+            entryPrice: position.entryPrice,
             markPrice: position.markPrice ?? position.entryPrice,
+            ...(position.symbol === input.symbol && position.side === input.decision.decision ? probeProtection : {}),
           })),
           price,
           volatility: Math.max(
@@ -796,6 +857,10 @@ export class LiveTradingService {
       where: { id: dto.riskAssessmentId, userId },
     });
     if (!assessment) throw new NotFoundException("Risk assessment not found");
+    if (assessment.executionAuthorization && (!proactiveAuthorizationAllowed(assessment.executionAuthorization, dto.connectionId, connection.environment) ||
+      process.env.PROACTIVE_AI_MODE !== 'DEMO')) throw new ForbiddenException('PROACTIVE_EXECUTION_NOT_AUTHORIZED');
+    if (assessment.executionAuthorization) proactiveOrderTerms(assessment.tradePlan, assessment.executionAuthorization);
+    if (assessment.connectionId && assessment.connectionId !== dto.connectionId) throw new ForbiddenException('RISK_CONNECTION_MISMATCH');
     if (
       !assessment.approved ||
       !assessment.positionSize ||
@@ -833,9 +898,14 @@ export class LiveTradingService {
       existingOpenPosition &&
       existingOpenPosition.side === (assessment.decision as "LONG" | "SHORT")
     ) {
-      throw new ConflictException(
-        "A position already exists in the approved direction",
-      );
+      const isConfirmedAdd = assessment.executionAuthorization && assessment.tradePlan && typeof assessment.tradePlan === 'object' &&
+                             'stagedEntry' in assessment.tradePlan && 
+                             isConfirmedStagedEntry(assessment.tradePlan);
+      if (!isConfirmedAdd) {
+        throw new ConflictException(
+          "A position already exists in the approved direction and this is not a CONFIRMED add",
+        );
+      }
     }
     const sameSignalOrder = await this.prisma.liveOrder.findFirst({
       where: {
@@ -884,10 +954,16 @@ export class LiveTradingService {
     );
     const desiredSide = assessment.decision as "LONG" | "SHORT";
     const same = positions.find((position) => position.side === desiredSide);
-    if (same)
-      throw new ConflictException(
-        "A position already exists in the approved direction",
-      );
+    if (same) {
+      const isConfirmedAdd = assessment.executionAuthorization && assessment.tradePlan && typeof assessment.tradePlan === 'object' &&
+                             'stagedEntry' in assessment.tradePlan && 
+                             isConfirmedStagedEntry(assessment.tradePlan);
+      if (!isConfirmedAdd) {
+        throw new ConflictException(
+          "A position already exists in the approved direction and this is not a CONFIRMED add",
+        );
+      }
+    }
     const opposite = positions.find(
       (position) => position.side !== desiredSide,
     );
@@ -968,7 +1044,11 @@ export class LiveTradingService {
     return result;
   }
 
-  async executePipeline(userId: string, pipelineRunId: string) {
+  async executePipeline(
+    userId: string,
+    pipelineRunId: string,
+    options: { requiredEnvironment?: "DEMO" } = {},
+  ) {
     const settings = this.config.values;
     if (!settings.runtimeEnabled) return { outcome: "KILL_SWITCH_ACTIVE" };
     if (settings.mode !== "DEMO" && settings.mode !== "LIVE")
@@ -980,6 +1060,10 @@ export class LiveTradingService {
       return { outcome: "RISK_ASSESSMENT_MISSING" };
     if (!assessment.approved)
       return { outcome: "RISK_REJECTED", reason: assessment.reason };
+    const proactiveAuthorization = assessment.executionAuthorization ? ProactiveAuthorizationSchema.safeParse(assessment.executionAuthorization) : undefined;
+    if (proactiveAuthorization && (!proactiveAuthorization.success || proactiveAuthorization.data.mode !== 'DEMO' ||
+      process.env.PROACTIVE_AI_MODE !== 'DEMO')) return { outcome: 'PROACTIVE_EXECUTION_NOT_AUTHORIZED' };
+    const requiredEnvironment = proactiveAuthorization ? 'DEMO' : options.requiredEnvironment;
 
     if (settings.mode === "LIVE") {
       const selfLearning =
@@ -1002,15 +1086,18 @@ export class LiveTradingService {
       ? connections.find(
           (item) =>
             item.id === assessment.connectionId &&
+            (!requiredEnvironment || item.environment === requiredEnvironment as ExchangeEnvironment) &&
             item.isEnabled &&
             item.isVerified,
         )
       : undefined;
+    if (!connection && proactiveAuthorization) return { outcome: 'NO_ELIGIBLE_EXCHANGE_CONNECTION' };
     if (!connection) {
       // Fallback: pick any eligible connection (preserves behaviour when
       // connectionId was not recorded on older assessments).
       connection = connections.find(
-        (item) => item.isEnabled && item.isVerified,
+        (item) => item.isEnabled && item.isVerified &&
+          (!requiredEnvironment || item.environment === requiredEnvironment as ExchangeEnvironment),
       );
     }
     if (!connection) return { outcome: "NO_ELIGIBLE_EXCHANGE_CONNECTION" };
@@ -1846,11 +1933,17 @@ export class LiveTradingService {
       stopLoss: Prisma.Decimal | null;
       takeProfit: Prisma.Decimal | null;
       tradePlan?: Prisma.JsonValue | null;
+      executionAuthorization?: Prisma.JsonValue | null;
     } | null,
     strategyId: string | null | undefined,
     context: RequestMetadata,
     options: { skipInstrumentCheck?: boolean } = {},
   ) {
+    if (!command.reduceOnly && assessment?.executionAuthorization) {
+      if (!proactiveAuthorizationAllowed(assessment.executionAuthorization, connection.id, connection.environment) || process.env.PROACTIVE_AI_MODE !== 'DEMO') throw new ForbiddenException('PROACTIVE_EXECUTION_NOT_AUTHORIZED');
+      command = { ...command, ...proactiveOrderTerms(assessment.tradePlan, assessment.executionAuthorization) };
+    }
+    assertDeclaredLimitOrder(command, connection.provider);
     // Validate against the connection's actual environment before reserving a
     // risk approval or creating a SUBMITTING row. OKX Demo exposes a smaller
     // instrument set than production (for example OKB-USDT-SWAP).
@@ -1881,6 +1974,7 @@ export class LiveTradingService {
         provider: connection.provider,
         environment: connection.environment,
         symbol: command.symbol,
+        type: command.orderType ?? "MARKET",
         side: command.side,
         quantity: command.quantity,
         leverage: command.leverage,
@@ -1894,6 +1988,10 @@ export class LiveTradingService {
           assessment?.tradePlan === null || assessment?.tradePlan === undefined
             ? Prisma.JsonNull
             : (assessment.tradePlan as Prisma.InputJsonValue),
+        stagedEntry:
+          assessment?.tradePlan && typeof assessment.tradePlan === 'object' && 'stagedEntry' in assessment.tradePlan && assessment.tradePlan.stagedEntry !== null
+            ? (assessment.tradePlan.stagedEntry as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
         errorCode: null,
         errorMessage: null,
       };
@@ -1916,6 +2014,7 @@ export class LiveTradingService {
       throw error;
     }
     try {
+      assertDeclaredLimitOrder(command, connection.provider);
       const order = await this.connections.placeOrder(
         userId,
         connection.id,
@@ -2752,6 +2851,7 @@ export class LiveTradingService {
       referencePrice: Prisma.Decimal;
       stopLoss: Prisma.Decimal | null;
       tradePlan?: Prisma.JsonValue | null;
+      executionAuthorization?: Prisma.JsonValue | null;
     },
   ): Promise<{
     positionSize: number;
@@ -2852,10 +2952,23 @@ export class LiveTradingService {
         "Exchange preflight failed: liquidation buffer is insufficient",
       );
     }
-    const retained = positions.filter(
-      (position) => position.symbol !== assessment.symbol,
-    );
-    if (retained.length >= limits.maxPositions) {
+    const confirmed = Boolean(assessment.executionAuthorization && isConfirmedStagedEntry(assessment.tradePlan));
+    if (confirmed) {
+      const auth = ProactiveAuthorizationSchema.parse(assessment.executionAuthorization);
+      const source = await this.prisma.liveOrder.findFirst({ where: { userId, connectionId, symbol: assessment.symbol, purpose: 'OPEN', status: 'FILLED' }, orderBy: { createdAt: 'desc' } });
+      const stored = StoredProbeSchema.safeParse(source?.stagedEntry);
+      const position = positions.find((item) => item.symbol === assessment.symbol && item.side === auth.thesis.direction);
+      if (!position || !source?.stopLoss || !source.protectiveClientOrderId || !stored.success || stored.data.stage !== 'PROBE' || stored.data.setup !== auth.thesis.setup ||
+        !thesisTriggersSatisfied(stored.data.trigger, auth.snapshot, referencePrice)) throw new ForbiddenException('STORED_PROBE_REQUIRED');
+      const status = await this.connections.getProtectiveOrderStatus(userId, connectionId, { symbol: assessment.symbol, protectiveClientOrderId: source.protectiveClientOrderId }, {});
+      if (status !== 'ACTIVE') throw new ForbiddenException('POSITION_PROTECTION_REQUIRED');
+      const entry = Number(position.entryPrice);
+      if (auth.thesis.direction === 'LONG' ? referencePrice < entry : referencePrice > entry) throw new ForbiddenException('UNPLANNED_AVERAGE_DOWN');
+      const existingLoss = Math.abs(Number(position.quantity)) * (Math.abs(entry - Number(source.stopLoss)) + entry * limits.estimatedRoundTripCostPct);
+      if (existingLoss + plannedLoss > equity * Math.min(0.005, limits.riskPerTrade) + 1e-8) throw new ForbiddenException('COMBINED_THESIS_RISK_EXCEEDED');
+    }
+    const retained = positions.filter((position) => position.symbol !== assessment.symbol || confirmed);
+    if (retained.filter((position) => position.symbol !== assessment.symbol).length >= limits.maxPositions) {
       throw new ForbiddenException(
         "Exchange preflight failed: maximum open positions exceeded",
       );

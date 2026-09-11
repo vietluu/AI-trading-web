@@ -1,4 +1,4 @@
-import type { DecisionOutput } from "@platform/shared";
+import type { DecisionOutput, TradeThesis, AnticipatoryMarketSnapshot, StructuredTrigger } from "@platform/shared";
 import { adaptiveTradingPolicy } from "../../pipeline/domain/adaptive-trading-policy";
 
 export type TradePlanRegime =
@@ -19,7 +19,25 @@ export type TradePlanStrategy =
   | "SQUEEZE_BREAKOUT"
   | "LEGACY_FALLBACK";
 
+export interface ProactiveExecutionContext {
+  thesisId: string;
+  parentThesisId?: string;
+  thesis: TradeThesis;
+  snapshot: AnticipatoryMarketSnapshot;
+  mode: 'OBSERVE' | 'SHADOW' | 'DEMO';
+  sizeFactor: number;
+}
+
+export interface StoredProbe {
+  stage: 'PROBE' | 'CONFIRMED';
+  thesisId: string;
+  setup: string;
+  trigger: StructuredTrigger[];
+  sourceDataCutoff: string;
+}
+
 export interface TradePlanMarketContext {
+  proactive?: ProactiveExecutionContext;
   atr?: number;
   rsi?: number;
   support?: number;
@@ -36,10 +54,14 @@ export interface TradePlanMarketContext {
   candleLow?: number;
   candleClose?: number;
   volumeRatio?: number;
+  currentPrice?: number;
+  liquiditySweep?: boolean;
+  derivativesImbalance?: number;
+  gateSeverity?: "APPROVE" | "REDUCE_SIZE" | "BLOCK";
   squeezeState?: {
     isSqueezing: boolean;
     breakoutProbability: number;
-    breakoutBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    momentumDirection: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
     consecutiveSqueezeBars: number;
   };
 }
@@ -69,9 +91,18 @@ export interface TradePlan {
   limitEntryPrice?: number;
   orderType?: "MARKET" | "LIMIT";
   limitTtlCandles?: number;
+  timeInForce?: 'IOC';
+  expiresAt?: string;
+  targets?: TradeThesis['targets'];
   isLiquiditySweep?: boolean;
   tp1Price?: number;
   tp2Price?: number;
+  stagedEntry?: StoredProbe & {
+    stage: "PROBE" | "CONFIRMED";
+    probeSizePct: number;
+    confirmationSizePct: number;
+    combinedRiskLimitPct: number;
+  };
 }
 
 const finitePositive = (value: number | undefined): value is number =>
@@ -640,6 +671,68 @@ function _buildAdaptiveTradePlan(input: {
 }
 
 export function buildAdaptiveTradePlan(input: Parameters<typeof _buildAdaptiveTradePlan>[0]): TradePlan {
+  const proactive = input.market.proactive;
+  if (proactive) {
+    const thesis = proactive.thesis;
+    const entry = thesis.entryZone;
+    const regime = resolveTradePlanRegime(input.decision, input.market);
+    const strategy: TradePlanStrategy = thesis.setup === 'SQUEEZE_PROBE' ? 'SQUEEZE_BREAKOUT'
+      : thesis.setup === 'NO_TRADE' ? 'LEGACY_FALLBACK' : thesis.setup;
+    if (!entry || thesis.stopLoss === null || !['PROBE_READY', 'CONFIRMED'].includes(thesis.state)) {
+      return { approved: false, reason: 'THESIS_NOT_EXECUTABLE', regime, strategy, maxHoldingCandles: 8, breakEvenAtR: 1 };
+    }
+    const reject = (reason: string): TradePlan => ({ approved: false, reason, regime, strategy, maxHoldingCandles: 8, breakEvenAtR: 1, targets: thesis.targets });
+    const snapshot = proactive.snapshot;
+    const structure = snapshot.structure.coverage === 'AVAILABLE' ? snapshot.structure : undefined;
+    const volatility = snapshot.volatility.coverage === 'AVAILABLE' ? snapshot.volatility : undefined;
+    const boundary = structure?.rangeBoundaries;
+    if (thesis.setup === 'RANGE_REVERSAL') {
+      if (!boundary || !Number.isFinite(boundary.upper) || !Number.isFinite(boundary.lower) || boundary.upper <= boundary.lower) {
+        return reject('THESIS_RANGE_BOUNDARY_REQUIRED');
+      }
+      if (input.entryPrice < boundary.lower || input.entryPrice > boundary.upper) {
+        return reject('THESIS_RANGE_DIRECTION_INVALID');
+      }
+      const location = (input.entryPrice - boundary.lower) / (boundary.upper - boundary.lower);
+      if (location > 0.3 && location < 0.7) return reject('RANGE_MIDPOINT_ENTRY_BLOCKED');
+      if (thesis.direction === 'LONG' ? location > 0.3 : location < 0.7) return reject('THESIS_RANGE_DIRECTION_INVALID');
+    }
+    const fresh = (field: { freshness: string; sourceTimestamp: string; freshnessThresholdMs: number }) => field.freshness === 'FRESH' &&
+      Date.parse(snapshot.sourceDataCutoff) - Date.parse(field.sourceTimestamp) <= field.freshnessThresholdMs;
+    const sweep = structure?.liquiditySweep.coverage === 'AVAILABLE' ? structure.liquiditySweep : undefined;
+    const alignedSweep = sweep && fresh(sweep) && sweep.detected && sweep.reclaimed && sweep.sweepZone &&
+      sweep.direction === (thesis.direction === 'LONG' ? 'BULLISH_SWEEP' : 'BEARISH_SWEEP');
+    if (thesis.setup === 'LIQUIDITY_SWEEP_REVERSAL' && !alignedSweep) return reject('THESIS_SWEEP_EVIDENCE_REQUIRED');
+    if (thesis.setup === 'SQUEEZE_PROBE') {
+      if (!volatility || !fresh(volatility) || volatility.squeezeState !== 'SQUEEZING' || volatility.squeezeDurationCandles < 3) return reject('THESIS_COMPRESSION_REQUIRED');
+      const structureAligned = structure?.invalidationCandidates.some((candidate) => candidate.direction === thesis.direction &&
+        (thesis.direction === 'LONG' ? candidate.price < entry.lower : candidate.price > entry.upper));
+      const participation = snapshot.participation.coverage === 'AVAILABLE' ? snapshot.participation : undefined;
+      const book = participation?.orderBook.coverage === 'AVAILABLE' ? participation.orderBook : undefined;
+      const participationAligned = book && fresh(book) && (thesis.direction === 'LONG' ? book.imbalance >= 0.2 : book.imbalance <= -0.2);
+      const derivatives = snapshot.derivatives.coverage === 'AVAILABLE' && snapshot.derivatives.derivativesImbalance.coverage === 'AVAILABLE' ? snapshot.derivatives.derivativesImbalance : undefined;
+      const derivativesAligned = derivatives && fresh(derivatives) && derivatives.squeezeProbability >= 65 &&
+        derivatives.squeezeDirection === (thesis.direction === 'LONG' ? 'SHORT_SQUEEZE' : 'LONG_SQUEEZE');
+      if ([structureAligned, participationAligned, derivativesAligned].filter(Boolean).length < 2) return reject('THESIS_DIRECTIONAL_EVIDENCE_REQUIRED');
+    }
+    // Native protection currently implements one full-position TP. Preserve and reject unsupported fractions.
+    if (thesis.targets.length !== 1 || thesis.targets[0]?.fraction !== 1) return reject('THESIS_MULTI_TARGET_EXECUTION_UNSUPPORTED');
+    const timeframeMs = input.market.timeframeMs ?? 15 * 60_000;
+    const expiresAt = new Date(Math.min(Date.parse(thesis.expiresAt), Date.parse(snapshot.sourceDataCutoff) + timeframeMs)).toISOString();
+    const probeSizePct = 0.25;
+    return {
+      approved: true, regime, strategy, stopLoss: thesis.stopLoss,
+      takeProfit: thesis.targets[0].price, targets: thesis.targets,
+      maxHoldingCandles: 8, breakEvenAtR: 1, atr: input.market.atr,
+      timeframeMs: input.market.timeframeMs,
+      timeInForce: 'IOC', expiresAt,
+      orderType: 'LIMIT', limitEntryPrice: Math.min(entry.upper, Math.max(entry.lower, input.entryPrice)), limitTtlCandles: 1,
+      stagedEntry: { stage: thesis.state === 'CONFIRMED' ? 'CONFIRMED' : 'PROBE', thesisId: proactive.thesisId,
+        setup: thesis.setup, trigger: thesis.trigger, sourceDataCutoff: proactive.snapshot.sourceDataCutoff,
+        probeSizePct, confirmationSizePct: 1 - probeSizePct, combinedRiskLimitPct: 0.005 },
+    };
+  }
+
   const plan = _buildAdaptiveTradePlan(input);
   if (!plan.approved) return plan;
 
@@ -680,5 +773,7 @@ export function buildAdaptiveTradePlan(input: Parameters<typeof _buildAdaptiveTr
   if (input.useLimitlessTrailing) {
     plan.takeProfit = undefined;
   }
+
+
   return plan;
 }

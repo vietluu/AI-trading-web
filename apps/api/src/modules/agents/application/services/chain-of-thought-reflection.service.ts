@@ -1,29 +1,14 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AIOrchestratorService } from '../../../ai/application/ai-orchestrator.service';
+import { AnticipatoryMarketSnapshot, TradeThesis, ThesisReview, ThesisReviewSchema, type DecisionOutput } from '@platform/shared';
 
-export interface ReflectionInput {
-  symbol: string;
-  candidateDecision: 'LONG' | 'SHORT' | 'WAIT';
-  confidence: number;
-  regime: string;
-  anticipatorySignals?: {
-    squeeze?: { active: boolean; breakoutProbability: number; breakoutBias: string };
-    liquiditySweep?: { detected: boolean; direction: string | null; confidence: number };
-    derivativesImbalance?: { squeezeProbability: number; squeezeDirection: string };
-  };
-  agentSummaries: Record<string, string>;
-  recentLosses?: Array<{ symbol: string; reason: string; regime: string }>;
-  scenarioBlueprint?: { primary: string; contingency: string; invalidation: string };
-}
-
-export interface ReflectionOutput {
-  adjustedDecision: 'LONG' | 'SHORT' | 'WAIT';
-  adjustedConfidence: number;
-  reasoning: string;
-  contrarianArguments: string[];
-  trapProbability: number;  // 0-100
-  overrideReason?: string;
+export interface CriticInput {
+  snapshot: AnticipatoryMarketSnapshot;
+  thesis: TradeThesis;
+  scenarios?: DecisionOutput['scenarios'];
+  cohortEvidence?: DecisionOutput['confidenceCalibration'];
+  recentLosses?: string[];
 }
 
 @Injectable()
@@ -35,13 +20,13 @@ export class ChainOfThoughtReflectionService {
     @Optional() private readonly configService?: ConfigService,
   ) {}
 
-  async reflect(input: ReflectionInput, userId?: string): Promise<ReflectionOutput> {
+  async reflect(input: CriticInput, userId?: string): Promise<ThesisReview> {
     const enabled = this.configService?.get<boolean>('LLM_REFLECTION_ENABLED', true) ?? true;
     const timeoutMs = this.configService?.get<number>('LLM_REFLECTION_TIMEOUT_MS', 8000) ?? 8000;
 
     // If disabled or WAIT decision, skip reflection
-    if (!enabled || input.candidateDecision === 'WAIT' || !this.aiOrchestrator) {
-      return this.passthrough(input);
+    if (!enabled || input.thesis.direction === 'WAIT' || !this.aiOrchestrator) {
+      return this.passthrough();
     }
 
     try {
@@ -63,144 +48,133 @@ export class ChainOfThoughtReflectionService {
           model,
           provider,
           responseFormat: 'json',
-          temperature: 0.3,
+          jsonSchema: {
+            type: 'object',
+            properties: {
+              action: { type: 'string', enum: ['APPROVE', 'REDUCE_SIZE', 'REQUIRE_TRIGGER', 'CANCEL'] },
+              sizeFactor: { type: 'number' },
+              reasonCodes: { type: 'array', items: { type: 'string' } },
+              evidenceRefs: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    snapshotField: { type: 'string' },
+                    source: { type: 'string' },
+                    sourceTimestamp: { type: 'string' },
+                    calculationVersion: { type: 'number' }
+                  },
+                  required: ['snapshotField', 'source', 'sourceTimestamp', 'calculationVersion']
+                }
+              },
+              rationale: { type: 'string' }
+            },
+            required: ['action', 'reasonCodes', 'evidenceRefs', 'rationale']
+          },
+          temperature: 0.2,
           maxTokens: 800,
-          correlationId: `reflection-${input.symbol}-${Date.now()}`,
+          correlationId: `reflection-${input.snapshot.symbol}-${Date.now()}`,
         });
 
         clearTimeout(timer);
         const rawText = response.text || (response.json ? JSON.stringify(response.json) : '');
-        return this.parseResponse(rawText, input);
+        return this.parseResponse(rawText);
       } finally {
         clearTimeout(timer);
       }
     } catch (error) {
       this.logger.warn({
         event: 'reflection_failed',
-        symbol: input.symbol,
+        symbol: input.snapshot.symbol,
         error: error instanceof Error ? error.message : String(error),
       });
-      return this.passthrough(input);
+      return {
+        action: 'REQUIRE_TRIGGER',
+        reasonCodes: ['CRITIC_TIMEOUT'],
+        evidenceRefs: [],
+        rationale: 'Reflection network or provider error. Safely falling back to REQUIRE_TRIGGER.'
+      };
     }
   }
 
-  private passthrough(input: ReflectionInput): ReflectionOutput {
+  private passthrough(): ThesisReview {
     return {
-      adjustedDecision: input.candidateDecision,
-      adjustedConfidence: input.confidence,
-      reasoning: 'Reflection skipped — passthrough mode.',
-      contrarianArguments: [],
-      trapProbability: 0,
+      action: 'APPROVE',
+      reasonCodes: [],
+      evidenceRefs: [],
+      rationale: 'Reflection skipped — passthrough mode.',
     };
   }
 
   private systemPrompt(): string {
-    return `You are a senior crypto trading risk analyst performing a final review of a trading decision.
-Your job is to think critically and challenge the decision BEFORE it is executed.
+    return `You are a senior crypto trading risk analyst (Critic) reviewing a proposed TradeThesis.
+Your job is to think critically and challenge the thesis BEFORE it is executed.
 You must be skeptical, contrarian, and thorough.
 
-IMPORTANT: You are the last line of defense against bad trades. Be honest, not supportive.
+CRUCIAL CONSTRAINT: You cannot reverse direction (e.g. LONG to SHORT). A contrary opinion becomes a REDUCE_SIZE, REQUIRE_TRIGGER, or CANCEL action.
 
-Respond in JSON format with this exact structure:
+Respond in JSON format matching this schema:
 {
-  "adjustedDecision": "LONG" | "SHORT" | "WAIT",
-  "adjustedConfidence": <number 0-100>,
-  "reasoning": "<your chain-of-thought analysis>",
-  "contrarianArguments": ["<reason 1 NOT to take this trade>", "<reason 2>", "<reason 3>"],
-  "trapProbability": <number 0-100>,
-  "overrideReason": "<if you changed the decision, explain why>" or null
+  "action": "APPROVE" | "REDUCE_SIZE" | "REQUIRE_TRIGGER" | "CANCEL",
+  "sizeFactor": <number between 0 and 1, only if REDUCE_SIZE>,
+  "reasonCodes": ["<code1>", "<code2>"],
+  "evidenceRefs": [],
+  "rationale": "<concise reasoning>"
 }`;
   }
 
-  private buildPrompt(input: ReflectionInput): string {
-    const parts: string[] = [
-      `## Trading Decision Under Review`,
-      `- Symbol: ${input.symbol}`,
-      `- Candidate Decision: ${input.candidateDecision}`,
-      `- Confidence: ${input.confidence}%`,
-      `- Market Regime: ${input.regime}`,
-    ];
+  private buildPrompt(input: CriticInput): string {
+    const marketContext = input.snapshot;
 
-    if (input.anticipatorySignals) {
-      parts.push(`\n## Anticipatory Signals`);
-      if (input.anticipatorySignals.squeeze) {
-        const s = input.anticipatorySignals.squeeze;
-        parts.push(`- Squeeze: ${s.active ? 'ACTIVE' : 'Inactive'} (breakout prob: ${s.breakoutProbability}%, bias: ${s.breakoutBias})`);
-      }
-      if (input.anticipatorySignals.liquiditySweep) {
-        const l = input.anticipatorySignals.liquiditySweep;
-        parts.push(`- Liquidity Sweep: ${l.detected ? 'DETECTED' : 'None'} (direction: ${l.direction ?? 'None'}, confidence: ${l.confidence}%)`);
-      }
-      if (input.anticipatorySignals.derivativesImbalance) {
-        const d = input.anticipatorySignals.derivativesImbalance;
-        parts.push(`- Derivatives: squeeze prob ${d.squeezeProbability}%, direction: ${d.squeezeDirection}`);
-      }
-    }
+    return `## Snapshot Context
+Symbol: ${input.snapshot.symbol}
+Timeframe: ${input.snapshot.timeframe}
 
-    parts.push(`\n## Agent Summaries`);
-    for (const [agent, summary] of Object.entries(input.agentSummaries)) {
-      parts.push(`- ${agent}: ${summary}`);
-    }
+## Market Context
+${JSON.stringify(marketContext, null, 2)}
 
-    if (input.recentLosses && input.recentLosses.length > 0) {
-      parts.push(`\n## Recent Losses (WARNING: Pattern may be repeating)`);
-      for (const loss of input.recentLosses.slice(0, 5)) {
-        parts.push(`- ${loss.symbol} in ${loss.regime}: ${loss.reason}`);
-      }
-    }
+## Scenarios and Cohort Evidence
+${JSON.stringify({ scenarios: input.scenarios, cohortEvidence: input.cohortEvidence, recentLosses: input.recentLosses })}
 
-    if (input.scenarioBlueprint) {
-      parts.push(`\n## Scenario Blueprint`);
-      parts.push(`- Primary: ${input.scenarioBlueprint.primary}`);
-      parts.push(`- Contingency: ${input.scenarioBlueprint.contingency}`);
-      parts.push(`- Invalidation: ${input.scenarioBlueprint.invalidation}`);
-    }
+## Proposed Thesis
+${JSON.stringify(input.thesis, null, 2)}
 
-    parts.push(`\n## Your Task`);
-    parts.push(`1. Analyze whether this ${input.candidateDecision} decision at ${input.confidence}% confidence is sound.`);
-    parts.push(`2. Consider: Is this a bull trap / bear trap? Is the entry timing right or too late?`);
-    parts.push(`3. Provide exactly 3 contrarian arguments against this trade.`);
-    parts.push(`4. Estimate the probability this is a market trap (0-100).`);
-    parts.push(`5. If trap probability > 70% or you see critical flaws, override to WAIT.`);
-    parts.push(`6. If the trade is sound but confidence is too high, adjust confidence down.`);
-
-    return parts.join('\n');
+Analyze this thesis. Identify any traps, late entry, or invalidated setups.
+If you reject, return CANCEL. If it needs confirmation, return REQUIRE_TRIGGER. If size should be reduced due to risk, return REDUCE_SIZE with sizeFactor.`;
   }
 
-  private parseResponse(raw: string, input: ReflectionInput): ReflectionOutput {
+  private parseResponse(raw: string): ThesisReview {
     try {
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) return this.passthrough(input);
+      if (!jsonMatch) {
+        return {
+          action: 'REQUIRE_TRIGGER',
+          reasonCodes: ['CRITIC_NO_JSON'],
+          evidenceRefs: [],
+          rationale: 'Reflection failed to return JSON. Safely falling back to REQUIRE_TRIGGER.'
+        };
+      }
 
-      const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+      const parsed: unknown = JSON.parse(jsonMatch[0]);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('Critic response must be an object');
+      }
+      const response = parsed as Record<string, unknown>;
 
-      const candidateAdj = typeof parsed.adjustedDecision === 'string' ? parsed.adjustedDecision : '';
-      const adjustedDecision: 'LONG' | 'SHORT' | 'WAIT' =
-        candidateAdj === 'LONG' || candidateAdj === 'SHORT' || candidateAdj === 'WAIT'
-          ? candidateAdj
-          : input.candidateDecision;
+      // Strip adjustedDecision if the model hallucinates it
+      if ('adjustedDecision' in response) {
+        delete response.adjustedDecision;
+      }
 
-      const rawConf = typeof parsed.adjustedConfidence === 'number' ? parsed.adjustedConfidence : input.confidence;
-      const adjustedConfidence = Math.max(0, Math.min(100, Math.round(rawConf)));
-
-      const rawTrap = typeof parsed.trapProbability === 'number' ? parsed.trapProbability : 0;
-      const trapProbability = Math.max(0, Math.min(100, Math.round(rawTrap)));
-
-      const contrarianArguments = Array.isArray(parsed.contrarianArguments)
-        ? (parsed.contrarianArguments as unknown[]).filter((a): a is string => typeof a === 'string').slice(0, 5)
-        : [];
-
+      return ThesisReviewSchema.parse(response);
+    } catch (err) {
+      this.logger.warn({ event: 'reflection_parse_failed', raw: raw.slice(0, 200), error: err });
       return {
-        adjustedDecision,
-        adjustedConfidence,
-        reasoning: typeof parsed.reasoning === 'string' ? parsed.reasoning : 'No reasoning provided.',
-        contrarianArguments,
-        trapProbability,
-        overrideReason: typeof parsed.overrideReason === 'string' ? parsed.overrideReason : undefined,
+        action: 'REQUIRE_TRIGGER',
+        reasonCodes: ['CRITIC_PARSE_FAILED'],
+        evidenceRefs: [],
+        rationale: 'Reflection failed to parse properly. Safely falling back to REQUIRE_TRIGGER.'
       };
-    } catch {
-      this.logger.warn({ event: 'reflection_parse_failed', raw: raw.slice(0, 200) });
-      return this.passthrough(input);
     }
   }
 }

@@ -17,6 +17,7 @@ describe('DecisionJudgeService', () => {
     } as never, { symbol: 'ALGO-USDT' });
 
     expect(result.approved).toBe(false);
+    expect(result.severity).toBe('BLOCK');
     expect(result.verdict).toBe('REQUEST_MORE_DATA');
   });
 
@@ -31,6 +32,7 @@ describe('DecisionJudgeService', () => {
     } as never, { symbol: 'ALGO-USDT' });
 
     expect(result).toEqual(expect.objectContaining({ approved: false, verdict: 'REJECT' }));
+    expect(result.severity).toBe('BLOCK');
     expect(result.reasons).toContain('EXPECTED_VALUE_TOO_LOW');
   });
 
@@ -45,7 +47,7 @@ describe('DecisionJudgeService', () => {
       market: good, technical: good, news: good, sentiment: good, macro: good, onchain: good,
     } as never, { symbol: 'ETH-USDT', requireCalibratedConfidence: true });
 
-    expect(result).toEqual({ approved: true, verdict: 'APPROVE', reasons: [] });
+    expect(result).toEqual({ approved: true, verdict: 'APPROVE', reasons: ['VALID_EXACT_EVIDENCE'], severity: 'APPROVE' });
   });
 
   it('does not let a boundary confidence bypass an unreliable global fallback', () => {
@@ -64,6 +66,7 @@ describe('DecisionJudgeService', () => {
     } as never, { symbol: 'ETH-USDT', requireCalibratedConfidence: true });
 
     expect(result.approved).toBe(false);
+    expect(result.severity).toBe('BLOCK');
     expect(result.verdict).toBe('REQUEST_MORE_DATA');
     expect(result.reasons).toContain('UNCALIBRATED_CONFIDENCE_TOO_LOW');
   });
@@ -80,6 +83,7 @@ describe('DecisionJudgeService', () => {
     } as never, { symbol: 'ETH-USDT', requireCalibratedConfidence: true });
 
     expect(result.approved).toBe(false);
+    expect(result.severity).toBe('BLOCK');
     expect(result.verdict).toBe('REQUEST_MORE_DATA');
     expect(result.reasons).toContain('PARTIAL_DATA_UNCALIBRATED');
   });
@@ -99,7 +103,7 @@ describe('DecisionJudgeService', () => {
       onchain: { dataQuality: 'INSUFFICIENT', generatedAt, signals: ['No verified on-chain provider is configured.'] },
     } as never, { symbol: 'SOL-USDT', timeframe: '15m', requireCalibratedConfidence: true });
 
-    expect(result).toEqual({ approved: true, verdict: 'APPROVE', reasons: [] });
+    expect(result).toEqual({ approved: true, verdict: 'APPROVE', reasons: ['VALID_EXACT_EVIDENCE'], severity: 'APPROVE' });
   });
 
   it('requires stronger raw confidence for uncalibrated automatic execution', () => {
@@ -114,6 +118,7 @@ describe('DecisionJudgeService', () => {
     } as never, { symbol: 'ETH-USDT', requireCalibratedConfidence: true });
 
     expect(result.approved).toBe(false);
+    expect(result.severity).toBe('BLOCK');
     expect(result.verdict).toBe('REQUEST_MORE_DATA');
     expect(result.reasons).toContain('UNCALIBRATED_CONFIDENCE_TOO_LOW');
   });
@@ -134,6 +139,7 @@ describe('DecisionJudgeService', () => {
     } as never, { symbol: 'ETH-USDT', requireCalibratedConfidence: true });
 
     expect(result.approved).toBe(false);
+    expect(result.severity).toBe('BLOCK');
     expect(result.verdict).toBe('REQUEST_MORE_DATA');
     expect(result.reasons).toEqual(expect.arrayContaining([
       'CALIBRATED_PROBABILITY_TOO_LOW',
@@ -153,7 +159,7 @@ describe('DecisionJudgeService', () => {
       symbol: 'BTC-USDT', timeframe: '1m', sourceTimestamp: '2026-08-08T11:55:00.000Z',
     }, now);
 
-    expect(result).toEqual(expect.objectContaining({ approved: false, verdict: 'REQUEST_MORE_DATA' }));
+    expect(result).toEqual(expect.objectContaining({ approved: false, verdict: 'REQUEST_MORE_DATA', severity: 'BLOCK' }));
     expect(result.reasons).toContain('STALE_SOURCE_DATA');
   });
 
@@ -211,7 +217,7 @@ describe('DecisionJudgeService', () => {
       sentiment: stale, macro: fresh, onchain: stale,
     } as never, { symbol: 'ETH-USDT', timeframe: '15m' }, now);
 
-    expect(result).toEqual({ approved: true, verdict: 'APPROVE', reasons: [] });
+    expect(result).toEqual({ approved: true, verdict: 'APPROVE', reasons: ['VALID_EXACT_EVIDENCE'], severity: 'APPROVE' });
   });
 
   it('still blocks stale core Market evidence', () => {
@@ -227,6 +233,17 @@ describe('DecisionJudgeService', () => {
     } as never, { symbol: 'ETH-USDT', timeframe: '15m' }, now);
 
     expect(result.approved).toBe(false);
+    expect(result.severity).toBe('BLOCK');
     expect(result.reasons).toContain('STALE_ANALYSIS');
+  });
+});
+
+
+describe('explicit evidence release modes', () => {
+  it.each(['DEMO', 'SHADOW'] as const)('reduces uncertain evidence in %s', (mode) => {
+    const good = { dataQuality: 'GOOD', generatedAt: new Date().toISOString(), trend: { direction: 'UP' } };
+    const result = new DecisionJudgeService().evaluate({ decision: 'LONG', dataQuality: 'PARTIAL', conflictLevel: 'LOW', confidence: 75, expectedValue: 0.8, profitFactorEstimate: 1.8, riskScore: 30 } as never,
+      { market: good, technical: good, news: good, sentiment: good, macro: good, onchain: good } as never, { symbol: 'BTC-USDT', mode, requireCalibratedConfidence: true });
+    expect(result).toMatchObject({ approved: true, severity: 'REDUCE_SIZE', sizeFactor: 0.25 });
   });
 });

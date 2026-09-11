@@ -302,6 +302,7 @@ model RiskAssessment {
   exposurePct    Float
   drawdownPct    Float
   tradePlan      Json?
+  executionAuthorization Json?
   createdAt      DateTime            @default(now())
   user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   strategy       PortfolioStrategy?  @relation(fields: [strategyId], references: [id], onDelete: SetNull)
@@ -410,6 +411,7 @@ model LiveOrder {
   lowestMark              Decimal?           @db.Decimal(24, 8)
   protectiveClientOrderId String?
   tradePlan               Json?
+  stagedEntry             Json?
   partialTakenAt          DateTime?
   errorCode               String?
   errorMessage            String?

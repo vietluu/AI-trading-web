@@ -4,7 +4,7 @@ import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../../database/prisma.service";
 import { ExchangeConnectionService } from "../../../exchange/application/exchange-connection.service";
 import { evaluateRisk, type RiskPosition } from "../domain/risk-engine";
-import type { TradePlanMarketContext } from "../domain/trade-plan-engine";
+import type { TradePlanMarketContext, StoredProbe } from "../domain/trade-plan-engine";
 import { RiskConfigService } from "./risk-config.service";
 
 type Tx = Prisma.TransactionClient;
@@ -27,6 +27,10 @@ export interface AssessRiskInput {
     side?: "LONG" | "SHORT";
     size: Prisma.Decimal;
     markPrice: Prisma.Decimal;
+    entryPrice?: Prisma.Decimal;
+    stopLoss?: Prisma.Decimal;
+    protectionVerified?: boolean;
+    stagedEntry?: StoredProbe;
   }>;
   price: number;
   volatility: number;
@@ -69,7 +73,13 @@ export class RiskManagementService {
           symbol: position.symbol,
           side: position.side,
           size: Number(position.size),
+          stopLoss: position.stopLoss === undefined ? undefined : Number(position.stopLoss),
+          protectionVerified: position.protectionVerified,
+          stagedEntry: position.stagedEntry,
           markPrice: Number(position.markPrice),
+          ...(position.entryPrice !== undefined
+            ? { entryPrice: Number(position.entryPrice) }
+            : {}),
         })),
         marketData: {
           price: input.price,
@@ -103,6 +113,11 @@ export class RiskManagementService {
       ? (evaluation.tradePlan as unknown as Prisma.InputJsonObject)
       : Prisma.JsonNull;
 
+    const proactive = input.tradePlanContext?.proactive;
+    const executionAuthorization = proactive ? {
+      kind: 'PROACTIVE', mode: proactive.mode, requiredEnvironment: 'DEMO', connectionId: sanitizedConnectionId,
+      thesisId: proactive.thesisId, thesis: proactive.thesis, snapshot: proactive.snapshot,
+    } as unknown as Prisma.InputJsonValue : Prisma.DbNull;
     const row = await tx.riskAssessment.upsert({
       where: { pipelineRunId: input.pipelineRunId },
       update: {
@@ -124,6 +139,7 @@ export class RiskManagementService {
         exposurePct: sanitizedExposurePct,
         drawdownPct: sanitizedDrawdownPct,
         tradePlan,
+        executionAuthorization,
       },
       create: {
         userId: input.userId,
@@ -145,6 +161,7 @@ export class RiskManagementService {
         exposurePct: sanitizedExposurePct,
         drawdownPct: sanitizedDrawdownPct,
         tradePlan,
+        executionAuthorization,
       },
     });
     this.logger.log({

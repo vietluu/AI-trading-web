@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
 import type { AIOrchestratorService } from '../src/modules/ai/application/ai-orchestrator.service';
 import { ChainOfThoughtReflectionService } from '../src/modules/agents/application/services/chain-of-thought-reflection.service';
+import { type AnticipatoryMarketSnapshot, type TradeThesis } from '@platform/shared';
 
 const mockOrchestrator = {
   execute: vi.fn<AIOrchestratorService['execute']>(),
@@ -15,12 +16,7 @@ function aiResponse(text: string) {
     model: 'gemini-3.1-flash-lite',
     text,
     finishReason: 'stop',
-    usage: {
-      promptTokens: 1,
-      completionTokens: 1,
-      totalTokens: 2,
-      estimatedCost: 0,
-    },
+    usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2, estimatedCost: 0 },
   };
 }
 
@@ -36,100 +32,123 @@ const mockConfig = {
 };
 
 function makeService(opts?: { orchestrator?: AIOrchestratorService; config?: ConfigService }) {
-  return new ChainOfThoughtReflectionService(
-    opts?.orchestrator ?? mockOrchestrator as unknown as AIOrchestratorService,
-    opts?.config ?? mockConfig as unknown as ConfigService,
-  );
+  const orch = opts && 'orchestrator' in opts ? opts.orchestrator : (mockOrchestrator as unknown as AIOrchestratorService);
+  const conf = opts && 'config' in opts ? opts.config : (mockConfig as unknown as ConfigService);
+  return new ChainOfThoughtReflectionService(orch, conf);
 }
 
-const baseInput = {
-  symbol: 'BTCUSDT',
-  candidateDecision: 'LONG' as const,
-  confidence: 75,
+const mockSnapshot = {
+  symbol: 'BTC-USDT',
+  timeframe: '15m',
+  structure: { coverage: 'AVAILABLE' }
+} as unknown as AnticipatoryMarketSnapshot;
+
+const mockThesis: TradeThesis = {
+  thesisVersion: 1,
+  decisionSource: 'AI',
+  state: 'PROBE_READY',
+  direction: 'LONG',
   regime: 'TRENDING_BULL',
-  agentSummaries: { market: 'Bullish trend', technical: 'EMA cross up' },
+  transitionProbability: 0.1,
+  setup: 'TREND_PULLBACK',
+  entryZone: { lower: 60000, upper: 61000 },
+  trigger: [],
+  invalidation: { price: 59000, reason: 'Support broke' },
+  stopLoss: 59000,
+  targets: [{ price: 65000, fraction: 1 }],
+  expectedNetR: 2.5,
+  maximumChaseDistanceAtr: 1,
+  confidence: 75,
+  evidenceFor: [],
+  evidenceAgainst: [],
+  missingEvidence: [],
+  expiresAt: new Date().toISOString(),
 };
 
-describe('ChainOfThoughtReflectionService', () => {
-  it('passes through when disabled', async () => {
+describe('ChainOfThoughtReflectionService as Critic', () => {
+  it('returns APPROVE passthrough when disabled', async () => {
     const service = makeService({
       config: {
-        get: (key: string, defaultValue?: unknown) =>
-          key === 'LLM_REFLECTION_ENABLED' ? false : defaultValue,
+        get: (key: string, defaultValue?: unknown) => key === 'LLM_REFLECTION_ENABLED' ? false : defaultValue,
       } as unknown as ConfigService,
     });
-    const result = await service.reflect(baseInput);
-    expect(result.adjustedDecision).toBe('LONG');
-    expect(result.reasoning).toContain('passthrough');
+    const result = await service.reflect({ snapshot: mockSnapshot, thesis: mockThesis });
+    expect(result.action).toBe('APPROVE');
+    expect(result.rationale).toContain('passthrough');
+    expect(result).not.toHaveProperty('adjustedDecision');
   });
 
-  it('passes through for WAIT decision', async () => {
-    const service = makeService();
-    const result = await service.reflect({ ...baseInput, candidateDecision: 'WAIT' });
-    expect(result.adjustedDecision).toBe('WAIT');
-    expect(result.reasoning).toContain('passthrough');
-  });
-
-  it('passes through when no orchestrator', async () => {
-    const service = new ChainOfThoughtReflectionService(
-      undefined,
-      mockConfig as unknown as ConfigService,
-    );
-    const result = await service.reflect(baseInput);
-    expect(result.adjustedDecision).toBe('LONG');
-  });
-
-  it('builds prompt correctly', async () => {
+  it('builds prompt containing scenario/thesis geometry', async () => {
     const service = makeService();
     mockOrchestrator.execute.mockResolvedValueOnce(aiResponse(JSON.stringify({
-        adjustedDecision: 'LONG',
-        adjustedConfidence: 75,
-        reasoning: 'Good trade',
-        contrarianArguments: ['Too high', 'RSI overbought', 'Fed meeting'],
-        trapProbability: 10,
-      })));
-    await service.reflect(baseInput);
+      action: 'APPROVE',
+      reasonCodes: [],
+      evidenceRefs: [],
+      rationale: 'Looks good'
+    })));
+    await service.reflect({ snapshot: mockSnapshot, thesis: mockThesis });
     expect(mockOrchestrator.execute).toHaveBeenCalled();
     const args = mockOrchestrator.execute.mock.calls[0]![0];
-    expect(args.userPrompt).toContain('BTCUSDT');
-    expect(args.userPrompt).toContain('Bullish trend');
+    expect(args.userPrompt).toContain('BTC-USDT');
+    expect(args.userPrompt).toContain('60000');
+    expect(args.userPrompt).toContain('59000');
   });
 
-  it('parses valid json response', async () => {
+  it('parses contrary opinion without reversing direction', async () => {
     const service = makeService();
     mockOrchestrator.execute.mockResolvedValueOnce(aiResponse(JSON.stringify({
-        adjustedDecision: 'SHORT',
-        adjustedConfidence: 60,
-        reasoning: 'Looks bearish actually',
-        contrarianArguments: ['A', 'B', 'C'],
-        trapProbability: 40,
-        overrideReason: 'Found a trap',
-      })));
-    const result = await service.reflect(baseInput);
-    expect(result.adjustedDecision).toBe('SHORT');
-    expect(result.adjustedConfidence).toBe(60);
-    expect(result.trapProbability).toBe(40);
-    expect(result.overrideReason).toBe('Found a trap');
+      action: 'CANCEL',
+      reasonCodes: ['TRAP_DETECTED'],
+      evidenceRefs: [],
+      rationale: 'Looks like a bear trap'
+    })));
+    const result = await service.reflect({ snapshot: mockSnapshot, thesis: mockThesis });
+    expect(result.action).toBe('CANCEL');
+    expect(result).not.toHaveProperty('adjustedDecision');
   });
-
-  it('falls back to passthrough on invalid json', async () => {
-    const service = makeService();
-    mockOrchestrator.execute.mockResolvedValueOnce(aiResponse('this is not json'));
-    const result = await service.reflect(baseInput);
-    expect(result.adjustedDecision).toBe('LONG');
-    expect(result.reasoning).toContain('passthrough');
-  });
-
-  it('adjusts decision to WAIT if trapProbability > 70 is handled by decision service, but here we just parse it', async () => {
+  
+  it('cannot output adjustedDecision', async () => {
     const service = makeService();
     mockOrchestrator.execute.mockResolvedValueOnce(aiResponse(JSON.stringify({
-        adjustedDecision: 'LONG',
-        adjustedConfidence: 75,
-        reasoning: 'Test',
-        contrarianArguments: [],
-        trapProbability: 80,
-      })));
-    const result = await service.reflect(baseInput);
-    expect(result.trapProbability).toBe(80);
+      action: 'CANCEL',
+      adjustedDecision: 'SHORT',
+      reasonCodes: [],
+      evidenceRefs: [],
+      rationale: 'I want to short'
+    })));
+    const result = await service.reflect({ snapshot: mockSnapshot, thesis: mockThesis });
+    expect(result.action).toBe('CANCEL');
+    expect(result).not.toHaveProperty('adjustedDecision');
+  });
+
+  it('safely falls back to REQUIRE_TRIGGER when AI returns malformed JSON', async () => {
+    const service = makeService();
+    mockOrchestrator.execute.mockResolvedValueOnce(aiResponse('Here is my thought: { action: "CANCEL", invalidJson: true }'));
+    const result = await service.reflect({ snapshot: mockSnapshot, thesis: mockThesis });
+    expect(result.action).toBe('REQUIRE_TRIGGER');
+    expect(result.reasonCodes).toContain('CRITIC_PARSE_FAILED');
+  });
+
+  it('safely falls back to REQUIRE_TRIGGER when AI returns no JSON', async () => {
+    const service = makeService();
+    mockOrchestrator.execute.mockResolvedValueOnce(aiResponse('I agree with the thesis, approve it.'));
+    const result = await service.reflect({ snapshot: mockSnapshot, thesis: mockThesis });
+    expect(result.action).toBe('REQUIRE_TRIGGER');
+    expect(result.reasonCodes).toContain('CRITIC_NO_JSON');
+  });
+
+  it('returns APPROVE passthrough if orchestrator is not injected', async () => {
+    const service = makeService({ orchestrator: undefined });
+    const result = await service.reflect({ snapshot: mockSnapshot, thesis: mockThesis });
+    expect(result.action).toBe('APPROVE');
+    expect(result.rationale).toContain('passthrough');
+  });
+
+  it('returns APPROVE passthrough if thesis is WAIT', async () => {
+    const service = makeService();
+    const waitThesis = { ...mockThesis, direction: 'WAIT' } as TradeThesis;
+    const result = await service.reflect({ snapshot: mockSnapshot, thesis: waitThesis });
+    expect(result.action).toBe('APPROVE');
+    expect(result.rationale).toContain('passthrough');
   });
 });

@@ -616,6 +616,7 @@ export const DecisionOutputSchema = z
     adaptiveThreshold: z.number().min(0).max(100),
     calibrationAdjustment: z.number(),
     executionCost: z.number().min(0),
+    decisionSource: z.enum(['AI', 'RULES', 'AI_WITH_RULES_FALLBACK']).optional(),
     scenarios: z.array(TradingScenarioSchema).optional(),
     regimeDetailed: DetailedRegimeTypeSchema.optional(),
     anticipatorySignals: z.object({
@@ -1038,7 +1039,7 @@ function validateEvidenceTree(
   }
 }
 
-function resolveSnapshotPath(snapshot: unknown, path: string): boolean {
+export function resolveSnapshotPath(snapshot: unknown, path: string): boolean {
   const segments = path.split('.');
   if (segments.length === 0 || segments.some((segment) => segment.length === 0)) {
     return false;
@@ -1046,12 +1047,14 @@ function resolveSnapshotPath(snapshot: unknown, path: string): boolean {
 
   let current: unknown = snapshot;
   for (const segment of segments) {
-    const match = /^([A-Za-z_][A-Za-z0-9_]*)(.*)$/u.exec(segment);
-    if (match === null) return false;
+    const bracketIndex = segment.indexOf('[');
+    const property = bracketIndex === -1 ? segment : segment.slice(0, bracketIndex);
+    const indexSuffix = bracketIndex === -1 ? '' : segment.slice(bracketIndex);
 
-    const property = match[1];
-    const indexSuffix = match[2];
-    if (property === undefined || indexSuffix === undefined) return false;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(property)) {
+      return false;
+    }
+
     if (
       current === null ||
       typeof current !== 'object' ||
@@ -1061,18 +1064,20 @@ function resolveSnapshotPath(snapshot: unknown, path: string): boolean {
     }
     current = (current as Record<string, unknown>)[property];
 
-    const indexPattern = /\[(\d+)\]/gu;
-    let consumed = '';
-    for (const indexMatch of indexSuffix.matchAll(indexPattern)) {
-      consumed += indexMatch[0];
-      if (!Array.isArray(current)) return false;
-      const index = Number(indexMatch[1]);
-      if (!Number.isInteger(index) || index < 0 || index >= current.length) {
+    if (indexSuffix.length > 0) {
+      if (!/^(\[\d+\])+$/u.test(indexSuffix)) {
         return false;
       }
-      current = current[index];
+      const indexPattern = /\[(\d+)\]/gu;
+      for (const indexMatch of indexSuffix.matchAll(indexPattern)) {
+        if (!Array.isArray(current)) return false;
+        const index = Number(indexMatch[1]);
+        if (!Number.isInteger(index) || index < 0 || index >= current.length) {
+          return false;
+        }
+        current = current[index];
+      }
     }
-    if (consumed !== indexSuffix) return false;
   }
 
   return current !== undefined;
@@ -1189,3 +1194,134 @@ export const AnticipatoryMarketSnapshotSchema = z
 export type AnticipatoryMarketSnapshot = z.infer<
   typeof AnticipatoryMarketSnapshotSchema
 >;
+
+export const TradeThesisDecisionSourceSchema = z.enum([
+  'AI',
+  'RULES',
+  'AI_WITH_RULES_FALLBACK',
+]);
+export type TradeThesisDecisionSource = z.infer<
+  typeof TradeThesisDecisionSourceSchema
+>;
+
+export const TradeThesisStateSchema = z.enum([
+  'WATCHING',
+  'PROBE_READY',
+  'CONFIRMED',
+  'TOO_LATE',
+  'WAIT',
+]);
+export type TradeThesisState = z.infer<typeof TradeThesisStateSchema>;
+
+export const TradeThesisSetupSchema = z.enum([
+  'RANGE_REVERSAL',
+  'LIQUIDITY_SWEEP_REVERSAL',
+  'SQUEEZE_PROBE',
+  'BREAKOUT_RETEST',
+  'TREND_PULLBACK',
+  'NO_TRADE',
+]);
+export type TradeThesisSetup = z.infer<typeof TradeThesisSetupSchema>;
+
+export const StructuredTriggerSchema = z
+  .object({
+    type: z.string().min(1),
+    price: z.number().nullable(),
+    description: z.string().min(1),
+  })
+  .strict();
+export type StructuredTrigger = z.infer<typeof StructuredTriggerSchema>;
+
+export const StructuredInvalidationSchema = z
+  .object({
+    price: z.number(),
+    reason: z.string().min(1),
+  })
+  .strict();
+export type StructuredInvalidation = z.infer<
+  typeof StructuredInvalidationSchema
+>;
+
+export const StructuredTargetSchema = z
+  .object({
+    price: z.number(),
+    fraction: z.number().min(0).max(1),
+  })
+  .strict();
+export type StructuredTarget = z.infer<typeof StructuredTargetSchema>;
+
+export const TradeThesisEntryZoneSchema = z
+  .object({
+    lower: z.number(),
+    upper: z.number(),
+  })
+  .strict();
+export type TradeThesisEntryZone = z.infer<typeof TradeThesisEntryZoneSchema>;
+
+export const TradeThesisSchema = z
+  .object({
+    thesisVersion: z.number().int().positive(),
+    decisionSource: TradeThesisDecisionSourceSchema,
+    state: TradeThesisStateSchema,
+    direction: z.enum(['LONG', 'SHORT', 'WAIT']),
+    regime: z.string().min(1),
+    transitionProbability: z.number().min(0).max(1),
+    setup: TradeThesisSetupSchema,
+    entryZone: TradeThesisEntryZoneSchema.nullable(),
+    trigger: z.array(StructuredTriggerSchema),
+    invalidation: StructuredInvalidationSchema.nullable(),
+    stopLoss: z.number().nullable(),
+    targets: z.array(StructuredTargetSchema),
+    expectedNetR: z.number().nullable(),
+    maximumChaseDistanceAtr: z.number().nonnegative(),
+    confidence: z.number().min(0).max(100),
+    evidenceFor: z.array(EvidenceRefSchema),
+    evidenceAgainst: z.array(EvidenceRefSchema),
+    missingEvidence: z.array(z.string()),
+    expiresAt: z.string().datetime(),
+  })
+  .strict();
+export type TradeThesis = z.infer<typeof TradeThesisSchema>;
+
+export const ThesisValidationReasonCodeSchema = z.enum([
+  'THESIS_STALE',
+  'EVIDENCE_REF_INVALID',
+  'GEOMETRY_INVALID',
+  'NET_R_TOO_LOW',
+  'ENTRY_TOO_LATE',
+  'PROTECTION_REQUIRED',
+]);
+export type ThesisValidationReasonCode = z.infer<
+  typeof ThesisValidationReasonCodeSchema
+>;
+
+export const ThesisValidationResultSchema = z
+  .object({
+    valid: z.boolean(),
+    status: z.enum(['VALID', 'INVALID']),
+    reasonCodes: z.array(ThesisValidationReasonCodeSchema),
+    reasons: z.array(z.string()),
+  })
+  .strict();
+export type ThesisValidationResult = z.infer<
+  typeof ThesisValidationResultSchema
+>;
+
+export const ThesisReviewActionSchema = z.enum([
+  'APPROVE',
+  'REDUCE_SIZE',
+  'REQUIRE_TRIGGER',
+  'CANCEL',
+]);
+export type ThesisReviewAction = z.infer<typeof ThesisReviewActionSchema>;
+
+export const ThesisReviewSchema = z
+  .object({
+    action: ThesisReviewActionSchema,
+    sizeFactor: z.number().min(0).max(1).optional(),
+    reasonCodes: z.array(z.string()),
+    evidenceRefs: z.array(EvidenceRefSchema),
+    rationale: z.string(),
+  })
+  .strict();
+export type ThesisReview = z.infer<typeof ThesisReviewSchema>;

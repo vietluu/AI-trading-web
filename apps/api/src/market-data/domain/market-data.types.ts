@@ -256,6 +256,8 @@ export interface IndicatorSnapshot {
     rollingHigh?: string;
     rollingLow?: string;
     volatility?: string;
+    squeezeState?: { isSqueezing: boolean; squeezeIntensity: number; atrPercentile: number; consecutiveSqueezeBars: number; momentumDirection: "BULLISH" | "BEARISH" | "NEUTRAL"; breakoutProbability: number; };
+    keltnerChannels?: { upper: number; middle: number; lower: number; };
   };
   calculatedAt: Date;
   calculationVersion: number;

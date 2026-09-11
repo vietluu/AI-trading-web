@@ -1125,7 +1125,7 @@ function buildExecutionEvidence(params: {
       freshnessThresholdMs:
         execution.freshnessThresholdMs ?? params.freshnessThresholdMs,
       calculationVersion: params.calculationVersion,
-      snapshotFields: ['execution.currentPrice', 'execution.priceTooFarFromCandidateZones'],
+      snapshotFields: ['execution.currentPrice', 'execution.spread', 'execution.estimatedRoundTripCost', 'execution.tickSize', 'execution.lotSize', 'execution.currentExposure', 'execution.priceTooFarFromCandidateZones'],
       source: execution.source ?? params.input.provider,
     }),
     currentPrice,

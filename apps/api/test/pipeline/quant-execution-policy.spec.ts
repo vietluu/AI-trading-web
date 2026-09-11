@@ -23,7 +23,7 @@ function service(validation: Record<string, unknown> | null, regime: Record<stri
   return { policy: new QuantExecutionPolicyService({
     researchValidationRun: { findFirst },
     marketRegimeState: { findFirst: vi.fn().mockResolvedValue(regime) },
-  } as never), findFirst };
+  } as never, { getUserLimits: () => Promise.resolve({ maxLeverage: 1, riskPerTrade: 0.02, riskRewardRatio: 1.5 }) } as never), findFirst };
 }
 
 function serviceWithLimits(validation: Record<string, unknown>, limits: Record<string, number>) {
@@ -53,8 +53,9 @@ describe("QuantExecutionPolicyService", () => {
   };
 
   it("fails closed when exact validation is missing", async () => {
-    await expect(service(null).policy.evaluate(input)).resolves.toEqual({
+    await expect(service(null).policy.evaluate(input)).resolves.toMatchObject({
       allowed: false,
+      severity: 'BLOCK',
       evaluated: false,
       reason: "QUANT_VALIDATION_MISSING",
     });
@@ -73,10 +74,11 @@ describe("QuantExecutionPolicyService", () => {
       primaryRsi: 68.06,
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       allowed: true,
       evaluated: false,
       advisory: true,
+      severity: 'REDUCE_SIZE',
       reason: "QUANT_VALIDATION_MISSING",
       sizeFactor: 0.25,
     });
@@ -96,8 +98,10 @@ describe("QuantExecutionPolicyService", () => {
       primaryRsi: 82,
     });
 
-    expect(highVolatility).toMatchObject({ allowed: false, reason: "QUANT_VALIDATION_MISSING" });
-    expect(overbought).toMatchObject({ allowed: false, reason: "QUANT_VALIDATION_MISSING" });
+    expect(highVolatility).toMatchObject({ allowed: false,
+      severity: 'BLOCK', reason: "QUANT_VALIDATION_MISSING" });
+    expect(overbought).toMatchObject({ allowed: false,
+      severity: 'BLOCK', reason: "QUANT_VALIDATION_MISSING" });
   });
 
   it("allows a smaller event canary for a corroborated high-impact event at 72 confidence", async () => {
@@ -113,6 +117,7 @@ describe("QuantExecutionPolicyService", () => {
     expect(result).toMatchObject({
       allowed: true,
       advisory: true,
+      severity: 'REDUCE_SIZE',
       reason: "QUANT_VALIDATION_MISSING",
       sizeFactor: 0.15,
     });
@@ -128,7 +133,8 @@ describe("QuantExecutionPolicyService", () => {
       marketEventDirection: "NEGATIVE",
     });
 
-    expect(result).toMatchObject({ allowed: false, reason: "QUANT_VALIDATION_MISSING" });
+    expect(result).toMatchObject({ allowed: false,
+      severity: 'BLOCK', reason: "QUANT_VALIDATION_MISSING" });
   });
 
   it("treats a slower bearish regime as advisory during a strong fresh core transition", async () => {
@@ -146,6 +152,7 @@ describe("QuantExecutionPolicyService", () => {
     expect(result).toMatchObject({
       allowed: true,
       advisory: true,
+      severity: 'REDUCE_SIZE',
       reason: "QUANT_VALIDATION_MISSING",
       sizeFactor: 0.25,
     });
@@ -163,7 +170,8 @@ describe("QuantExecutionPolicyService", () => {
       primaryRsi: 75,
     });
 
-    expect(result).toMatchObject({ allowed: false, reason: "QUANT_REGIME_CONFLICT" });
+    expect(result).toMatchObject({ allowed: false,
+      severity: 'BLOCK', reason: "QUANT_REGIME_CONFLICT" });
   });
 
   it("treats expired evidence as advisory while preserving fresh negative evidence as a hard block", async () => {
@@ -184,27 +192,31 @@ describe("QuantExecutionPolicyService", () => {
     expect(positive).toMatchObject({
       allowed: true,
       advisory: true,
+      severity: 'REDUCE_SIZE',
       reason: "QUANT_VALIDATION_STALE",
       sizeFactor: 0.25,
     });
     expect(expiredNegative).toMatchObject({
       allowed: true,
       advisory: true,
+      severity: 'REDUCE_SIZE',
       reason: "QUANT_VALIDATION_STALE",
       sizeFactor: 0.25,
     });
     expect(freshNegative).toMatchObject({
       allowed: false,
+      severity: 'BLOCK',
       reason: "QUANT_WALK_FORWARD_UNSTABLE",
     });
   });
 
   it("blocks the observed ETH-quality evidence when walk-forward is unstable", async () => {
     const result = await service(valid({ probabilityOfProfit: 30.94, probabilityOfRuin: 100, walkForwardStable: false })).policy.evaluate(input);
-    expect(result).toMatchObject({ allowed: false, reason: "QUANT_WALK_FORWARD_UNSTABLE" });
+    expect(result).toMatchObject({ allowed: false,
+      severity: 'BLOCK', reason: "QUANT_WALK_FORWARD_UNSTABLE" });
   });
 
-  it("allows a tenth-size DEMO canary when a confirmed market dislocation aligns with strong realtime evidence", async () => {
+  it("does not let a DEMO dislocation canary bypass unstable exact evidence", async () => {
     const result = await service(valid({
       probabilityOfProfit: 43,
       probabilityOfRuin: 9.77,
@@ -236,16 +248,14 @@ describe("QuantExecutionPolicyService", () => {
     } as never);
 
     expect(result).toMatchObject({
-      allowed: true,
-      evaluated: true,
-      advisory: true,
-      dislocationCanary: true,
+      allowed: false,
+      evaluated: false,
+      severity: 'BLOCK',
       reason: "QUANT_WALK_FORWARD_UNSTABLE",
-      sizeFactor: 0.1,
     });
   });
 
-  it("treats low historical profit probability as advisory for the same bounded dislocation canary", async () => {
+  it("does not let a DEMO dislocation canary bypass low exact profit probability", async () => {
     const result = await service(valid({ probabilityOfProfit: 43 })).policy.evaluate({
       ...input,
       mode: "DEMO",
@@ -268,10 +278,9 @@ describe("QuantExecutionPolicyService", () => {
     } as never);
 
     expect(result).toMatchObject({
-      allowed: true,
-      dislocationCanary: true,
+      allowed: false,
+      severity: 'BLOCK',
       reason: "QUANT_PROBABILITY_TOO_LOW",
-      sizeFactor: 0.1,
     });
   });
 
@@ -299,6 +308,7 @@ describe("QuantExecutionPolicyService", () => {
 
     expect(result).toMatchObject({
       allowed: false,
+      severity: 'BLOCK',
       reason: "QUANT_WALK_FORWARD_UNSTABLE",
     });
   });
@@ -327,6 +337,7 @@ describe("QuantExecutionPolicyService", () => {
 
     expect(result).toMatchObject({
       allowed: false,
+      severity: 'BLOCK',
       reason: "QUANT_WALK_FORWARD_UNSTABLE",
     });
   });
@@ -355,6 +366,7 @@ describe("QuantExecutionPolicyService", () => {
 
     expect(result).toMatchObject({
       allowed: false,
+      severity: 'BLOCK',
       reason: "QUANT_WALK_FORWARD_UNSTABLE",
     });
   });
@@ -367,12 +379,14 @@ describe("QuantExecutionPolicyService", () => {
 
   it("blocks a directional trade against a fresh high-confidence quant regime", async () => {
     const result = await service(valid(), { regime: "BEAR", confidence: 82, detectedAt: new Date("2026-08-12T00:55:00Z") }).policy.evaluate(input);
-    expect(result).toMatchObject({ allowed: false, reason: "QUANT_REGIME_CONFLICT" });
+    expect(result).toMatchObject({ allowed: false,
+      severity: 'BLOCK', reason: "QUANT_REGIME_CONFLICT" });
   });
 
   it("requires a meaningful out-of-sample Sharpe margin instead of merely above zero", async () => {
     const result = await service(valid({ outOfSampleSharpe: 0.2 })).policy.evaluate(input);
-    expect(result).toMatchObject({ allowed: false, reason: "QUANT_OUT_OF_SAMPLE_EDGE_MISSING" });
+    expect(result).toMatchObject({ allowed: false,
+      severity: 'BLOCK', reason: "QUANT_OUT_OF_SAMPLE_EDGE_MISSING" });
   });
 
   it("fails closed when Monte Carlo evidence is derived from too few trades", async () => {
@@ -384,7 +398,8 @@ describe("QuantExecutionPolicyService", () => {
         executionAssumptions: { leverage: 1, riskPerTrade: 0.02, riskRewardRatio: 1.5 },
       },
     })).policy.evaluate(input);
-    expect(result).toMatchObject({ allowed: false, evaluated: false, reason: "QUANT_SAMPLE_TOO_SMALL" });
+    expect(result).toMatchObject({ allowed: false,
+      severity: 'BLOCK', evaluated: false, reason: "QUANT_SAMPLE_TOO_SMALL" });
   });
 
   it("fails closed when research assumptions do not match execution", async () => {
@@ -394,7 +409,8 @@ describe("QuantExecutionPolicyService", () => {
       riskRewardRatio: 2,
     });
     const result = await policy.evaluate(input);
-    expect(result).toMatchObject({ allowed: false, evaluated: false, reason: "QUANT_ASSUMPTION_MISMATCH" });
+    expect(result).toMatchObject({ allowed: false,
+      severity: 'BLOCK', evaluated: false, reason: "QUANT_ASSUMPTION_MISMATCH" });
   });
 
   it("does not grant statistically ineligible negative evidence hard-gate authority", async () => {
@@ -413,6 +429,7 @@ describe("QuantExecutionPolicyService", () => {
 
     expect(result).toMatchObject({
       allowed: false,
+      severity: 'BLOCK',
       evaluated: false,
       reason: "QUANT_SAMPLE_TOO_SMALL",
     });
@@ -425,8 +442,9 @@ describe("QuantExecutionPolicyService", () => {
       decision: { decision: "WAIT", regime: { type: "RANGING" } } as never,
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       allowed: false,
+      severity: 'BLOCK',
       evaluated: false,
       reason: "QUANT_NOT_APPLICABLE",
     });
@@ -449,8 +467,9 @@ describe("QuantExecutionPolicyService", () => {
       decision: strongDecision() as never,
       multiTimeframeConfirmation: 90,
     });
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       allowed: false,
+      severity: 'BLOCK',
       evaluated: false,
       reason: "QUANT_VALIDATION_MISSING",
     });
@@ -468,8 +487,19 @@ describe("QuantExecutionPolicyService", () => {
       allowed: true,
       evaluated: false,
       advisory: true,
+      severity: 'REDUCE_SIZE',
       reason: "QUANT_VALIDATION_MISSING",
       sizeFactor: 0.25,
     });
   });
+});
+
+
+it('cannot use a dislocation to bypass a reliable negative exact cohort', async () => {
+  const result = await service(valid({ probabilityOfProfit: 30 })).policy.evaluate({
+    userId: 'user-1', symbol: 'ETH-USDT', provider: 'OKX_FUTURES', timeframe: '15m', mode: 'DEMO', now: new Date('2026-08-12T01:00:00Z'),
+    decision: strongDecision({ expectedReward: 3, expectedLoss: 1, executionCost: 0.1 }) as never, multiTimeframeConfirmation: 100,
+    marketDislocation: { direction: 'BULLISH', confirmationCount: 3, indicatorCloseTime: '2026-08-12T01:00:00Z', reasons: ['ROLLING_HIGH_BREAKOUT', 'BULLISH_ATR_IMPULSE'] },
+  });
+  expect(result).toMatchObject({ allowed: false, severity: 'BLOCK' });
 });
