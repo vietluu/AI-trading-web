@@ -1224,14 +1224,20 @@ export class DecisionService {
     active: AnalystName[],
   ): AgentDataQuality {
     const expectedCount = this.expectedAnalystCount(input);
+    const coreQuality = this.coreDataQuality(input);
+    // If core market data (market & technical) is insufficient, or fewer than 2 analysts are active, mark INSUFFICIENT
     if (
-      input.fusionOutput.dataQuality === "INSUFFICIENT" ||
-      active.length < Math.min(3, expectedCount)
+      coreQuality === "INSUFFICIENT" ||
+      active.length < Math.min(2, expectedCount)
     ) {
       return "INSUFFICIENT";
     }
+    // If fusion is INSUFFICIENT but core data (Market + Technical) is GOOD, degrade gracefully to PARTIAL instead of hard-blocking
+    if (input.fusionOutput.dataQuality === "INSUFFICIENT") {
+      return coreQuality === "GOOD" ? "PARTIAL" : "INSUFFICIENT";
+    }
     if (
-      input.fusionOutput.dataQuality === "GOOD" &&
+      (input.fusionOutput.dataQuality === "GOOD" || coreQuality === "GOOD") &&
       active.length >= expectedCount &&
       active.every((name) => input[name]?.dataQuality === "GOOD")
     )

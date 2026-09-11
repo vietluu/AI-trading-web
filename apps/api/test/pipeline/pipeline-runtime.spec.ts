@@ -914,4 +914,153 @@ describe("drift reassessment boundary", () => {
     expect(assessPipelineDecision).toHaveBeenCalledTimes(2);
     expect(executePipeline).toHaveBeenCalledTimes(2);
   });
+
+  it("degrades gracefully without blocking pipeline when an optional secondary timeframe is stale but primary timeframe is fresh", async () => {
+    const freshCloseTime = new Date();
+    const staleCloseTime = new Date(Date.now() - 3600_000); // 1 hour ago (stale for 5m)
+
+    const fusionResult = {
+      analyses: {
+        market: {
+          trend: { direction: 'UP', strength: 'STRONG' },
+          volatility: { atr: 10 },
+          liquidity: { spread: '0.01%' },
+          dataQuality: 'GOOD',
+          summary: 'Market is strongly bullish',
+        },
+        technical: {
+          trend: { direction: 'UP', strength: 'STRONG' },
+          movingAverages: { alignment: 'BULLISH' },
+          momentum: { rsi: '60.00', macd: { trend: 'BULLISH' } },
+          structure: { breakout: false, marketStructure: 'HH_HL' },
+          dataQuality: 'GOOD',
+          summary: 'Technicals are aligned bullish',
+        },
+        news: { impact: { level: 'LOW' }, dataQuality: 'GOOD', summary: 'Neutral' },
+        sentiment: { sentiment: { overall: 'NEUTRAL' }, dataQuality: 'GOOD', summary: 'Neutral' },
+        macro: { macroTrend: 'NEUTRAL', dataQuality: 'GOOD', summary: 'Neutral' },
+        onchain: { activity: 'NORMAL', signals: [], dataQuality: 'GOOD', summary: 'Neutral' },
+      },
+      fusionOutput: {
+        overallBias: 'BULLISH',
+        confidence: 80,
+        dataQuality: 'GOOD',
+        summary: 'Bullish confluence',
+      },
+    };
+
+    const fusion = { runDetailed: vi.fn().mockResolvedValue(fusionResult) };
+    const decisionOutput = {
+      decision: 'LONG',
+      confidence: 80,
+      reasoning: 'strong trend',
+      signals: { bullishFactors: ['trend'], bearishFactors: [] },
+      risks: [],
+      dataQuality: 'GOOD',
+      coreDataQuality: 'GOOD',
+      conflictLevel: 'LOW',
+      opportunityScore: 85,
+      expectedWinProbability: 0.7,
+      expectedReward: 2.0,
+      expectedLoss: 0.8,
+      expectedValue: 1.2,
+      profitFactorEstimate: 2.5,
+      riskScore: 20,
+      adaptiveThreshold: 60,
+      volatilityAdjustment: 0,
+      directionalAgreement: 100,
+      evidenceCoverage: 100,
+      agreementScore: 80,
+      regime: { type: 'TRENDING' },
+      weighting: { market: 20, technical: 25, news: 15, sentiment: 15, macro: 15, onchain: 10 },
+      overrides: [],
+      calibrationAdjustment: 0,
+      executionCost: 0.04,
+      generatedAt: new Date().toISOString(),
+    };
+
+    const decision = {
+      decideForUser: vi.fn().mockResolvedValue(decisionOutput),
+      decideWithReflection: vi.fn().mockResolvedValue(decisionOutput),
+      calibrateForExecution: vi.fn().mockImplementation((val: unknown) => Promise.resolve(val)),
+    };
+    const repository = {
+      updateRun: vi.fn().mockResolvedValue({}),
+      updateStep: vi.fn().mockResolvedValue({}),
+      activeStrategyKeys: vi.fn().mockResolvedValue(['trend']),
+    };
+    const riskPolicy = {
+      evaluate: vi.fn().mockReturnValue({ actionable: true, decision: 'LONG' }),
+    };
+    const signalFilter = { evaluate: vi.fn().mockReturnValue({ allowed: true }) };
+    const marketData = {
+      // Primary 15m is fresh; optional 5m is stale
+      getIndicatorSnapshot: vi.fn().mockImplementation((_p, _s, interval) => {
+        if (interval === '5m') {
+          return Promise.resolve({ candleCloseTime: staleCloseTime, values: { rsi14: 50, ema20: 100, ema50: 99 } });
+        }
+        return Promise.resolve({ candleCloseTime: freshCloseTime, values: { rsi14: 60, atr14: 10, ema20: 100, ema50: 98, ema200: 90 } });
+      }),
+      getHistoricalCandles: vi.fn().mockImplementation(({ interval }) => {
+        if (interval === '5m') {
+          return Promise.resolve([{ close: '100', closeTime: staleCloseTime }]);
+        }
+        return Promise.resolve([{ close: '105', closeTime: freshCloseTime }]);
+      }),
+    };
+    const alerts = {
+      decision: vi.fn().mockResolvedValue(undefined),
+      contextual: vi.fn().mockResolvedValue(undefined),
+      repeatedFailure: vi.fn().mockResolvedValue(undefined),
+      blockedOpportunity: vi.fn().mockResolvedValue(undefined),
+    };
+    const analytics = { recordStageTelemetry: vi.fn() };
+    const liveTrading = {
+      assessPipelineDecision: vi.fn().mockResolvedValue({ outcome: 'RISK_APPROVED', risk: { approved: true, reason: 'ok', riskScore: 20 } }),
+      executePipeline: vi.fn().mockResolvedValue({ outcome: 'ORDER_SUBMITTED' }),
+    };
+    const redis = {
+      setNx: vi.fn().mockResolvedValue(true),
+      compareAndDelete: vi.fn().mockResolvedValue(true),
+    };
+
+    const service = new PipelineRunnerService(
+      fusion as never,
+      decision as never,
+      repository as never,
+      { isCancelled: vi.fn().mockResolvedValue(false) } as never,
+      riskPolicy as never,
+      signalFilter as never,
+      marketData as never,
+      alerts as never,
+      analytics as never,
+      liveTrading as never,
+      redis as never,
+      undefined,
+      undefined,
+      { evaluate: vi.fn().mockResolvedValue({ allowed: true, evaluated: true }) } as never,
+    );
+
+    await service.run({
+      pipelineId: 'FULL_ANALYSIS_DECISION',
+      runId: 'graceful-degrade-run',
+      userId: 'user-1',
+      provider: 'OKX_FUTURES',
+      symbol: 'BTC-USDT',
+      params: { interval: '15m', strategyIds: ['trend'] },
+      trigger: 'EVENT',
+    } as never);
+
+    // Assert that the pipeline was NOT rejected with STALE_MARKET_DATA and proceeded to execute
+    expect(repository.updateRun).toHaveBeenCalledWith(
+      'graceful-degrade-run',
+      expect.objectContaining({
+        status: 'COMPLETED',
+        decision: 'LONG',
+        skippedReason: undefined,
+      }),
+    );
+    expect(liveTrading.assessPipelineDecision).toHaveBeenCalled();
+  });
 });
+
