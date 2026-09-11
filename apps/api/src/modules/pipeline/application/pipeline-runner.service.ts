@@ -286,6 +286,8 @@ export class PipelineRunnerService {
           })),
       );
 
+      // Only reject if the primary execution timeframe itself is stale.
+      // Secondary/optional timeframes are excluded above for graceful degradation.
       if (staleTimeframeSet.has(interval)) {
         const completedAt = new Date();
         const reason = `STALE_MARKET_DATA:${staleTimeframes.join(',')}`;
@@ -293,6 +295,7 @@ export class PipelineRunnerService {
           event: 'pipeline_stale_market_data_rejected',
           runId,
           symbol,
+          interval,
           staleTimeframes,
         });
         await this.repository.updateRun(runId, {
@@ -319,6 +322,7 @@ export class PipelineRunnerService {
           event: 'pipeline_optional_timeframe_data_ignored',
           runId,
           symbol,
+          interval,
           staleTimeframes,
         });
       }

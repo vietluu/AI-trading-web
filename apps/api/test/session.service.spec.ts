@@ -71,11 +71,11 @@ describe("SessionService", () => {
     expect(repository.revoke).toHaveBeenCalled();
   });
 
-  it("revokes a token family when a rotated token is reused", async () => {
+  it("revokes a token family when a rotated token is reused past grace period", async () => {
     const repository = {
       findBySessionId: vi.fn().mockResolvedValue({
         tokenFamily: "family-id",
-        rotatedAt: new Date(),
+        rotatedAt: new Date(Date.now() - 60_000),
       }),
       listFamilyIdentifiers: vi
         .fn()
@@ -90,5 +90,40 @@ describe("SessionService", () => {
       makeService(repository, redis).resolve("reused-token", {}),
     ).rejects.toBeInstanceOf(UnauthorizedException);
     expect(repository.revokeFamily).toHaveBeenCalledWith("family-id");
+  });
+
+  it("permits active session resolution when previous token is sent within concurrency grace period", async () => {
+    const repository = {
+      findBySessionId: vi.fn().mockResolvedValue({
+        id: "old-id",
+        userId: "user-id",
+        tokenFamily: "family-id",
+        revokedAt: new Date(Date.now() - 1000),
+        rotatedAt: new Date(Date.now() - 1000), // 1s ago (within 30s grace period)
+        expiresAt: new Date(Date.now() + 3600_000),
+      }),
+      findActiveByFamily: vi.fn(),
+      revokeFamily: vi.fn().mockResolvedValue(undefined),
+      listFamilyIdentifiers: vi.fn().mockResolvedValue([]),
+    };
+    const redis = {
+      get: vi.fn().mockResolvedValue(null),
+      delete: vi.fn().mockResolvedValue(undefined),
+    };
+    const serviceInstance = makeService(repository, redis);
+    repository.findActiveByFamily.mockImplementation(() => ({
+      id: "active-id",
+      userId: "user-id",
+      tokenFamily: "family-id",
+      generation: 2,
+      csrfHash: "hash",
+      fingerprint: (serviceInstance as unknown as { fingerprint: (c: object) => string }).fingerprint({}),
+      expiresAt: new Date(Date.now() + 3600_000),
+      rememberMe: true,
+    }));
+    const resolved = await serviceInstance.resolve("old-token", {});
+    expect(resolved.id).toBe("active-id");
+    expect(resolved.tokenFamily).toBe("family-id");
+    expect(repository.revokeFamily).not.toHaveBeenCalled();
   });
 });

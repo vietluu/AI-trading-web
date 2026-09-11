@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import type { DecisionOutput, FusionInput } from '@platform/shared';
 import {
   adaptiveTradingPolicy,
+  isAltcoin,
   parseSpreadBps,
   timeframeMilliseconds,
 } from '../domain/adaptive-trading-policy';
@@ -63,12 +64,13 @@ export class DecisionJudgeService {
     const coreTechnicalEvidence =
       analyses.market.dataQuality !== 'INSUFFICIENT' &&
       analyses.technical.dataQuality !== 'INSUFFICIENT';
-    const shortTerm = timeframeMilliseconds(context.timeframe) <= 60 * 60_000;
-    // For short-term trades, fresh Market + Technical evidence plus one valid
-    // auxiliary observation is a sufficient quorum. Missing Macro/Social data
-    // still lowers confidence, but no longer has an unconditional veto.
+    const isAlt = isAltcoin(context?.symbol);
+    const shortTerm = timeframeMilliseconds(context?.timeframe) <= 60 * 60_000;
+    // For altcoins or short-term trades with core technical evidence,
+    // fresh Market + Technical evidence plus one valid auxiliary observation (or core triad)
+    // is a sufficient quorum. Missing Macro/Social/Onchain data no longer has an unconditional veto.
     const minimumUsable = Math.min(
-      coreTechnicalEvidence && shortTerm ? 3 : 4,
+      isAlt || (coreTechnicalEvidence && shortTerm) ? 3 : 4,
       configured.length,
     );
     const freshUsable = usable.filter(([, analysis]) => {
@@ -150,6 +152,26 @@ export class DecisionJudgeService {
         reasons.push('MACRO_DIRECTION_CONFLICT');
       }
     }
+
+    // Pre-Mortem Adversarial Validation: "What could kill this trade in 15 minutes?"
+    if (decision.decision !== 'WAIT') {
+      const marketAnomalies = Array.isArray(analyses.market?.anomalies) ? analyses.market.anomalies : [];
+      const technicalSignals = Array.isArray(analyses.technical?.signals) ? analyses.technical.signals : [];
+      const allAnomalies = [...marketAnomalies, ...technicalSignals].join(' ').toLowerCase();
+
+      // 1. Liquidity Vacuum: Extreme spread expansion or book depletion before high volatility
+      const isLiquidityVacuum = /liquidity vacuum|orderbook thinning|spread widening abnormally/i.test(allAnomalies);
+      if (isLiquidityVacuum) {
+        reasons.push('PRE_MORTEM_LIQUIDITY_VACUUM');
+      }
+
+      // 2. High-danger trap: Breakout signal during extreme compression without volume confirmation
+      const isFakeoutTrap = /fakeout risk|exhaustion wick|divergence trap/i.test(allAnomalies);
+      const agreement = decision.directionalAgreement ?? decision.agreementScore ?? 0;
+      if (isFakeoutTrap && (decision.confidence < 75 || agreement < 70)) {
+        reasons.push('PRE_MORTEM_FAKEOUT_RISK');
+      }
+    }
     // Automatic exchange execution must respect reliable negative evidence
     // even when the calibration falls back to the user's global history. Exact
     // calibration remains the only hard gate for non-execution callers.
@@ -169,7 +191,8 @@ export class DecisionJudgeService {
       decision.decision !== 'WAIT' &&
       (!calibration || calibration.status !== 'CALIBRATED' || !hardGateCalibration) &&
       decision.dataQuality === 'PARTIAL' &&
-      !executionCoreGood
+      !executionCoreGood &&
+      !isAlt
     ) reasons.push('PARTIAL_DATA_UNCALIBRATED');
     if (
       context.mode !== 'DEMO' && context.mode !== 'SHADOW' &&

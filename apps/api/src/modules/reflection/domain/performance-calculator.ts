@@ -57,6 +57,8 @@ export function calculatePerformanceMetrics(records: PerformanceRecord[]): Perfo
       H4: records.filter((r) => r.horizon === 'H4').length,
       LONG: records.filter((r) => r.horizon === 'LONG').length,
     },
+    shadowCandidates: records.filter((r) => r.leverageSource === 'SHADOW_CONFIG').length,
+    executedDecisions: records.filter((r) => r.leverageSource !== 'SHADOW_CONFIG').length,
   };
 }
 

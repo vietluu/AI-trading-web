@@ -485,7 +485,14 @@ export class AgentRunnerService {
         toolData,
         usedTools,
       );
-      if (deterministicOutput !== undefined) {
+      const aiReasoningEnabled =
+        this.configService?.get<boolean>("AI_ANALYST_REASONING_ENABLED") === true ||
+        process.env.AI_ANALYST_REASONING_ENABLED === "true";
+      const preferDeterministic =
+        !aiReasoningEnabled ||
+        this.configService?.get<string>("USE_DETERMINISTIC_ANALYSTS") === "true";
+
+      if (deterministicOutput !== undefined && preferDeterministic) {
         aiResponse = {
           json: deterministicOutput,
           text: JSON.stringify(deterministicOutput),
@@ -497,7 +504,7 @@ export class AgentRunnerService {
             estimatedCost: 0,
           },
         };
-      } else
+      } else {
         try {
           aiResponse = await this.aiOrchestratorService.execute({
             userId: userId || "00000000-0000-0000-0000-000000000000",
@@ -513,20 +520,40 @@ export class AgentRunnerService {
               : "text",
           });
         } catch (error) {
-          if (!definition.buildInsufficientOutput) throw error;
-          const reason =
-            error instanceof Error ? error.message : "AI provider unavailable";
-          return this.persistInsufficientResult({
-            definition,
-            runRecord,
-            usedTools,
-            reason,
-            durationMs: Date.now() - startTime,
-            idempotencyFingerprint,
-            toolCallCount,
-            toolRoundCount,
-          });
+          if (deterministicOutput !== undefined) {
+            this.logger.warn({
+              event: "ai_analyst_fallback_to_deterministic",
+              agentType: definition.type,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            aiResponse = {
+              json: deterministicOutput,
+              text: JSON.stringify(deterministicOutput),
+              provider: "DETERMINISTIC",
+              model: `${definition.type.toLowerCase()}-rules-v1-fallback`,
+              usage: {
+                promptTokens: 0,
+                completionTokens: 0,
+                estimatedCost: 0,
+              },
+            };
+          } else {
+            if (!definition.buildInsufficientOutput) throw error;
+            const reason =
+              error instanceof Error ? error.message : "AI provider unavailable";
+            return this.persistInsufficientResult({
+              definition,
+              runRecord,
+              usedTools,
+              reason,
+              durationMs: Date.now() - startTime,
+              idempotencyFingerprint,
+              toolCallCount,
+              toolRoundCount,
+            });
+          }
         }
+      }
 
       runRecord = await this.transitionState(
         runRecord.id,

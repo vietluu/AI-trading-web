@@ -21,6 +21,14 @@ export function assetLiquidityClass(symbol?: string): AssetLiquidityClass {
   return MAJORS.has(base) ? 'MAJOR' : LIQUID_ALTS.has(base) ? 'LIQUID_ALT' : 'LONG_TAIL';
 }
 
+export function isMajorAsset(symbol?: string): boolean {
+  return assetLiquidityClass(symbol) === 'MAJOR';
+}
+
+export function isAltcoin(symbol?: string): boolean {
+  return assetLiquidityClass(symbol) !== 'MAJOR';
+}
+
 export function timeframeMilliseconds(timeframe = '15m'): number {
   const match = /^(\d+)([mhd])$/i.exec(timeframe);
   if (!match) return 15 * 60_000;

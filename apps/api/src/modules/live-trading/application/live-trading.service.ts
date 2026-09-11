@@ -2390,7 +2390,8 @@ export class LiveTradingService {
         take !== undefined &&
         (position.side === "LONG" ? mark >= take : mark <= take);
       if (
-        position.provider === ExchangeProvider.OKX_FUTURES &&
+        (position.provider === ExchangeProvider.OKX_FUTURES ||
+          position.provider === ExchangeProvider.BINANCE_FUTURES) &&
         !stopHit &&
         !takeHit
       ) {
@@ -2764,7 +2765,12 @@ export class LiveTradingService {
     positions: ExchangePosition[],
     context: RequestMetadata,
   ): Promise<void> {
-    if (connection.provider !== ExchangeProvider.OKX_FUTURES) return;
+    if (
+      connection.provider !== ExchangeProvider.OKX_FUTURES &&
+      connection.provider !== ExchangeProvider.BINANCE_FUTURES
+    ) {
+      return;
+    }
     const protectedEntries = await this.prisma.liveOrder.findMany({
       where: {
         userId,

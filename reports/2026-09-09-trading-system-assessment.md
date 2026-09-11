@@ -1,5 +1,7 @@
 # Đánh giá AI trader — 09/09/2026
 
+> Cập nhật cùng ngày: lần kiểm tra tiếp theo đã đọc được database production bằng READ ONLY và chạy thử nghiệm cục bộ trên nến thật. Xem [báo cáo production mới](2026-09-09-production-trading-assessment.md), thay thế hạn chế chưa kết nối được và bổ sung bằng chứng thực tế cho báo cáo lịch sử bên dưới.
+
 ## Kết luận và phạm vi
 
 Hệ thống có nền tảng execution và quản trị rủi ro đáng kể, nhưng mã nguồn hiện tại chưa đáp ứng đầy đủ mục tiêu AI tự suy luận như trader chuyên nghiệp. Chưa có bằng chứng trong lần đánh giá này để kết luận hệ thống có lợi thế giao dịch sau mọi chi phí hoặc nên tăng vốn live.

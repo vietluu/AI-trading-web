@@ -113,4 +113,19 @@ describe("authenticated home dashboard", () => {
     expect(useLiveTradingDashboard).toHaveBeenCalledTimes(1);
     expect(replace).not.toHaveBeenCalled();
   });
+
+  it("redirects to login when auth:expired is dispatched", async () => {
+    vi.mocked(useHomeSession).mockReturnValue({
+      ...queryResult(),
+      data: { expiresAt: "2026-08-10T00:00:00.000Z" },
+    } as never);
+
+    renderPage();
+
+    window.dispatchEvent(new CustomEvent("auth:expired"));
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledWith("/login?reason=session-expired&next=%2F");
+    });
+  });
 });

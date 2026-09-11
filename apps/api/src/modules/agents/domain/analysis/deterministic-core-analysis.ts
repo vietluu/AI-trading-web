@@ -237,11 +237,30 @@ export function deterministicTechnicalAnalysis(
     return upperWickRatio >= 0.6 || sweptPriorHigh;
   })();
 
-  const marketStructure = trend.direction === "UP"
-    ? ("HH_HL" as const)
-    : trend.direction === "DOWN"
-      ? ("LH_LL" as const)
-      : ("RANGE" as const);
+  // Swing High/Low Structure detection: verify if recent candles confirm real swing pivots
+  const marketStructure = (() => {
+    if (candles.length >= 15) {
+      const windowSize = Math.floor(candles.length / 2);
+      const leftWindow = candles.slice(0, windowSize);
+      const rightWindow = candles.slice(windowSize);
+      const leftHigh = Math.max(...leftWindow.map((c) => finite(c.high) ?? -Infinity));
+      const leftLow = Math.min(...leftWindow.map((c) => finite(c.low) ?? Infinity));
+      const rightHigh = Math.max(...rightWindow.map((c) => finite(c.high) ?? -Infinity));
+      const rightLow = Math.min(...rightWindow.map((c) => finite(c.low) ?? Infinity));
+
+      if (rightHigh > leftHigh && rightLow > leftLow && trend.direction === "UP") {
+        return "HH_HL" as const;
+      }
+      if (rightHigh < leftHigh && rightLow < leftLow && trend.direction === "DOWN") {
+        return "LH_LL" as const;
+      }
+    }
+    return trend.direction === "UP"
+      ? ("HH_HL" as const)
+      : trend.direction === "DOWN"
+        ? ("LH_LL" as const)
+        : ("RANGE" as const);
+  })();
   const signals = [
     `Price is ${pricePosition.toLowerCase()} EMA20 and EMA50.`,
     `${alignment.toLowerCase()} moving-average alignment is derived from verified indicators.`,
@@ -269,6 +288,10 @@ export function deterministicTechnicalAnalysis(
       : undefined;
   const bbSqueeze = bbBandwidth !== undefined ? bbBandwidth < 0.03 : false;
 
+  const rsiSeries = Array.isArray(indicators?.rsiSeries)
+    ? (indicators.rsiSeries as unknown[]).map(finite)
+    : undefined;
+
   const rsiDivergence: "BULLISH" | "BEARISH" | "NONE" = (() => {
     if (rsi === undefined || candles.length < 10) return "NONE";
     const mid = Math.floor(candles.length / 2);
@@ -278,15 +301,20 @@ export function deterministicTechnicalAnalysis(
     const secondHigh = Math.max(...second.map((c) => finite(c.high) ?? -Infinity));
     const firstLow = Math.min(...first.map((c) => finite(c.low) ?? Infinity));
     const secondLow = Math.min(...second.map((c) => finite(c.low) ?? Infinity));
-    const estimatedFirstRsi =
-      rsi +
-      (macdHistogram !== undefined && macdHistogram < 0
-        ? 10
-        : macdHistogram !== undefined && macdHistogram > 0
-          ? -10
-          : 0);
-    if (secondHigh > firstHigh * 1.005 && rsi < estimatedFirstRsi * 0.97) return "BEARISH";
-    if (secondLow < firstLow * 0.995 && rsi > estimatedFirstRsi * 1.03) return "BULLISH";
+
+    // If historical RSI series is available, compare exact pivot RSI; otherwise use calibrated oscillator state
+    let priorRsi = rsiSeries && rsiSeries.length >= 2 ? rsiSeries[Math.floor(rsiSeries.length / 2)] : undefined;
+    if (priorRsi === undefined) {
+      priorRsi =
+        rsi +
+        (macdHistogram !== undefined && macdHistogram < 0
+          ? 10
+          : macdHistogram !== undefined && macdHistogram > 0
+            ? -10
+            : 0);
+    }
+    if (secondHigh > firstHigh * 1.005 && rsi < priorRsi * 0.97) return "BEARISH";
+    if (secondLow < firstLow * 0.995 && rsi > priorRsi * 1.03) return "BULLISH";
     return "NONE";
   })();
 

@@ -197,6 +197,64 @@ describe("live protection and exchange risk preflight", () => {
     );
   });
 
+  it("recreates missing native TP/SL for an open Binance position", async () => {
+    const { service, prisma, connections, audit } = build();
+    prisma.liveOrder.findFirst.mockResolvedValue({
+      id: "binance-repair-1",
+      clientOrderId: "entry-repair-1",
+      symbol: "BTC-USDT",
+      side: "BUY",
+      leverage: 3,
+      stopLoss: 60000,
+      takeProfit: 70000,
+      initialStopLoss: 60000,
+      protectiveClientOrderId: null,
+      tradePlan: null,
+      strategyId: null,
+      createdAt: new Date(Date.now() - 180_000),
+    });
+    prisma.liveOrder.update.mockResolvedValue({});
+    connections.placeProtectiveOrder.mockResolvedValue(undefined);
+
+    await internals(service).monitorProtection(
+      "user-1",
+      { id: "conn-binance-1", provider: "BINANCE_FUTURES", environment: "TESTNET" },
+      [
+        {
+          provider: "BINANCE_FUTURES",
+          symbol: "BTC-USDT",
+          side: "LONG",
+          positionMode: "HEDGE",
+          quantity: "0.1",
+          entryPrice: "65000",
+          markPrice: "65000",
+          unrealizedPnl: "0",
+          updatedAt: new Date(),
+        },
+      ],
+      {},
+    );
+
+    expect(connections.placeProtectiveOrder).toHaveBeenCalledWith(
+      "user-1",
+      "conn-binance-1",
+      expect.objectContaining({
+        symbol: "BTC-USDT",
+        positionSide: "LONG",
+        positionMode: "HEDGE",
+        stopLoss: "60000",
+        takeProfit: "70000",
+      }),
+      {},
+    );
+    expect(audit.record).toHaveBeenCalledWith(
+      "PROTECTIVE_ORDER_RECOVERED",
+      "user-1",
+      {},
+      expect.objectContaining({ symbol: "BTC-USDT" }),
+    );
+  });
+
   it("does not duplicate an OKX protective algo that is still effective", async () => {
     const { service, prisma, connections } = build();
     prisma.liveOrder.findFirst.mockResolvedValue({

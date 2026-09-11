@@ -165,4 +165,104 @@ describe("ExchangeTradeLedgerService", () => {
       }) as unknown,
     }));
   });
+
+  it("incorporates accrued funding payments across funding intervals into net PnL", async () => {
+    const openedAt = new Date("2026-08-16T00:00:00.000Z");
+    const fundingTime = new Date("2026-08-16T08:00:00.000Z");
+    const closedAt = new Date("2026-08-16T12:00:00.000Z");
+    const openingFill = {
+      id: "fill-open-fund",
+      symbol: "BTC-USDT",
+      exchangeTradeId: "trade-open-fund",
+      exchangeOrderId: "order-open-fund",
+      liveOrderId: "live-open-fund",
+      strategyId: "strategy-1",
+      side: "BUY",
+      positionSide: "LONG",
+      price: 60000,
+      quantity: 1,
+      realizedPnl: 0,
+      fee: -6,
+      feeAsset: "USDT",
+      isClosing: false,
+      executedAt: openedAt,
+    };
+    const closingFill = {
+      id: "fill-close-fund",
+      symbol: "BTC-USDT",
+      exchangeTradeId: "trade-close-fund",
+      exchangeOrderId: "order-close-fund",
+      liveOrderId: "live-close-fund",
+      strategyId: "strategy-1",
+      side: "SELL",
+      positionSide: "LONG",
+      price: 61000,
+      quantity: 1,
+      realizedPnl: 1000,
+      fee: -6,
+      feeAsset: "USDT",
+      isClosing: true,
+      executedAt: closedAt,
+    };
+    const upsert = vi.fn().mockResolvedValue({
+      id: "closed-fund-1",
+      userId: "user-1",
+      symbol: "BTC-USDT",
+      exchangeOrderId: "order-close-fund",
+      grossPnl: 1000,
+      fee: -12,
+      netPnl: 982,
+      closedAt,
+    });
+    const prisma = {
+      exchangeFill: {
+        findMany: vi.fn()
+          .mockResolvedValueOnce([closingFill])
+          .mockResolvedValueOnce([openingFill, closingFill]),
+      },
+      liveOrder: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "live-close-fund",
+          strategyId: "strategy-1",
+          purpose: "CLOSE",
+        }),
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
+      fundingRateSnapshot: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            fundingRate: "0.0001", // 0.01% -> for LONG: -60000 * 0.0001 = -6 USDT payment
+            fundingTime,
+          },
+        ]),
+      },
+      closedTrade: { upsert },
+      knowledgeArchive: { upsert: vi.fn().mockResolvedValue({}) },
+    };
+    const service = new ExchangeTradeLedgerService(prisma as never);
+
+    const rebuilt = await (
+      service as unknown as {
+        rebuildClosedTrade(
+          userId: string,
+          connection: { id: string; provider: "OKX_FUTURES"; environment: "DEMO" },
+          exchangeOrderId: string,
+        ): Promise<boolean>;
+      }
+    ).rebuildClosedTrade(
+      "user-1",
+      { id: "connection-1", provider: "OKX_FUTURES", environment: "DEMO" },
+      "order-close-fund",
+    );
+
+    expect(rebuilt).toBe(true);
+    // grossPnl (1000) + fee (-12) + funding (-6) = 982
+    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({
+        grossPnl: 1000,
+        fee: -12,
+        netPnl: 982,
+      }) as unknown,
+    }));
+  });
 });

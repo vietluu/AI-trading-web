@@ -932,6 +932,113 @@ describe("exchange adapter normalization contract", () => {
     );
   });
 
+  it("places, checks, and cancels native protective orders for Binance Futures", async () => {
+    const publicGet = vi.fn().mockResolvedValue({
+      timezone: "UTC",
+      symbols: [
+        {
+          symbol: "BTCUSDT",
+          contractType: "PERPETUAL",
+          status: "TRADING",
+          baseAsset: "BTC",
+          quoteAsset: "USDT",
+          marginAsset: "USDT",
+          pricePrecision: 2,
+          quantityPrecision: 3,
+          filters: [],
+        },
+      ],
+    });
+    const signedGet = vi.fn().mockResolvedValue({
+      symbol: "BTCUSDT",
+      orderId: 99901,
+      clientOrderId: "protect1",
+      side: "SELL",
+      type: "STOP_MARKET",
+      status: "NEW",
+      origQty: "0",
+      executedQty: "0",
+    });
+    const signedPost = vi.fn().mockResolvedValue({
+      symbol: "BTCUSDT",
+      orderId: 99902,
+      clientOrderId: "repair1",
+      side: "SELL",
+      type: "STOP_MARKET",
+      status: "NEW",
+      origQty: "0",
+      executedQty: "0",
+    });
+    const signedDelete = vi.fn().mockResolvedValue({
+      symbol: "BTCUSDT",
+      orderId: 99901,
+      clientOrderId: "protect1",
+      side: "SELL",
+      type: "STOP_MARKET",
+      status: "CANCELED",
+      origQty: "0",
+      executedQty: "0",
+    });
+
+    const adapter = new BinanceFuturesAdapter({
+      publicGet,
+      signedGet,
+      signedPost,
+      signedDelete,
+    } as unknown as BinanceFuturesClient);
+
+    const credentials = {
+      apiKey: "test-key",
+      apiSecret: "test-secret",
+      environment: ExchangeEnvironment.TESTNET,
+    };
+
+    await expect(
+      adapter.getProtectiveOrderStatus(credentials, {
+        symbol: "BTC-USDT",
+        protectiveClientOrderId: "protect-1",
+      }),
+    ).resolves.toBe("ACTIVE");
+
+    await adapter.placeProtectiveOrder(credentials, {
+      symbol: "BTC-USDT",
+      positionSide: "LONG",
+      positionMode: "HEDGE",
+      protectiveClientOrderId: "repair-1",
+      stopLoss: "65000",
+      takeProfit: "68000",
+    });
+
+    expect(signedPost).toHaveBeenCalledWith(
+      "/fapi/v1/order",
+      credentials,
+      expect.objectContaining({
+        symbol: "BTCUSDT",
+        side: "SELL",
+        positionSide: "LONG",
+        type: "STOP_MARKET",
+        closePosition: "true",
+        workingType: "MARK_PRICE",
+        newClientOrderId: "repair1",
+        stopPrice: "65000.00",
+      }),
+    );
+
+    await adapter.cancelProtectiveOrder(credentials, {
+      symbol: "BTC-USDT",
+      protectiveClientOrderId: "protect-1",
+    });
+
+    expect(signedDelete).toHaveBeenCalledWith(
+      "/fapi/v1/order",
+      credentials,
+      expect.objectContaining({
+        symbol: "BTCUSDT",
+        origClientOrderId: "protect1",
+      }),
+    );
+  });
+
   it("removes hyphens from UUID-style client order ids before OKX submission", async () => {
     const signedPost = vi
       .fn()

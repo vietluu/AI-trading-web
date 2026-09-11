@@ -152,4 +152,64 @@ describe("apiRequest", () => {
     window.removeEventListener("auth:expired", authExpired);
     window.removeEventListener("api:error", apiError);
   });
+
+  it("attempts silent refresh on 401 and succeeds when refresh token is valid", async () => {
+    Object.defineProperty(document, "cookie", {
+      configurable: true,
+      value: "csrf_token=valid-token",
+    });
+
+    let apiCallCount = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        if (url.includes("/auth/refresh")) {
+          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+        }
+        if (url.includes("/portfolio/overview")) {
+          apiCallCount++;
+          if (apiCallCount === 1) {
+            return Promise.resolve(new Response(JSON.stringify({ message: "Unauthorized" }), { status: 401 }));
+          }
+          return Promise.resolve(new Response(JSON.stringify({ totalBalance: 50000 }), { status: 200 }));
+        }
+        return Promise.resolve(new Response("{}", { status: 200 }));
+      }),
+    );
+
+    const result = await apiRequest<{ totalBalance: number }>("/portfolio/overview");
+    expect(result).toEqual({ totalBalance: 50000 });
+    expect(apiCallCount).toBe(2);
+  });
+
+  it("deduplicates simultaneous refreshes into a single network flight", async () => {
+    Object.defineProperty(document, "cookie", {
+      configurable: true,
+      value: "csrf_token=valid-token",
+    });
+
+    let refreshCallCount = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        if (url.includes("/auth/refresh")) {
+          refreshCallCount++;
+          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+        }
+        if (url.includes("/query-")) {
+          return Promise.resolve(new Response(JSON.stringify({ data: url }), { status: 200 }));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ message: "Unauthorized" }), { status: 401 }));
+      }),
+    );
+
+    // Initial 401 triggers refresh for two concurrent requests
+    await Promise.allSettled([
+      apiRequest<{ message: string }>("/test1"),
+      apiRequest<{ message: string }>("/test2"),
+    ]);
+
+    expect(refreshCallCount).toBe(1);
+  });
 });
+

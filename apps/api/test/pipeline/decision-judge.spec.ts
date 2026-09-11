@@ -251,7 +251,7 @@ describe('explicit evidence release modes', () => {
 describe('macro news blackout and direction alignment gates', () => {
   const judge = new DecisionJudgeService();
   const baseAnalyses = () => {
-    const good = { dataQuality: 'GOOD', generatedAt: new Date().toISOString(), trend: { direction: 'UP' } };
+    const good = { dataQuality: 'GOOD', generatedAt: new Date().toISOString(), trend: { direction: 'UP' }, anomalies: [] as string[], signals: [] as string[] };
     return {
       market: good,
       technical: good,
@@ -348,6 +348,51 @@ describe('macro news blackout and direction alignment gates', () => {
     expect(result.approved).toBe(true);
     expect(result.reasons).not.toContain('MACRO_DIRECTION_CONFLICT');
     expect(result.reasons).not.toContain('MACRO_NEWS_BLACKOUT');
+  });
+
+  it('blocks entry with PRE_MORTEM_LIQUIDITY_VACUUM when orderbook thinning is detected', () => {
+    const analyses = baseAnalyses();
+    analyses.market.anomalies = ['Liquidity vacuum: orderbook thinning rapidly ahead of scheduled event.'];
+    const result = judge.evaluate(
+      {
+        decision: 'LONG',
+        dataQuality: 'GOOD',
+        conflictLevel: 'LOW',
+        confidence: 80,
+        expectedValue: 0.8,
+        profitFactorEstimate: 1.8,
+        riskScore: 30,
+      } as never,
+      analyses as never,
+      { symbol: 'BTC-USDT' },
+    );
+
+    expect(result.approved).toBe(false);
+    expect(result.severity).toBe('BLOCK');
+    expect(result.reasons).toContain('PRE_MORTEM_LIQUIDITY_VACUUM');
+  });
+
+  it('blocks entry with PRE_MORTEM_FAKEOUT_RISK when divergence trap exists with sub-75 confidence', () => {
+    const analyses = baseAnalyses();
+    analyses.technical.signals = ['Exhaustion wick and divergence trap detected on 15m candle.'];
+    const result = judge.evaluate(
+      {
+        decision: 'LONG',
+        dataQuality: 'GOOD',
+        conflictLevel: 'LOW',
+        confidence: 68,
+        directionalAgreement: 65,
+        expectedValue: 0.6,
+        profitFactorEstimate: 1.5,
+        riskScore: 35,
+      } as never,
+      analyses as never,
+      { symbol: 'BTC-USDT' },
+    );
+
+    expect(result.approved).toBe(false);
+    expect(result.severity).toBe('BLOCK');
+    expect(result.reasons).toContain('PRE_MORTEM_FAKEOUT_RISK');
   });
 });
 

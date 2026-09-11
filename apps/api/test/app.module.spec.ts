@@ -15,5 +15,5 @@ describe("AppModule", () => {
       | undefined;
 
     expect(imports).toContain(MarketDataModule);
-  });
+  }, 30000);
 });

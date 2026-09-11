@@ -212,14 +212,31 @@ export class PerformanceService {
     };
   }
 
-  async list(userId: string, horizon?: EvaluationHorizon, symbol?: string) {
-    return (await this.repository.records(userId, horizon, 500, symbol)).map(
-      toDto,
-    );
+  async list(
+    userId: string,
+    horizon?: EvaluationHorizon,
+    symbol?: string,
+    executionType?: "ALL" | "EXECUTED_ONLY" | "SHADOW_ONLY",
+  ) {
+    const records = (
+      await this.repository.records(userId, horizon, 500, symbol)
+    ).map(toDto);
+    if (executionType === "EXECUTED_ONLY") {
+      return records.filter((r) => r.leverageSource !== "SHADOW_CONFIG");
+    }
+    if (executionType === "SHADOW_ONLY") {
+      return records.filter((r) => r.leverageSource === "SHADOW_CONFIG");
+    }
+    return records;
   }
-  async metrics(userId: string, horizon?: EvaluationHorizon, symbol?: string) {
+  async metrics(
+    userId: string,
+    horizon?: EvaluationHorizon,
+    symbol?: string,
+    executionType?: "ALL" | "EXECUTED_ONLY" | "SHADOW_ONLY",
+  ) {
     return calculatePerformanceMetrics(
-      await this.list(userId, horizon, symbol),
+      await this.list(userId, horizon, symbol, executionType),
     );
   }
   async lifecycleMetrics(userId?: string, symbol?: string): Promise<LifecyclePromotionMetrics> {

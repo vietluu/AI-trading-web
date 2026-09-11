@@ -30,6 +30,7 @@ export class SessionService {
   static readonly cookieName = "sid";
   static readonly csrfCookieName = "csrf_token";
   static readonly csrfHeaderName = "x-csrf-token";
+  static readonly rotationGracePeriodMs = 30_000;
   private readonly ttlSeconds: number;
   private readonly rememberMeTtlSeconds: number;
   private readonly secret: string;
@@ -79,16 +80,65 @@ export class SessionService {
     }
 
     const session = await this.repository.findBySessionId(sessionId);
-    if (!session || session.revokedAt || session.expiresAt <= new Date()) {
+    if (!session || session.expiresAt <= new Date()) {
       await this.redis.delete(this.key(sessionId));
       if (session && !session.revokedAt)
         await this.repository.revoke(session.id);
       throw new UnauthorizedException("Session is invalid or expired");
     }
 
+    if (session.revokedAt) {
+      // Check if this session was rotated within the concurrency grace period
+      if (
+        session.rotatedAt &&
+        Date.now() - session.rotatedAt.getTime() <= SessionService.rotationGracePeriodMs
+      ) {
+        const active = await this.repository.findActiveByFamily(session.tokenFamily);
+        if (active && active.expiresAt > new Date()) {
+          const fingerprint = this.fingerprint(context);
+          if (
+            this.fingerprintEnabled &&
+            !this.constantEqual(active.fingerprint, fingerprint)
+          ) {
+            await this.destroyFamily(active.tokenFamily);
+            throw new UnauthorizedException("Session device fingerprint changed");
+          }
+          if (
+            csrfToken &&
+            !this.constantEqual(active.csrfHash, this.hash(`csrf:${csrfToken}`))
+          ) {
+            throw new UnauthorizedException("CSRF validation failed");
+          }
+          return {
+            id: active.id,
+            userId: active.userId,
+            tokenFamily: active.tokenFamily,
+            generation: active.generation,
+            csrfHash: active.csrfHash,
+            fingerprint: active.fingerprint,
+            expiresAt: active.expiresAt.toISOString(),
+            rememberMe: active.rememberMe,
+          };
+        }
+      }
+      await this.redis.delete(this.key(sessionId));
+      if (
+        session.rotatedAt &&
+        Date.now() - session.rotatedAt.getTime() > SessionService.rotationGracePeriodMs
+      ) {
+        await this.destroyFamily(session.tokenFamily);
+      }
+      throw new UnauthorizedException("Session is invalid or expired");
+    }
+
     if (!parsed) {
       if (session.rotatedAt) {
-        await this.destroyFamily(session.tokenFamily);
+        if (
+          Date.now() - session.rotatedAt.getTime() >
+          SessionService.rotationGracePeriodMs
+        ) {
+          await this.destroyFamily(session.tokenFamily);
+        }
         throw new UnauthorizedException("Session is invalid or expired");
       }
 
@@ -142,6 +192,35 @@ export class SessionService {
     token: string,
     context: RequestMetadata,
   ): Promise<SessionCredentials> {
+    const sessionId = this.hash(`session:${token}`);
+    const existing = await this.repository.findBySessionId(sessionId);
+
+    // If already rotated within the concurrency grace period, return cached grace credentials
+    if (
+      existing?.rotatedAt &&
+      Date.now() - existing.rotatedAt.getTime() <= SessionService.rotationGracePeriodMs
+    ) {
+      const graceCached = await this.redis.get(this.graceKey(existing.tokenFamily));
+      if (graceCached) {
+        try {
+          const parsedGrace = JSON.parse(graceCached) as {
+            token: string;
+            csrfToken: string;
+            expiresAt: string;
+            rememberMe: boolean;
+          };
+          return {
+            token: parsedGrace.token,
+            csrfToken: parsedGrace.csrfToken,
+            expiresAt: new Date(parsedGrace.expiresAt),
+            rememberMe: parsedGrace.rememberMe,
+          };
+        } catch {
+          // fallback to standard issue
+        }
+      }
+    }
+
     const current = await this.resolve(token, context);
     const next = await this.issue(
       current.userId,
@@ -151,7 +230,17 @@ export class SessionService {
       current.generation + 1,
       current.id,
     );
-    await this.redis.delete(this.key(this.hash(`session:${token}`)));
+    await this.redis.delete(this.key(sessionId));
+    await this.redis.setWithTtl(
+      this.graceKey(current.tokenFamily),
+      JSON.stringify({
+        token: next.token,
+        csrfToken: next.csrfToken,
+        expiresAt: next.expiresAt.toISOString(),
+        rememberMe: next.rememberMe,
+      }),
+      Math.round(SessionService.rotationGracePeriodMs / 1000),
+    );
     return next;
   }
 
@@ -203,6 +292,23 @@ export class SessionService {
       ? await this.repository.rotate(rotateId, data)
       : await this.repository.create(data);
     if (!session) {
+      if (rotateId) {
+        const existing = await this.repository.findOwned(rotateId, userId);
+        if (
+          existing?.rotatedAt &&
+          Date.now() - existing.rotatedAt.getTime() <= SessionService.rotationGracePeriodMs
+        ) {
+          const active = await this.repository.findActiveByFamily(tokenFamily);
+          if (active) {
+            return {
+              token,
+              csrfToken,
+              expiresAt,
+              rememberMe,
+            };
+          }
+        }
+      }
       await this.destroyFamily(tokenFamily);
       throw new UnauthorizedException("Session rotation conflict detected");
     }
@@ -222,6 +328,10 @@ export class SessionService {
       ttl,
     );
     return { token, csrfToken, expiresAt, rememberMe };
+  }
+
+  private graceKey(tokenFamily: string): string {
+    return `session:grace:${tokenFamily}`;
   }
 
   private async handlePossibleReuse(sessionId: string): Promise<void> {

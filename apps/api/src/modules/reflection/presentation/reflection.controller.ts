@@ -18,12 +18,32 @@ export class ReflectionController {
   constructor(private readonly performance: PerformanceService, private readonly reflection: ReflectionService, private readonly repository: ReflectionRepository, private readonly selfLearning: SelfLearningService) {}
 
   @Get('performance')
-  records(@CurrentUser() user: { id: string }, @Query('horizon') raw?: string, @Query('symbol') symbol?: string) {
-    return this.performance.list(user.id, raw ? EvaluationHorizonSchema.parse(raw) : undefined, symbol);
+  records(
+    @CurrentUser() user: { id: string },
+    @Query('horizon') raw?: string,
+    @Query('symbol') symbol?: string,
+    @Query('executionType') executionType?: "ALL" | "EXECUTED_ONLY" | "SHADOW_ONLY",
+  ) {
+    return this.performance.list(
+      user.id,
+      raw ? EvaluationHorizonSchema.parse(raw) : undefined,
+      symbol,
+      executionType,
+    );
   }
   @Get('performance/metrics')
-  metrics(@CurrentUser() user: { id: string }, @Query('horizon') raw?: string, @Query('symbol') symbol?: string) {
-    return this.performance.metrics(user.id, raw ? EvaluationHorizonSchema.parse(raw) : undefined, symbol);
+  metrics(
+    @CurrentUser() user: { id: string },
+    @Query('horizon') raw?: string,
+    @Query('symbol') symbol?: string,
+    @Query('executionType') executionType?: "ALL" | "EXECUTED_ONLY" | "SHADOW_ONLY",
+  ) {
+    return this.performance.metrics(
+      user.id,
+      raw ? EvaluationHorizonSchema.parse(raw) : undefined,
+      symbol,
+      executionType,
+    );
   }
   @Get('performance/alerts')
   alerts(@CurrentUser() user: { id: string }, @Query('symbol') symbol?: string) { return this.performance.alerts(user.id, symbol); }
