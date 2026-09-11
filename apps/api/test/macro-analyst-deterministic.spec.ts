@@ -56,4 +56,29 @@ describe('MACRO_ANALYST_DEFINITION - macroTrend scoring', () => {
     );
     expect(result?.macroTrend).toBe('RISK_OFF');
   });
+
+  it('should flag MACRO_NEWS_BLACKOUT in riskFactors when high impact event is 15 minutes away with no actual data', () => {
+    const scheduledAt = new Date(Date.now() + 15 * 60_000).toISOString();
+    const result = MACRO_ANALYST_DEFINITION.buildDeterministicOutput!(
+      makeToolData([
+        { name: 'Consumer Price Index', importance: 'HIGH', actual: null, forecast: '3.2', scheduledAt },
+      ]),
+      [],
+    );
+    expect(result?.riskFactors.some((r) => r.includes('MACRO_NEWS_BLACKOUT'))).toBe(true);
+    expect(result?.summary).toContain('[MACRO_NEWS_BLACKOUT ACTIVE]');
+  });
+
+  it('should not flag blackout when high impact event is 2 hours away', () => {
+    const scheduledAt = new Date(Date.now() + 120 * 60_000).toISOString();
+    const result = MACRO_ANALYST_DEFINITION.buildDeterministicOutput!(
+      makeToolData([
+        { name: 'Consumer Price Index', importance: 'HIGH', actual: null, forecast: '3.2', scheduledAt },
+      ]),
+      [],
+    );
+    expect(result?.riskFactors.some((r) => r.includes('MACRO_NEWS_BLACKOUT'))).toBe(false);
+    expect(result?.summary).not.toContain('[MACRO_NEWS_BLACKOUT ACTIVE]');
+  });
 });
+

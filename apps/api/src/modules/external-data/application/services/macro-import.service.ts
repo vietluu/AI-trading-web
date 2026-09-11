@@ -1,13 +1,16 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { MacroImportConfirmRequest, MacroImportPreviewResponse } from '@platform/shared';
 import { PrismaService } from '../../../../database/prisma.service';
 import { ManualMacroAdapter } from '../../infrastructure/providers/macro/manual-macro.adapter';
+import { ExternalDataEventBus } from './external-data-event-bus.service';
+import { scoreMacroTrend } from '../../../agents/domain/definitions/macro-analyst.definition';
 
 @Injectable()
 export class MacroImportService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly manualMacroAdapter: ManualMacroAdapter,
+    @Optional() private readonly eventBus?: ExternalDataEventBus,
   ) {}
 
   previewImport(content: string, fileFormat: 'csv' | 'json'): MacroImportPreviewResponse {
@@ -31,7 +34,7 @@ export class MacroImportService {
         }
 
         // Upsert macroeconomic event
-        await this.prisma.macroEconomicEvent.upsert({
+        const savedEvent = await this.prisma.macroEconomicEvent.upsert({
           where: {
             provider_name_scheduledAt: {
               provider: 'MANUAL_MACRO',
@@ -67,6 +70,37 @@ export class MacroImportService {
             sourceUrl: item.sourceUrl || null,
           },
         });
+
+        if (item.actual && this.eventBus) {
+          const macroTrend = scoreMacroTrend([{
+            name: savedEvent.name,
+            importance: savedEvent.importance,
+            actual: savedEvent.actual,
+            forecast: savedEvent.forecast,
+          }]);
+          const actualNum = parseFloat(item.actual);
+          const forecastNum = item.forecast ? parseFloat(item.forecast) : NaN;
+          const surprise = Number.isFinite(actualNum) && Number.isFinite(forecastNum)
+            ? actualNum - forecastNum
+            : null;
+
+          this.eventBus.emitMacroRelease({
+            id: savedEvent.id,
+            name: savedEvent.name,
+            category: savedEvent.category,
+            importance: savedEvent.importance,
+            actual: item.actual,
+            forecast: item.forecast ?? null,
+            previous: item.previous ?? null,
+            unit: item.unit ?? null,
+            country: item.country ?? null,
+            currency: item.currency ?? null,
+            scheduledAt: savedEvent.scheduledAt.toISOString(),
+            releasedAt: new Date().toISOString(),
+            macroTrend,
+            surprise,
+          });
+        }
 
         acceptedCount++;
       } catch (err: any) {

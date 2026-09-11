@@ -334,6 +334,8 @@ export class ExternalDataSchedulerService implements OnApplicationBootstrap {
       await this.queue.add(ExternalDataJobType.POLL_FEAR_GREED, {}, { jobId });
     } else if (provider === ExternalDataProvider.REDDIT) {
       await this.queue.add(ExternalDataJobType.POLL_REDDIT, {}, { jobId });
+    } else if (provider === 'BLS_OFFICIAL' || provider === 'OFFICIAL_MACRO') {
+      await this.queue.add(ExternalDataJobType.POLL_OFFICIAL_MACRO, {}, { jobId });
     }
     return { jobId, status: "QUEUED" };
   }
