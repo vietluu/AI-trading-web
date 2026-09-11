@@ -204,9 +204,9 @@ describe("apiRequest", () => {
     );
 
     // Initial 401 triggers refresh for two concurrent requests
-    const [res1, res2] = await Promise.all([
-      apiRequest<{ message: string }>("/test1").catch((e) => e),
-      apiRequest<{ message: string }>("/test2").catch((e) => e),
+    await Promise.allSettled([
+      apiRequest<{ message: string }>("/test1"),
+      apiRequest<{ message: string }>("/test2"),
     ]);
 
     expect(refreshCallCount).toBe(1);

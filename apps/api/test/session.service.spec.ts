@@ -93,7 +93,6 @@ describe("SessionService", () => {
   });
 
   it("permits active session resolution when previous token is sent within concurrency grace period", async () => {
-    let serviceInstance: SessionService;
     const repository = {
       findBySessionId: vi.fn().mockResolvedValue({
         id: "old-id",
@@ -103,16 +102,7 @@ describe("SessionService", () => {
         rotatedAt: new Date(Date.now() - 1000), // 1s ago (within 30s grace period)
         expiresAt: new Date(Date.now() + 3600_000),
       }),
-      findActiveByFamily: vi.fn().mockImplementation(() => ({
-        id: "active-id",
-        userId: "user-id",
-        tokenFamily: "family-id",
-        generation: 2,
-        csrfHash: "hash",
-        fingerprint: (serviceInstance as unknown as { fingerprint: (c: object) => string }).fingerprint({}),
-        expiresAt: new Date(Date.now() + 3600_000),
-        rememberMe: true,
-      })),
+      findActiveByFamily: vi.fn(),
       revokeFamily: vi.fn().mockResolvedValue(undefined),
       listFamilyIdentifiers: vi.fn().mockResolvedValue([]),
     };
@@ -120,7 +110,17 @@ describe("SessionService", () => {
       get: vi.fn().mockResolvedValue(null),
       delete: vi.fn().mockResolvedValue(undefined),
     };
-    serviceInstance = makeService(repository, redis);
+    const serviceInstance = makeService(repository, redis);
+    repository.findActiveByFamily.mockImplementation(() => ({
+      id: "active-id",
+      userId: "user-id",
+      tokenFamily: "family-id",
+      generation: 2,
+      csrfHash: "hash",
+      fingerprint: (serviceInstance as unknown as { fingerprint: (c: object) => string }).fingerprint({}),
+      expiresAt: new Date(Date.now() + 3600_000),
+      rememberMe: true,
+    }));
     const resolved = await serviceInstance.resolve("old-token", {});
     expect(resolved.id).toBe("active-id");
     expect(resolved.tokenFamily).toBe("family-id");
