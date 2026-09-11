@@ -48,6 +48,34 @@ export function hasAuthSessionHint(): boolean {
   return Boolean(readCookie("csrf_token"));
 }
 
+let refreshPromise: Promise<boolean> | null = null;
+
+async function attemptSilentRefresh(): Promise<boolean> {
+  if (refreshPromise) {
+    return refreshPromise;
+  }
+  refreshPromise = (async () => {
+    try {
+      const csrfToken = readCookie("csrf_token");
+      const headers = new Headers();
+      if (csrfToken) {
+        headers.set("X-CSRF-Token", csrfToken);
+      }
+      const response = await fetch(resolveApiUrl("/auth/refresh"), {
+        method: "POST",
+        credentials: "include",
+        headers,
+      });
+      return response.ok;
+    } catch {
+      return false;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+  return refreshPromise;
+}
+
 export async function apiRequest<T>(
   path: string,
   init?: RequestInit,
@@ -65,11 +93,34 @@ export async function apiRequest<T>(
     if (csrfToken) headers.set("X-CSRF-Token", csrfToken);
   }
 
-  const response = await fetch(resolveApiUrl(path), {
+  const isAuthEndpoint =
+    path.startsWith("/auth/") ||
+    path.startsWith("auth/") ||
+    path.startsWith("/api/auth/") ||
+    path.startsWith("api/auth/");
+
+  let response = await fetch(resolveApiUrl(path), {
     ...init,
     credentials: "include",
     headers,
   });
+
+  // If unauthorized on a non-auth endpoint and user holds a session hint, try silent refresh once
+  if (response.status === 401 && !isAuthEndpoint && hasAuthSessionHint()) {
+    const refreshed = await attemptSilentRefresh();
+    if (refreshed) {
+      // Refresh new CSRF token if updated
+      const newCsrf = readCookie("csrf_token");
+      if (newCsrf && !["GET", "HEAD", "OPTIONS"].includes(method)) {
+        headers.set("X-CSRF-Token", newCsrf);
+      }
+      response = await fetch(resolveApiUrl(path), {
+        ...init,
+        credentials: "include",
+        headers,
+      });
+    }
+  }
 
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as ApiErrorBody;

@@ -58,7 +58,14 @@ export function SessionMonitor(): null {
         // apiRequest emits auth:expired for an invalid server-side session.
       }
     };
+    const handleVisibilityChange = (): void => {
+      if (document.visibilityState === "visible") {
+        void check();
+      }
+    };
+
     window.addEventListener("auth:expired", logout);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     void check();
     const interval = setInterval(() => void check(), 30_000);
     return () => {
@@ -66,6 +73,7 @@ export function SessionMonitor(): null {
       clearInterval(interval);
       clearTimeout(expiryTimer);
       window.removeEventListener("auth:expired", logout);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [pathname]);
 

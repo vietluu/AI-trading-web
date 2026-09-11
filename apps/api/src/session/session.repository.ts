@@ -87,6 +87,13 @@ export class SessionRepository {
     });
   }
 
+  findActiveByFamily(tokenFamily: string): Promise<Session | null> {
+    return this.prisma.session.findFirst({
+      where: { tokenFamily, revokedAt: null, expiresAt: { gt: new Date() } },
+      orderBy: { generation: "desc" },
+    });
+  }
+
   async revokeAll(userId: string): Promise<void> {
     await this.prisma.session.updateMany({
       where: { userId, revokedAt: null },
