@@ -70,6 +70,16 @@ export default function DashboardPage(): React.JSX.Element {
     }
   }, [router, session.error]);
 
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      router.replace("/login?reason=session-expired&next=%2F");
+    };
+    window.addEventListener("auth:expired", handleAuthExpired);
+    return () => {
+      window.removeEventListener("auth:expired", handleAuthExpired);
+    };
+  }, [router]);
+
   if (session.isLoading) {
     return <DashboardSkeleton label={t.dashboard.sessionVerifying} />;
   }
