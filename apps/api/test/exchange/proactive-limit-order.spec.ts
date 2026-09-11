@@ -7,9 +7,9 @@ const now = new Date('2026-09-09T12:00:00Z');
 const credentials = { apiKey: 'fixture', apiSecret: 'fixture', passphrase: 'fixture', environment: ExchangeEnvironment.DEMO };
 const command = { symbol: 'BTC-USDT', side: 'BUY', quantity: '0.02', leverage: 2, clientOrderId: 'thesis1', orderType: 'LIMIT', limitPrice: '108200', timeInForce: 'IOC', expiresAt: '2026-09-09T12:15:00Z' } as const;
 function fixture(provider: 'BINANCE' | 'OKX') {
-  const signedPost = vi.fn<(...args: any[]) => Promise<any>>((path: string, _credentials: unknown, body: Record<string, unknown>) => {
+  const signedPost = vi.fn((path: string, _credentials: unknown, body?: Record<string, unknown>) => {
     if (path.includes('leverage')) return Promise.resolve([{ lever: '2' }]);
-    if (provider === 'BINANCE') return Promise.resolve({ symbol: 'BTCUSDT', orderId: '1', side: 'BUY', type: body.type, status: 'NEW', origQty: '0.02', executedQty: '0', price: body.price, timeInForce: body.timeInForce });
+    if (provider === 'BINANCE') return Promise.resolve({ symbol: 'BTCUSDT', orderId: '1', side: 'BUY', type: body?.type, status: 'NEW', origQty: '0.02', executedQty: '0', price: body?.price, timeInForce: body?.timeInForce });
     return Promise.resolve([{ ordId: '1', clOrdId: 'thesis1', sCode: '0', sMsg: '' }]);
   });
   const client = { signedPost, signedGet: () => Promise.resolve([{ instId: 'BTC-USDT-SWAP', maxBuy: '100', maxSell: '100' }]), publicGet: () => Promise.resolve([{ instId: 'BTC-USDT-SWAP', last: '108250', bidPx: '108249', askPx: '108251', high24h: '109000', low24h: '100000', vol24h: '100', volCcy24h: '1000', open24h: '108000', ts: String(now.getTime()) }]) };
@@ -34,18 +34,18 @@ describe('proactive LIMIT execution adapters', () => {
   });
   it('does not retry a governed OKX limit as market when the exchange rejects it', async () => {
     const { adapter, signedPost } = fixture('OKX');
-    signedPost.mockImplementation((path) => Promise.resolve(path.includes('leverage') ? [{ lever: '2' }] : [{ ordId: '1', clOrdId: 'thesis1', sCode: '1', sMsg: 'All operations failed' }]));
+    signedPost.mockImplementation(((path: string) => Promise.resolve(path.includes('leverage') ? [{ lever: '2' }] : [{ ordId: '1', clOrdId: 'thesis1', sCode: '1', sMsg: 'All operations failed' }])) as never);
     await expect(adapter.placeOrder(credentials, command)).rejects.toThrow('All operations failed');
     expect(signedPost.mock.calls.filter(([path]) => path.endsWith('/order'))).toHaveLength(1);
   });
   it.each(['BINANCE', 'OKX'] as const)('%s rechecks deadline after exchange preflight IO', async (provider) => {
     const { adapter, signedPost } = fixture(provider);
     const prior = signedPost.getMockImplementation()!;
-    signedPost.mockImplementation(async (...args) => {
-      const result = await prior(...args);
-      if (args[0].includes('leverage')) vi.setSystemTime(new Date(command.expiresAt));
+    signedPost.mockImplementation((async (path: string, creds: unknown, body?: Record<string, unknown>) => {
+      const result = await prior(path, creds, body);
+      if (path.includes('leverage')) vi.setSystemTime(new Date(command.expiresAt));
       return result;
-    });
+    }) as never);
     await expect(adapter.placeOrder(credentials, command)).rejects.toThrow('THESIS_ORDER_EXPIRED');
     expect(signedPost.mock.calls.filter(([path]) => path.endsWith('/order'))).toHaveLength(0);
   });

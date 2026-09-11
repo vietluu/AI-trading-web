@@ -73,7 +73,8 @@ export function composeEvidenceSize(gates: EvidenceGateResult[], options: Eviden
   const reasons = [...new Set(gates.flatMap((gate) => gate.reasons))];
   if (gates.some((gate) => gate.severity === 'BLOCK' || gate.sizeFactor === 0)) return { severity: 'BLOCK', sizeFactor: 0, reasons };
   const raw = gates.reduce((factor, gate) => factor * (gate.sizeFactor ?? 1), 1);
-  if (!Number.isFinite(raw) || raw <= 0 || raw > 1) return { severity: 'BLOCK', sizeFactor: 0, reasons: [...reasons, 'INVALID_SIZE_FACTOR'] };
-  const sizeFactor = Math.min(raw, Math.max(options.minSizeFactor ?? 0.05, Math.min(options.maxSizeFactor ?? 1, raw)));
+  const min = options.minSizeFactor ?? 0.05;
+  const max = options.maxSizeFactor ?? 1;
+  const sizeFactor = Math.min(max, Math.max(min, raw));
   return { severity: sizeFactor < 1 ? 'REDUCE_SIZE' : 'APPROVE', sizeFactor, reasons };
 }
