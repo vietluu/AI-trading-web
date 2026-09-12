@@ -207,17 +207,41 @@ export class DecisionJudgeService {
       (hardGateCalibration.empiricalProbability ?? 0) < policy.minCalibratedProbability
     ) reasons.push('CALIBRATED_PROBABILITY_TOO_LOW');
     const sampleSize = hardGateCalibration?.sampleSize ?? hardGateCalibration?.bucketSampleSize ?? 0;
+    const empiricalProbability = hardGateCalibration?.empiricalProbability ?? 0;
+    const brierScore = hardGateCalibration?.brierScore ?? 0;
     // Tighter brier requirement for larger samples, standard 0.35 ceiling
     const maxBrier = sampleSize >= 100 ? 0.32 : 0.35;
-    if (
-      hardGateCalibration &&
-      (hardGateCalibration.brierScore ?? 0) > maxBrier
-    ) reasons.push('CALIBRATION_UNRELIABLE');
+
+    let calibrationShrinkage = false;
+    if (hardGateCalibration && brierScore > maxBrier) {
+      if (empiricalProbability >= 0.50 && brierScore <= 0.36) {
+        calibrationShrinkage = true;
+      } else {
+        reasons.push('CALIBRATION_UNRELIABLE');
+      }
+    }
 
     if (reasons.some((reason) => reason.includes('DATA') || reason.includes('STALE') || reason.includes('USABLE') || reason.includes('CALIBRAT'))) {
       return { verdict: 'REQUEST_MORE_DATA', severity: 'BLOCK', approved: false, reasons: Array.from(new Set(reasons)) };
     }
     if (reasons.length > 0) return { verdict: 'REJECT', severity: 'BLOCK', approved: false, reasons: Array.from(new Set(reasons)) };
-    return { verdict: 'APPROVE', severity: gateResult.severity, ...(gateResult.sizeFactor !== undefined ? { sizeFactor: gateResult.sizeFactor } : {}), approved: true, reasons: Array.from(new Set(gateResult.reasons)) };
+
+    let severity: 'BLOCK' | 'REDUCE_SIZE' | 'APPROVE' = gateResult.severity;
+    let sizeFactor: number | undefined = gateResult.sizeFactor;
+    const approvedReasons = [...gateResult.reasons];
+
+    if (calibrationShrinkage) {
+      severity = 'REDUCE_SIZE';
+      sizeFactor = Math.min(sizeFactor ?? 1.0, 0.5);
+      approvedReasons.push('CALIBRATION_SHRINKAGE_SIZE_REDUCED');
+    }
+
+    return {
+      verdict: 'APPROVE',
+      severity,
+      ...(sizeFactor !== undefined ? { sizeFactor } : {}),
+      approved: true,
+      reasons: Array.from(new Set(approvedReasons)),
+    };
   }
 }

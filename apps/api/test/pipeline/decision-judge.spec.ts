@@ -394,5 +394,74 @@ describe('macro news blackout and direction alignment gates', () => {
     expect(result.severity).toBe('BLOCK');
     expect(result.reasons).toContain('PRE_MORTEM_FAKEOUT_RISK');
   });
+
+  it('applies CALIBRATION_SHRINKAGE_SIZE_REDUCED instead of blocking when empiricalProbability >= 0.50 and brierScore <= 0.36', () => {
+    const good = { dataQuality: 'GOOD', generatedAt: new Date().toISOString() };
+    const result = judge.evaluate(
+      {
+        decision: 'LONG',
+        dataQuality: 'GOOD',
+        conflictLevel: 'LOW',
+        confidence: 85,
+        expectedValue: 1.0,
+        profitFactorEstimate: 2.0,
+        riskScore: 30,
+        confidenceCalibration: {
+          status: 'CALIBRATED',
+          rawScore: 85,
+          empiricalProbability: 0.54, // Positive edge (54% win rate)
+          sampleSize: 137,           // >= 100
+          bucketSampleSize: 46,
+          brierScore: 0.3315,        // > 0.32 but <= 0.36
+          scope: 'EXACT',
+          fallbackUsed: false,
+          hardGateEligible: true,
+        },
+      } as never,
+      {
+        market: good, technical: good, news: good, sentiment: good, macro: good, onchain: good,
+      } as never,
+      { symbol: 'ZRO-USDT', requireCalibratedConfidence: true },
+    );
+
+    expect(result.approved).toBe(true);
+    expect(result.severity).toBe('REDUCE_SIZE');
+    expect(result.sizeFactor).toBe(0.5);
+    expect(result.reasons).toContain('CALIBRATION_SHRINKAGE_SIZE_REDUCED');
+  });
+
+  it('retains hard BLOCK CALIBRATION_UNRELIABLE when empiricalProbability < 0.50 despite sampleSize >= 100', () => {
+    const good = { dataQuality: 'GOOD', generatedAt: new Date().toISOString() };
+    const result = judge.evaluate(
+      {
+        decision: 'LONG',
+        dataQuality: 'GOOD',
+        conflictLevel: 'LOW',
+        confidence: 85,
+        expectedValue: 1.0,
+        profitFactorEstimate: 2.0,
+        riskScore: 30,
+        confidenceCalibration: {
+          status: 'CALIBRATED',
+          rawScore: 85,
+          empiricalProbability: 0.25, // Poor edge (25% win rate like BNB)
+          sampleSize: 150,           // >= 100
+          bucketSampleSize: 30,
+          brierScore: 0.34,          // > 0.32
+          scope: 'EXACT',
+          fallbackUsed: false,
+          hardGateEligible: true,
+        },
+      } as never,
+      {
+        market: good, technical: good, news: good, sentiment: good, macro: good, onchain: good,
+      } as never,
+      { symbol: 'BNB-USDT', requireCalibratedConfidence: true },
+    );
+
+    expect(result.approved).toBe(false);
+    expect(result.severity).toBe('BLOCK');
+    expect(result.reasons).toContain('CALIBRATION_UNRELIABLE');
+  });
 });
 
