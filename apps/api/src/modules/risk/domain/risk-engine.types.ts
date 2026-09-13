@@ -1,5 +1,6 @@
 import type { DecisionOutput, RiskOutput } from "@platform/shared";
 import type { TradePlan, TradePlanMarketContext, StoredProbe } from "./trade-plan-engine";
+import type { ExecutionContext } from "../../pipeline/domain/execution-context";
 
 export interface RiskAccount {
   balance: number;
@@ -47,6 +48,7 @@ export interface RiskInput {
   /** Newest first; used to prevent immediate re-entry after net losses. */
   recentClosedTrades?: RecentClosedTradeRecord[];
   now?: Date;
+  executionContext?: ExecutionContext;
 }
 
 export interface RiskLimits {

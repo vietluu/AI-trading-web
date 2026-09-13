@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DecisionOutput } from "@platform/shared";
+import { buildExecutionContext } from "../../src/modules/pipeline/domain/execution-context";
 import {
   calculateDrawdown,
   calculatePositionSize,
@@ -498,5 +499,90 @@ describe("risk engine", () => {
     expect(memeResult.leverage).toBeLessThanOrEqual(5);
     // For MAJOR with maxLeverage 50, it is capped at 30x
     expect(btcResult.leverage).toBeLessThanOrEqual(30);
+  });
+
+  it("rejects when executionContext violates setup location", () => {
+    const invalidZroContext = buildExecutionContext({
+      regime: "RANGING",
+      setup: "RANGE_REVERSION",
+      action: "ENTER",
+      price: 1.0171,
+      support: 1.0151,
+      resistance: 1.0245,
+      atr: 0.00467606,
+      sourceDataCutoff: new Date().toISOString(),
+      primaryCandleClosed: true,
+      triggerConfirmed: true,
+    });
+
+    const result = evaluateRisk(
+      input({
+        symbol: "ZRO-USDT",
+        decision: decision({
+          decision: "SHORT",
+          executionContext: invalidZroContext,
+        }),
+        marketData: {
+          price: 1.0171,
+          volatility: 0.02,
+          tradePlanContext: {
+            atr: 0.00467606,
+            support: 1.0151,
+            resistance: 1.0245,
+            executionContext: invalidZroContext,
+          },
+        },
+        executionContext: invalidZroContext,
+      }),
+      limits,
+    );
+
+    expect(result.approved).toBe(false);
+    expect(result.reason).toBe("RANGE_SHORT_NOT_AT_UPPER_BOUNDARY");
+  });
+
+  it("preserves range reversal strategy in tradePlan when executionContext is present", () => {
+    const validRangeContext = buildExecutionContext({
+      regime: "RANGING",
+      setup: "RANGE_REVERSION",
+      action: "ENTER",
+      price: 1.0235,
+      support: 1.0151,
+      resistance: 1.0245,
+      atr: 0.00467606,
+      sourceDataCutoff: new Date().toISOString(),
+      primaryCandleClosed: true,
+      triggerConfirmed: true,
+    });
+
+    const result = evaluateRisk(
+      input({
+        symbol: "ZRO-USDT",
+        decision: decision({
+          decision: "SHORT",
+          executionContext: validRangeContext,
+        }),
+        marketData: {
+          price: 1.0235,
+          volatility: 0.02,
+          tradePlanContext: {
+            atr: 0.00467606,
+            support: 1.0151,
+            resistance: 1.0245,
+            adx: 30, // would trigger quantitative trend if not protected
+            efficiencyRatio: 0.4,
+            ema20: 1.0200,
+            ema50: 1.0220,
+            executionContext: validRangeContext,
+          },
+        },
+        executionContext: validRangeContext,
+      }),
+      limits,
+    );
+
+    expect(result.tradePlan).toBeDefined();
+    expect(result.tradePlan?.regime).toBe("RANGING");
+    expect(result.tradePlan?.strategy).toBe("RANGE_REVERSAL");
   });
 });

@@ -1,5 +1,6 @@
 import { validateTradeThesis } from '../../agents/domain/trade-thesis-validator';
 import { thesisTriggersSatisfied } from './thesis-execution';
+import { validateSetupLocation } from '../../pipeline/domain/execution-context';
 import type {
   LastTradeRecord,
   RiskAccount,
@@ -175,6 +176,17 @@ export function evaluateRisk(
     return reject("ABNORMAL_VOLATILITY");
   if (drawdownPct >= limits.maxDrawdown) return reject("MAX_DRAWDOWN_EXCEEDED");
 
+  const context =
+    input.executionContext ??
+    marketData.tradePlanContext?.executionContext ??
+    decision.executionContext;
+  if (context) {
+    const [firstLocationReason] = validateSetupLocation(context, decision.decision);
+    if (firstLocationReason) {
+      return reject(firstLocationReason);
+    }
+  }
+
   const proactive = marketData.tradePlanContext?.proactive;
   if (proactive) {
     if (!['OBSERVE', 'SHADOW', 'DEMO'].includes(proactive.mode)) return reject('PROACTIVE_MODE_INVALID');
@@ -291,10 +303,14 @@ export function evaluateRisk(
     side: decision.decision,
     entryPrice: marketData.price,
     decision,
-    market: marketData.tradePlanContext ?? {},
+    market: {
+      ...marketData.tradePlanContext,
+      ...(context ? { executionContext: context } : {}),
+    },
     configuredStopLossPct: limits.stopLossPct,
     configuredRiskRewardRatio: limits.riskRewardRatio,
     roundTripCostPct: limits.estimatedRoundTripCostPct,
+    executionContext: context,
   });
 
 

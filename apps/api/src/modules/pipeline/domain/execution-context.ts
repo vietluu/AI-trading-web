@@ -41,6 +41,7 @@ export interface BuildExecutionContextInput {
 export type TradeDirection = 'LONG' | 'SHORT';
 
 export type SetupLocationValidationReason =
+  | 'REGIME_SETUP_MISMATCH'
   | 'RANGE_LOCATION_UNAVAILABLE'
   | 'RANGE_LONG_NOT_AT_LOWER_BOUNDARY'
   | 'RANGE_SHORT_NOT_AT_UPPER_BOUNDARY'
@@ -48,6 +49,18 @@ export type SetupLocationValidationReason =
   | 'ENTRY_TRIGGER_NOT_CONFIRMED'
   | 'ENTRY_CHASE_DISTANCE_EXCEEDED'
   | 'EXPECTED_MOVE_ALREADY_CONSUMED';
+
+export function isSetupCompatibleWithRegime(
+  regime: CanonicalRegime,
+  setup: CanonicalSetup,
+): boolean {
+  return (
+    (regime === 'RANGING' && setup === 'RANGE_REVERSION') ||
+    (regime === 'PRE_BREAKOUT' && setup === 'TRANSITION_PROBE') ||
+    (regime === 'BREAKOUT' && setup === 'BREAKOUT_RETEST') ||
+    (regime === 'TRENDING' && setup === 'TREND_PULLBACK')
+  );
+}
 
 function isFiniteNumber(value: number | undefined): value is number {
   return value !== undefined && Number.isFinite(value);
@@ -144,6 +157,10 @@ export function validateSetupLocation(
 ): SetupLocationValidationReason[] {
   const reasons = new Set<SetupLocationValidationReason>();
   const { priceLocation } = context;
+
+  if (!isSetupCompatibleWithRegime(context.regime, context.setup)) {
+    reasons.add('REGIME_SETUP_MISMATCH');
+  }
 
   if (context.setup === 'RANGE_REVERSION' && context.action !== 'WAIT') {
     if (priceLocation.rangePercentile === undefined) {

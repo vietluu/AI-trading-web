@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DecisionOutput } from "@platform/shared";
 import { buildAdaptiveTradePlan } from "../../src/modules/risk/domain/trade-plan-engine";
+import { buildExecutionContext } from "../../src/modules/pipeline/domain/execution-context";
 import { createBaseSnapshot, createValidLongThesis } from "../helpers/thesis-fixture";
 
 const decision = (
@@ -570,5 +571,79 @@ describe("adaptive trade plan engine", () => {
     expect(plan.tp2Price).toBe(plan.takeProfit);
     expect(plan.grossRewardPct).toBeGreaterThan(1.0);
     expect(plan.expectedNetRewardPct).toBeGreaterThan(0.5);
+  });
+
+  it("does not convert range reversal into trend pullback", () => {
+    const rangeShortAtResistance = {
+      side: "SHORT" as const,
+      entryPrice: 1.0235,
+      decision: decision("SHORT", "RANGING"),
+      market: {
+        atr: 0.00467606,
+        support: 1.0151,
+        resistance: 1.0245,
+        // Bearish trend indicators that would ordinarily trigger quantitative trend
+        adx: 35,
+        efficiencyRatio: 0.45,
+        ema20: 1.0200,
+        ema50: 1.0220,
+        executionContext: buildExecutionContext({
+          regime: "RANGING",
+          setup: "RANGE_REVERSION",
+          action: "ENTER",
+          price: 1.0235,
+          support: 1.0151,
+          resistance: 1.0245,
+          atr: 0.00467606,
+          sourceDataCutoff: new Date().toISOString(),
+          primaryCandleClosed: true,
+          triggerConfirmed: true,
+        }),
+      },
+      configuredStopLossPct: 0.02,
+      configuredRiskRewardRatio: 1.5,
+    };
+
+    const plan = buildAdaptiveTradePlan(rangeShortAtResistance);
+    expect(plan.regime).toBe("RANGING");
+    expect(plan.strategy).toBe("RANGE_REVERSAL");
+  });
+
+  it("selects trade plan directly from executionContext setup and does not reclassify", () => {
+    // When range boundary is violated for RANGE_REVERSION, reject as RANGE_REVERSAL rather than falling through to TREND_PULLBACK
+    const invalidRangeShort = {
+      side: "SHORT" as const,
+      entryPrice: 1.0171, // near support, violates short boundary
+      decision: decision("SHORT", "RANGING"),
+      market: {
+        atr: 0.00467606,
+        support: 1.0151,
+        resistance: 1.0245,
+        adx: 35,
+        efficiencyRatio: 0.45,
+        ema20: 1.0200,
+        ema50: 1.0220,
+        executionContext: buildExecutionContext({
+          regime: "RANGING",
+          setup: "RANGE_REVERSION",
+          action: "ENTER",
+          price: 1.0171,
+          support: 1.0151,
+          resistance: 1.0245,
+          atr: 0.00467606,
+          sourceDataCutoff: new Date().toISOString(),
+          primaryCandleClosed: true,
+          triggerConfirmed: true,
+        }),
+      },
+      configuredStopLossPct: 0.02,
+      configuredRiskRewardRatio: 1.5,
+    };
+
+    const plan = buildAdaptiveTradePlan(invalidRangeShort);
+    expect(plan.approved).toBe(false);
+    expect(plan.regime).toBe("RANGING");
+    expect(plan.strategy).toBe("RANGE_REVERSAL");
+    expect(plan.reason).toBe("RANGE_ENTRY_NOT_AT_BOUNDARY");
   });
 });
