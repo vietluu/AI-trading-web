@@ -458,7 +458,7 @@ git commit -m "feat(risk): make loss cooldown thesis aware"
 - Consumes: symbol, setup, regime, direction, execution policy/version, and validation.
 - Produces: `riskTier: 'NORMAL' | 'PROBE' | 'BLOCKED'`, matched cohort, size, and reason.
 
-- [ ] **Step 1: Write failing tier tests**
+- [x] **Step 1: Write failing tier tests**
 
 ```ts
 expect((await policy.evaluate(exactNegativeFixture({
@@ -470,17 +470,17 @@ expect((await policy.evaluate(positiveExactFixture())).riskTier)
   .toBe('NORMAL');
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/quant-execution-policy.spec.ts test/pipeline/evidence-gate.spec.ts`
 
 Expected: FAIL because the result lacks matched setup and risk tier.
 
-- [ ] **Step 3: Implement cohort matching and tier composition**
+- [x] **Step 3: Implement cohort matching and tier composition**
 
 Use `{symbol, setup, regime, direction, executionPolicy, configurationVersion}` as the key. Mature exact negative evidence is `BLOCKED`; immature, stale, or mismatched evidence in shadow/DEMO is `PROBE` capped at 0.2; mature positive exact evidence is `NORMAL`. Global fallback never overrides exact negative evidence. Map tiers to existing `BLOCK`, `REDUCE_SIZE`, and `APPROVE` composition.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/quant-execution-policy.spec.ts test/pipeline/evidence-gate.spec.ts test/pipeline/pipeline.service.spec.ts`
 
