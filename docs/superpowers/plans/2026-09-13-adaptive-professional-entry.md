@@ -505,7 +505,7 @@ git commit -m "feat(quant): size execution by matched cohort"
 - Consumes: finalized `TradeLifecycleOutcome` joined to thesis cohort.
 - Produces: lifecycle calibration for executable setups; horizon metrics remain diagnostic.
 
-- [ ] **Step 1: Write failing SL-before-horizon test**
+- [x] **Step 1: Write failing SL-before-horizon test**
 
 ```ts
 it('keeps a stopped trade wrong when the one-hour mark later agrees', async () => {
@@ -519,17 +519,17 @@ it('keeps a stopped trade wrong when the one-hour mark later agrees', async () =
 });
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @platform/api test -- test/reflection/performance-provenance.spec.ts test/reflection/self-learning.service.spec.ts test/reflection/thesis-cohort.spec.ts`
 
 Expected: FAIL because horizon outcomes can feed executable calibration.
 
-- [ ] **Step 3: Separate diagnostic and executable learning**
+- [x] **Step 3: Separate diagnostic and executable learning**
 
 Select finalized lifecycle rows for promotion/calibration and return `{source:'TRADE_LIFECYCLE', outcome, netR, realizedNetPnl, exitReason}`. Key cohorts by configuration hash, symbol, setup, regime, direction, and execution policy. Retain horizon results in reports only.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run: `pnpm --filter @platform/api test -- test/reflection/performance-provenance.spec.ts test/reflection/self-learning.service.spec.ts test/reflection/thesis-cohort.spec.ts test/reflection/live-eligibility.spec.ts`
 
