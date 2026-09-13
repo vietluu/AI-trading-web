@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { FusionRunInputSchema } from "../src/schemas/agents.js";
-import { PipelineScheduleInputSchema } from "../src/schemas/pipeline.js";
+import {
+  ExecutionContextSchema,
+  PipelineScheduleInputSchema,
+  StoredPipelineContextSchema,
+} from "../src/schemas/pipeline.js";
 
 const schedule = {
   pipelineId: "FULL_ANALYSIS_DECISION",
@@ -40,5 +44,32 @@ describe("PipelineScheduleInputSchema", () => {
     });
     expect(result.intervalMs).toBe(300_000);
     expect(result.maxRunsPerHour).toBe(60);
+  });
+});
+
+describe("ExecutionContextSchema", () => {
+  const context = {
+    regime: "RANGING",
+    setup: "RANGE_REVERSION",
+    action: "ENTER",
+    riskTier: "NORMAL",
+    sourceDataCutoff: "2026-09-12T22:59:59.999Z",
+    usesClosedPrimaryCandle: true,
+    triggerConfirmed: true,
+    priceLocation: {
+      rangePercentile: 0.8,
+      distanceFromSupportAtr: 1.5,
+      distanceFromResistanceAtr: 0.25,
+    },
+  };
+
+  it("accepts the canonical execution context persisted by pipeline runs", () => {
+    expect(ExecutionContextSchema.parse(context)).toEqual(context);
+  });
+
+  it("keeps historical stored contexts valid when execution context is absent", () => {
+    expect(StoredPipelineContextSchema.parse({ analyses: {} })).toEqual({
+      analyses: {},
+    });
   });
 });

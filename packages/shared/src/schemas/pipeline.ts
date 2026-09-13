@@ -20,6 +20,60 @@ export const PipelineRunStatusSchema = z.enum([
   "TIMEOUT",
   "SKIPPED",
 ]);
+
+export const CanonicalRegimeSchema = z.enum([
+  "RANGING",
+  "PRE_BREAKOUT",
+  "BREAKOUT",
+  "TRENDING",
+  "UNCERTAIN",
+]);
+export type CanonicalRegime = z.infer<typeof CanonicalRegimeSchema>;
+
+export const CanonicalSetupSchema = z.enum([
+  "RANGE_REVERSION",
+  "TRANSITION_PROBE",
+  "BREAKOUT_RETEST",
+  "TREND_PULLBACK",
+]);
+export type CanonicalSetup = z.infer<typeof CanonicalSetupSchema>;
+
+export const EntryActionSchema = z.enum(["WAIT", "PROBE", "ENTER"]);
+export type EntryAction = z.infer<typeof EntryActionSchema>;
+
+export const RiskTierSchema = z.enum(["NONE", "PROBE", "NORMAL"]);
+export type RiskTier = z.infer<typeof RiskTierSchema>;
+
+export const ExecutionContextSchema = z
+  .object({
+    regime: CanonicalRegimeSchema,
+    regimeDetail: z.string().min(1).optional(),
+    setup: CanonicalSetupSchema,
+    action: EntryActionSchema,
+    riskTier: RiskTierSchema,
+    sourceDataCutoff: z.string().datetime(),
+    usesClosedPrimaryCandle: z.boolean(),
+    triggerConfirmed: z.boolean(),
+    priceLocation: z
+      .object({
+        rangePercentile: z.number().min(0).max(1).optional(),
+        distanceFromSupportAtr: z.number().nonnegative().optional(),
+        distanceFromResistanceAtr: z.number().nonnegative().optional(),
+        distanceFromTriggerAtr: z.number().nonnegative().optional(),
+        moveConsumedPct: z.number().nonnegative().optional(),
+      })
+      .strict(),
+  })
+  .strict();
+export type ExecutionContext = z.infer<typeof ExecutionContextSchema>;
+
+export const StoredPipelineContextSchema = z
+  .object({
+    executionContext: ExecutionContextSchema.optional(),
+  })
+  .passthrough();
+export type StoredPipelineContext = z.infer<typeof StoredPipelineContextSchema>;
+
 export const PipelineSymbolSchema = z
   .string()
   .min(3)
