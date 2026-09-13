@@ -5,6 +5,7 @@ export interface ClosedTradeCycleInput {
   symbol?: string;
   side?: string;
   positionSide?: string | null;
+  requestedQuantity?: unknown;
   quantity?: unknown;
   entryPrice?: unknown;
   grossPnl?: unknown;
@@ -12,6 +13,7 @@ export interface ClosedTradeCycleInput {
   netPnl: unknown;
   returnPct: number | null;
   sourceDataComplete?: boolean;
+  status?: string;
   openedAt?: Date | null;
   closedAt?: Date;
 }
@@ -27,8 +29,25 @@ export interface ClosedTradeCycle {
   netPnl: number;
   returnPct: number | null;
   sourceDataComplete: boolean;
+  requestedQuantity?: number | null;
+  status?: string;
   openedAt: Date | null;
   closedAt: Date | null;
+}
+
+export function normalizeTerminalOrderStatus(
+  status: string,
+  requestedQuantity: number,
+  filledQuantity: number,
+): string {
+  if (
+    (status === "CANCELED" || status === "EXPIRED") &&
+    filledQuantity > 0 &&
+    (requestedQuantity <= 0 || filledQuantity < requestedQuantity)
+  ) {
+    return "PARTIALLY_FILLED_CANCELED";
+  }
+  return status;
 }
 
 /** Combines partial TP/SL/imported closing orders from the same opening order. */
@@ -55,6 +74,10 @@ export function aggregateClosedTradeCycles(
     const entryNotional = quantity > 0 && entryPrice > 0
       ? quantity * entryPrice
       : 0;
+    const requestedQuantity =
+      trade.requestedQuantity !== undefined && trade.requestedQuantity !== null
+        ? finiteNumber(trade.requestedQuantity)
+        : null;
     const existing = cycles.get(key);
     if (!existing) {
       cycles.set(key, {
@@ -68,6 +91,14 @@ export function aggregateClosedTradeCycles(
         netPnl: finiteNumber(trade.netPnl),
         returnPct: trade.returnPct,
         sourceDataComplete: trade.sourceDataComplete ?? false,
+        requestedQuantity,
+        status: trade.status
+          ? normalizeTerminalOrderStatus(
+              trade.status,
+              requestedQuantity ?? 0,
+              quantity,
+            )
+          : undefined,
         openedAt,
         closedAt: trade.closedAt ?? null,
         entryNotional,
@@ -77,12 +108,22 @@ export function aggregateClosedTradeCycles(
 
     if (trade.id) existing.tradeIds.push(trade.id);
     existing.quantity += quantity;
+    if (requestedQuantity !== null) {
+      existing.requestedQuantity = (existing.requestedQuantity ?? 0) + requestedQuantity;
+    }
     existing.grossPnl += finiteNumber(trade.grossPnl);
     existing.fee += finiteNumber(trade.fee);
     existing.netPnl += finiteNumber(trade.netPnl);
     existing.entryNotional += entryNotional;
     existing.sourceDataComplete =
       existing.sourceDataComplete && (trade.sourceDataComplete ?? false);
+    if (trade.status) {
+      existing.status = normalizeTerminalOrderStatus(
+        trade.status,
+        existing.requestedQuantity ?? 0,
+        existing.quantity,
+      );
+    }
     if (trade.closedAt && (!existing.closedAt || trade.closedAt > existing.closedAt)) {
       existing.closedAt = trade.closedAt;
     }
@@ -90,6 +131,13 @@ export function aggregateClosedTradeCycles(
 
   return [...cycles.values()].map(({ entryNotional, ...cycle }) => ({
     ...cycle,
+    status: cycle.status
+      ? normalizeTerminalOrderStatus(
+          cycle.status,
+          cycle.requestedQuantity ?? 0,
+          cycle.quantity,
+        )
+      : undefined,
     returnPct: entryNotional > 0
       ? cycle.netPnl / entryNotional
       : cycle.returnPct,

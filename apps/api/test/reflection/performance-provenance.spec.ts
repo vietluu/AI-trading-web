@@ -38,3 +38,32 @@ describe("performanceDriftToleranceMs", () => {
     expect(performanceDriftToleranceMs("SHORT", 300_000)).toBe(30_000);
   });
 });
+
+import { PerformanceService } from "../../src/modules/reflection/application/performance.service";
+
+describe("PerformanceService.executablePerformance", () => {
+  const service = new PerformanceService({} as never, {} as never);
+
+  const lifecycleFixture = (overrides: Record<string, unknown> = {}) => ({
+    status: 'FINALIZED',
+    exitReason: 'STOP_LOSS',
+    netR: -1,
+    realizedNetPnl: -50,
+    ...overrides,
+  });
+  const performanceFixture = (overrides: Record<string, unknown> = {}) => ({
+    outcome: 'CORRECT' as const,
+    returnPct: 0.45,
+    ...overrides,
+  });
+
+  it('keeps a stopped trade wrong when the one-hour mark later agrees', async () => {
+    const result = await service.executablePerformance({
+      lifecycle: lifecycleFixture({ exitReason: 'STOP_LOSS', netR: -1 }),
+      horizon: performanceFixture({ outcome: 'CORRECT', returnPct: 0.45 }),
+    });
+    expect(result).toMatchObject({
+      source: 'TRADE_LIFECYCLE', outcome: 'WRONG', netR: -1,
+    });
+  });
+});

@@ -1,4 +1,9 @@
 import { z } from 'zod';
+import {
+  CanonicalSetupSchema,
+  EntryActionSchema,
+  ExecutionContextSchema,
+} from './pipeline.js';
 
 export const AgentTypeSchema = z.enum([
   'MARKET_ANALYST',
@@ -553,6 +558,61 @@ export type DecisionInput = z.infer<typeof DecisionInputSchema>;
 export const DecisionRunInputSchema = FusionRunInputSchema;
 export type DecisionRunInput = z.infer<typeof DecisionRunInputSchema>;
 
+export const ExecutableThesisSchema = z
+  .object({
+    action: EntryActionSchema,
+    setup: CanonicalSetupSchema,
+    entryZone: z.object({ lower: z.number(), upper: z.number() }).strict().optional(),
+    trigger: z.object({
+      kind: z.string().min(1),
+      confirmed: z.boolean(),
+      observedAt: z.string().datetime(),
+    }).strict(),
+    invalidation: z.object({ price: z.number(), reason: z.string().min(1) }).strict().optional(),
+    targets: z.array(z.object({
+      price: z.number(),
+      fraction: z.number().positive().max(1),
+      role: z.string().min(1),
+    }).strict()),
+    maximumChaseDistanceAtr: z.number().nonnegative(),
+    expectedNetR: z.number().optional(),
+    evidenceFor: z.array(z.string()),
+    evidenceAgainst: z.array(z.string()),
+    whyEntryIsNotLate: z.string().min(1).optional(),
+    nextActionCondition: z.string().min(1).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.action === 'WAIT') {
+      if (!value.nextActionCondition) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['nextActionCondition'],
+          message: 'WAIT thesis requires a next action condition',
+        });
+      }
+      return;
+    }
+
+    for (const field of ['entryZone', 'invalidation', 'whyEntryIsNotLate'] as const) {
+      if (!value[field]) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [field],
+          message: `${value.action} thesis requires ${field}`,
+        });
+      }
+    }
+    if (value.targets.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['targets'],
+        message: `${value.action} thesis requires at least one target`,
+      });
+    }
+  });
+export type ExecutableThesis = z.infer<typeof ExecutableThesisSchema>;
+
 export const DecisionOutputSchema = z
   .object({
     decision: DecisionSchema,
@@ -616,6 +676,11 @@ export const DecisionOutputSchema = z
     adaptiveThreshold: z.number().min(0).max(100),
     calibrationAdjustment: z.number(),
     executionCost: z.number().min(0),
+    // Historic stored decisions predate executable playbooks. New Decision
+    // service output always supplies both fields; parsing legacy records stays
+    // backward-compatible until their migration is complete.
+    executionContext: ExecutionContextSchema.optional(),
+    thesis: ExecutableThesisSchema.optional(),
     decisionSource: z.enum(['AI', 'RULES', 'AI_WITH_RULES_FALLBACK']).optional(),
     scenarios: z.array(TradingScenarioSchema).optional(),
     regimeDetailed: DetailedRegimeTypeSchema.optional(),

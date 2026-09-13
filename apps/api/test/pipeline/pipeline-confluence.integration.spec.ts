@@ -7,6 +7,7 @@ import {
   evaluateConfluence,
 } from "../../src/modules/pipeline/domain/confluence-engine";
 import type { ConfluenceSignal } from "../../src/modules/pipeline/domain/confluence-engine.types";
+import { buildMarketContext } from "../../src/modules/pipeline/domain/market-context";
 
 describe("Pipeline Confluence Integration & Lifecycle", () => {
   describe("Confluence batch aggregation and resolution", () => {
@@ -140,6 +141,85 @@ describe("Pipeline Confluence Integration & Lifecycle", () => {
       } as never);
 
       expect(runner.executeConfluenceBatch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Market Anchors & Portfolio Opportunity Ranking", () => {
+    it("deduplicates repeated observations and ranks portfolio opportunities by expected R, location, and anchor alignment", async () => {
+      const collector = new ConfluenceCollectorService({ eval: vi.fn() } as unknown as RedisService);
+
+      const anchorCandles = [
+        { symbol: "BTC-USDT", open: 60000, high: 61000, low: 59900, close: 60800, volume: 1000, timestamp: new Date(), closed: true },
+        { symbol: "ETH-USDT", open: 2500, high: 2550, low: 2480, close: 2540, volume: 5000, timestamp: new Date(), closed: true },
+      ];
+      const market = buildMarketContext(anchorCandles);
+      expect(market.marketRegime).toBe("RISK_ON");
+
+      await collector.add({
+        pipelineRunId: "run-zro-1",
+        symbol: "ZRO-USDT",
+        decision: "LONG",
+        confidence: 80,
+        opportunityScore: 70,
+        expectedValue: 0.4,
+        expectedNetR: 1.5,
+        locationScore: 85,
+        riskScore: 2,
+        strategyKey: "trend",
+        compositeScore: 75,
+        regime: "TRENDING",
+        referencePrice: 1.05,
+        setup: "RANGE_REVERSION",
+        triggerId: "trigger-1",
+        sourceDataCutoff: new Date("2026-09-13T06:00:00Z"),
+        executionContext: { executionDecision: { decision: "LONG" }, strategyKey: "trend", provider: "BINANCE_FUTURES" },
+      });
+
+      await collector.add({
+        pipelineRunId: "run-zro-2",
+        symbol: "ZRO-USDT",
+        decision: "LONG",
+        confidence: 82,
+        opportunityScore: 72,
+        expectedValue: 0.42,
+        expectedNetR: 1.6,
+        locationScore: 90,
+        riskScore: 2,
+        strategyKey: "trend",
+        compositeScore: 78,
+        regime: "TRENDING",
+        referencePrice: 1.06,
+        setup: "RANGE_REVERSION",
+        triggerId: "trigger-1",
+        sourceDataCutoff: new Date("2026-09-13T06:15:00Z"),
+        executionContext: { executionDecision: { decision: "LONG" }, strategyKey: "trend", provider: "BINANCE_FUTURES" },
+      });
+
+      await collector.add({
+        pipelineRunId: "run-sol-1",
+        symbol: "SOL-USDT",
+        decision: "LONG",
+        confidence: 75,
+        opportunityScore: 68,
+        expectedValue: 0.25,
+        expectedNetR: 0.8,
+        locationScore: 60,
+        riskScore: 3,
+        strategyKey: "trend",
+        compositeScore: 65,
+        regime: "TRENDING",
+        referencePrice: 135,
+        setup: "TREND_PULLBACK",
+        triggerId: "trigger-sol-1",
+        sourceDataCutoff: new Date("2026-09-13T06:15:00Z"),
+        executionContext: { executionDecision: { decision: "LONG" }, strategyKey: "trend", provider: "BINANCE_FUTURES" },
+      });
+
+      const pending = await collector.pending();
+      expect(pending).toHaveLength(2);
+      expect(pending[0]!.symbol).toBe("ZRO-USDT");
+      expect(pending[0]!.expectedNetR).toBe(1.6);
+      expect(pending[1]!.symbol).toBe("SOL-USDT");
     });
   });
 });

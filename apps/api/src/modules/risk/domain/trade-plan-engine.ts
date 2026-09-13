@@ -1,4 +1,5 @@
 import type { DecisionOutput, TradeThesis, AnticipatoryMarketSnapshot, StructuredTrigger } from "@platform/shared";
+import type { ExecutionContext, RiskTier } from "../../pipeline/domain/execution-context";
 import { adaptiveTradingPolicy } from "../../pipeline/domain/adaptive-trading-policy";
 
 export type TradePlanRegime =
@@ -38,6 +39,7 @@ export interface StoredProbe {
 
 export interface TradePlanMarketContext {
   proactive?: ProactiveExecutionContext;
+  executionContext?: ExecutionContext;
   atr?: number;
   rsi?: number;
   support?: number;
@@ -71,6 +73,7 @@ export interface TradePlan {
   reason?: string;
   regime: TradePlanRegime;
   strategy: TradePlanStrategy;
+  riskTier?: RiskTier;
   stopLoss?: number;
   takeProfit?: number;
   rewardToRisk?: number;
@@ -89,10 +92,12 @@ export interface TradePlan {
   netRewardToRisk?: number;
   lossStreakSizeFactor?: number;
   limitEntryPrice?: number;
+  limitPrice?: number;
   orderType?: "MARKET" | "LIMIT";
   limitTtlCandles?: number;
   timeInForce?: 'IOC';
   expiresAt?: string;
+  sizeFactor?: number;
   targets?: TradeThesis['targets'];
   isLiquiditySweep?: boolean;
   tp1Price?: number;
@@ -163,14 +168,25 @@ function _buildAdaptiveTradePlan(input: {
   configuredRiskRewardRatio: number;
   roundTripCostPct?: number;
   useLimitlessTrailing?: boolean;
+  executionContext?: ExecutionContext;
 }): TradePlan {
   const { side, entryPrice, decision, market } = input;
-  let regime = resolveTradePlanRegime(decision, market);
+  const context = input.executionContext ?? market.executionContext ?? decision.executionContext;
+  let regime: TradePlanRegime;
+  if (context) {
+    if (context.regime === "RANGING") regime = "RANGING";
+    else if (context.regime === "BREAKOUT") regime = "BREAKOUT";
+    else if (context.regime === "PRE_BREAKOUT") regime = "PRE_BREAKOUT_ACCUMULATION";
+    else if (context.regime === "TRENDING") regime = side === "LONG" ? "TREND_UP" : "TREND_DOWN";
+    else regime = resolveTradePlanRegime(decision, market);
+  } else {
+    regime = resolveTradePlanRegime(decision, market);
+  }
   const atr = market.atr;
   const support = market.support;
   const resistance = market.resistance;
   const costPct = input.roundTripCostPct ?? 0.0008;
-  const momentumScalp = /\[momentum-scalp\]/i.test(decision.reasoning);
+  const momentumScalp = !context && /\[momentum-scalp\]/i.test(decision.reasoning);
   const policy = adaptiveTradingPolicy({
     symbol: input.symbol,
     regime:
@@ -282,7 +298,7 @@ function _buildAdaptiveTradePlan(input: {
     return false;
   })();
 
-  if (isLiquiditySweep && finitePositive(atr)) {
+  if (!context && isLiquiditySweep && finitePositive(atr)) {
     const sweepWickExtreme = side === "LONG" ? market.candleLow! : market.candleHigh!;
     const buffer = atr * 0.2;
     const stopLoss = side === "LONG" ? sweepWickExtreme - buffer : sweepWickExtreme + buffer;
@@ -319,13 +335,30 @@ function _buildAdaptiveTradePlan(input: {
   }
   
   if (
-    (regime === "PRE_BREAKOUT_ACCUMULATION" || regime === "HIGH_VOLATILITY") &&
-    market.squeezeState?.isSqueezing &&
-    market.squeezeState.breakoutProbability > 65 &&
-    finitePositive(atr) &&
-    finitePositive(support) &&
-    finitePositive(resistance)
+    context?.setup === "TRANSITION_PROBE" ||
+    (!context &&
+      (regime === "PRE_BREAKOUT_ACCUMULATION" || regime === "HIGH_VOLATILITY") &&
+      market.squeezeState?.isSqueezing &&
+      market.squeezeState.breakoutProbability > 65 &&
+      finitePositive(atr) &&
+      finitePositive(support) &&
+      finitePositive(resistance))
   ) {
+    if (
+      !market.squeezeState?.isSqueezing ||
+      market.squeezeState.breakoutProbability <= 65 ||
+      !finitePositive(support) ||
+      !finitePositive(resistance)
+    ) {
+      return {
+        approved: false,
+        reason: "TRANSITION_CONDITIONS_NOT_MET",
+        regime: "PRE_BREAKOUT_ACCUMULATION",
+        strategy: "SQUEEZE_BREAKOUT",
+        maxHoldingCandles: 8,
+        breakEvenAtR: 1,
+      };
+    }
     const isLong = side === "LONG";
     const limitEntryPrice = isLong ? support : resistance;
     const buffer = atr * 0.3;
@@ -336,7 +369,7 @@ function _buildAdaptiveTradePlan(input: {
     
     return {
       approved: true,
-      regime,
+      regime: "PRE_BREAKOUT_ACCUMULATION",
       strategy: "SQUEEZE_BREAKOUT",
       stopLoss: rounded(stopLoss),
       takeProfit: rounded(takeProfit),
@@ -424,6 +457,7 @@ function _buildAdaptiveTradePlan(input: {
   // breakout flag. A small ATR buffer avoids classifying a boundary touch as a
   // confirmed break.
   if (
+    !context &&
     market.breakout !== true &&
     ((side === "LONG" && finitePositive(resistance) && entryPrice > resistance + atr * 0.1) ||
       (side === "SHORT" && finitePositive(support) && entryPrice < support - atr * 0.1))
@@ -432,11 +466,23 @@ function _buildAdaptiveTradePlan(input: {
   }
 
   if (
-    regime === "RANGING" &&
-    finitePositive(support) &&
-    finitePositive(resistance) &&
-    resistance > support
+    context?.setup === "RANGE_REVERSION" ||
+    (!context &&
+      regime === "RANGING" &&
+      finitePositive(support) &&
+      finitePositive(resistance) &&
+      resistance > support)
   ) {
+    if (!finitePositive(support) || !finitePositive(resistance) || resistance <= support) {
+      return {
+        approved: false,
+        reason: "RANGE_LOCATION_UNAVAILABLE",
+        regime: "RANGING",
+        strategy: "RANGE_REVERSAL",
+        maxHoldingCandles: rangeHoldingCandles(market.timeframeMs),
+        breakEvenAtR: 0.8,
+      };
+    }
     const rangeWidth = resistance - support;
     const location = (entryPrice - support) / rangeWidth;
     const boundaryTolerance = Math.min(0.05, (atr / rangeWidth) * 0.1);
@@ -446,7 +492,7 @@ function _buildAdaptiveTradePlan(input: {
       return {
         approved: false,
         reason: "RANGE_ENTRY_NOT_AT_BOUNDARY",
-        regime,
+        regime: "RANGING",
         strategy: "RANGE_REVERSAL",
         maxHoldingCandles: rangeHoldingCandles(market.timeframeMs),
         breakEvenAtR: 0.8,
@@ -466,7 +512,7 @@ function _buildAdaptiveTradePlan(input: {
       return {
         approved: false,
         reason: "STRUCTURAL_RISK_REWARD_NOT_MET",
-        regime,
+        regime: "RANGING",
         strategy: "RANGE_REVERSAL",
         rewardToRisk: rounded(rr),
         maxHoldingCandles: rangeHoldingCandles(market.timeframeMs),
@@ -479,7 +525,7 @@ function _buildAdaptiveTradePlan(input: {
     const limitEntryPrice = side === "LONG" ? entryPrice - pullbackOffset : entryPrice + pullbackOffset;
     return {
       approved: true,
-      regime,
+      regime: "RANGING",
       strategy: "RANGE_REVERSAL",
       stopLoss: rounded(stopLoss),
       takeProfit: rounded(takeProfit),
@@ -496,7 +542,10 @@ function _buildAdaptiveTradePlan(input: {
     };
   }
 
-  if (regime === "BREAKOUT") {
+  if (
+    context?.setup === "BREAKOUT_RETEST" ||
+    (!context && regime === "BREAKOUT")
+  ) {
     const boundary = side === "LONG" ? resistance : support;
     if (finitePositive(boundary)) {
       const extension = side === "LONG"
@@ -775,5 +824,6 @@ export function buildAdaptiveTradePlan(input: Parameters<typeof _buildAdaptiveTr
   }
 
 
+  plan.riskTier = input.executionContext?.riskTier ?? input.market?.executionContext?.riskTier ?? plan.riskTier;
   return plan;
 }

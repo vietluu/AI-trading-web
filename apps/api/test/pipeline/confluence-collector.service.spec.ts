@@ -147,3 +147,52 @@ describe("ConfluenceCollectorService", () => {
     expect(drained).toBeNull();
   });
 });
+
+import { buildMarketContext } from "../../src/modules/pipeline/domain/market-context";
+
+describe("Market Anchors and Opportunity Deduplication", () => {
+  let collector: ConfluenceCollectorService;
+
+  beforeEach(() => {
+    collector = new ConfluenceCollectorService({ eval: vi.fn() } as unknown as RedisService);
+  });
+
+  const anchorCandles = [
+    { symbol: "BTC-USDT", open: 60000, high: 60500, low: 59800, close: 60400, volume: 100, timestamp: new Date(), closed: true },
+    { symbol: "ETH-USDT", open: 2500, high: 2550, low: 2480, close: 2540, volume: 500, timestamp: new Date(), closed: true },
+  ];
+
+  const candidate = (overrides: Record<string, unknown> = {}) => ({
+    pipelineRunId: "run-test",
+    symbol: "ZRO-USDT",
+    decision: "LONG" as const,
+    confidence: 80,
+    opportunityScore: 75,
+    expectedValue: 0.5,
+    riskScore: 3,
+    strategyKey: "trend",
+    compositeScore: 75,
+    regime: "TRENDING",
+    referencePrice: 1.05,
+    executionContext: {
+      executionDecision: { decision: "LONG" },
+      strategyKey: "trend",
+      provider: "BINANCE_FUTURES",
+    },
+    setup: "RANGE_REVERSION",
+    triggerId: "range-low-1",
+    ...overrides,
+  });
+
+  it('adds BTC and ETH context to an altcoin candidate', () => {
+    expect(buildMarketContext(anchorCandles)).toMatchObject({
+      anchors: { BTC: { available: true }, ETH: { available: true } },
+    });
+  });
+
+  it('updates one opportunity for repeated observations of the same trigger', async () => {
+    await collector.add(candidate({ symbol: 'ZRO-USDT', setup: 'RANGE_REVERSION', triggerId: 'range-low-1' }));
+    await collector.add(candidate({ symbol: 'ZRO-USDT', setup: 'RANGE_REVERSION', triggerId: 'range-low-1' }));
+    expect(await collector.pending()).toHaveLength(1);
+  });
+});

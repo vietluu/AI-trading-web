@@ -61,4 +61,33 @@ describe("aggregateClosedTradeCycles", () => {
 
     expect(result).toHaveLength(2);
   });
+
+  it("normalizes a canceled order with positive partial fill to PARTIALLY_FILLED_CANCELED retaining filled quantity", () => {
+    const result = aggregateClosedTradeCycles([
+      {
+        id: "partial-1",
+        connectionId: "connection-1",
+        strategyId: "strategy-1",
+        symbol: "ZRO-USDT",
+        positionSide: "SHORT",
+        requestedQuantity: 2776,
+        quantity: 746,
+        entryPrice: 1.018,
+        grossPnl: 10,
+        fee: -0.5,
+        netPnl: 9.5,
+        returnPct: 0.0125,
+        sourceDataComplete: true,
+        status: "CANCELED",
+        openedAt: new Date("2026-09-11T06:00:00.000Z"),
+        closedAt: new Date("2026-09-11T06:15:00.000Z"),
+      },
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      quantity: 746,
+      status: "PARTIALLY_FILLED_CANCELED",
+    });
+  });
 });

@@ -7,8 +7,13 @@ import {
   DecisionOutputSchema,
   DecisionRunInputSchema,
   type AgentDataQuality,
+  type CanonicalRegime,
+  type CanonicalSetup,
   type DecisionInput,
   type DecisionOutput,
+  type ExecutableThesis,
+  ExecutionContextSchema,
+  type ExecutionContext,
   type FusionInput,
   type MarketRegime,
 } from "@platform/shared";
@@ -33,6 +38,11 @@ import { createHash } from "node:crypto";
 import { adaptiveTradingPolicy, assetLiquidityClass, parseSpreadBps } from "../../../pipeline/domain/adaptive-trading-policy";
 import { classifyDetailedRegime, computeRegimeAdaptiveWeights } from "../../domain/analysis/regime-adaptive-weights";
 import { buildScenarioBlueprint } from "../../domain/analysis/scenario-planning-engine";
+import {
+  buildExecutionContext,
+  validateSetupLocation,
+  type TradeDirection,
+} from "../../../pipeline/domain/execution-context";
 
 
 export type { AnalystName, Bias, ConflictLevel, RunDecisionOptions, Weighting };
@@ -83,6 +93,7 @@ export class DecisionService {
       referencePrice?: number;
       currentPrice?: number;
       anticipatorySnapshot?: AnticipatoryMarketSnapshot;
+      executionContext?: ExecutionContext;
     } = {},
   ): Promise<DecisionOutput> {
     const config =
@@ -146,6 +157,7 @@ export class DecisionService {
         referencePrice: metadata.referencePrice,
         currentPrice: metadata.currentPrice,
         anticipatorySnapshot: metadata.anticipatorySnapshot,
+        executionContext: metadata.executionContext,
       }
     );
     const confidenceCalibration = await this.confidenceCalibration(
@@ -566,6 +578,7 @@ export class DecisionService {
       referencePrice?: number;
       currentPrice?: number;
       anticipatorySnapshot?: AnticipatoryMarketSnapshot;
+      executionContext?: ExecutionContext;
     },
   ): DecisionOutput {
     const input = DecisionInputSchema.parse(rawInput);
@@ -917,7 +930,7 @@ export class DecisionService {
       customOptions?.confidenceThreshold ?? 0,
       adaptiveThreshold,
     );
-    const finalDecision: DecisionOutput["decision"] =
+    let finalDecision: DecisionOutput["decision"] =
       dataQuality === "INSUFFICIENT" ||
       conflictLevel === "HIGH" ||
       extreme ||
@@ -948,6 +961,22 @@ export class DecisionService {
         ? "BEARISH"
         : undefined;
 
+    const playbook = this.selectPlaybook({
+      direction: finalDecision,
+      input,
+      snapshot: customOptions?.anticipatorySnapshot,
+      executionContext: customOptions?.executionContext,
+      referencePrice: customOptions?.currentPrice ?? customOptions?.referencePrice,
+      risks,
+      signals,
+    });
+    // Older callers have not yet propagated Task 1's canonical context. Keep
+    // their directional telemetry intact, while making the missing execution
+    // location explicit as a non-actionable thesis. Once a context is present,
+    // it is authoritative and invalid/late candidates fail closed to WAIT.
+    if (customOptions?.executionContext && playbook.executionContext.action === 'WAIT') {
+      finalDecision = 'WAIT';
+    }
     const scenarios = buildScenarioBlueprint({
       decision: finalDecision,
       confidence: Math.round(calibratedConfidence),
@@ -989,6 +1018,8 @@ export class DecisionService {
       adaptiveThreshold: Math.round(adaptiveThreshold),
       calibrationAdjustment: Number(calibrationAdjustment.toFixed(2)),
       executionCost: Number(executionCost.toFixed(3)),
+      executionContext: playbook.executionContext,
+      thesis: playbook.thesis,
       scenarios,
       anticipatorySignals: anticipatory?.signals,
       decisionSource: "RULES",
@@ -1018,6 +1049,250 @@ export class DecisionService {
       },
     });
     return output;
+  }
+
+  private selectPlaybook(params: {
+    direction: DecisionOutput['decision'];
+    input: DecisionInput;
+    snapshot?: AnticipatoryMarketSnapshot;
+    executionContext?: ExecutionContext;
+    referencePrice?: number;
+    risks: string[];
+    signals: DecisionOutput['signals'];
+  }): { executionContext: ExecutionContext; thesis: ExecutableThesis } {
+    const context = params.executionContext ?? this.waitingExecutionContext(
+      params.input,
+      params.snapshot,
+      params.referencePrice,
+    );
+    const observedAt = params.snapshot?.execution.coverage === 'AVAILABLE'
+      ? params.snapshot.execution.sourceTimestamp
+      : context.sourceDataCutoff;
+    const direction = params.direction === 'WAIT' ? undefined : params.direction;
+    const snapshotPrice = params.snapshot?.execution.coverage === 'AVAILABLE'
+      ? params.snapshot.execution.currentPrice
+      : undefined;
+    const atr = params.snapshot?.volatility.coverage === 'AVAILABLE'
+      ? params.snapshot.volatility.atr
+      : undefined;
+    const boundaries = params.snapshot?.structure.coverage === 'AVAILABLE'
+      ? params.snapshot.structure.rangeBoundaries
+      : undefined;
+
+    if (!direction || !params.executionContext || context.action === 'WAIT') {
+      return this.waitingPlaybook(context, observedAt, params.risks);
+    }
+
+    const validationReasons = validateSetupLocation(context, direction);
+    const setupMatchesRegime = this.setupMatchesRegime(context.regime, context.setup);
+    const hasExecutablePrices = snapshotPrice !== undefined && atr !== undefined && atr > 0;
+    const hasTransitionEvidence = params.snapshot?.structure.coverage === 'AVAILABLE' &&
+      params.snapshot?.volatility.coverage === 'AVAILABLE' &&
+      params.snapshot.volatility.squeezeState === 'SQUEEZING' &&
+      (params.snapshot.structure.liquiditySweep.coverage === 'AVAILABLE' &&
+        params.snapshot.structure.liquiditySweep.detected ||
+        params.snapshot.participation.coverage === 'AVAILABLE' &&
+          params.snapshot.participation.volumeState === 'EXPANDING' ||
+        params.snapshot.derivatives.coverage === 'AVAILABLE' &&
+          params.snapshot.derivatives.derivativesImbalance.coverage === 'AVAILABLE' &&
+          params.snapshot.derivatives.derivativesImbalance.squeezeProbability >= 50);
+    const hasStructuralPressure =
+      (context.priceLocation.distanceFromSupportAtr ?? Infinity) <= 0.8 ||
+      (context.priceLocation.distanceFromResistanceAtr ?? Infinity) <= 0.8;
+    const hasAcceptableBreakoutChase =
+      context.priceLocation.distanceFromTriggerAtr !== undefined &&
+      context.priceLocation.distanceFromTriggerAtr <= 0.8;
+    const hasTrendPullback = direction === 'LONG'
+      ? (context.priceLocation.distanceFromSupportAtr ?? Infinity) <= 0.8
+      : (context.priceLocation.distanceFromResistanceAtr ?? Infinity) <= 0.8;
+    const requiresRange = context.setup === 'RANGE_REVERSION';
+    const candidateIsValid =
+      setupMatchesRegime &&
+      hasExecutablePrices &&
+      validationReasons.length === 0 &&
+      (requiresRange ? boundaries !== undefined : true) &&
+      (context.setup !== 'TRANSITION_PROBE' ||
+        (context.action === 'PROBE' && hasStructuralPressure && hasTransitionEvidence)) &&
+      (context.setup !== 'BREAKOUT_RETEST' || hasAcceptableBreakoutChase) &&
+      (context.setup !== 'TREND_PULLBACK' || hasTrendPullback);
+
+    if (!candidateIsValid) {
+      return this.waitingPlaybook(this.asWaitContext(context), observedAt, [
+        ...params.risks,
+        ...validationReasons.map((reason) => reason.replaceAll('_', ' ').toLowerCase()),
+      ]);
+    }
+
+    const entryZone = this.entryZoneFor(context.setup, direction, snapshotPrice, atr, boundaries);
+    const invalidation = this.invalidationFor(direction, entryZone, atr, boundaries);
+    const targets = this.targetsFor(context.setup, direction, entryZone, atr, boundaries);
+    const thesis: ExecutableThesis = {
+      action: context.action,
+      setup: context.setup,
+      entryZone,
+      trigger: {
+        kind: this.triggerKindFor(context.setup),
+        confirmed: context.triggerConfirmed,
+        observedAt,
+      },
+      invalidation,
+      targets,
+      maximumChaseDistanceAtr: 0.8,
+      expectedNetR: 2,
+      evidenceFor: [
+        ...params.signals.bullishFactors,
+        ...params.signals.bearishFactors,
+        `${context.setup} matches ${context.regime} at the validated location.`,
+      ],
+      evidenceAgainst: params.risks,
+      whyEntryIsNotLate: 'The confirmed trigger remains within the 0.8 ATR chase limit and the planned move is not consumed.',
+    };
+    return { executionContext: context, thesis };
+  }
+
+  private waitingExecutionContext(
+    input: DecisionInput,
+    snapshot?: AnticipatoryMarketSnapshot,
+    referencePrice?: number,
+  ): ExecutionContext {
+    const boundaries = snapshot?.structure.coverage === 'AVAILABLE'
+      ? snapshot.structure.rangeBoundaries
+      : undefined;
+    const price = snapshot?.execution.coverage === 'AVAILABLE'
+      ? snapshot.execution.currentPrice
+      : referencePrice ?? 0;
+    const atr = snapshot?.volatility.coverage === 'AVAILABLE'
+      ? snapshot.volatility.atr
+      : undefined;
+    const regime = this.canonicalRegimeFor(this.detectRegime(input, snapshot));
+    const setup: CanonicalSetup = regime === 'RANGING'
+      ? 'RANGE_REVERSION'
+      : regime === 'PRE_BREAKOUT'
+        ? 'TRANSITION_PROBE'
+        : regime === 'BREAKOUT'
+          ? 'BREAKOUT_RETEST'
+          : 'TREND_PULLBACK';
+    return buildExecutionContext({
+      regime,
+      setup,
+      action: 'WAIT',
+      price,
+      support: boundaries?.lower,
+      resistance: boundaries?.upper,
+      atr,
+      sourceDataCutoff: snapshot?.sourceDataCutoff ?? input.fusionOutput.generatedAt,
+      primaryCandleClosed: false,
+    });
+  }
+
+  private waitingPlaybook(
+    context: ExecutionContext,
+    observedAt: string,
+    evidenceAgainst: string[],
+  ): { executionContext: ExecutionContext; thesis: ExecutableThesis } {
+    const waitContext = context.action === 'WAIT' ? context : this.asWaitContext(context);
+    return {
+      executionContext: waitContext,
+      thesis: {
+        action: 'WAIT',
+        setup: waitContext.setup,
+        trigger: {
+          kind: 'PLAYBOOK_REASSESSMENT',
+          confirmed: false,
+          observedAt,
+        },
+        targets: [],
+        maximumChaseDistanceAtr: 0.8,
+        evidenceFor: [],
+        evidenceAgainst,
+        nextActionCondition: 'Wait for a pullback to the planned zone or a confirmed breakout retest before entering.',
+      },
+    };
+  }
+
+  private asWaitContext(context: ExecutionContext): ExecutionContext {
+    return ExecutionContextSchema.parse({
+      ...context,
+      action: 'WAIT',
+      riskTier: 'NONE',
+    });
+  }
+
+  private canonicalRegimeFor(regime: MarketRegime): CanonicalRegime {
+    if (regime.detailed === 'PRE_BREAKOUT_ACCUMULATION') return 'PRE_BREAKOUT';
+    if (regime.type === 'RANGING') return 'RANGING';
+    if (regime.type === 'TRENDING') return 'TRENDING';
+    return 'UNCERTAIN';
+  }
+
+  private setupMatchesRegime(regime: CanonicalRegime, setup: CanonicalSetup): boolean {
+    return (
+      (regime === 'RANGING' && (setup === 'RANGE_REVERSION' || setup === 'TRANSITION_PROBE')) ||
+      (regime === 'PRE_BREAKOUT' && setup === 'TRANSITION_PROBE') ||
+      (regime === 'BREAKOUT' && setup === 'BREAKOUT_RETEST') ||
+      (regime === 'TRENDING' && setup === 'TREND_PULLBACK')
+    );
+  }
+
+  private entryZoneFor(
+    setup: CanonicalSetup,
+    direction: TradeDirection,
+    price: number,
+    atr: number,
+    boundaries?: { lower: number; upper: number },
+  ): { lower: number; upper: number } {
+    if (setup === 'RANGE_REVERSION' && boundaries) {
+      const width = boundaries.upper - boundaries.lower;
+      return direction === 'LONG'
+        ? { lower: boundaries.lower, upper: boundaries.lower + width * 0.2 }
+        : { lower: boundaries.upper - width * 0.2, upper: boundaries.upper };
+    }
+    return { lower: price - atr * 0.25, upper: price + atr * 0.25 };
+  }
+
+  private invalidationFor(
+    direction: TradeDirection,
+    entryZone: { lower: number; upper: number },
+    atr: number,
+    boundaries?: { lower: number; upper: number },
+  ): { price: number; reason: string } {
+    return direction === 'LONG'
+      ? { price: Math.min(entryZone.lower - atr * 0.5, boundaries?.lower ?? Infinity), reason: 'Structural support loss invalidates the long thesis.' }
+      : { price: Math.max(entryZone.upper + atr * 0.5, boundaries?.upper ?? -Infinity), reason: 'Structural resistance reclaim invalidates the short thesis.' };
+  }
+
+  private targetsFor(
+    setup: CanonicalSetup,
+    direction: TradeDirection,
+    entryZone: { lower: number; upper: number },
+    atr: number,
+    boundaries?: { lower: number; upper: number },
+  ): Array<{ price: number; fraction: number; role: string }> {
+    if (setup === 'RANGE_REVERSION' && boundaries) {
+      const midpoint = (boundaries.lower + boundaries.upper) / 2;
+      return direction === 'LONG'
+        ? [
+            { price: midpoint, fraction: 0.5, role: 'RANGE_MIDPOINT' },
+            { price: boundaries.upper, fraction: 0.5, role: 'RANGE_OPPOSITE_BOUNDARY' },
+          ]
+        : [
+            { price: midpoint, fraction: 0.5, role: 'RANGE_MIDPOINT' },
+            { price: boundaries.lower, fraction: 0.5, role: 'RANGE_OPPOSITE_BOUNDARY' },
+          ];
+    }
+    const entry = (entryZone.lower + entryZone.upper) / 2;
+    return [{
+      price: direction === 'LONG' ? entry + atr * 2 : entry - atr * 2,
+      fraction: 1,
+      role: setup === 'BREAKOUT_RETEST' ? 'BREAKOUT_EXTENSION' : 'STRUCTURAL_TARGET',
+    }];
+  }
+
+  private triggerKindFor(setup: CanonicalSetup): string {
+    if (setup === 'RANGE_REVERSION') return 'BOUNDARY_RECLAIM';
+    if (setup === 'TRANSITION_PROBE') return 'COMPRESSION_CONFIRMATION';
+    if (setup === 'BREAKOUT_RETEST') return 'BREAKOUT_RETEST';
+    return 'PULLBACK_RECLAIM';
   }
 
   private detectRegime(input: DecisionInput, snapshot?: AnticipatoryMarketSnapshot): MarketRegime {

@@ -28,6 +28,15 @@ describe('Thesis Cohort Calibration & AI Lift Domain', () => {
     expect(parsed).toEqual(defaultCohortParams);
   });
 
+  it('1b. Formats and parses cohort key with configurationHash as 7-segment key', () => {
+    const withHash = { ...defaultCohortParams, configurationHash: 'cfg-hash-123' };
+    const key = buildThesisCohortKey(withHash);
+    expect(key).toBe('BTC-USDT|15m|TRENDING_UP|LONG|BREAKOUT|v1|cfg-hash-123');
+
+    const parsed = parseThesisCohortKey(key);
+    expect(parsed).toEqual(withHash);
+  });
+
   it('2. Overlapping updates from one thesis count exactly once (unique by thesisId)', () => {
     const thesisId = 'thesis-duplicate-test-1';
     const baseCutoff = new Date('2026-09-10T10:00:00.000Z');

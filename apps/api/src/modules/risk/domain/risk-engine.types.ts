@@ -1,5 +1,6 @@
-import type { DecisionOutput, RiskOutput } from "@platform/shared";
+import type { DecisionOutput, MarketRegime, RiskOutput } from "@platform/shared";
 import type { TradePlan, TradePlanMarketContext, StoredProbe } from "./trade-plan-engine";
+import type { CanonicalSetup, ExecutionContext } from "../../pipeline/domain/execution-context";
 
 export interface RiskAccount {
   balance: number;
@@ -28,8 +29,21 @@ export interface LastTradeRecord {
 }
 
 export interface RecentClosedTradeRecord {
+  symbol?: string;
+  direction?: "LONG" | "SHORT";
+  setup?: CanonicalSetup;
+  regime?: MarketRegime["type"];
+  configurationHash?: string;
+  sourceDataCutoff?: string;
   netPnl: number;
   closedAt: Date;
+}
+
+export interface ExecutionPlanInput {
+  orderType: 'MARKET' | 'LIMIT';
+  limitPrice?: number;
+  timeInForce?: 'IOC';
+  expiryCandles?: number;
 }
 
 export interface RiskInput {
@@ -47,6 +61,8 @@ export interface RiskInput {
   /** Newest first; used to prevent immediate re-entry after net losses. */
   recentClosedTrades?: RecentClosedTradeRecord[];
   now?: Date;
+  executionContext?: ExecutionContext;
+  executionPlan?: ExecutionPlanInput;
 }
 
 export interface RiskLimits {

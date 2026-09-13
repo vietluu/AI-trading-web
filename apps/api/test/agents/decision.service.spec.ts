@@ -10,6 +10,8 @@ import { FusionService } from '../../src/modules/agents/application/services/fus
 import { DECISION_SYNTHESIZER_DEFINITION } from '../../src/modules/agents/domain/definitions/decision-synthesizer.definition';
 import { AgentInvocationSource, AgentType } from '../../src/modules/agents/domain/enums';
 import { PromptRegistry } from '../../src/modules/ai/infrastructure/prompt/prompt-registry';
+import { createBaseSnapshot } from '../helpers/thesis-fixture';
+import { buildExecutionContext } from '../../src/modules/pipeline/domain/execution-context';
 
 function fixture(): { analyses: FusionInput; fusionOutput: FusionOutput } {
   const generatedAt = new Date().toISOString();
@@ -72,7 +74,136 @@ function decisionInput(): DecisionInput {
   return { symbol: 'BTC-USDT', fusionOutput: value.fusionOutput, ...value.analyses };
 }
 
+function playbookFixture(options: {
+  direction: 'LONG' | 'SHORT';
+  regime: 'RANGING' | 'PRE_BREAKOUT' | 'BREAKOUT' | 'TRENDING';
+  setup: 'RANGE_REVERSION' | 'TRANSITION_PROBE' | 'BREAKOUT_RETEST' | 'TREND_PULLBACK';
+  action: 'WAIT' | 'PROBE' | 'ENTER';
+  triggerConfirmed: boolean;
+  primaryCandleClosed: boolean;
+  moveConsumedPct?: number;
+  price?: number;
+}) {
+  const input = decisionInput();
+  const snapshot = createBaseSnapshot();
+  if (
+    snapshot.execution.coverage !== 'AVAILABLE' ||
+    snapshot.structure.coverage !== 'AVAILABLE' ||
+    snapshot.volatility.coverage !== 'AVAILABLE'
+  ) throw new Error('Playbook fixture requires available execution evidence.');
+  const execution = snapshot.execution;
+  const structure = snapshot.structure;
+  const volatility = snapshot.volatility;
+  const sweep = structure.liquiditySweep;
+  if (sweep.coverage !== 'AVAILABLE') {
+    throw new Error('Playbook fixture requires available sweep evidence.');
+  }
+  execution.currentPrice = options.price ?? (options.direction === 'LONG' ? 108_100 : 111_900);
+  structure.liquiditySweep = {
+    ...sweep,
+    detected: true,
+    direction: options.direction === 'LONG' ? 'BULLISH_SWEEP' : 'BEARISH_SWEEP',
+    reclaimed: true,
+  };
+  if (options.regime === 'RANGING') {
+    input.market!.trend = { direction: 'SIDEWAYS', strength: 'WEAK' };
+    input.technical!.trend = { direction: 'SIDEWAYS', strength: 'WEAK' };
+  }
+  if (options.direction === 'SHORT') {
+    input.news!.impact.direction = 'NEGATIVE';
+    input.sentiment!.sentiment.overall = 'BEARISH';
+    input.macro!.macroTrend = 'RISK_OFF';
+    input.technical!.momentum.macd.trend = 'BEARISH';
+  }
+  return {
+    input,
+    snapshot,
+    executionContext: buildExecutionContext({
+      regime: options.regime,
+      setup: options.setup,
+      action: options.action,
+      price: execution.currentPrice,
+      support: structure.rangeBoundaries?.lower,
+      resistance: structure.rangeBoundaries?.upper,
+      triggerPrice: options.direction === 'LONG' ? 108_000 : 112_000,
+      atr: volatility.atr,
+      moveConsumedPct: options.moveConsumedPct,
+      sourceDataCutoff: snapshot.sourceDataCutoff,
+      primaryCandleClosed: options.primaryCandleClosed,
+      triggerConfirmed: options.triggerConfirmed,
+    }),
+  };
+}
+
 describe('DecisionService', () => {
+  it('selects range reversal at a validated lower boundary', () => {
+    const fixture = playbookFixture({
+      direction: 'LONG', regime: 'RANGING', setup: 'RANGE_REVERSION',
+      action: 'ENTER', triggerConfirmed: true, primaryCandleClosed: true,
+    });
+
+    const decision = new DecisionService({} as never).decide(fixture.input, {
+      anticipatorySnapshot: fixture.snapshot,
+      executionContext: fixture.executionContext,
+    });
+
+    expect(decision.executionContext).toMatchObject({
+      regime: 'RANGING', setup: 'RANGE_REVERSION', action: 'ENTER',
+    });
+    expect(decision.thesis?.entryZone).toBeDefined();
+    expect(decision.thesis?.targets[0]?.role).toBe('RANGE_MIDPOINT');
+  });
+
+  it('creates a small transition probe before full confirmation', () => {
+    const fixture = playbookFixture({
+      direction: 'LONG', regime: 'PRE_BREAKOUT', setup: 'TRANSITION_PROBE',
+      action: 'PROBE', triggerConfirmed: true, primaryCandleClosed: false,
+    });
+
+    const decision = new DecisionService({} as never).decide(fixture.input, {
+      anticipatorySnapshot: fixture.snapshot,
+      executionContext: fixture.executionContext,
+    });
+
+    expect(decision.executionContext).toMatchObject({
+      regime: 'PRE_BREAKOUT', setup: 'TRANSITION_PROBE',
+      action: 'PROBE', riskTier: 'PROBE',
+    });
+  });
+
+  it('fails closed rather than shorting a range near support', () => {
+    const fixture = playbookFixture({
+      direction: 'SHORT', regime: 'RANGING', setup: 'RANGE_REVERSION',
+      action: 'ENTER', triggerConfirmed: true, primaryCandleClosed: true,
+      price: 108_100,
+    });
+
+    const decision = new DecisionService({} as never).decide(fixture.input, {
+      anticipatorySnapshot: fixture.snapshot,
+      executionContext: fixture.executionContext,
+    });
+
+    expect(decision.decision).toBe('WAIT');
+    expect(decision.executionContext?.action).toBe('WAIT');
+    expect(decision.thesis?.nextActionCondition).toMatch(/pullback|retest/i);
+  });
+
+  it('returns an actionable wait condition instead of chasing a consumed move', () => {
+    const fixture = playbookFixture({
+      direction: 'LONG', regime: 'TRENDING', setup: 'TREND_PULLBACK',
+      action: 'ENTER', triggerConfirmed: true, primaryCandleClosed: true,
+      moveConsumedPct: 0.65,
+    });
+
+    const decision = new DecisionService({} as never).decide(fixture.input, {
+      anticipatorySnapshot: fixture.snapshot,
+      executionContext: fixture.executionContext,
+    });
+
+    expect(decision.executionContext?.action).toBe('WAIT');
+    expect(decision.thesis?.nextActionCondition).toMatch(/pullback|retest/i);
+  });
+
   it('selects a performance horizon that matches the strategy holding period', () => {
     const service = new DecisionService({} as never) as unknown as {
       calibrationHorizon(strategyKey?: string, timeframe?: string): string;

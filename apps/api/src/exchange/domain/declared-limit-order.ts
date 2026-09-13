@@ -3,7 +3,7 @@ import type { ExchangeProvider, PlaceOrderCommand } from './exchange.types';
 
 /** A declared LIMIT is never eligible for an adapter's market-order fallback. */
 export function assertDeclaredLimitOrder(command: PlaceOrderCommand, provider: ExchangeProvider): boolean {
-  const declared = command.orderType !== undefined || command.limitPrice !== undefined || command.expiresAt !== undefined;
+  const declared = command.orderType === 'LIMIT' || command.limitPrice !== undefined || command.expiresAt !== undefined;
   if (!declared) return false;
   const expiresAt = Date.parse(command.expiresAt ?? '');
   if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw ExchangeError.invalidRequest(provider, 'THESIS_ORDER_EXPIRED');
