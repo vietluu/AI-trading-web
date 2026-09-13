@@ -350,7 +350,7 @@ git commit -m "fix(trading): enforce canonical setup and entry location"
 - Consumes: approved plan order type/price/TTL and exchange fills.
 - Produces: identical submitted terms and `PARTIALLY_FILLED_CANCELED` audit state.
 
-- [ ] **Step 1: Write failing execution-integrity test**
+- [x] **Step 1: Write failing execution-integrity test**
 
 ```ts
 it('submits an approved pullback as LIMIT without market fallback', async () => {
@@ -366,13 +366,13 @@ it('submits an approved pullback as LIMIT without market fallback', async () => 
 
 Add a test where requested quantity 2,776, filled quantity 746, and terminal canceled status produces `PARTIALLY_FILLED_CANCELED` while retaining the 746-unit lifecycle.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @platform/api test -- test/live-trading/proactive-execution-evidence.spec.ts test/exchange/proactive-limit-order.spec.ts test/live-trading/exchange-trade-ledger.spec.ts`
 
 Expected: LIMIT propagation or partial-fill assertion FAILS.
 
-- [ ] **Step 3: Implement immutable terms and reconciliation**
+- [x] **Step 3: Implement immutable terms and reconciliation**
 
 ```ts
 const orderTerms = plan.orderType === 'LIMIT'
@@ -387,13 +387,13 @@ const orderTerms = plan.orderType === 'LIMIT'
 
 Persist approved/submitted terms, reject mismatches with `EXECUTION_PLAN_DRIFT`, and normalize canceled orders with positive incomplete fills to `PARTIALLY_FILLED_CANCELED`.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `pnpm --filter @platform/api test -- test/live-trading/proactive-execution-evidence.spec.ts test/exchange/proactive-limit-order.spec.ts test/live-trading/exchange-trade-ledger.spec.ts test/live-trading/closed-trade-cycle.spec.ts`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/modules/live-trading/application/live-trading.service.ts apps/api/src/modules/live-trading/application/exchange-trade-ledger.service.ts apps/api/src/modules/live-trading/domain/closed-trade-cycle.ts apps/api/test/live-trading/proactive-execution-evidence.spec.ts apps/api/test/exchange/proactive-limit-order.spec.ts apps/api/test/live-trading/exchange-trade-ledger.spec.ts apps/api/test/live-trading/closed-trade-cycle.spec.ts
