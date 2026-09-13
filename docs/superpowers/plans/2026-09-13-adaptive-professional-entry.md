@@ -293,7 +293,7 @@ git commit -m "feat(pipeline): propagate closed-candle execution context"
 - Consumes: `ExecutionContext` and `validateSetupLocation`.
 - Produces: deterministic reject codes and a plan whose regime/setup equal the approved context.
 
-- [ ] **Step 1: Write failing Judge and plan immutability tests**
+- [x] **Step 1: Write failing Judge and plan immutability tests**
 
 ```ts
 it('rejects bearish indicators when a range short is near support', () => {
@@ -311,23 +311,23 @@ it('does not convert range reversal into trend pullback', () => {
 });
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/decision-judge.spec.ts test/risk/risk-engine.spec.ts test/risk/trade-plan-engine.spec.ts`
 
 Expected: FAIL because Judge lacks location validation and Risk re-infers setup.
 
-- [ ] **Step 3: Enforce context**
+- [x] **Step 3: Enforce context**
 
 Judge blocks `REGIME_SETUP_MISMATCH`, boundary violations, `PRIMARY_CANDLE_NOT_CLOSED`, `ENTRY_TRIGGER_NOT_CONFIRMED`, `ENTRY_CHASE_DISTANCE_EXCEEDED`, and `EXPECTED_MOVE_ALREADY_CONSUMED`. Add `executionContext` to `RiskInput`; select the trade-plan branch from `context.setup` and reject instead of reclassifying.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/decision-judge.spec.ts test/risk/risk-engine.spec.ts test/risk/trade-plan-engine.spec.ts`
 
 Expected: PASS, including a positive upper-boundary short.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/modules/pipeline/application/decision-judge.service.ts apps/api/src/modules/risk/domain/risk-engine.types.ts apps/api/src/modules/risk/domain/risk-engine.ts apps/api/src/modules/risk/domain/trade-plan-engine.ts apps/api/test/pipeline/decision-judge.spec.ts apps/api/test/risk/risk-engine.spec.ts apps/api/test/risk/trade-plan-engine.spec.ts
