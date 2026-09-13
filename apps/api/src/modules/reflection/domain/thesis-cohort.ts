@@ -7,14 +7,16 @@ export interface ThesisCohortKeyParams {
   direction: string;
   setup: string;
   executionPolicyVersion: string;
+  configurationHash?: string;
 }
 
 /**
  * Builds standard cohort key:
- * symbol|timeframe|regime|direction|setup|executionPolicyVersion
+ * symbol|timeframe|regime|direction|setup|executionPolicyVersion[|configurationHash]
  */
 export function buildThesisCohortKey(params: ThesisCohortKeyParams): string {
-  return `${params.symbol}|${params.timeframe}|${params.regime}|${params.direction}|${params.setup}|${params.executionPolicyVersion}`;
+  const base = `${params.symbol}|${params.timeframe}|${params.regime}|${params.direction}|${params.setup}|${params.executionPolicyVersion}`;
+  return params.configurationHash ? `${base}|${params.configurationHash}` : base;
 }
 
 /**
@@ -22,12 +24,12 @@ export function buildThesisCohortKey(params: ThesisCohortKeyParams): string {
  */
 export function parseThesisCohortKey(key: string): ThesisCohortKeyParams {
   const parts = key.split('|');
-  if (parts.length !== 6) {
-    throw new Error(`INVALID_COHORT_KEY: Expected 6 pipe-delimited segments, received: "${key}"`);
+  if (parts.length !== 6 && parts.length !== 7) {
+    throw new Error(`INVALID_COHORT_KEY: Expected 6 or 7 pipe-delimited segments, received: "${key}"`);
   }
-  const [symbol, timeframe, regime, direction, setup, executionPolicyVersion] = parts;
+  const [symbol, timeframe, regime, direction, setup, executionPolicyVersion, configurationHash] = parts;
   if (!symbol || !timeframe || !regime || !direction || !setup || !executionPolicyVersion) {
-    throw new Error(`INVALID_COHORT_KEY: Expected 6 non-empty pipe-delimited segments, received: "${key}"`);
+    throw new Error(`INVALID_COHORT_KEY: Expected non-empty pipe-delimited segments, received: "${key}"`);
   }
   return {
     symbol,
@@ -36,6 +38,7 @@ export function parseThesisCohortKey(key: string): ThesisCohortKeyParams {
     direction,
     setup,
     executionPolicyVersion,
+    ...(configurationHash ? { configurationHash } : {}),
   };
 }
 
@@ -255,15 +258,16 @@ export function evaluateThesisCohort(
     (o) => o.status === 'FINALIZED' && o.netR !== null && typeof o.netR === 'number',
   );
 
-  // Exact cohort partition: same symbol, timeframe, regime, direction, setup, policy
+  // Exact cohort partition: same symbol, timeframe, regime, direction, setup, policy, configurationHash
   const exactOutcomes = finalized.filter((o) => {
     const symbolMatch = o.symbol === params.symbol;
-    const timeframeMatch = !o.timeframe || o.timeframe === params.timeframe;
+    const timeframeMatch = !params.timeframe || !o.timeframe || o.timeframe === params.timeframe;
     const regimeMatch = !o.regime || o.regime === params.regime;
     const directionMatch = o.direction === params.direction;
     const setupMatch = !o.setup || o.setup === params.setup;
     const policyMatch = matchesPolicyVersion(o, params.executionPolicyVersion);
-    return symbolMatch && timeframeMatch && regimeMatch && directionMatch && setupMatch && policyMatch;
+    const configHashMatch = !params.configurationHash || !o.configurationHash || o.configurationHash === params.configurationHash;
+    return symbolMatch && timeframeMatch && regimeMatch && directionMatch && setupMatch && policyMatch && configHashMatch;
   });
 
   const exactMetrics = calibrateCohortFromLifecycle(exactOutcomes, { minSampleSize: minExactSamples });
@@ -305,12 +309,13 @@ export function evaluateThesisCohort(
   // 2. Hierarchical fallback: exact sample is insufficient (< minExactSamples).
   // Check broader cross-symbol cohort (same timeframe, regime, direction, setup, policy across ALL symbols)
   const broaderOutcomes = finalized.filter((o) => {
-    const timeframeMatch = !o.timeframe || o.timeframe === params.timeframe;
+    const timeframeMatch = !params.timeframe || !o.timeframe || o.timeframe === params.timeframe;
     const regimeMatch = !o.regime || o.regime === params.regime;
     const directionMatch = o.direction === params.direction;
     const setupMatch = !o.setup || o.setup === params.setup;
     const policyMatch = matchesPolicyVersion(o, params.executionPolicyVersion);
-    return timeframeMatch && regimeMatch && directionMatch && setupMatch && policyMatch;
+    const configHashMatch = !params.configurationHash || !o.configurationHash || o.configurationHash === params.configurationHash;
+    return timeframeMatch && regimeMatch && directionMatch && setupMatch && policyMatch && configHashMatch;
   });
 
   const broaderMetrics = calibrateCohortFromLifecycle(broaderOutcomes, { minSampleSize: minBroaderSamples });
