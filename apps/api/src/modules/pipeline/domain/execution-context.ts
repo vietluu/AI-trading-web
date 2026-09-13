@@ -40,6 +40,7 @@ export interface BuildExecutionContextInput {
 export type TradeDirection = 'LONG' | 'SHORT';
 
 export type SetupLocationValidationReason =
+  | 'RANGE_LOCATION_UNAVAILABLE'
   | 'RANGE_LONG_NOT_AT_LOWER_BOUNDARY'
   | 'RANGE_SHORT_NOT_AT_UPPER_BOUNDARY'
   | 'PRIMARY_CANDLE_NOT_CLOSED'
@@ -53,6 +54,49 @@ function isFiniteNumber(value: number | undefined): value is number {
 
 function positiveFinite(value: number | undefined): value is number {
   return isFiniteNumber(value) && value > 0;
+}
+
+function assertFiniteInput(value: number, name: string): void {
+  if (!Number.isFinite(value)) {
+    throw new RangeError(`${name} must be a finite number`);
+  }
+}
+
+function assertOptionalFiniteInput(
+  value: number | undefined,
+  name: string,
+): void {
+  if (value !== undefined) assertFiniteInput(value, name);
+}
+
+function validateExecutionContextOutput(context: ExecutionContext): ExecutionContext {
+  const { priceLocation } = context;
+  for (const [name, value] of Object.entries(priceLocation)) {
+    if (!Number.isFinite(value)) {
+      throw new RangeError(`priceLocation.${name} must be a finite number`);
+    }
+  }
+  if (
+    priceLocation.rangePercentile !== undefined &&
+    (priceLocation.rangePercentile < 0 || priceLocation.rangePercentile > 1)
+  ) throw new RangeError('priceLocation.rangePercentile must be between 0 and 1');
+  if (
+    priceLocation.distanceFromSupportAtr !== undefined &&
+    priceLocation.distanceFromSupportAtr < 0
+  ) throw new RangeError('priceLocation.distanceFromSupportAtr must be nonnegative');
+  if (
+    priceLocation.distanceFromResistanceAtr !== undefined &&
+    priceLocation.distanceFromResistanceAtr < 0
+  ) throw new RangeError('priceLocation.distanceFromResistanceAtr must be nonnegative');
+  if (
+    priceLocation.distanceFromTriggerAtr !== undefined &&
+    priceLocation.distanceFromTriggerAtr < 0
+  ) throw new RangeError('priceLocation.distanceFromTriggerAtr must be nonnegative');
+  if (
+    priceLocation.moveConsumedPct !== undefined &&
+    priceLocation.moveConsumedPct < 0
+  ) throw new RangeError('priceLocation.moveConsumedPct must be nonnegative');
+  return context;
 }
 
 function sourceDataCutoffIso(value: Date | string): string {
@@ -77,6 +121,12 @@ export function buildExecutionContext(
   input: BuildExecutionContextInput,
 ): ExecutionContext {
   const { atr, price, resistance, support, triggerPrice } = input;
+  assertFiniteInput(price, 'price');
+  assertOptionalFiniteInput(support, 'support');
+  assertOptionalFiniteInput(resistance, 'resistance');
+  assertOptionalFiniteInput(triggerPrice, 'triggerPrice');
+  assertOptionalFiniteInput(atr, 'atr');
+  assertOptionalFiniteInput(input.moveConsumedPct, 'moveConsumedPct');
   const rangeIsValid =
     isFiniteNumber(support) &&
     isFiniteNumber(resistance) &&
@@ -104,7 +154,7 @@ export function buildExecutionContext(
     priceLocation.moveConsumedPct = input.moveConsumedPct;
   }
 
-  return {
+  return validateExecutionContextOutput({
     regime: input.regime,
     ...(input.regimeDetail === undefined ? {} : { regimeDetail: input.regimeDetail }),
     setup: input.setup,
@@ -114,7 +164,7 @@ export function buildExecutionContext(
     usesClosedPrimaryCandle: input.primaryCandleClosed,
     triggerConfirmed: input.triggerConfirmed ?? false,
     priceLocation,
-  };
+  });
 }
 
 export function validateSetupLocation(
@@ -124,7 +174,10 @@ export function validateSetupLocation(
   const reasons = new Set<SetupLocationValidationReason>();
   const { priceLocation } = context;
 
-  if (context.setup === 'RANGE_REVERSION') {
+  if (context.setup === 'RANGE_REVERSION' && context.action !== 'WAIT') {
+    if (priceLocation.rangePercentile === undefined) {
+      reasons.add('RANGE_LOCATION_UNAVAILABLE');
+    }
     if (
       direction === 'LONG' &&
       priceLocation.rangePercentile !== undefined &&
@@ -137,10 +190,12 @@ export function validateSetupLocation(
     ) reasons.add('RANGE_SHORT_NOT_AT_UPPER_BOUNDARY');
   }
 
+  if (context.action === 'WAIT') return [...reasons];
+
+  if (!context.triggerConfirmed) reasons.add('ENTRY_TRIGGER_NOT_CONFIRMED');
   if (context.action !== 'ENTER') return [...reasons];
 
   if (!context.usesClosedPrimaryCandle) reasons.add('PRIMARY_CANDLE_NOT_CLOSED');
-  if (!context.triggerConfirmed) reasons.add('ENTRY_TRIGGER_NOT_CONFIRMED');
   if (
     priceLocation.distanceFromTriggerAtr !== undefined &&
     priceLocation.distanceFromTriggerAtr > EXECUTION_CONTEXT_POLICY.maximumTriggerChaseDistanceAtr

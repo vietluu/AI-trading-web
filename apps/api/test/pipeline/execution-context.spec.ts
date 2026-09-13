@@ -128,6 +128,66 @@ describe('execution context', () => {
       .toContain('ENTRY_TRIGGER_NOT_CONFIRMED');
   });
 
+  it('rejects an executable probe whose structural trigger is unconfirmed', () => {
+    const context = buildExecutionContext({
+      regime: 'PRE_BREAKOUT',
+      setup: 'TRANSITION_PROBE',
+      action: 'PROBE',
+      price: 100,
+      atr: 2,
+      sourceDataCutoff,
+      primaryCandleClosed: false,
+      triggerConfirmed: false,
+    });
+
+    expect(validateSetupLocation(context, 'LONG'))
+      .toContain('ENTRY_TRIGGER_NOT_CONFIRMED');
+  });
+
+  it('rejects an executable range setup without a proven location', () => {
+    const context = buildExecutionContext({
+      regime: 'RANGING',
+      setup: 'RANGE_REVERSION',
+      action: 'ENTER',
+      price: 100,
+      atr: 2,
+      sourceDataCutoff,
+      primaryCandleClosed: true,
+      triggerConfirmed: true,
+    });
+
+    expect(validateSetupLocation(context, 'LONG'))
+      .toContain('RANGE_LOCATION_UNAVAILABLE');
+  });
+
+  it('rejects non-finite price input before it can enter the context', () => {
+    expect(() => buildExecutionContext({
+      regime: 'RANGING',
+      setup: 'RANGE_REVERSION',
+      action: 'WAIT',
+      price: Number.NaN,
+      support: 100,
+      resistance: 110,
+      atr: 2,
+      sourceDataCutoff,
+      primaryCandleClosed: true,
+    })).toThrow('price must be a finite number');
+  });
+
+  it('rejects non-finite optional input before it can enter the context', () => {
+    expect(() => buildExecutionContext({
+      regime: 'BREAKOUT',
+      setup: 'BREAKOUT_RETEST',
+      action: 'ENTER',
+      price: 100,
+      triggerPrice: Number.POSITIVE_INFINITY,
+      atr: 2,
+      sourceDataCutoff,
+      primaryCandleClosed: true,
+      triggerConfirmed: true,
+    })).toThrow('triggerPrice must be a finite number');
+  });
+
   it('rejects an entry beyond the configured trigger chase distance', () => {
     const context = buildExecutionContext({
       regime: 'BREAKOUT',
