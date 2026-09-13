@@ -45,7 +45,7 @@
 - Consumes: price, support, resistance, ATR, trigger, source cutoff, candle finality, regime, setup, and action.
 - Produces: `ExecutionContext`, `buildExecutionContext(input)`, and `validateSetupLocation(context, direction)`.
 
-- [ ] **Step 1: Write failing ZRO, valid-boundary, and intrabar tests**
+- [x] **Step 1: Write failing ZRO, valid-boundary, and intrabar tests**
 
 ```ts
 it('rejects the ZRO normal short near range support', () => {
@@ -84,13 +84,13 @@ it('makes an intrabar transition probe-only', () => {
 });
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/execution-context.spec.ts`
 
 Expected: FAIL because the module does not exist.
 
-- [ ] **Step 3: Implement the contract and validators**
+- [x] **Step 3: Implement the contract and validators**
 
 ```ts
 export type CanonicalRegime = 'RANGING' | 'PRE_BREAKOUT' | 'BREAKOUT' | 'TRENDING' | 'UNCERTAIN';
@@ -119,17 +119,17 @@ export interface ExecutionContext {
 
 Clamp range percentile to `[0,1]`. Reject range LONG above `0.30`, range SHORT below `0.70`, normal `ENTER` on an open primary candle, unconfirmed triggers, chase distance beyond the configured ATR limit, and consumed move above 50%.
 
-- [ ] **Step 4: Add the equivalent Zod schema**
+- [x] **Step 4: Add the equivalent Zod schema**
 
 Add `ExecutionContextSchema` and its inferred type to `packages/shared/src/schemas/pipeline.ts`; make `storedContext.executionContext` optional for historical compatibility.
 
-- [ ] **Step 5: Verify GREEN**
+- [x] **Step 5: Verify GREEN**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/execution-context.spec.ts && pnpm --filter @platform/shared test -- test/pipeline.spec.ts`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/api/src/modules/pipeline/domain/execution-context.ts apps/api/test/pipeline/execution-context.spec.ts packages/shared/src/schemas/pipeline.ts packages/shared/test/pipeline.spec.ts
@@ -152,7 +152,7 @@ git commit -m "feat(pipeline): add canonical execution context"
 - Consumes: Task 1 `ExecutionContext`, analyst evidence, and existing `DecisionOutput` inputs.
 - Produces: one structured executable thesis with action, entry zone, trigger, invalidation, targets, chase limit, evidence for/against, and a late-entry assessment.
 
-- [ ] **Step 1: Write failing playbook tests**
+- [x] **Step 1: Write failing playbook tests**
 
 ```ts
 it('selects range reversal at a validated lower boundary', async () => {
@@ -179,13 +179,13 @@ it('returns an actionable wait condition instead of chasing', async () => {
 });
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @platform/api test -- test/agents/decision.service.spec.ts test/agents/decision-data-quality.spec.ts && pnpm --filter @platform/shared test -- test/trade-thesis.spec.ts`
 
 Expected: FAIL because DecisionOutput does not yet require an executable thesis or canonical playbook action.
 
-- [ ] **Step 3: Extend the structured thesis schema**
+- [x] **Step 3: Extend the structured thesis schema**
 
 Require this shape for actionable decisions and rules fallback:
 
@@ -208,11 +208,11 @@ interface ExecutableThesis {
 
 Validator rules require entry, invalidation, target, chase, and not-late justification for `PROBE/ENTER`; `WAIT` requires `nextActionCondition`. Narrative text cannot compensate for missing fields.
 
-- [ ] **Step 4: Select one playbook from regime and location**
+- [x] **Step 4: Select one playbook from regime and location**
 
 In Decision, evaluate `RANGE_REVERSION`, `TRANSITION_PROBE`, `BREAKOUT_RETEST`, and `TREND_PULLBACK` candidates. Ranging selects matching boundaries; pre-breakout requires compression plus structural pressure and at least one confirming sweep/volume/derivatives observation; breakout requires trigger and acceptable chase; trending requires a pullback zone. Return `WAIT` when no candidate has both valid location and trigger.
 
-- [ ] **Step 5: Verify GREEN and commit**
+- [x] **Step 5: Verify GREEN and commit**
 
 Run: `pnpm --filter @platform/api test -- test/agents/decision.service.spec.ts test/agents/decision-data-quality.spec.ts && pnpm --filter @platform/shared test -- test/trade-thesis.spec.ts`
 
