@@ -1,4 +1,5 @@
 import type { DecisionOutput, TradeThesis, AnticipatoryMarketSnapshot, StructuredTrigger } from "@platform/shared";
+import type { ExecutionContext } from "../../pipeline/domain/execution-context";
 import { adaptiveTradingPolicy } from "../../pipeline/domain/adaptive-trading-policy";
 
 export type TradePlanRegime =
@@ -38,6 +39,7 @@ export interface StoredProbe {
 
 export interface TradePlanMarketContext {
   proactive?: ProactiveExecutionContext;
+  executionContext?: ExecutionContext;
   atr?: number;
   rsi?: number;
   support?: number;

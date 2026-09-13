@@ -723,6 +723,7 @@ export class PipelineRunnerService {
           ...selectedAdvisoryReasons,
           ...('advisory' in quant && quant.advisory && quant.reason ? [quant.reason] : []),
         ])],
+        ...(output.executionContext ? { executionContext: output.executionContext } : {}),
       };
       await this.finishStep(runId, "decision", output, decisionCompletedAt);
       this.analytics.recordStageTelemetry({
@@ -797,12 +798,14 @@ export class PipelineRunnerService {
             provider: String(job.provider),
             interval: String(interval),
             quant,
+            ...(output.executionContext ? { canonicalExecutionContext: output.executionContext } : {}),
             tradePlanContext: {
                   ...(Number.isFinite(lastPrice) ? { currentPrice: lastPrice } : {}),
                   ...(indicatorSnapshot?.values?.squeezeState ? { squeezeState: indicatorSnapshot.values.squeezeState } : {}),
                   gateSeverity: judge?.severity === 'REDUCE_SIZE' || (quant && 'severity' in quant && quant.severity === 'REDUCE_SIZE') ? 'REDUCE_SIZE' : 'APPROVE',
                   ...(synthesizedOutput?.anticipatorySignals?.liquiditySweep ? { liquiditySweep: synthesizedOutput.anticipatorySignals.liquiditySweep.detected } : {}),
                   ...(synthesizedOutput?.anticipatorySignals?.derivativesImbalance?.squeezeProbability !== undefined ? { derivativesImbalance: synthesizedOutput.anticipatorySignals.derivativesImbalance.squeezeProbability } : {}),
+                  ...(synthesizedOutput?.executionContext ? { executionContext: synthesizedOutput.executionContext } : {}),
               timeframeMs: timeframeMilliseconds(String(interval)),
               ...(Number.isFinite(Number(indicatorSnapshot?.values.rsi14))
                 ? { rsi: Number(indicatorSnapshot?.values.rsi14) }
@@ -923,6 +926,7 @@ export class PipelineRunnerService {
                   gateSeverity: judge?.severity === 'REDUCE_SIZE' || (quant && 'severity' in quant && quant.severity === 'REDUCE_SIZE') ? 'REDUCE_SIZE' : 'APPROVE',
                   ...(synthesizedOutput?.anticipatorySignals?.liquiditySweep ? { liquiditySweep: synthesizedOutput.anticipatorySignals.liquiditySweep.detected } : {}),
                   ...(synthesizedOutput?.anticipatorySignals?.derivativesImbalance?.squeezeProbability !== undefined ? { derivativesImbalance: synthesizedOutput.anticipatorySignals.derivativesImbalance.squeezeProbability } : {}),
+                  ...(synthesizedOutput?.executionContext ? { executionContext: synthesizedOutput.executionContext } : {}),
                   ...(proactive ? anticipatoryDecisionContext(proactive.snapshot).market : {}),
                   timeframeMs: timeframeMilliseconds(String(interval)),
                   ...(Number.isFinite(Number(indicatorSnapshot?.values.rsi14))
@@ -1095,7 +1099,7 @@ export class PipelineRunnerService {
         learningStage: output.learningConfiguration?.stage,
         timeframe: String(interval),
         skippedReason: finalSkippedReason,
-        storedContext: { analyses, fusionOutput, candidateDecision: finalCandidateDecision, strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue },
+        storedContext: { analyses, fusionOutput, candidateDecision: finalCandidateDecision, strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue, ...(output.executionContext ? { executionContext: output.executionContext as unknown as Prisma.InputJsonValue } : {}) },
         result: {
           ...output,
           candidateDecision: finalCandidateDecision,
