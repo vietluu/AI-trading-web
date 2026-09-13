@@ -414,7 +414,7 @@ git commit -m "fix(execution): preserve limit plans and partial fills"
 - Consumes: prior trade direction/setup/regime/configuration and new context.
 - Produces: full cooldown for repeated losing theses and capped reversal probes for confirmed transitions.
 
-- [ ] **Step 1: Write failing cooldown tests**
+- [x] **Step 1: Write failing cooldown tests**
 
 ```ts
 expect(evaluateRisk(sameDirectionSameSetupAfterLoss).reason)
@@ -425,17 +425,17 @@ expect(evaluateRisk(oppositeWithoutNewTrigger).reason)
   .toBe('LOSS_REVERSAL_TRIGGER_REQUIRED');
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @platform/api test -- test/risk/risk-engine.spec.ts test/risk/staged-entry-risk.spec.ts`
 
 Expected: reversal cases FAIL because cooldown ignores thesis identity.
 
-- [ ] **Step 3: Implement contextual cooldown**
+- [x] **Step 3: Implement contextual cooldown**
 
 Extend `RecentClosedTradeRecord` with symbol, direction, setup, regime, configuration hash, PnL, and close time. Keep existing cooldown for the same thesis. Permit the opposite direction only for a new `TRANSITION_PROBE` with a different cutoff and confirmed trigger, capped at `0.2` normal size; otherwise return `LOSS_REVERSAL_TRIGGER_REQUIRED`.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run: `pnpm --filter @platform/api test -- test/risk/risk-engine.spec.ts test/risk/staged-entry-risk.spec.ts`
 
