@@ -1226,10 +1226,12 @@ export class DecisionService {
   }
 
   private setupMatchesRegime(regime: CanonicalRegime, setup: CanonicalSetup): boolean {
-    return (regime === 'RANGING' && setup === 'RANGE_REVERSION') ||
+    return (
+      (regime === 'RANGING' && (setup === 'RANGE_REVERSION' || setup === 'TRANSITION_PROBE')) ||
       (regime === 'PRE_BREAKOUT' && setup === 'TRANSITION_PROBE') ||
       (regime === 'BREAKOUT' && setup === 'BREAKOUT_RETEST') ||
-      (regime === 'TRENDING' && setup === 'TREND_PULLBACK');
+      (regime === 'TRENDING' && setup === 'TREND_PULLBACK')
+    );
   }
 
   private entryZoneFor(

@@ -39,6 +39,13 @@ export interface RecentClosedTradeRecord {
   closedAt: Date;
 }
 
+export interface ExecutionPlanInput {
+  orderType: 'MARKET' | 'LIMIT';
+  limitPrice?: number;
+  timeInForce?: 'IOC';
+  expiryCandles?: number;
+}
+
 export interface RiskInput {
   symbol: string;
   decision: DecisionOutput;
@@ -55,6 +62,7 @@ export interface RiskInput {
   recentClosedTrades?: RecentClosedTradeRecord[];
   now?: Date;
   executionContext?: ExecutionContext;
+  executionPlan?: ExecutionPlanInput;
 }
 
 export interface RiskLimits {

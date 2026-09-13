@@ -92,10 +92,12 @@ export interface TradePlan {
   netRewardToRisk?: number;
   lossStreakSizeFactor?: number;
   limitEntryPrice?: number;
+  limitPrice?: number;
   orderType?: "MARKET" | "LIMIT";
   limitTtlCandles?: number;
   timeInForce?: 'IOC';
   expiresAt?: string;
+  sizeFactor?: number;
   targets?: TradeThesis['targets'];
   isLiquiditySweep?: boolean;
   tp1Price?: number;

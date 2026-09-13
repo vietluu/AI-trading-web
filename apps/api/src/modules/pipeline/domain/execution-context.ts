@@ -54,12 +54,11 @@ export function isSetupCompatibleWithRegime(
   regime: CanonicalRegime,
   setup: CanonicalSetup,
 ): boolean {
-  return (
-    (regime === 'RANGING' && setup === 'RANGE_REVERSION') ||
-    (regime === 'PRE_BREAKOUT' && setup === 'TRANSITION_PROBE') ||
-    (regime === 'BREAKOUT' && setup === 'BREAKOUT_RETEST') ||
-    (regime === 'TRENDING' && setup === 'TREND_PULLBACK')
-  );
+  if (regime === 'RANGING') return setup === 'RANGE_REVERSION' || setup === 'TRANSITION_PROBE';
+  if (regime === 'BREAKOUT') return setup === 'BREAKOUT_RETEST';
+  if (regime === 'PRE_BREAKOUT') return setup === 'TRANSITION_PROBE';
+  if (regime === 'TRENDING') return setup === 'TREND_PULLBACK';
+  return false;
 }
 
 function isFiniteNumber(value: number | undefined): value is number {

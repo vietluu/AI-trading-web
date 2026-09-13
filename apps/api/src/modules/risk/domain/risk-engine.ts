@@ -341,8 +341,22 @@ export function evaluateRisk(
     executionContext: context,
   });
 
-  if (isReversalTransitionProbe) {
+  if (
+    isReversalTransitionProbe ||
+    context?.riskTier === "PROBE" ||
+    context?.action === "PROBE" ||
+    context?.setup === "TRANSITION_PROBE"
+  ) {
     plan.riskTier = "PROBE";
+    plan.sizeFactor = Math.min(plan.sizeFactor ?? 1, 0.2);
+  }
+
+  if (input.executionPlan) {
+    plan.orderType = input.executionPlan.orderType;
+    plan.limitPrice = input.executionPlan.limitPrice;
+    plan.limitEntryPrice = input.executionPlan.limitPrice;
+    plan.timeInForce = input.executionPlan.timeInForce;
+    plan.limitTtlCandles = input.executionPlan.expiryCandles;
   }
 
   if (!plan.approved || !plan.stopLoss || !plan.takeProfit)
@@ -491,11 +505,17 @@ export function evaluateRisk(
     );
     plan.lossStreakSizeFactor = lossStreakSizeFactor;
   }
-  if (isReversalTransitionProbe) {
+  if (
+    isReversalTransitionProbe ||
+    context?.riskTier === "PROBE" ||
+    context?.action === "PROBE" ||
+    context?.setup === "TRANSITION_PROBE"
+  ) {
     positionSize = rounded(
       positionSize * 0.2,
       RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
     );
+    plan.sizeFactor = Math.min(plan.sizeFactor ?? 1, 0.2);
   }
   if (!finitePositive(positionSize))
     return reject("MAX_PORTFOLIO_EXPOSURE_EXCEEDED");
