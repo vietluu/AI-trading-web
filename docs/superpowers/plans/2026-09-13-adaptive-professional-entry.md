@@ -235,7 +235,7 @@ git commit -m "feat(agents): produce executable regime playbooks"
 - Consumes: Task 1 context builder and current candles/indicators.
 - Produces: identical `executionContext` in decision result, stored context, confluence payload, and Risk request.
 
-- [ ] **Step 1: Write failing finality test**
+- [x] **Step 1: Write failing finality test**
 
 ```ts
 it('does not confirm normal entry from an open primary candle', () => {
@@ -253,23 +253,23 @@ it('does not confirm normal entry from an open primary candle', () => {
 
 Add a pipeline test asserting deep equality between persisted context and `assessPipelineDecision({ executionContext })`.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/multi-timeframe-analysis.spec.ts test/pipeline/pipeline.service.spec.ts`
 
 Expected: FAIL because finality and context propagation are absent.
 
-- [ ] **Step 3: Implement finality and single-build propagation**
+- [x] **Step 3: Implement finality and single-build propagation**
 
 Extend frame input with `isClosed`. Return `normalEntryConfirmed` using closed frames only and `probeEligible` using explicitly labeled live observations. Build the context once after regime/indicator selection and pass the same object through `candidateDecision`, `storedContext`, confluence, and `assessPipelineDecision`.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/multi-timeframe-analysis.spec.ts test/pipeline/pipeline.service.spec.ts test/pipeline/pipeline-confluence.integration.spec.ts`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/modules/pipeline/domain/multi-timeframe-analysis.ts apps/api/src/modules/pipeline/application/pipeline-runner.service.ts apps/api/test/pipeline/multi-timeframe-analysis.spec.ts apps/api/test/pipeline/pipeline.service.spec.ts
