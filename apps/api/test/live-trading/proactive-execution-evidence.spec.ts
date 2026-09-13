@@ -101,12 +101,12 @@ describe('pipeline LIMIT execution integrity', () => {
       { assessTrade: vi.fn() } as never,
       { ticker: vi.fn() } as never,
     );
-    vi.spyOn(service as never, 'sync').mockResolvedValue(undefined as never);
+    vi.spyOn(service as never, 'sync').mockResolvedValue(undefined);
     vi.spyOn(service as never, 'assertExchangePortfolioRisk').mockResolvedValue({
       positionSize: 100,
       leverage: 2,
       referencePrice: 1.0200,
-    } as never);
+    });
 
     const result = await service.executePipeline('user-1', 'run-1');
 
