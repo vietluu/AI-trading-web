@@ -1,6 +1,6 @@
-import type { DecisionOutput, RiskOutput } from "@platform/shared";
+import type { DecisionOutput, MarketRegime, RiskOutput } from "@platform/shared";
 import type { TradePlan, TradePlanMarketContext, StoredProbe } from "./trade-plan-engine";
-import type { ExecutionContext } from "../../pipeline/domain/execution-context";
+import type { CanonicalSetup, ExecutionContext } from "../../pipeline/domain/execution-context";
 
 export interface RiskAccount {
   balance: number;
@@ -29,6 +29,12 @@ export interface LastTradeRecord {
 }
 
 export interface RecentClosedTradeRecord {
+  symbol?: string;
+  direction?: "LONG" | "SHORT";
+  setup?: CanonicalSetup;
+  regime?: MarketRegime["type"];
+  configurationHash?: string;
+  sourceDataCutoff?: string;
   netPnl: number;
   closedAt: Date;
 }

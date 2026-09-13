@@ -1,5 +1,5 @@
 import type { DecisionOutput, TradeThesis, AnticipatoryMarketSnapshot, StructuredTrigger } from "@platform/shared";
-import type { ExecutionContext } from "../../pipeline/domain/execution-context";
+import type { ExecutionContext, RiskTier } from "../../pipeline/domain/execution-context";
 import { adaptiveTradingPolicy } from "../../pipeline/domain/adaptive-trading-policy";
 
 export type TradePlanRegime =
@@ -73,6 +73,7 @@ export interface TradePlan {
   reason?: string;
   regime: TradePlanRegime;
   strategy: TradePlanStrategy;
+  riskTier?: RiskTier;
   stopLoss?: number;
   takeProfit?: number;
   rewardToRisk?: number;
@@ -821,5 +822,6 @@ export function buildAdaptiveTradePlan(input: Parameters<typeof _buildAdaptiveTr
   }
 
 
+  plan.riskTier = input.executionContext?.riskTier ?? input.market?.executionContext?.riskTier ?? plan.riskTier;
   return plan;
 }

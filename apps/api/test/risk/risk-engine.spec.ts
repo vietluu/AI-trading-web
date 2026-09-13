@@ -334,6 +334,96 @@ describe("risk engine", () => {
     expect(released.positionSize).toBeCloseTo((200 / 1040) * 0.5, 8);
   });
 
+  it("applies thesis-aware cooldown to same direction but permits confirmed opposite transition probe", () => {
+    const sameDirectionSameSetupAfterLoss = input({
+      decision: decision({ decision: "LONG" }),
+      executionContext: buildExecutionContext({
+        regime: "TRENDING",
+        setup: "TREND_PULLBACK",
+        action: "ENTER",
+        price: 50_000,
+        support: 49_000,
+        resistance: 52_000,
+        atr: 500,
+        sourceDataCutoff: new Date("2026-08-02T00:10:00Z"),
+        primaryCandleClosed: true,
+        triggerConfirmed: true,
+      }),
+      recentClosedTrades: [
+        {
+          symbol: "BTC-USDT",
+          direction: "LONG",
+          setup: "TREND_PULLBACK",
+          regime: "TRENDING",
+          sourceDataCutoff: "2026-08-02T00:00:00.000Z",
+          netPnl: -10,
+          closedAt: new Date("2026-08-02T00:05:00Z"),
+        },
+      ],
+    });
+
+    const oppositeWithoutNewTrigger = input({
+      decision: decision({ decision: "SHORT" }),
+      executionContext: buildExecutionContext({
+        regime: "PRE_BREAKOUT",
+        setup: "TRANSITION_PROBE",
+        action: "PROBE",
+        price: 49_800,
+        support: 49_000,
+        resistance: 50_500,
+        atr: 500,
+        sourceDataCutoff: new Date("2026-08-02T00:10:00Z"),
+        primaryCandleClosed: true,
+        triggerConfirmed: false,
+      }),
+      recentClosedTrades: [
+        {
+          symbol: "BTC-USDT",
+          direction: "LONG",
+          setup: "TREND_PULLBACK",
+          regime: "TRENDING",
+          sourceDataCutoff: "2026-08-02T00:00:00.000Z",
+          netPnl: -10,
+          closedAt: new Date("2026-08-02T00:05:00Z"),
+        },
+      ],
+    });
+
+    const oppositeTransitionAfterLoss = input({
+      decision: decision({ decision: "SHORT" }),
+      executionContext: buildExecutionContext({
+        regime: "PRE_BREAKOUT",
+        setup: "TRANSITION_PROBE",
+        action: "PROBE",
+        price: 49_800,
+        support: 49_000,
+        resistance: 50_500,
+        atr: 500,
+        sourceDataCutoff: new Date("2026-08-02T00:10:00Z"),
+        primaryCandleClosed: true,
+        triggerConfirmed: true,
+      }),
+      recentClosedTrades: [
+        {
+          symbol: "BTC-USDT",
+          direction: "LONG",
+          setup: "TREND_PULLBACK",
+          regime: "TRENDING",
+          sourceDataCutoff: "2026-08-02T00:00:00.000Z",
+          netPnl: -10,
+          closedAt: new Date("2026-08-02T00:05:00Z"),
+        },
+      ],
+    });
+
+    expect(evaluateRisk(sameDirectionSameSetupAfterLoss, limits).reason)
+      .toBe("LOSS_REENTRY_COOLDOWN_ACTIVE");
+    expect(evaluateRisk(oppositeTransitionAfterLoss, limits).tradePlan?.riskTier)
+      .toBe("PROBE");
+    expect(evaluateRisk(oppositeWithoutNewTrigger, limits).reason)
+      .toBe("LOSS_REVERSAL_TRIGGER_REQUIRED");
+  });
+
   it("opens a timed circuit breaker after three consecutive losses", () => {
     const recentClosedTrades = [
       { netPnl: -10, closedAt: new Date("2026-08-02T00:00:00Z") },

@@ -180,6 +180,86 @@ export function evaluateRisk(
     input.executionContext ??
     marketData.tradePlanContext?.executionContext ??
     decision.executionContext;
+
+  const cooldownWindow = input.lastTrades?.find(
+    (trade) =>
+      trade.symbol === input.symbol && trade.direction === decision.decision &&
+      (input.now ?? new Date()).getTime() - trade.createdAt.getTime() <
+        limits.cooldownMs,
+  );
+  if (
+    (input.lastTradeAt &&
+      (input.now ?? new Date()).getTime() - input.lastTradeAt.getTime() <
+        limits.cooldownMs) ||
+    cooldownWindow
+  )
+    return reject("TRADE_COOLDOWN_ACTIVE");
+  const consecutiveLosses = (input.recentClosedTrades ?? [])
+    .findIndex((trade) => trade.netPnl >= 0);
+  const lossCount = consecutiveLosses === -1
+    ? (input.recentClosedTrades?.length ?? 0)
+    : consecutiveLosses;
+  const latestLoss = input.recentClosedTrades?.[0];
+  const maxConsecutiveLosses = Math.max(
+    1,
+    limits.maxConsecutiveLosses ?? 3,
+  );
+  const lossStreakPauseMs = Math.max(
+    limits.lossReentryCooldownMs ?? 15 * 60_000,
+    limits.lossStreakPauseMs ?? 6 * 60 * 60_000,
+  );
+  if (
+    lossCount >= maxConsecutiveLosses &&
+    latestLoss &&
+    (input.now ?? new Date()).getTime() - latestLoss.closedAt.getTime() <
+      lossStreakPauseMs
+  ) return reject("LOSS_STREAK_CIRCUIT_BREAKER_ACTIVE");
+  const policy = adaptiveTradingPolicy({
+    symbol: input.symbol,
+    regime: decision.regime?.type,
+  });
+  const cooldownTierMultiplier =
+    policy.liquidityClass === "MAJOR" ? 1 : policy.liquidityClass === "LIQUID_ALT" ? 4 : 16;
+  const baseLossCooldownMs =
+    (limits.lossReentryCooldownMs ?? 15 * 60_000) * cooldownTierMultiplier;
+  const lossCooldownMs = baseLossCooldownMs * Math.min(
+    4,
+    2 ** Math.max(0, lossCount - 1),
+  );
+  let isReversalTransitionProbe = false;
+  if (
+    lossCount > 0 &&
+    latestLoss &&
+    (input.now ?? new Date()).getTime() - latestLoss.closedAt.getTime() <
+      lossCooldownMs
+  ) {
+    const isOppositeDirection =
+      Boolean(latestLoss.direction) &&
+      latestLoss.direction !== decision.decision;
+
+    if (isOppositeDirection) {
+      const isTransitionProbe =
+        context?.setup === "TRANSITION_PROBE" ||
+        decision.thesis?.setup === "TRANSITION_PROBE";
+      const isTriggerConfirmed =
+        context?.triggerConfirmed === true ||
+        decision.thesis?.trigger?.confirmed === true;
+      const latestCutoff = latestLoss.sourceDataCutoff;
+      const currentCutoff = context?.sourceDataCutoff
+        ? String(context.sourceDataCutoff)
+        : decision.thesis?.trigger?.observedAt;
+      const differentCutoff =
+        !latestCutoff || !currentCutoff || latestCutoff !== currentCutoff;
+
+      if (!isTransitionProbe || !isTriggerConfirmed || !differentCutoff) {
+        return reject("LOSS_REVERSAL_TRIGGER_REQUIRED");
+      }
+      isReversalTransitionProbe = true;
+    } else {
+      return reject("LOSS_REENTRY_COOLDOWN_ACTIVE");
+    }
+  }
+
   if (context) {
     const [firstLocationReason] = validateSetupLocation(context, decision.decision);
     if (firstLocationReason) {
@@ -246,58 +326,6 @@ export function evaluateRisk(
       (limits.maxSameDirectionPositions ?? 1)
   ) return reject("MAX_SAME_DIRECTION_POSITIONS_EXCEEDED");
 
-  const cooldownWindow = input.lastTrades?.find(
-    (trade) =>
-      trade.symbol === input.symbol && trade.direction === decision.decision &&
-      (input.now ?? new Date()).getTime() - trade.createdAt.getTime() <
-        limits.cooldownMs,
-  );
-  if (
-    (input.lastTradeAt &&
-      (input.now ?? new Date()).getTime() - input.lastTradeAt.getTime() <
-        limits.cooldownMs) ||
-    cooldownWindow
-  )
-    return reject("TRADE_COOLDOWN_ACTIVE");
-  const consecutiveLosses = (input.recentClosedTrades ?? [])
-    .findIndex((trade) => trade.netPnl >= 0);
-  const lossCount = consecutiveLosses === -1
-    ? (input.recentClosedTrades?.length ?? 0)
-    : consecutiveLosses;
-  const latestLoss = input.recentClosedTrades?.[0];
-  const maxConsecutiveLosses = Math.max(
-    1,
-    limits.maxConsecutiveLosses ?? 3,
-  );
-  const lossStreakPauseMs = Math.max(
-    limits.lossReentryCooldownMs ?? 15 * 60_000,
-    limits.lossStreakPauseMs ?? 6 * 60 * 60_000,
-  );
-  if (
-    lossCount >= maxConsecutiveLosses &&
-    latestLoss &&
-    (input.now ?? new Date()).getTime() - latestLoss.closedAt.getTime() <
-      lossStreakPauseMs
-  ) return reject("LOSS_STREAK_CIRCUIT_BREAKER_ACTIVE");
-  const policy = adaptiveTradingPolicy({
-    symbol: input.symbol,
-    regime: decision.regime?.type,
-  });
-  const cooldownTierMultiplier =
-    policy.liquidityClass === "MAJOR" ? 1 : policy.liquidityClass === "LIQUID_ALT" ? 4 : 16;
-  const baseLossCooldownMs =
-    (limits.lossReentryCooldownMs ?? 15 * 60_000) * cooldownTierMultiplier;
-  const lossCooldownMs = baseLossCooldownMs * Math.min(
-    4,
-    2 ** Math.max(0, lossCount - 1),
-  );
-  if (
-    lossCount > 0 &&
-    latestLoss &&
-    (input.now ?? new Date()).getTime() - latestLoss.closedAt.getTime() <
-      lossCooldownMs
-  ) return reject("LOSS_REENTRY_COOLDOWN_ACTIVE");
-
   const plan = buildAdaptiveTradePlan({
     symbol: input.symbol,
     side: decision.decision,
@@ -313,6 +341,9 @@ export function evaluateRisk(
     executionContext: context,
   });
 
+  if (isReversalTransitionProbe) {
+    plan.riskTier = "PROBE";
+  }
 
   if (!plan.approved || !plan.stopLoss || !plan.takeProfit)
     return {
@@ -459,6 +490,12 @@ export function evaluateRisk(
       RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
     );
     plan.lossStreakSizeFactor = lossStreakSizeFactor;
+  }
+  if (isReversalTransitionProbe) {
+    positionSize = rounded(
+      positionSize * 0.2,
+      RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
+    );
   }
   if (!finitePositive(positionSize))
     return reject("MAX_PORTFOLIO_EXPOSURE_EXCEEDED");
