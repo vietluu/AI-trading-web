@@ -270,6 +270,18 @@ Rollout sequence:
 3. Enable demo probes and range-boundary entries with existing account limits.
 4. Compare against predeclared acceptance criteria before any live promotion.
 
+## Market Universe and Opportunity Ranking
+
+BTC-USDT and ETH-USDT act as market-regime anchors even when they are not in
+the executable symbol universe. Their trend, volatility, and correlation state
+provide a common risk-on/risk-off context for altcoin theses.
+
+The pipeline ranks actionable opportunities across symbols before execution.
+Repeated observations of the same symbol, direction, setup, and structural
+trigger update one opportunity rather than creating independent candidates.
+Portfolio selection spends exposure on the best post-cost, location-adjusted
+candidate instead of whichever scheduled symbol crosses its threshold first.
+
 At minimum, promotion requires no execution-plan drift, no increase in chase
 rate, positive post-cost expectancy on the holdout sample, and drawdown within
 the existing deterministic limit. Trade frequency is reported but is not by
