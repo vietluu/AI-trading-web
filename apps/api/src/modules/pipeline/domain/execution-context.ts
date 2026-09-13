@@ -1,9 +1,10 @@
-import type {
-  CanonicalRegime,
-  CanonicalSetup,
-  EntryAction,
-  ExecutionContext,
-  RiskTier,
+import {
+  ExecutionContextSchema,
+  type CanonicalRegime,
+  type CanonicalSetup,
+  type EntryAction,
+  type ExecutionContext,
+  type RiskTier,
 } from '@platform/shared';
 
 export type {
@@ -69,36 +70,6 @@ function assertOptionalFiniteInput(
   if (value !== undefined) assertFiniteInput(value, name);
 }
 
-function validateExecutionContextOutput(context: ExecutionContext): ExecutionContext {
-  const { priceLocation } = context;
-  for (const [name, value] of Object.entries(priceLocation)) {
-    if (!Number.isFinite(value)) {
-      throw new RangeError(`priceLocation.${name} must be a finite number`);
-    }
-  }
-  if (
-    priceLocation.rangePercentile !== undefined &&
-    (priceLocation.rangePercentile < 0 || priceLocation.rangePercentile > 1)
-  ) throw new RangeError('priceLocation.rangePercentile must be between 0 and 1');
-  if (
-    priceLocation.distanceFromSupportAtr !== undefined &&
-    priceLocation.distanceFromSupportAtr < 0
-  ) throw new RangeError('priceLocation.distanceFromSupportAtr must be nonnegative');
-  if (
-    priceLocation.distanceFromResistanceAtr !== undefined &&
-    priceLocation.distanceFromResistanceAtr < 0
-  ) throw new RangeError('priceLocation.distanceFromResistanceAtr must be nonnegative');
-  if (
-    priceLocation.distanceFromTriggerAtr !== undefined &&
-    priceLocation.distanceFromTriggerAtr < 0
-  ) throw new RangeError('priceLocation.distanceFromTriggerAtr must be nonnegative');
-  if (
-    priceLocation.moveConsumedPct !== undefined &&
-    priceLocation.moveConsumedPct < 0
-  ) throw new RangeError('priceLocation.moveConsumedPct must be nonnegative');
-  return context;
-}
-
 function sourceDataCutoffIso(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -154,7 +125,7 @@ export function buildExecutionContext(
     priceLocation.moveConsumedPct = input.moveConsumedPct;
   }
 
-  return validateExecutionContextOutput({
+  return ExecutionContextSchema.parse({
     regime: input.regime,
     ...(input.regimeDetail === undefined ? {} : { regimeDetail: input.regimeDetail }),
     setup: input.setup,

@@ -188,6 +188,21 @@ describe('execution context', () => {
     })).toThrow('triggerPrice must be a finite number');
   });
 
+  it('rejects an empty regime detail through the canonical context schema', () => {
+    expect(() => buildExecutionContext({
+      regime: 'RANGING',
+      regimeDetail: '',
+      setup: 'RANGE_REVERSION',
+      action: 'WAIT',
+      price: 100,
+      support: 90,
+      resistance: 110,
+      atr: 2,
+      sourceDataCutoff,
+      primaryCandleClosed: true,
+    })).toThrow('String must contain at least 1 character(s)');
+  });
+
   it('rejects an entry beyond the configured trigger chase distance', () => {
     const context = buildExecutionContext({
       regime: 'BREAKOUT',
