@@ -604,7 +604,7 @@ git commit -m "feat(pipeline): rank unique opportunities with market anchors"
 - Consumes: Tasks 1–9 outputs.
 - Produces: replay/shadow evidence for range participation, probes, chase, plan drift, expectancy, and drawdown.
 
-- [ ] **Step 1: Write failing acceptance matrix**
+- [x] **Step 1: Write failing acceptance matrix**
 
 ```ts
 const cases = {
@@ -617,23 +617,23 @@ const cases = {
 
 Assert submitted and approved plans are identical for actionable cases.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/adaptive-professional-entry.integration.spec.ts`
 
 Expected: FAIL until all boundaries are connected.
 
-- [ ] **Step 3: Add telemetry and operations guidance**
+- [x] **Step 3: Add telemetry and operations guidance**
 
 Record regime, setup, range percentile, trigger distance, consumed move, candle finality, action, risk tier, Judge verdict, Quant reason, approved/submitted order types, plan drift, and lifecycle net R. Aggregate range participation, probe count, chase rate, drift count, post-cost expectancy, profit factor, and drawdown. Document replay → shadow → DEMO rollout and stop on any plan drift, increased chase, negative holdout expectancy, or excess drawdown.
 
-- [ ] **Step 4: Run focused integration tests**
+- [x] **Step 4: Run focused integration tests**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/adaptive-professional-entry.integration.spec.ts test/pipeline/pipeline-analytics.spec.ts test/pipeline/proactive-thesis.integration.spec.ts test/pipeline/proactive-joined-execution.spec.ts`
 
 Expected: PASS.
 
-- [ ] **Step 5: Run full verification**
+- [x] **Step 5: Run full verification**
 
 ```bash
 pnpm --filter @platform/shared test
@@ -645,7 +645,7 @@ pnpm --filter @platform/api build
 
 Expected: every command exits 0 with no failures.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/api/test/pipeline/adaptive-professional-entry.integration.spec.ts apps/api/src/modules/pipeline/application/pipeline-analytics.service.ts apps/api/test/pipeline/pipeline-analytics.spec.ts docs/operations/proactive-ai-trading.md
@@ -654,13 +654,13 @@ git commit -m "test(trading): verify adaptive professional entries"
 
 ## Rollout Review Checklist
 
-- [ ] ZRO near-support normal short is rejected.
-- [ ] Valid range-boundary trades remain actionable.
-- [ ] Intrabar transition is capped at 20% normal size.
-- [ ] Same-thesis cooldown remains; confirmed reversal may probe.
-- [ ] Mature exact negative Quant evidence blocks normal execution.
-- [ ] Approved LIMIT parameters equal submitted parameters.
-- [ ] Partial fills remain visible in order, position, and trade history.
-- [ ] Executable calibration uses lifecycle outcomes after fees and funding.
-- [ ] Shadow reports frequency, chase rate, post-cost expectancy, profit factor, and drawdown.
-- [ ] DEMO promotion is rejected when execution-plan drift is nonzero.
+- [x] ZRO near-support normal short is rejected.
+- [x] Valid range-boundary trades remain actionable.
+- [x] Intrabar transition is capped at 20% normal size.
+- [x] Same-thesis cooldown remains; confirmed reversal may probe.
+- [x] Mature exact negative Quant evidence blocks normal execution.
+- [x] Approved LIMIT parameters equal submitted parameters.
+- [x] Partial fills remain visible in order, position, and trade history.
+- [x] Executable calibration uses lifecycle outcomes after fees and funding.
+- [x] Shadow reports frequency, chase rate, post-cost expectancy, profit factor, and drawdown.
+- [x] DEMO promotion is rejected when execution-plan drift is nonzero.
