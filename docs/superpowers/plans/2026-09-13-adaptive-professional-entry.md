@@ -553,7 +553,7 @@ git commit -m "fix(learning): calibrate execution from lifecycle outcomes"
 - Consumes: closed BTC/ETH anchor candles and canonical candidate contexts.
 - Produces: shared `MarketContext`, one updated opportunity per structural trigger, and deterministic portfolio ranking.
 
-- [ ] **Step 1: Write failing anchor and deduplication tests**
+- [x] **Step 1: Write failing anchor and deduplication tests**
 
 ```ts
 it('adds BTC and ETH context to an altcoin candidate', () => {
@@ -571,17 +571,17 @@ it('updates one opportunity for repeated observations of the same trigger', asyn
 
 Define the local test builders in this test file: `anchorCandles` contains closed 15-minute BTC and ETH rows; `candidate` returns a complete existing `ConfluenceSignal` with overrides for symbol, setup, and trigger ID.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/confluence-collector.service.spec.ts test/pipeline/pipeline-confluence.integration.spec.ts`
 
 Expected: FAIL because anchor context and structural-trigger deduplication do not exist.
 
-- [ ] **Step 3: Implement common context and ranking**
+- [x] **Step 3: Implement common context and ranking**
 
 Build anchor trend/volatility/correlation only from closed candles. Key pending opportunities by `{symbol, direction, setup, triggerId}` and update their newest cutoff. Rank unique candidates by post-cost expected R, location score, trigger freshness, evidence quality, and portfolio correlation penalty; preserve deterministic tie-breaking by cutoff then symbol.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/confluence-collector.service.spec.ts test/pipeline/pipeline-confluence.integration.spec.ts`
 
