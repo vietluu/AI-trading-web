@@ -16,11 +16,12 @@ describe("PipelineHealthService execution funnel", () => {
         count: vi.fn().mockResolvedValue(3),
         findMany: vi.fn().mockResolvedValue([
           {
-            skippedReason: "QUANT_VALIDATION_MISSING",
+            skippedReason: "VALID_EXACT_EVIDENCE",
             result: {
               candidateDecision: { decision: "LONG" },
               judge: { approved: true },
               quant: { allowed: false },
+              blockingGate: { stage: "QUANT", reason: "QUANT_VALIDATION_MISSING" },
             },
           },
           {

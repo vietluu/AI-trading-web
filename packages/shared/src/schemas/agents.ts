@@ -558,6 +558,16 @@ export type DecisionInput = z.infer<typeof DecisionInputSchema>;
 export const DecisionRunInputSchema = FusionRunInputSchema;
 export type DecisionRunInput = z.infer<typeof DecisionRunInputSchema>;
 
+export const ExecutionEvidenceScoreSchema = z
+  .object({
+    signalStrength: z.number().min(0).max(100),
+    estimatedWinProbability: z.number().min(0).max(1).optional(),
+    expectedNetR: z.number().optional(),
+    calibrationQuality: z.enum(['RELIABLE', 'UNRELIABLE', 'INSUFFICIENT']),
+  })
+  .strict();
+export type ExecutionEvidenceScore = z.infer<typeof ExecutionEvidenceScoreSchema>;
+
 export const ExecutableThesisSchema = z
   .object({
     action: EntryActionSchema,
@@ -618,6 +628,7 @@ export const DecisionOutputSchema = z
     decision: DecisionSchema,
     confidence: z.number().min(0).max(100),
     confidenceKind: z.literal('COMPOSITE_SCORE').optional(),
+    executionEvidence: ExecutionEvidenceScoreSchema.optional(),
     confidenceCalibration: z.object({
       status: z.enum(['CALIBRATED', 'INSUFFICIENT_HISTORY']),
       rawScore: z.number().min(0).max(100),
@@ -1281,6 +1292,7 @@ export type TradeThesisState = z.infer<typeof TradeThesisStateSchema>;
 export const TradeThesisSetupSchema = z.enum([
   'RANGE_REVERSAL',
   'LIQUIDITY_SWEEP_REVERSAL',
+  'RECOVERY_RECLAIM',
   'SQUEEZE_PROBE',
   'BREAKOUT_RETEST',
   'TREND_PULLBACK',

@@ -573,6 +573,37 @@ describe("adaptive trade plan engine", () => {
     expect(plan.expectedNetRewardPct).toBeGreaterThan(0.5);
   });
 
+  it("validates RECOVERY_RECLAIM setup without reclassifying it", () => {
+    const snapshot = createBaseSnapshot();
+    const thesis = {
+      ...createValidLongThesis(),
+      setup: "RECOVERY_RECLAIM" as const,
+      entryZone: { lower: 109_500, upper: 110_500 },
+      stopLoss: 109_000,
+      targets: [{ price: 112_000, fraction: 1 }],
+      expectedNetR: 1.5,
+      trigger: [{ type: 'PRICE_CROSS' as const, operator: '>=' as const, price: 110_000, candleFinality: 'CLOSED' as const, description: 'Confirm recovery reclaim' }],
+    };
+    const plan = buildAdaptiveTradePlan({
+      side: "LONG",
+      entryPrice: 110_000,
+      decision: decision("LONG", "TRENDING"),
+      market: {
+        atr: 1_000,
+        support: 108_000,
+        resistance: 115_000,
+        proactive: { thesisId: "thesis-rec-1", thesis, snapshot, mode: "DEMO", sizeFactor: 1 },
+      },
+      configuredStopLossPct: 0.02,
+      configuredRiskRewardRatio: 1.5,
+    });
+
+    expect(plan.approved).toBe(true);
+    expect(plan.strategy).toBe("RECOVERY_RECLAIM");
+    expect(plan.targets).toEqual(thesis.targets);
+    expect(plan.stagedEntry?.setup).toBe("RECOVERY_RECLAIM");
+  });
+
   it("does not convert range reversal into trend pullback", () => {
     const rangeShortAtResistance = {
       side: "SHORT" as const,
@@ -647,3 +678,4 @@ describe("adaptive trade plan engine", () => {
     expect(plan.reason).toBe("RANGE_ENTRY_NOT_AT_BOUNDARY");
   });
 });
+

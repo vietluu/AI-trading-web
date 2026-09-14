@@ -258,4 +258,41 @@ describe('transitionOpportunity', () => {
       });
     },
   );
+
+  it('promotes LIQUIDITY_SWEEP_REVERSAL from WATCHING to PROBE_READY when sweep is reclaimed', () => {
+    const sweepSnapshot = snapshot({
+      structure: {
+        ...snapshot().structure,
+        liquiditySweep: {
+          coverage: 'AVAILABLE',
+          freshness: 'FRESH',
+          observationAgeMs: 0,
+          freshnessThresholdMs: 900_000,
+          sourceTimestamp: cutoff,
+          calculationVersion: 2,
+          evidence: [{ snapshotField: 'structure.liquiditySweep', source: 'BINANCE_FUTURES', sourceTimestamp: cutoff, calculationVersion: 2 }],
+          detected: true,
+          direction: 'BULLISH_SWEEP',
+          sweepZone: { price: 90, type: 'SWING_LOW' },
+          penetration: 1.5,
+          reclaimed: true,
+        },
+      } as unknown as AnticipatoryMarketSnapshot['structure'],
+    });
+    const state = current({
+      setup: 'LIQUIDITY_SWEEP_REVERSAL',
+      state: 'WATCHING',
+      direction: 'LONG',
+      invalidationPrice: 88,
+    });
+
+    const result = transitionOpportunity(state, sweepSnapshot, new Date('2026-09-09T01:00:01.000Z'));
+    expect(result).toMatchObject({
+      changed: true,
+      fromState: 'WATCHING',
+      toState: 'PROBE_READY',
+      reasonCode: 'PROBE_ALIGNMENT_CONFIRMED',
+      sourceDataCutoff: new Date(cutoff),
+    });
+  });
 });

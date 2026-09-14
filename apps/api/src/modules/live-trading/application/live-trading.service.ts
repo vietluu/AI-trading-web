@@ -437,22 +437,38 @@ export class LiveTradingService {
           ? ExchangeEnvironment.TESTNET
           : ExchangeEnvironment.DEMO);
     const userConnections = await this.connections.list(input.userId);
-    let connection = userConnections.find(
-      (item) =>
-        item.provider === input.provider &&
-        item.environment === targetEnvironment &&
-        item.isEnabled &&
-        item.isVerified,
-    );
+    let connection: typeof userConnections[0] | undefined;
     let effectiveProvider = input.provider;
-    if (!connection) {
-      const fallback = userConnections.find(
-        (item) => item.isEnabled && item.isVerified &&
-          (!requiredEnvironment || item.environment === requiredEnvironment as ExchangeEnvironment),
+
+    if (proactive?.thesis.setup === 'RECOVERY_RECLAIM') {
+      connection = userConnections.find(
+        (item) =>
+          item.provider === ExchangeProvider.OKX_FUTURES &&
+          item.environment === ExchangeEnvironment.DEMO &&
+          item.isEnabled &&
+          item.isVerified,
       );
-      if (fallback) {
-        connection = fallback;
-        effectiveProvider = fallback.provider;
+      if (!connection) {
+        return { outcome: "NO_ELIGIBLE_EXCHANGE_CONNECTION", price: 0 };
+      }
+      effectiveProvider = ExchangeProvider.OKX_FUTURES;
+    } else {
+      connection = userConnections.find(
+        (item) =>
+          item.provider === input.provider &&
+          item.environment === targetEnvironment &&
+          item.isEnabled &&
+          item.isVerified,
+      );
+      if (!connection) {
+        const fallback = userConnections.find(
+          (item) => item.isEnabled && item.isVerified &&
+            (!requiredEnvironment || item.environment === requiredEnvironment as ExchangeEnvironment),
+        );
+        if (fallback) {
+          connection = fallback;
+          effectiveProvider = fallback.provider;
+        }
       }
     }
     if (!connection)

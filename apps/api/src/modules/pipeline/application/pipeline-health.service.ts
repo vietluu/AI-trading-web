@@ -108,10 +108,14 @@ export class PipelineHealthService {
     ).length;
     const rejectionCounts = new Map<string, number>();
     for (const run of funnelRuns) {
-      if (!run.skippedReason) continue;
+      const canonicalReason = resultOf(resultOf(run.result).blockingGate).reason;
+      const reason = typeof canonicalReason === "string"
+        ? canonicalReason
+        : run.skippedReason;
+      if (!reason) continue;
       rejectionCounts.set(
-        run.skippedReason,
-        (rejectionCounts.get(run.skippedReason) ?? 0) + 1,
+        reason,
+        (rejectionCounts.get(reason) ?? 0) + 1,
       );
     }
     return {

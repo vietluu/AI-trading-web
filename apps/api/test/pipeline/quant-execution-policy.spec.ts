@@ -33,18 +33,37 @@ function serviceWithLimits(validation: Record<string, unknown>, limits: Record<s
   } as never, { getUserLimits: vi.fn().mockResolvedValue(limits) } as never);
 }
 
-const valid = (overrides: Record<string, unknown> = {}) => ({
-  probabilityOfProfit: 62, probabilityOfRuin: 1, outOfSampleSharpe: 1.2,
-  walkForwardStable: true, confidenceBrierScore: 0.18,
-  metricsJson: {
+const valid = (overrides: Record<string, unknown> = {}) => {
+  const baseMetrics = {
+    direction: "BOTH",
+    regime: "ANY",
+    executionPolicy: "DEFAULT",
+    configurationVersion: 1,
     sampleEvidence: { totalTrades: 50, outOfSampleTrades: 12, walkForwardWindows: 5 },
     outOfSample: { outOfSampleTrades: 12 },
     walkForward: { windows: Array.from({ length: 5 }, () => ({})) },
     executionAssumptions: { leverage: 1, riskPerTrade: 0.02, riskRewardRatio: 1.5 },
     calibration: { evidenceSufficient: false },
-  },
-  createdAt: new Date("2026-08-12T00:00:00Z"), ...overrides,
-});
+  };
+  const overrideMetrics =
+    overrides.metricsJson && typeof overrides.metricsJson === 'object'
+      ? (overrides.metricsJson as Record<string, unknown>)
+      : {};
+  return {
+    interval: "15m",
+    probabilityOfProfit: 62,
+    probabilityOfRuin: 1,
+    outOfSampleSharpe: 1.2,
+    walkForwardStable: true,
+    confidenceBrierScore: 0.18,
+    createdAt: new Date("2026-08-12T00:00:00Z"),
+    ...overrides,
+    metricsJson: {
+      ...baseMetrics,
+      ...overrideMetrics,
+    },
+  };
+};
 
 describe("QuantExecutionPolicyService", () => {
   const input = {
@@ -493,6 +512,22 @@ describe("QuantExecutionPolicyService", () => {
     });
   });
 
+  it("rejects 1h validation for 15m decision as assumption mismatch with PARTIAL_MATCH status", async () => {
+    const { policy } = service(valid({ interval: '1h' }));
+    const result = await policy.evaluate({ ...input, timeframe: '15m' });
+    expect(result.evidenceStatus).toBe('PARTIAL_MATCH');
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe('QUANT_ASSUMPTION_MISMATCH');
+  });
+
+  it("blocks negative exact evidence and exposes EXACT_MATURE_NEGATIVE status", async () => {
+    const { policy } = service(valid({ probabilityOfProfit: 40 }));
+    const result = await policy.evaluate(input);
+    expect(result.evidenceStatus).toBe('EXACT_MATURE_NEGATIVE');
+    expect(result.allowed).toBe(false);
+    expect(result.severity).toBe('BLOCK');
+  });
+
   it("assigns riskTier and matched cohort based on exact evidence maturity and quality", async () => {
     const exactNegativeFixture = (overrides: Record<string, unknown> = {}) => ({
       ...input,
@@ -520,7 +555,7 @@ describe("QuantExecutionPolicyService", () => {
           regime: "TRENDING",
           direction: "LONG",
           executionPolicy: "STANDARD",
-          configurationVersion: "v1",
+          configurationVersion: 1,
         },
         executionAssumptions: { leverage: 1, riskPerTrade: 0.02, riskRewardRatio: 1.5 },
       },
@@ -539,7 +574,7 @@ describe("QuantExecutionPolicyService", () => {
           regime: "TRENDING",
           direction: "LONG",
           executionPolicy: "STANDARD",
-          configurationVersion: "v1",
+          configurationVersion: 1,
         },
         executionAssumptions: { leverage: 1, riskPerTrade: 0.02, riskRewardRatio: 1.5 },
       },
@@ -557,7 +592,7 @@ describe("QuantExecutionPolicyService", () => {
           regime: "TRENDING",
           direction: "LONG",
           executionPolicy: "STANDARD",
-          configurationVersion: "v1",
+          configurationVersion: 1,
         },
         executionAssumptions: { leverage: 1, riskPerTrade: 0.02, riskRewardRatio: 1.5 },
       },

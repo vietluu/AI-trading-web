@@ -5,6 +5,11 @@ import { evaluateEvidenceGate } from '../domain/evidence-gate';
 import { timeframeMilliseconds } from "../domain/adaptive-trading-policy";
 import { RiskConfigService } from "../../risk/application/risk-config.service";
 
+import {
+  classifyExecutionEvidence,
+  CohortEvidenceStatus,
+} from '../domain/execution-cohort';
+
 export interface QuantExecutionPolicyResult {
   severity: 'BLOCK' | 'REDUCE_SIZE' | 'APPROVE';
   riskTier?: 'NORMAL' | 'PROBE' | 'BLOCKED';
@@ -13,13 +18,16 @@ export interface QuantExecutionPolicyResult {
   advisory?: boolean;
   dislocationCanary?: boolean;
   sizeFactor?: number;
+  evidenceStatus?: CohortEvidenceStatus;
   matchedCohort?: {
     symbol: string;
+    strategyKey?: string;
     setup?: string;
     regime?: string;
     direction?: string;
+    timeframe?: string;
     executionPolicy?: string;
-    configurationVersion?: string;
+    configurationVersion?: number | string;
     sampleSize?: number;
     matchType?: 'EXACT' | 'FAMILY' | 'GLOBAL_FALLBACK';
   };
@@ -124,68 +132,74 @@ export class QuantExecutionPolicyService {
     if (this.hasFreshRegimeConflict(input, regime, now)) {
       return { severity: 'BLOCK', riskTier: 'BLOCKED', allowed: false, reason: "QUANT_REGIME_CONFLICT", matchedCohort, ...(regimeEvidence ? { regime: regimeEvidence } : {}) };
     }
-    
     const liveLimits = await this.riskConfig?.getUserLimits(input.userId);
-    let assumptionMismatch = false;
-    let newCohort = false;
-    let negativeExactCohort = false;
-    let evidence = undefined;
-    
-    if (validation) {
-      const metrics = validation.metricsJson && typeof validation.metricsJson === "object" && !Array.isArray(validation.metricsJson)
-        ? validation.metricsJson as Record<string, unknown> : {};
-      const sampleEvidence = metrics.sampleEvidence && typeof metrics.sampleEvidence === "object" && !Array.isArray(metrics.sampleEvidence)
-        ? metrics.sampleEvidence as Record<string, unknown> : {};
-      const outOfSample = metrics.outOfSample && typeof metrics.outOfSample === "object" && !Array.isArray(metrics.outOfSample)
-        ? metrics.outOfSample as Record<string, unknown> : {};
-      const assumptions = metrics.executionAssumptions && typeof metrics.executionAssumptions === "object" && !Array.isArray(metrics.executionAssumptions)
-        ? metrics.executionAssumptions as Record<string, unknown> : undefined;
-      matchedCohort.sampleSize = Number(sampleEvidence.totalTrades ?? sampleEvidence.sampleSize ?? (metrics.sampleSize as number) ?? 0);
-        
-      evidence = {
-        probabilityOfProfit: validation.probabilityOfProfit,
-        probabilityOfRuin: validation.probabilityOfRuin,
-        outOfSampleSharpe: validation.outOfSampleSharpe,
-        walkForwardStable: validation.walkForwardStable,
-        confidenceBrierScore: validation.confidenceBrierScore,
-        createdAt: validation.createdAt.toISOString(),
-      };
-      
-      const maxAge = Math.max(36 * 3_600_000, timeframeMilliseconds(input.timeframe) * 12);
-      const isStale = now.getTime() - validation.createdAt.getTime() > maxAge;
-      newCohort = Number(sampleEvidence.totalTrades ?? 0) < 30 || Number(sampleEvidence.outOfSampleTrades ?? outOfSample.outOfSampleTrades ?? 0) < 10;
-      assumptionMismatch = !assumptions || !liveLimits ||
-        ['leverage', 'riskPerTrade', 'riskRewardRatio'].some((key) => !Number.isFinite(Number(assumptions[key]))) || (liveLimits !== null && liveLimits !== undefined && (
-        Number(assumptions.leverage) !== liveLimits.maxLeverage ||
-        Math.abs(Number(assumptions.riskPerTrade) - liveLimits.riskPerTrade) > 1e-9 ||
-        Math.abs(Number(assumptions.riskRewardRatio) - liveLimits.riskRewardRatio) > 1e-9
-      ));
-      negativeExactCohort = !isStale && !newCohort && !assumptionMismatch &&
-        (!validation.walkForwardStable || validation.probabilityOfProfit < 52 || validation.probabilityOfRuin > 15 || validation.outOfSampleSharpe <= 0.8);
-    } else {
-      newCohort = true; 
-      assumptionMismatch = false;
-    }
-    
+    const parsedConfigVersion = typeof cohortVersion === 'number'
+      ? cohortVersion
+      : (typeof cohortVersion === 'string'
+          ? (Number.isFinite(parseInt(cohortVersion.replace(/^v/i, ''), 10)) ? parseInt(cohortVersion.replace(/^v/i, ''), 10) : undefined)
+          : undefined);
+
+    const cohortClassification = classifyExecutionEvidence(
+      {
+        symbol: input.symbol,
+        strategyKey: input.strategyKey ?? 'ai-core',
+        direction: (cohortDirection === 'SHORT' ? 'SHORT' : 'LONG'),
+        regime: regime?.regime ?? (cohortRegime === 'TRENDING' ? 'BULL' : cohortRegime ?? 'RANGING'),
+        timeframe: input.timeframe,
+        executionPolicy: cohortPolicy,
+        configurationVersion: parsedConfigVersion,
+        userLimits: liveLimits,
+      },
+      validation,
+      now,
+    );
+
+    const evidenceStatus = cohortClassification.status;
+    Object.assign(matchedCohort, {
+      ...(cohortClassification.matchedCohort ?? {}),
+      sampleSize: cohortClassification.totalTrades ?? 0,
+      matchType: evidenceStatus.startsWith('EXACT') ? 'EXACT' : 'GLOBAL_FALLBACK',
+    });
+
+    const evidence = validation
+      ? {
+          probabilityOfProfit: validation.probabilityOfProfit,
+          probabilityOfRuin: validation.probabilityOfRuin,
+          outOfSampleSharpe: validation.outOfSampleSharpe,
+          walkForwardStable: validation.walkForwardStable,
+          confidenceBrierScore: validation.confidenceBrierScore,
+          createdAt: validation.createdAt.toISOString(),
+        }
+      : undefined;
+
     const gateResult = evaluateEvidenceGate({
       mode: input.mode ?? 'DEMO',
-      negativeExactCohort,
-      newCohort,
-      assumptionMismatch,
+      negativeExactCohort: evidenceStatus === 'EXACT_MATURE_NEGATIVE',
+      newCohort: evidenceStatus === 'EXACT_IMMATURE' || evidenceStatus === 'MISSING',
+      assumptionMismatch: evidenceStatus === 'PARTIAL_MATCH',
     });
-    
+
     if (gateResult.severity === 'BLOCK') {
        let reason: NonNullable<QuantExecutionPolicyResult['reason']> = 'QUANT_VALIDATION_MISSING';
-       if (!validation) reason = 'QUANT_VALIDATION_MISSING';
-       else if (gateResult.reasons.includes('ASSUMPTION_MISMATCH_LIVE')) reason = 'QUANT_ASSUMPTION_MISMATCH';
-       else if (gateResult.reasons.includes('NEW_COHORT_LIVE')) reason = 'QUANT_SAMPLE_TOO_SMALL';
-       else if (gateResult.reasons.includes('NEGATIVE_EXACT_COHORT')) {
-           reason = !validation.walkForwardStable ? 'QUANT_WALK_FORWARD_UNSTABLE' : validation.probabilityOfProfit < 52 ? 'QUANT_PROBABILITY_TOO_LOW' : validation.probabilityOfRuin > 15 ? 'QUANT_RUIN_RISK_TOO_HIGH' : 'QUANT_OUT_OF_SAMPLE_EDGE_MISSING';
-
+       if (evidenceStatus === 'MISSING') reason = 'QUANT_VALIDATION_MISSING';
+       else if (evidenceStatus === 'PARTIAL_MATCH') reason = 'QUANT_ASSUMPTION_MISMATCH';
+       else if (evidenceStatus === 'EXACT_IMMATURE') reason = 'QUANT_SAMPLE_TOO_SMALL';
+       else if (evidenceStatus === 'EXACT_MATURE_NEGATIVE') {
+           reason = (cohortClassification.reason as NonNullable<QuantExecutionPolicyResult['reason']>) ?? 'QUANT_OUT_OF_SAMPLE_EDGE_MISSING';
        }
-       return { severity: 'BLOCK', riskTier: 'BLOCKED', allowed: false, evaluated: false, reason, validation: evidence, matchedCohort, reasons: gateResult.reasons };
+       return {
+         severity: 'BLOCK',
+         riskTier: 'BLOCKED',
+         allowed: false,
+         evaluated: false,
+         reason,
+         validation: evidence,
+         reasons: gateResult.reasons,
+         evidenceStatus,
+         matchedCohort,
+       };
     }
-    
+
     const applyGate = (res: QuantExecutionPolicyResult): QuantExecutionPolicyResult => {
       const severity = res.severity === 'BLOCK' || gateResult.severity === 'BLOCK'
         ? 'BLOCK'
@@ -199,7 +213,8 @@ export class QuantExecutionPolicyService {
           severity: 'BLOCK',
           riskTier,
           allowed: false,
-          matchedCohort,
+          evidenceStatus: res.evidenceStatus ?? evidenceStatus,
+          matchedCohort: res.matchedCohort ?? matchedCohort,
           reasons: combinedReasons,
         };
       }
@@ -211,7 +226,8 @@ export class QuantExecutionPolicyService {
           severity: 'REDUCE_SIZE',
           riskTier,
           sizeFactor: Math.min(currentSize, gateSize),
-          matchedCohort,
+          evidenceStatus: res.evidenceStatus ?? evidenceStatus,
+          matchedCohort: res.matchedCohort ?? matchedCohort,
           reasons: combinedReasons,
         };
       }
@@ -219,40 +235,42 @@ export class QuantExecutionPolicyService {
         ...res,
         severity: 'APPROVE',
         riskTier,
-        matchedCohort,
+        evidenceStatus: res.evidenceStatus ?? evidenceStatus,
+        matchedCohort: res.matchedCohort ?? matchedCohort,
         reasons: combinedReasons,
       };
     };
-    
-    if (!validation) return applyGate(this.insufficientEvidence("QUANT_VALIDATION_MISSING", input));
-    
-    const maxAge = Math.max(36 * 3_600_000, timeframeMilliseconds(input.timeframe) * 12);
-    if (now.getTime() - validation.createdAt.getTime() > maxAge)
+
+    if (evidenceStatus === 'MISSING') {
+      return applyGate(this.insufficientEvidence("QUANT_VALIDATION_MISSING", input));
+    }
+
+    if (evidenceStatus === 'STALE') {
       return applyGate({ ...this.insufficientEvidence("QUANT_VALIDATION_STALE", input), validation: evidence });
-      
-    if (newCohort) {
+    }
+
+    if (evidenceStatus === 'EXACT_IMMATURE') {
       return applyGate({ ...this.insufficientEvidence("QUANT_SAMPLE_TOO_SMALL", input), validation: evidence });
     }
 
-    if (assumptionMismatch) {
+    if (evidenceStatus === 'PARTIAL_MATCH') {
       return applyGate({ ...this.insufficientEvidence("QUANT_ASSUMPTION_MISMATCH", input), validation: evidence });
     }
-      
 
-    if (validation.probabilityOfRuin > 15) {
-      return applyGate({ severity: 'BLOCK', allowed: false, reason: "QUANT_RUIN_RISK_TOO_HIGH", validation: evidence });
+    if (evidenceStatus === 'EXACT_MATURE_NEGATIVE') {
+      const reason = (cohortClassification.reason as NonNullable<QuantExecutionPolicyResult['reason']>) ?? 'QUANT_OUT_OF_SAMPLE_EDGE_MISSING';
+      return applyGate({ severity: 'BLOCK', allowed: false, reason, validation: evidence });
     }
-    if (validation.outOfSampleSharpe <= 0.8) {
-      return applyGate({ severity: 'BLOCK', allowed: false, reason: "QUANT_OUT_OF_SAMPLE_EDGE_MISSING", validation: evidence });
-    }
-    
-    const metrics = validation.metricsJson && typeof validation.metricsJson === "object" && !Array.isArray(validation.metricsJson)
+
+    // EXACT_MATURE_POSITIVE: check calibration if sufficient
+    const metrics = validation?.metricsJson && typeof validation.metricsJson === "object" && !Array.isArray(validation.metricsJson)
       ? validation.metricsJson as Record<string, unknown> : {};
     const calibration = metrics.calibration && typeof metrics.calibration === "object" && !Array.isArray(metrics.calibration)
       ? metrics.calibration as Record<string, unknown> : undefined;
-      
-    if (calibration?.evidenceSufficient === true && validation.confidenceBrierScore > 0.3)
+
+    if (calibration?.evidenceSufficient === true && validation && validation.confidenceBrierScore > 0.3) {
       return applyGate({ severity: 'BLOCK', allowed: false, reason: "QUANT_CALIBRATION_UNRELIABLE", validation: evidence });
+    }
 
     return applyGate({
       severity: 'APPROVE',

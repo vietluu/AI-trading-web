@@ -9,6 +9,7 @@ import {
   type RiskInput,
   type RiskLimits,
 } from "../../src/modules/risk/domain/risk-engine";
+import { DecisionRiskPolicyService } from "../../src/modules/risk/application/decision-risk-policy.service";
 
 const limits: RiskLimits = {
   riskPerTrade: 0.02,
@@ -676,3 +677,54 @@ describe("risk engine", () => {
     expect(result.tradePlan?.strategy).toBe("RANGE_REVERSAL");
   });
 });
+
+describe("DecisionRiskPolicyService executionEvidence EV gate", () => {
+  const service = new DecisionRiskPolicyService();
+  const baseDecision = decision();
+
+  it("reads expectedNetR for the EV gate when present", () => {
+    const negativeNetRDecision = {
+      ...baseDecision,
+      expectedValue: 0.7,
+      executionEvidence: {
+        signalStrength: 80,
+        expectedNetR: -0.1,
+        calibrationQuality: 'RELIABLE' as const,
+      },
+    };
+
+    const result = service.evaluate(negativeNetRDecision, { symbol: 'BTC-USDT' });
+    expect(result.actionable).toBe(false);
+    expect(result.reason).toBe('EXPECTED_VALUE_NEGATIVE');
+    expect(result.evEvaluationPath).toBe('EXECUTION_EVIDENCE');
+  });
+
+  it("passes EV gate when expectedNetR is positive", () => {
+    const positiveNetRDecision = {
+      ...baseDecision,
+      expectedValue: 0.1,
+      executionEvidence: {
+        signalStrength: 80,
+        expectedNetR: 0.8,
+        calibrationQuality: 'RELIABLE' as const,
+      },
+    };
+
+    const result = service.evaluate(positiveNetRDecision, { symbol: 'BTC-USDT' });
+    expect(result.actionable).toBe(true);
+    expect(result.evEvaluationPath).toBe('EXECUTION_EVIDENCE');
+  });
+
+  it("falls back to legacy expectedValue when executionEvidence is omitted", () => {
+    const legacyDecision = {
+      ...baseDecision,
+      expectedValue: 0.7,
+      executionEvidence: undefined,
+    };
+
+    const result = service.evaluate(legacyDecision, { symbol: 'BTC-USDT' });
+    expect(result.actionable).toBe(true);
+    expect(result.evEvaluationPath).toBeUndefined();
+  });
+});
+

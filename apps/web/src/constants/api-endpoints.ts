@@ -60,6 +60,7 @@ export const API_ENDPOINTS = {
     portfolioRebalance: "/ai/portfolio/rebalance",
     portfolioStrategyStatus: (key: string) => `/ai/portfolio/strategies/${key}/status`,
     reflection: "/ai/reflection",
+    reflectionRecoveryCohorts: "/ai/reflection/recovery-cohorts",
     reflectionInsights: "/ai/reflection/insights",
     reflectionProposals: "/ai/reflection/proposals",
     reflectionRun: "/ai/reflection/run",

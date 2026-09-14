@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import type { GateStage } from '../domain/gate-decision';
 
 export interface StageTelemetryRecord {
   pipelineId: string;
@@ -14,6 +15,7 @@ export interface StageTelemetryRecord {
   riskScore: number;
   decision: string;
   rejectReason?: string;
+  blockingStage?: GateStage;
   executionResult: string;
   durationMs: number;
   tokenUsage: number;

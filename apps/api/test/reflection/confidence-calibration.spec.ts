@@ -3,6 +3,7 @@ import {
   buildReliabilityCurve,
   calibrateConfidence,
   calibrateConfidenceWithFallback,
+  buildExecutionEvidenceScore,
 } from '../../src/modules/reflection/domain/confidence-calibration';
 
 describe('confidence calibration', () => {
@@ -75,5 +76,41 @@ describe('confidence calibration', () => {
     expect(calibration.status).toBe('INSUFFICIENT_HISTORY');
     expect(calibration.scope).toBe('NONE');
     expect(calibration.empiricalProbability).toBeNull();
+  });
+
+  it('does not turn an 85 signal strength with unreliable calibration into an 85% probability', () => {
+    const score = buildExecutionEvidenceScore({
+      signalStrength: 85,
+      confidenceCalibration: {
+        status: 'CALIBRATED',
+        empiricalProbability: 0.85,
+        brierScore: 0.35,
+      },
+      expectedReward: 2,
+      expectedLoss: 1,
+      executionCost: 0.05,
+    });
+    expect(score.signalStrength).toBe(85);
+    expect(score.calibrationQuality).toBe('UNRELIABLE');
+    expect(score.estimatedWinProbability).toBeUndefined();
+    expect(score.expectedNetR).toBeUndefined();
+  });
+
+  it('populates estimatedWinProbability and expectedNetR when calibration is reliable', () => {
+    const score = buildExecutionEvidenceScore({
+      signalStrength: 80,
+      confidenceCalibration: {
+        status: 'CALIBRATED',
+        empiricalProbability: 0.60,
+        brierScore: 0.15,
+      },
+      expectedReward: 2,
+      expectedLoss: 1,
+      executionCost: 0.05,
+    });
+    expect(score.signalStrength).toBe(80);
+    expect(score.calibrationQuality).toBe('RELIABLE');
+    expect(score.estimatedWinProbability).toBe(0.60);
+    expect(score.expectedNetR).toBe(0.75);
   });
 });

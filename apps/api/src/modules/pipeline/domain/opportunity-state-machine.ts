@@ -16,6 +16,7 @@ export const OPPORTUNITY_WATCHER_POLICY = Object.freeze({
 export type OpportunitySetup =
   | 'RANGE_REVERSAL'
   | 'LIQUIDITY_SWEEP_REVERSAL'
+  | 'RECOVERY_RECLAIM'
   | 'SQUEEZE_PROBE'
   | 'BREAKOUT_RETEST'
   | 'TREND_PULLBACK';

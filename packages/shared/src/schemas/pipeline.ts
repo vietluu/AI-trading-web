@@ -99,6 +99,40 @@ export const PipelineRunRequestSchema = z
   .strict();
 export type PipelineRunRequest = z.infer<typeof PipelineRunRequestSchema>;
 
+export const PipelineGateStageSchema = z.enum([
+  "SIGNAL_FILTER",
+  "JUDGE",
+  "QUANT",
+  "MULTI_TIMEFRAME",
+  "RISK",
+  "EXECUTION",
+]);
+export const PipelineGateDispositionSchema = z.enum([
+  "PASS",
+  "ADVISORY",
+  "REDUCE_SIZE",
+  "BLOCK",
+]);
+export const PipelineGateDecisionRecordSchema = z.object({
+  stage: PipelineGateStageSchema,
+  disposition: PipelineGateDispositionSchema,
+  reasonCodes: z.array(z.string()),
+  selectedBlockingReason: z.string().optional(),
+});
+export const PipelineBlockingGateSchema = z.object({
+  stage: PipelineGateStageSchema,
+  reason: z.string(),
+});
+export const PipelineRunResultSchema = z.object({
+  gates: z.array(PipelineGateDecisionRecordSchema).optional(),
+  blockingGate: PipelineBlockingGateSchema.optional(),
+}).passthrough();
+export type PipelineGateStage = z.infer<typeof PipelineGateStageSchema>;
+export type PipelineGateDisposition = z.infer<typeof PipelineGateDispositionSchema>;
+export type PipelineGateDecisionRecord = z.infer<typeof PipelineGateDecisionRecordSchema>;
+export type PipelineBlockingGate = z.infer<typeof PipelineBlockingGateSchema>;
+export type PipelineRunResult = z.infer<typeof PipelineRunResultSchema>;
+
 export const PipelineScheduleInputSchema = z
   .object({
     pipelineId: PipelineIdSchema.default("FULL_ANALYSIS_DECISION"),

@@ -61,4 +61,26 @@ describe("proactive demo connection selection", () => {
     },
   );
 
+  it("strictly requires OKX_FUTURES DEMO for RECOVERY_RECLAIM and rejects Binance testnet", async () => {
+    const binanceTestnet = {
+      ...production,
+      id: "binance-testnet",
+      provider: ExchangeProvider.BINANCE_FUTURES,
+      environment: ExchangeEnvironment.TESTNET,
+    };
+    const { service, connections } = build([binanceTestnet]);
+    const recoveryAssessment = {
+      ...assessment,
+      tradePlanContext: {
+        proactive: {
+          thesis: { setup: "RECOVERY_RECLAIM" },
+        },
+      } as never,
+    };
+
+    const result = await service.assessPipelineDecision(recoveryAssessment);
+    expect(result).toMatchObject({ outcome: "NO_ELIGIBLE_EXCHANGE_CONNECTION" });
+    expect(connections.instrument).not.toHaveBeenCalled();
+  });
 });
+

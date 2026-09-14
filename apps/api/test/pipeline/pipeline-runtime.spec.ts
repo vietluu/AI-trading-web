@@ -8,6 +8,15 @@ import { PipelineSchedulerService } from '../../src/modules/pipeline/application
 import { PipelineRunnerService } from '../../src/modules/pipeline/application/pipeline-runner.service';
 import { PIPELINE_DEAD_LETTER_QUEUE_NAME, PIPELINE_RETRY_QUEUE_NAME, PIPELINE_RUN_QUEUE_NAME } from '../../src/modules/pipeline/infrastructure/pipeline-queue.constants';
 
+type PersistedRunUpdate = {
+  status?: string;
+  skippedReason?: string;
+  result?: {
+    blockingGate?: { stage: string; reason: string };
+    gates?: Array<{ stage: string; disposition: string }>;
+  };
+};
+
 describe('Phase 6.6 pipeline runtime policies', () => {
   it('validates and matches five-field cron expressions in the requested timezone', () => {
     expect(() => validateCron('*/5 * * * *')).not.toThrow();
@@ -111,7 +120,7 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     }));
   });
 
-  it('skips live assessment and execution when the decision gate blocks the trade', async () => {
+  it('persists canonical gate provenance across blocked, approved, failed, and reassessment outcomes', async () => {
     const repository = {
       updateRun: vi.fn().mockResolvedValue({}),
       updateStep: vi.fn().mockResolvedValue({}),
@@ -201,6 +210,13 @@ describe('Phase 6.6 pipeline runtime policies', () => {
       liveTrading as never,
       redis as never,
     );
+    const persistedUpdate = (id: string, status?: string) =>
+      (repository.updateRun.mock.calls as unknown as Array<[string, PersistedRunUpdate]>)
+        .find(([runId, update]) =>
+          runId === id && (status === undefined
+            ? update.result !== undefined
+            : update.status === status),
+        )?.[1];
 
     await service.run({
       pipelineId: 'FULL_ANALYSIS_DECISION',
@@ -255,6 +271,214 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     expect(redis.compareAndDelete).toHaveBeenCalled();
     expect(repository.updateRun).toHaveBeenCalledWith('run-2', expect.objectContaining({
       status: 'COMPLETED', decision: 'LONG', skippedReason: undefined,
+    }));
+    const approvedRun = persistedUpdate('run-2', 'COMPLETED');
+    expect(approvedRun?.result?.gates).toEqual([
+      expect.objectContaining({ stage: 'SIGNAL_FILTER', disposition: 'PASS' }),
+      expect.objectContaining({ stage: 'JUDGE', disposition: 'PASS' }),
+      expect.objectContaining({ stage: 'QUANT', disposition: 'PASS' }),
+      expect.objectContaining({ stage: 'MULTI_TIMEFRAME', disposition: 'PASS' }),
+      expect.objectContaining({ stage: 'RISK', disposition: 'PASS' }),
+      expect.objectContaining({ stage: 'EXECUTION', disposition: 'PASS' }),
+    ]);
+    expect(approvedRun?.result?.blockingGate).toBeUndefined();
+
+    repository.updateRun.mockClear();
+    liveTrading.assessPipelineDecision.mockImplementationOnce(() => {
+      const evaluatedRun = persistedUpdate('run-risk-failure');
+      expect(evaluatedRun?.result?.gates).toEqual([
+        expect.objectContaining({ stage: 'SIGNAL_FILTER', disposition: 'PASS' }),
+        expect.objectContaining({ stage: 'JUDGE', disposition: 'PASS' }),
+        expect.objectContaining({ stage: 'QUANT', disposition: 'PASS' }),
+        expect.objectContaining({ stage: 'MULTI_TIMEFRAME', disposition: 'PASS' }),
+      ]);
+      return Promise.resolve({ outcome: 'NO_ELIGIBLE_EXCHANGE_CONNECTION' });
+    });
+
+    await expect(approvedService.run({
+      pipelineId: 'FULL_ANALYSIS_DECISION',
+      runId: 'run-risk-failure',
+      userId: 'user-1',
+      provider: 'BINANCE_FUTURES',
+      symbol: 'ETH-USDT',
+      params: { interval: '1h', strategyIds: ['ai-core', 'trend'] },
+      trigger: 'EVENT',
+    } as never)).rejects.toThrow('NO_ELIGIBLE_EXCHANGE_CONNECTION');
+
+    const failedAfterEvaluationRun = persistedUpdate('run-risk-failure', 'FAILED');
+    expect(failedAfterEvaluationRun?.result?.gates).toEqual([
+      expect.objectContaining({ stage: 'SIGNAL_FILTER', disposition: 'PASS' }),
+      expect.objectContaining({ stage: 'JUDGE', disposition: 'PASS' }),
+      expect.objectContaining({ stage: 'QUANT', disposition: 'PASS' }),
+      expect.objectContaining({ stage: 'MULTI_TIMEFRAME', disposition: 'PASS' }),
+      expect.objectContaining({
+        stage: 'RISK',
+        disposition: 'BLOCK',
+      }),
+    ]);
+    expect(failedAfterEvaluationRun?.result?.blockingGate).toEqual({
+      stage: 'RISK',
+      reason: 'NO_ELIGIBLE_EXCHANGE_CONNECTION',
+    });
+    expect(failedAfterEvaluationRun?.skippedReason).toBe('NO_ELIGIBLE_EXCHANGE_CONNECTION');
+
+    repository.updateRun.mockClear();
+    liveTrading.assessPipelineDecision.mockRejectedValueOnce(
+      new Error('NO_ELIGIBLE_EXCHANGE_CONNECTION: connection lookup failed'),
+    );
+
+    await expect(approvedService.run({
+      pipelineId: 'FULL_ANALYSIS_DECISION',
+      runId: 'run-risk-exception',
+      userId: 'user-1',
+      provider: 'BINANCE_FUTURES',
+      symbol: 'ETH-USDT',
+      params: { interval: '1h', strategyIds: ['ai-core', 'trend'] },
+      trigger: 'EVENT',
+    } as never)).rejects.toThrow('NO_ELIGIBLE_EXCHANGE_CONNECTION');
+
+    const failedRiskExceptionRun = persistedUpdate('run-risk-exception', 'FAILED');
+    expect(failedRiskExceptionRun?.result?.gates?.at(-1)).toEqual(
+      expect.objectContaining({ stage: 'RISK', disposition: 'BLOCK' }),
+    );
+    expect(failedRiskExceptionRun?.result?.blockingGate).toEqual({
+      stage: 'RISK',
+      reason: 'NO_ELIGIBLE_EXCHANGE_CONNECTION',
+    });
+    expect(failedRiskExceptionRun?.skippedReason).toBe('NO_ELIGIBLE_EXCHANGE_CONNECTION');
+
+    repository.updateRun.mockClear();
+    liveTrading.assessPipelineDecision.mockResolvedValueOnce({
+      outcome: 'RISK_APPROVED',
+      risk: { approved: true, reason: 'ok', riskScore: 20 },
+    });
+    liveTrading.executePipeline.mockRejectedValueOnce(new Error('exchange unavailable'));
+
+    await expect(approvedService.run({
+      pipelineId: 'FULL_ANALYSIS_DECISION',
+      runId: 'run-execution-failure',
+      userId: 'user-1',
+      provider: 'BINANCE_FUTURES',
+      symbol: 'ETH-USDT',
+      params: { interval: '1h', strategyIds: ['ai-core', 'trend'] },
+      trigger: 'EVENT',
+    } as never)).rejects.toThrow('exchange unavailable');
+
+    const failedDuringExecutionRun = persistedUpdate('run-execution-failure', 'FAILED');
+    expect(failedDuringExecutionRun?.result?.gates?.slice(-2)).toEqual([
+      expect.objectContaining({ stage: 'RISK', disposition: 'PASS' }),
+      expect.objectContaining({ stage: 'EXECUTION', disposition: 'BLOCK' }),
+    ]);
+    expect(failedDuringExecutionRun?.result?.blockingGate).toEqual({
+      stage: 'EXECUTION',
+      reason: 'PIPELINE_EXECUTION_FAILED',
+    });
+    expect(failedDuringExecutionRun?.skippedReason).toBe('PIPELINE_EXECUTION_FAILED');
+
+    repository.updateRun.mockClear();
+    liveTrading.assessPipelineDecision
+      .mockResolvedValueOnce({
+        outcome: 'RISK_APPROVED',
+        risk: { approved: true, reason: 'ok', riskScore: 20 },
+      })
+      .mockRejectedValueOnce(
+        new Error('NO_ELIGIBLE_EXCHANGE_CONNECTION: reassessment connection lookup failed'),
+      );
+    liveTrading.executePipeline.mockResolvedValueOnce({
+      outcome: 'EXECUTION_FAILED',
+      errorCode: 'ENTRY_PRICE_DRIFT',
+      retryable: true,
+    });
+
+    await expect(approvedService.run({
+      pipelineId: 'FULL_ANALYSIS_DECISION',
+      runId: 'run-reassessment-failure',
+      userId: 'user-1',
+      provider: 'BINANCE_FUTURES',
+      symbol: 'ETH-USDT',
+      params: { interval: '1h', strategyIds: ['ai-core', 'trend'] },
+      trigger: 'EVENT',
+    } as never)).rejects.toThrow('NO_ELIGIBLE_EXCHANGE_CONNECTION');
+
+    const failedReassessmentRun = persistedUpdate('run-reassessment-failure', 'FAILED');
+    expect(failedReassessmentRun?.result?.gates?.at(-1)).toEqual(
+      expect.objectContaining({ stage: 'RISK', disposition: 'BLOCK' }),
+    );
+    expect(failedReassessmentRun?.result?.gates).not.toContainEqual(
+      expect.objectContaining({ stage: 'EXECUTION' }),
+    );
+    expect(failedReassessmentRun?.result?.blockingGate).toEqual({
+      stage: 'RISK',
+      reason: 'NO_ELIGIBLE_EXCHANGE_CONNECTION',
+    });
+    expect(failedReassessmentRun?.skippedReason).toBe('NO_ELIGIBLE_EXCHANGE_CONNECTION');
+
+    repository.updateRun.mockClear();
+    const provenanceService = new PipelineRunnerService(
+      fusion as never,
+      decision as never,
+      repository as never,
+      { isCancelled: vi.fn().mockResolvedValue(false) } as never,
+      riskPolicy,
+      signalFilter,
+      marketData as never,
+      alerts as never,
+      analytics as never,
+      liveTrading as never,
+      redis as never,
+      {
+        evaluate: vi.fn().mockReturnValue({
+          verdict: 'APPROVE',
+          severity: 'APPROVE',
+          approved: true,
+          reasons: ['VALID_EXACT_EVIDENCE'],
+        }),
+      },
+      undefined,
+      {
+        evaluate: vi.fn().mockResolvedValue({
+          severity: 'BLOCK',
+          allowed: false,
+          evaluated: false,
+          reason: 'QUANT_ASSUMPTION_MISMATCH',
+          reasons: ['ASSUMPTION_MISMATCH_LIVE'],
+        }),
+      } as never,
+    );
+
+    await provenanceService.run({
+      pipelineId: 'FULL_ANALYSIS_DECISION',
+      runId: 'run-quant-block',
+      userId: 'user-1',
+      provider: 'BINANCE_FUTURES',
+      symbol: 'ETH-USDT',
+      params: { interval: '1h', strategyIds: ['ai-core'] },
+      trigger: 'EVENT',
+    } as never);
+
+    const quantBlockedRun = (repository.updateRun.mock.calls as unknown as Array<[
+      string,
+      {
+        status?: string;
+        skippedReason?: string;
+        result?: {
+          blockingGate?: { stage: string; reason: string };
+          gates?: Array<{ stage: string; disposition: string }>;
+        };
+      },
+    ]>).find(([id, update]) => id === 'run-quant-block' && update.status === 'COMPLETED')?.[1];
+    expect(quantBlockedRun?.result?.blockingGate).toEqual({
+      stage: 'QUANT',
+      reason: 'QUANT_ASSUMPTION_MISMATCH',
+    });
+    expect(quantBlockedRun?.skippedReason).toBe('QUANT_ASSUMPTION_MISMATCH');
+    expect(quantBlockedRun?.result?.gates).toContainEqual(expect.objectContaining({
+      stage: 'JUDGE',
+      disposition: 'PASS',
+    }));
+    expect(analytics.recordStageTelemetry).toHaveBeenCalledWith(expect.objectContaining({
+      rejectReason: 'QUANT_ASSUMPTION_MISMATCH',
+      blockingStage: 'QUANT',
     }));
 
     vi.clearAllMocks();
@@ -1063,4 +1287,3 @@ describe("drift reassessment boundary", () => {
     expect(liveTrading.assessPipelineDecision).toHaveBeenCalled();
   });
 });
-

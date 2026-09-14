@@ -3,6 +3,7 @@ import {
   LiveEligibilityCandidateSchema,
   LiveEligibilityReviewInputSchema,
   SelfLearningLifecycleDtoSchema,
+  RecoveryCohortResponseSchema,
 } from "@platform/shared";
 
 describe("reflection and self-learning lifecycle schemas", () => {
@@ -105,4 +106,71 @@ describe("reflection and self-learning lifecycle schemas", () => {
       }),
     ).toThrow();
   });
+
+  it("parses valid RecoveryCohortResponse and enforces separation between control and simulated shadow candidate", () => {
+    const validResponse = {
+      cohortKey: "BINANCE_FUTURES:BTC-USDT:15m:RECOVERY_RECLAIM:IMMATURE",
+      control: {
+        type: "CONTROL_REALIZED" as const,
+        metrics: {
+          sampleSize: 150,
+          winCount: 85,
+          lossCount: 65,
+          scratchCount: 0,
+          winRate: 0.5667,
+          meanNetR: 0.25,
+          lowerConfidenceBoundNetR: 0.08,
+          profitFactor: 1.35,
+          grossProfit: 4500,
+          grossLoss: 3333,
+          maxDrawdown: 350,
+          averageMfe: 180,
+          averageMae: -75,
+          stopBeforeTargetRate: 0.42,
+          exclusions: { duplicateCount: 2, incompleteCount: 1, supersededCount: 0, corruptedCount: 0, totalExcluded: 3 },
+          sensitivity: { doubledCostProfitFactor: 1.10, doubledCostMeanNetR: 0.05, doubledCostResilient: true },
+        },
+      },
+      candidate: {
+        type: "CANDIDATE_SHADOW" as const,
+        isSimulated: true as const,
+        metrics: {
+          sampleSize: 120,
+          winCount: 75,
+          lossCount: 45,
+          scratchCount: 0,
+          winRate: 0.625,
+          meanNetR: 0.38,
+          lowerConfidenceBoundNetR: 0.15,
+          profitFactor: 1.55,
+          grossProfit: 5200,
+          grossLoss: 3350,
+          maxDrawdown: 280,
+          averageMfe: 220,
+          averageMae: -65,
+          stopBeforeTargetRate: 0.36,
+          exclusions: { duplicateCount: 0, incompleteCount: 2, supersededCount: 0, corruptedCount: 0, totalExcluded: 2 },
+          sensitivity: { doubledCostProfitFactor: 1.25, doubledCostMeanNetR: 0.12, doubledCostResilient: true },
+        },
+        walkForwardFolds: [
+          { foldIndex: 1, sampleSize: 40, meanNetR: 0.35, profitFactor: 1.45 },
+          { foldIndex: 2, sampleSize: 40, meanNetR: 0.42, profitFactor: 1.65 },
+          { foldIndex: 3, sampleSize: 40, meanNetR: 0.37, profitFactor: 1.55 },
+        ],
+        calibrationQuality: "GOOD" as const,
+        promotionEligibility: {
+          eligible: true,
+          reasons: [],
+        },
+      },
+      generatedAt: "2026-09-14T12:00:00.000Z",
+    };
+
+    const parsed = RecoveryCohortResponseSchema.parse(validResponse);
+    expect(parsed.candidate.isSimulated).toBe(true);
+    expect(parsed.control.type).toBe("CONTROL_REALIZED");
+    expect(parsed.candidate.type).toBe("CANDIDATE_SHADOW");
+    expect(parsed.candidate.walkForwardFolds).toHaveLength(3);
+  });
 });
+

@@ -1,0 +1,38 @@
+# Evidence-Aligned Entry Optimization Plan Index
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement these plans in order. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Deliver the approved entry-optimization design through five independently reviewable, shadow-safe releases.
+
+**Architecture:** Each phase has a separate plan, feature boundary, verification gate, and commit history. A later phase may consume persisted contracts from an earlier phase but may not weaken its safety constraints.
+
+**Tech Stack:** NestJS, TypeScript, Prisma/PostgreSQL, BullMQ/Redis, Vitest, Next.js
+
+**Spec:** `docs/superpowers/specs/2026-09-14-evidence-aligned-entry-optimization-design.md`
+
+## Global Constraints
+
+- Implement in the listed order; do not combine phase commits.
+- New entry behavior remains shadow-only.
+- Do not enable a production exchange connection or real-capital execution.
+- DEMO probe execution requires a separate user approval after shadow evidence review.
+- Use closed primary candles for recovery confirmation.
+- Run migration dry-run diagnostics before adding uniqueness constraints.
+- Preserve all existing account, Risk, protection, cooldown, and kill-switch gates.
+
+## Ordered Plans
+
+1. [x] `2026-09-14-phase-1-gate-provenance-deduplication.md` (Completed)
+2. [x] `2026-09-14-phase-2-exact-quant-cohorts.md` (Completed)
+3. [x] `2026-09-14-phase-3-recovery-reclaim-state-machine.md` (Completed)
+4. [x] `2026-09-14-phase-4-governed-shadow-probes.md` (Completed)
+5. [x] `2026-09-14-phase-5-pnl-evaluation-promotion.md` (Completed)
+
+## Release Checkpoints
+
+- [x] Phase 1: blocker audit reconciles and duplicate samples stop increasing.
+- [x] Phase 2: no mismatched timeframe/policy can authorize execution.
+- [x] Phase 3: recovery decisions reproduce from closed candles without future data.
+- [x] Phase 4: shadow plans use execution-equivalent terms and never call exchange APIs.
+- [x] Phase 5: control/candidate reports reconcile post-cost PnL and enforce promotion eligibility.
+

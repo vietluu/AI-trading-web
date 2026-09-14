@@ -390,4 +390,26 @@ describe("Proactive Thesis Pipeline Integration", () => {
     expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
   });
 
+  it('forces RECOVERY_RECLAIM setup to SHADOW regardless of deployment mode', async () => {
+    vi.stubEnv("PROACTIVE_AI_MODE", "DEMO");
+    const recoveryThesis = {
+      ...createValidLongThesis(),
+      setup: 'RECOVERY_RECLAIM' as const,
+      state: 'PROBE_READY' as const,
+      targets: [{ price: 112000, fraction: 1 }],
+    };
+    vi.mocked(mockTradeResearcher.research!).mockResolvedValue({
+      preferred: recoveryThesis,
+      alternatives: [],
+      researchRunId: 'thesis-recovery-1',
+      contextSnapshotId: 'context-1',
+    });
+
+    const result = await pipelineRunner.run(makeJob());
+
+    // Because RECOVERY_RECLAIM is forced to SHADOW, live submission (even DEMO) must NOT be called
+    expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ outcome: "SKIPPED", reason: "RECOVERY_SHADOW_ONLY" });
+    delete process.env.PROACTIVE_AI_MODE;
+  });
 });

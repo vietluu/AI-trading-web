@@ -86,6 +86,7 @@ export class ReflectionRepository {
       },
       select: {
         id: true,
+        evaluationKey: true,
         userId: true,
         symbol: true,
         provider: true,
@@ -103,6 +104,34 @@ export class ReflectionRepository {
       orderBy: [{ completedAt: "asc" }, { id: "asc" }],
       take,
     });
+  }
+  async evaluationSampleClaimed(
+    evaluationKey: string,
+    runId: string,
+  ): Promise<boolean> {
+    const [labeledRun, eligibleOwner] = await Promise.all([
+      this.prisma.pipelineRun.findFirst({
+        where: {
+          evaluationKey,
+          performanceRecords: { some: {} },
+        },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: { id: true },
+      }),
+      this.prisma.pipelineRun.findFirst({
+        where: {
+          evaluationKey,
+          status: "COMPLETED",
+          completedAt: { not: null },
+          decision: { in: ["LONG", "SHORT", "WAIT"] },
+          confidence: { not: null },
+        },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: { id: true },
+      }),
+    ]);
+    const owner = labeledRun ?? eligibleOwner;
+    return owner !== null && owner.id !== runId;
   }
   candleAtOrBefore(
     provider: "BINANCE_FUTURES" | "OKX_FUTURES",
@@ -208,4 +237,27 @@ export class ReflectionRepository {
   proposal(userId: string, id: string) {
     return this.prisma.improvementProposal.findFirst({ where: { id, userId } });
   }
+
+  async recoveryCohortOutcomes(cohortKey?: string, take = 5000) {
+    const shadowPlans = await this.prisma.shadowExecutionPlan.findMany({
+      where: {
+        status: { in: ['TARGET_REACHED', 'STOPPED', 'EXPIRED', 'FILLED', 'CANCELLED'] },
+        ...(cohortKey ? { cohortKey } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+
+    const controlOutcomes = await this.prisma.tradeLifecycleOutcome.findMany({
+      where: {
+        status: 'FINALIZED',
+        ...(cohortKey ? { symbol: cohortKey.split(':')[1] } : {}),
+      },
+      orderBy: { closedAt: 'desc' },
+      take,
+    });
+
+    return { shadowPlans, controlOutcomes };
+  }
 }
+
