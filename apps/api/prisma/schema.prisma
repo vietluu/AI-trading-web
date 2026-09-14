@@ -363,6 +363,7 @@ model PaperSignal {
   id                   String            @id @default(uuid()) @db.Uuid
   userId               String            @db.Uuid
   pipelineRunId        String?           @unique @db.Uuid
+  evaluationKey        String?           @unique
   symbol               String
   provider             ExchangeProvider?
   decision             String
@@ -561,6 +562,7 @@ model PipelineRun {
   dataQuality             String?
   marketRegime            String?
   configurationVersion    Int?
+  evaluationKey           String?
   learningStage           String?
   timeframe               String?
   skippedReason           String?
@@ -586,6 +588,7 @@ model PipelineRun {
   @@index([pipelineId, symbol, createdAt])
   @@index([correlationId])
   @@index([replayOfRunId])
+  @@index([evaluationKey])
   @@map("pipeline_runs")
 }
 

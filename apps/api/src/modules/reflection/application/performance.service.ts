@@ -85,9 +85,18 @@ export class PerformanceService {
     let skippedForMissingStartCandle = 0;
     let skippedForDrift = 0;
     const evaluatedUserIds = new Set<string>();
+    const seenEvaluationKeys = new Set<string>();
     const newlyFailedRuns: Array<{ runId: string, userId: string, symbol: string, decision: string, outcome: string, returnPct: number, marketRegime?: string, storedContext?: Prisma.JsonValue }> = [];
     for (const run of runs) {
       if (!run.completedAt || !run.decision || run.confidence == null) continue;
+      if (run.evaluationKey) {
+        if (seenEvaluationKeys.has(run.evaluationKey)) continue;
+        seenEvaluationKeys.add(run.evaluationKey);
+        if (await this.repository.evaluationSampleClaimed(
+          run.evaluationKey,
+          run.id,
+        )) continue;
+      }
       const candidate = evaluationCandidate(run.storedContext);
       const evaluatedDecision = candidate?.decision ?? run.decision;
       const evaluatedConfidence = candidate?.confidence ?? run.confidence;

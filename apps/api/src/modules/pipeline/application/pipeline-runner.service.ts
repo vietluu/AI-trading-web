@@ -63,6 +63,7 @@ import {
   type GateDisposition,
   type GateStage,
 } from "../domain/gate-decision";
+import { buildEvaluationKey } from "../domain/evaluation-identity";
 
 class PipelineCancelledError extends Error {}
 class PipelineExecutionLockBusyError extends Error {}
@@ -75,6 +76,7 @@ const DISLOCATION_CANARY_ADVISORY_REASONS = new Set([
   "CALIBRATED_PROBABILITY_TOO_LOW",
   "CALIBRATION_UNRELIABLE",
 ]);
+const BUILT_IN_CONFIGURATION_VERSION = 0;
 
 function marketDislocationFromParams(value: unknown): {
   direction: "BULLISH" | "BEARISH";
@@ -769,9 +771,43 @@ export class PipelineRunnerService {
       const decisionCompletedAt = new Date();
       const sourceTimestamp = indicatorSnapshot?.candleCloseTime ??
         recentCandles[0]?.closeTime;
+      const sourceDataCutoff = recentCandles[0]?.closeTime ??
+        indicatorSnapshot?.candleCloseTime;
       const sourceDataAgeMs = sourceTimestamp
         ? Math.max(0, decisionCompletedAt.getTime() - new Date(sourceTimestamp).getTime())
         : undefined;
+      const configurationVersion = output.learningConfiguration?.version ??
+        BUILT_IN_CONFIGURATION_VERSION;
+      const evaluationIdentity = sourceDataCutoff
+        ? {
+            userId: job.userId,
+            provider: String(job.provider),
+            symbol,
+            timeframe: String(interval),
+            sourceDataCutoff: new Date(sourceDataCutoff),
+            strategyKey,
+            direction: output.decision,
+            configurationVersion,
+          }
+        : undefined;
+      const evaluationKey = evaluationIdentity
+        ? buildEvaluationKey(evaluationIdentity)
+        : undefined;
+      if (evaluationKey) {
+        const identityResult = await this.repository.persistEvaluationIdentity?.(
+          runId,
+          evaluationKey,
+          evaluationIdentity,
+        );
+        if (identityResult?.sampleReused) {
+          this.logger.log({
+            event: "pipeline_evaluation_sample_reused",
+            runId,
+            evaluationKey,
+            paperSignalId: identityResult.paperSignal?.id,
+          });
+        }
+      }
       const candidateBlockingGate = selectBlockingGate(candidateGates);
       const candidateDecision = {
         decision: output.decision,
@@ -814,6 +850,8 @@ export class PipelineRunnerService {
         quant: quant as unknown as Prisma.InputJsonValue,
       };
       await this.repository.updateRun(runId, {
+        evaluationKey,
+        configurationVersion,
         skippedReason: candidateBlockingGate?.reason,
         result: evaluatedResult as unknown as Prisma.InputJsonValue,
       });
@@ -1208,7 +1246,8 @@ export class PipelineRunnerService {
         confidence: output.confidence,
         dataQuality: output.dataQuality,
         marketRegime: output.regime.type,
-        configurationVersion: output.learningConfiguration?.version,
+        configurationVersion,
+        evaluationKey,
         learningStage: output.learningConfiguration?.stage,
         timeframe: String(interval),
         skippedReason: finalSkippedReason,
@@ -1513,19 +1552,25 @@ export class PipelineRunnerService {
   ): Promise<void> {
     if (evaluation.rejected.length === 0) return;
 
-    const records = evaluation.rejected.map((signal: ConfluenceSignal) => ({
-      id: randomUUID(),
-      userId,
-      pipelineRunId: signal.pipelineRunId,
-      symbol: signal.symbol,
-      provider: signal.executionContext.provider as unknown as ExchangeProvider,
-      decision: signal.decision,
-      confidence: signal.confidence,
-      mode: "CONFLUENCE_REJECTED",
-      referencePrice: signal.referencePrice,
-      outcome: "PENDING",
-      marketRegime: signal.regime,
-    }));
+    const records = await Promise.all(evaluation.rejected.map(
+      async (signal: ConfluenceSignal) => {
+        const run = await this.repository.findRun(signal.pipelineRunId);
+        return {
+          id: randomUUID(),
+          userId,
+          pipelineRunId: signal.pipelineRunId,
+          evaluationKey: run?.evaluationKey ?? undefined,
+          symbol: signal.symbol,
+          provider: signal.executionContext.provider as unknown as ExchangeProvider,
+          decision: signal.decision,
+          confidence: signal.confidence,
+          mode: "CONFLUENCE_REJECTED",
+          referencePrice: signal.referencePrice,
+          outcome: "PENDING",
+          marketRegime: signal.regime,
+        };
+      },
+    ));
 
     await this.repository.createPaperSignals(records).catch((err) => {
       this.logger.error({

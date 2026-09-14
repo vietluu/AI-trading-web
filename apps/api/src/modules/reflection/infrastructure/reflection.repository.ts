@@ -86,6 +86,7 @@ export class ReflectionRepository {
       },
       select: {
         id: true,
+        evaluationKey: true,
         userId: true,
         symbol: true,
         provider: true,
@@ -103,6 +104,27 @@ export class ReflectionRepository {
       orderBy: [{ completedAt: "asc" }, { id: "asc" }],
       take,
     });
+  }
+  async evaluationSampleClaimed(
+    evaluationKey: string,
+    runId: string,
+  ): Promise<boolean> {
+    const [labeledCount, canonicalRun] = await Promise.all([
+      this.prisma.pipelineRun.count({
+        where: {
+          evaluationKey,
+          id: { not: runId },
+          performanceRecords: { some: {} },
+        },
+      }),
+      this.prisma.pipelineRun.findFirst({
+        where: { evaluationKey },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: { id: true },
+      }),
+    ]);
+    return labeledCount > 0 ||
+      (canonicalRun !== null && canonicalRun.id !== runId);
   }
   candleAtOrBefore(
     provider: "BINANCE_FUTURES" | "OKX_FUTURES",
