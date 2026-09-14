@@ -23,7 +23,7 @@ describe("PipelineAlertService blocked opportunity telemetry", () => {
     await service.blockedOpportunity({
       runId: "run-5", userId: "user-1", symbol: "ETH-USDT",
       decision: "LONG", confidence: 75,
-      blockedReasons: ["QUANT_VALIDATION_STALE"],
+      blockingGate: { stage: "QUANT", reason: "QUANT_VALIDATION_STALE" },
       analyses: analyses("UP"), multiTimeframeConfirmation: 100,
     });
 
@@ -32,6 +32,11 @@ describe("PipelineAlertService blocked opportunity telemetry", () => {
     expect(lastCall).toMatchObject({
       data: { kind: "MISSED_OPPORTUNITY", delivered: true },
     });
+    const reasoningSummary = (lastCall as {
+      data?: { reasoningSummary?: unknown };
+    } | undefined)?.data?.reasoningSummary;
+    expect(typeof reasoningSummary === "string" ? reasoningSummary : "")
+      .toContain("QUANT_VALIDATION_STALE");
   });
 
   it("does not count a signal when market and technical direction are not aligned", async () => {
@@ -41,7 +46,7 @@ describe("PipelineAlertService blocked opportunity telemetry", () => {
     await service.blockedOpportunity({
       runId: "run-1", userId: "user-1", symbol: "ETH-USDT",
       decision: "LONG", confidence: 75,
-      blockedReasons: ["QUANT_VALIDATION_STALE"],
+      blockingGate: { stage: "QUANT", reason: "QUANT_VALIDATION_STALE" },
       analyses: analyses("SIDEWAYS"), multiTimeframeConfirmation: 100,
     });
 
@@ -63,7 +68,7 @@ describe("PipelineAlertService blocked opportunity telemetry", () => {
     await service.blockedOpportunity({
       runId: "run-5", userId: "user-1", symbol: "SOL-USDT",
       decision: "LONG", confidence: 75,
-      blockedReasons: ["UNCALIBRATED_CONFIDENCE_TOO_LOW"],
+      blockingGate: { stage: "JUDGE", reason: "UNCALIBRATED_CONFIDENCE_TOO_LOW" },
       analyses: analyses("UP"), multiTimeframeConfirmation: 100,
       priceChangePercent: 9.09,
     });

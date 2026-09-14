@@ -1,12 +1,13 @@
 import type {
   AnticipatoryMarketSnapshot,
   EvidenceRef,
+  ExecutableThesis,
   ThesisValidationReasonCode,
   ThesisValidationResult,
   TradeThesis,
   ThesisReview,
 } from '@platform/shared';
-import { resolveSnapshotPath, TradeThesisSchema } from '@platform/shared';
+import { ExecutableThesisSchema, resolveSnapshotPath, TradeThesisSchema } from '@platform/shared';
 
 export interface TradeThesisValidatorOptions {
   now?: Date | string | number;
@@ -15,6 +16,23 @@ export interface TradeThesisValidatorOptions {
 
 const DEFAULT_MIN_NET_R = 1.0;
 const FLOAT_EPSILON = 1e-6;
+
+/**
+ * Validates the decision-stage thesis independently of narrative reasoning.
+ * This contract deliberately shares no fallback path with prose fields.
+ */
+export function validateExecutableThesis(thesis: ExecutableThesis): ThesisValidationResult {
+  const parsed = ExecutableThesisSchema.safeParse(thesis);
+  if (!parsed.success) {
+    return {
+      valid: false,
+      status: 'INVALID',
+      reasonCodes: ['GEOMETRY_INVALID'],
+      reasons: parsed.error.issues.map((issue) => issue.message),
+    };
+  }
+  return { valid: true, status: 'VALID', reasonCodes: [], reasons: [] };
+}
 
 function getSnapshotValue(snapshot: unknown, path: string): unknown {
   const segments = path.split('.');

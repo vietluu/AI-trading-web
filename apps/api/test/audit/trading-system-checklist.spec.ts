@@ -54,6 +54,10 @@ describe('live trading checklist simulation', () => {
       probabilityOfProfit: 80, probabilityOfRuin: 0, outOfSampleSharpe: 2,
       walkForwardStable: true, confidenceBrierScore: 0.1, createdAt: new Date('2026-08-12T09:00:00Z'),
       metricsJson: {
+        direction: 'LONG',
+        regime: 'BULL',
+        executionPolicy: 'DEFAULT',
+        configurationVersion: 1,
         sampleEvidence: { totalTrades: 5, outOfSampleTrades: 1, walkForwardWindows: 1 },
         outOfSample: { outOfSampleTrades: 1 }, walkForward: { windows: [{}] },
         executionAssumptions: { leverage: 50, riskPerTrade: 0.02, riskRewardRatio: 1.5 },

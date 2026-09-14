@@ -105,6 +105,34 @@ export class ReflectionRepository {
       take,
     });
   }
+  async evaluationSampleClaimed(
+    evaluationKey: string,
+    runId: string,
+  ): Promise<boolean> {
+    const [labeledRun, eligibleOwner] = await Promise.all([
+      this.prisma.pipelineRun.findFirst({
+        where: {
+          evaluationKey,
+          performanceRecords: { some: {} },
+        },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: { id: true },
+      }),
+      this.prisma.pipelineRun.findFirst({
+        where: {
+          evaluationKey,
+          status: "COMPLETED",
+          completedAt: { not: null },
+          decision: { in: ["LONG", "SHORT", "WAIT"] },
+          confidence: { not: null },
+        },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: { id: true },
+      }),
+    ]);
+    const owner = labeledRun ?? eligibleOwner;
+    return owner !== null && owner.id !== runId;
+  }
   candleAtOrBefore(
     provider: "BINANCE_FUTURES" | "OKX_FUTURES",
     symbol: string,
@@ -219,8 +247,31 @@ export class ReflectionRepository {
   proposal(userId: string, id: string) {
     return this.prisma.improvementProposal.findFirst({ where: { id, userId } });
   }
+
+  async recoveryCohortOutcomes(cohortKey?: string, take = 5000) {
+    const shadowPlans = await this.prisma.shadowExecutionPlan.findMany({
+      where: {
+        status: { in: ['TARGET_REACHED', 'STOPPED', 'EXPIRED', 'FILLED', 'CANCELLED'] },
+        ...(cohortKey ? { cohortKey } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+
+    const controlOutcomes = await this.prisma.tradeLifecycleOutcome.findMany({
+      where: {
+        status: 'FINALIZED',
+        ...(cohortKey ? { symbol: cohortKey.split(':')[1] } : {}),
+      },
+      orderBy: { closedAt: 'desc' },
+      take,
+    });
+
+    return { shadowPlans, controlOutcomes };
+  }
 }
 
-function isPrismaUniqueConflict(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
+function isPrismaUniqueConflict(error: unknown): error is { code: "P2002" } {
+  return typeof error === "object" && error !== null &&
+    "code" in error && error.code === "P2002";
 }

@@ -190,4 +190,67 @@ describe('pipeline evaluation and reflection flow', () => {
     expect(result.skippedForMissingStartCandle).toBeGreaterThan(0);
     expect(createRecord).not.toHaveBeenCalled();
   });
+
+  it('aggregates recovery cohort comparison separating control realized and candidate shadow outcomes', async () => {
+    const repository = {
+      recoveryCohortOutcomes: vi.fn().mockResolvedValue({
+        shadowPlans: [
+          {
+            id: 'shadow-1',
+            evaluationKey: 'key-1',
+            symbol: 'BTC-USDT',
+            provider: 'BINANCE_FUTURES',
+            timeframe: '15m',
+            direction: 'LONG',
+            setup: 'RECOVERY_RECLAIM',
+            cohortKey: 'BINANCE_FUTURES:BTC-USDT:15m:RECOVERY_RECLAIM:IMMATURE',
+            status: 'TARGET_REACHED',
+            isComplete: true,
+            grossPnl: new Prisma.Decimal(200),
+            feeBps: new Prisma.Decimal(10),
+            slippageBps: new Prisma.Decimal(5),
+            fundingBps: new Prisma.Decimal(2),
+            netPnl: new Prisma.Decimal(180),
+            netR: new Prisma.Decimal(1.8),
+            mfe: new Prisma.Decimal(220),
+            mae: new Prisma.Decimal(-50),
+            durationCandles: 3,
+            terminalReason: 'TAKE_PROFIT',
+            createdAt: new Date(),
+          },
+        ],
+        controlOutcomes: [
+          {
+            id: 'control-1',
+            symbol: 'BTC-USDT',
+            provider: 'BINANCE_FUTURES',
+            timeframe: '15m',
+            direction: 'LONG',
+            setup: 'LIQUIDITY_SWEEP_REVERSAL',
+            status: 'FINALIZED',
+            realizedGrossPnl: new Prisma.Decimal(150),
+            signedFees: new Prisma.Decimal(15),
+            signedFunding: new Prisma.Decimal(5),
+            realizedNetPnl: new Prisma.Decimal(130),
+            netR: new Prisma.Decimal(1.3),
+            mfe: new Prisma.Decimal(170),
+            mae: new Prisma.Decimal(-60),
+            exitReason: 'TAKE_PROFIT',
+            createdAt: new Date(),
+          },
+        ],
+      }),
+    } as unknown as ReflectionRepository;
+    const config = { get: <T>(_key: string, fallback: T) => fallback } as ConfigService;
+    const service = new PerformanceService(repository, config);
+
+    const result = await service.getRecoveryCohortComparison('BINANCE_FUTURES:BTC-USDT:15m:RECOVERY_RECLAIM:IMMATURE');
+    expect(result.control.type).toBe('CONTROL_REALIZED');
+    expect(result.candidate.type).toBe('CANDIDATE_SHADOW');
+    expect(result.candidate.isSimulated).toBe(true);
+    expect(result.candidate.metrics.sampleSize).toBe(1);
+    expect(result.control.metrics.sampleSize).toBe(1);
+    expect(result.candidate.promotionEligibility.eligible).toBe(false); // sample size < 100
+  });
 });
+

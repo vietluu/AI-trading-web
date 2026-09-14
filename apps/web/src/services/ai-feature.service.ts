@@ -8,6 +8,7 @@ import type {
   SentimentAgentOutput,
   TechnicalAgentInput,
   TechnicalAgentOutput,
+  RecoveryCohortResponse,
 } from "@platform/shared";
 
 import { API_ENDPOINTS } from "@/constants/api-endpoints";
@@ -619,6 +620,15 @@ export async function updatePortfolioStrategyStatus(key: string, next: string) {
 
 export async function getReflectionData() {
   return apiRequest<ReflectionSummary>(API_ENDPOINTS.ai.reflection);
+}
+
+export async function getRecoveryCohortComparison(
+  cohortKey?: string,
+): Promise<RecoveryCohortResponse> {
+  const target = cohortKey
+    ? `${API_ENDPOINTS.ai.reflectionRecoveryCohorts}?cohortKey=${encodeURIComponent(cohortKey)}`
+    : API_ENDPOINTS.ai.reflectionRecoveryCohorts;
+  return apiRequest<RecoveryCohortResponse>(target);
 }
 
 export async function getSelfLearningLifecycle() {

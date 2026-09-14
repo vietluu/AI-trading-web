@@ -1,5 +1,6 @@
 export interface EvidenceGateResult {
   severity: 'BLOCK' | 'REDUCE_SIZE' | 'APPROVE';
+  riskTier?: 'NORMAL' | 'PROBE' | 'BLOCKED';
   sizeFactor?: number;
   reasons: string[];
 }
@@ -36,7 +37,7 @@ export function evaluateEvidenceGate(input: EvidenceGateInput, options?: Evidenc
   if (input.newCohort && input.mode === 'LIVE') reasons.push('NEW_COHORT_LIVE');
 
   if (reasons.length > 0) {
-    return { severity: 'BLOCK', reasons };
+    return { severity: 'BLOCK', riskTier: 'BLOCKED', reasons };
   }
 
   let severity: 'BLOCK' | 'REDUCE_SIZE' | 'APPROVE' = 'APPROVE';
@@ -58,23 +59,28 @@ export function evaluateEvidenceGate(input: EvidenceGateInput, options?: Evidenc
     const maxSize = options?.maxSizeFactor ?? 1.0;
     return {
       severity: 'REDUCE_SIZE',
+      riskTier: 'PROBE',
       sizeFactor: Math.max(minSize, Math.min(maxSize, factor)),
       reasons,
     };
   }
 
   reasons.push('VALID_EXACT_EVIDENCE');
-  return { severity: 'APPROVE', reasons };
+  return { severity: 'APPROVE', riskTier: 'NORMAL', reasons };
 }
 
 
 /** Compose independent reductions once. A zero factor or any BLOCK stays blocked. */
 export function composeEvidenceSize(gates: EvidenceGateResult[], options: EvidenceGateOptions = {}): EvidenceGateResult {
   const reasons = [...new Set(gates.flatMap((gate) => gate.reasons))];
-  if (gates.some((gate) => gate.severity === 'BLOCK' || gate.sizeFactor === 0)) return { severity: 'BLOCK', sizeFactor: 0, reasons };
+  if (gates.some((gate) => gate.severity === 'BLOCK' || gate.sizeFactor === 0)) {
+    return { severity: 'BLOCK', riskTier: 'BLOCKED', sizeFactor: 0, reasons };
+  }
   const raw = gates.reduce((factor, gate) => factor * (gate.sizeFactor ?? 1), 1);
   const min = options.minSizeFactor ?? 0.05;
   const max = options.maxSizeFactor ?? 1;
   const sizeFactor = Math.min(max, Math.max(min, raw));
-  return { severity: sizeFactor < 1 ? 'REDUCE_SIZE' : 'APPROVE', sizeFactor, reasons };
+  const severity = sizeFactor < 1 ? 'REDUCE_SIZE' : 'APPROVE';
+  const riskTier = severity === 'REDUCE_SIZE' ? 'PROBE' : 'NORMAL';
+  return { severity, riskTier, sizeFactor, reasons };
 }

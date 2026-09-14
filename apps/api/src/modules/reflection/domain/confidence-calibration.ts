@@ -238,3 +238,75 @@ export function calibrateLifecycleWithHierarchicalFallback(
   };
 }
 
+export function buildExecutionEvidenceScore(params: {
+  signalStrength: number;
+  confidenceCalibration?: {
+    status: 'CALIBRATED' | 'INSUFFICIENT_HISTORY';
+    empiricalProbability: number | null;
+    brierScore: number | null;
+    hardGateEligible?: boolean;
+  } | null;
+  expectedReward?: number;
+  expectedLoss?: number;
+  executionCost?: number;
+}): {
+  signalStrength: number;
+  estimatedWinProbability?: number;
+  expectedNetR?: number;
+  calibrationQuality: 'RELIABLE' | 'UNRELIABLE' | 'INSUFFICIENT';
+} {
+  const {
+    signalStrength,
+    confidenceCalibration,
+    expectedReward = 0,
+    expectedLoss = 0,
+    executionCost = 0,
+  } = params;
+
+  let calibrationQuality: 'RELIABLE' | 'UNRELIABLE' | 'INSUFFICIENT' = 'INSUFFICIENT';
+
+  if (confidenceCalibration?.status === 'CALIBRATED') {
+    if (
+      confidenceCalibration.brierScore !== null &&
+      confidenceCalibration.brierScore !== undefined &&
+      confidenceCalibration.brierScore > 0.3
+    ) {
+      calibrationQuality = 'UNRELIABLE';
+    } else {
+      calibrationQuality = 'RELIABLE';
+    }
+  } else {
+    calibrationQuality = 'INSUFFICIENT';
+  }
+
+  let estimatedWinProbability: number | undefined = undefined;
+  if (
+    calibrationQuality === 'RELIABLE' &&
+    confidenceCalibration?.empiricalProbability !== null &&
+    confidenceCalibration?.empiricalProbability !== undefined
+  ) {
+    estimatedWinProbability = Number(confidenceCalibration.empiricalProbability.toFixed(3));
+  }
+
+  let expectedNetR: number | undefined = undefined;
+  if (estimatedWinProbability !== undefined && expectedLoss > 0) {
+    const rUnit = expectedLoss;
+    const grossProfitR = expectedReward / rUnit;
+    const grossLossR = 1.0;
+    const costR = executionCost / rUnit;
+    const netR =
+      estimatedWinProbability * grossProfitR -
+      (1 - estimatedWinProbability) * grossLossR -
+      costR;
+    expectedNetR = Number(netR.toFixed(3));
+  }
+
+  return {
+    signalStrength,
+    ...(estimatedWinProbability !== undefined ? { estimatedWinProbability } : {}),
+    ...(expectedNetR !== undefined ? { expectedNetR } : {}),
+    calibrationQuality,
+  };
+}
+
+

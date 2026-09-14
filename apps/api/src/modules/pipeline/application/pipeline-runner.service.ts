@@ -57,6 +57,13 @@ import type { TradePlanMarketContext } from "../../risk/domain/trade-plan-engine
 import { TradeResearcherService } from "../../agents/application/services/trade-researcher.service";
 import { ChainOfThoughtReflectionService } from "../../agents/application/services/chain-of-thought-reflection.service";
 import { AnticipatorySnapshotService } from "../../agents/application/services/anticipatory-snapshot.service";
+import {
+  selectBlockingGate,
+  type GateDecisionRecord,
+  type GateDisposition,
+  type GateStage,
+} from "../domain/gate-decision";
+import { buildEvaluationKey } from "../domain/evaluation-identity";
 
 class PipelineCancelledError extends Error {}
 class PipelineExecutionLockBusyError extends Error {}
@@ -69,6 +76,7 @@ const DISLOCATION_CANARY_ADVISORY_REASONS = new Set([
   "CALIBRATED_PROBABILITY_TOO_LOW",
   "CALIBRATION_UNRELIABLE",
 ]);
+const BUILT_IN_CONFIGURATION_VERSION = 0;
 
 function marketDislocationFromParams(value: unknown): {
   direction: "BULLISH" | "BEARISH";
@@ -117,6 +125,24 @@ function historicalGateReasonsAreAdvisory(reasons: string[]): boolean {
   return reasons.every((reason) =>
     DISLOCATION_CANARY_ADVISORY_REASONS.has(reason),
   );
+}
+
+function gateRecord(
+  stage: GateStage,
+  disposition: GateDisposition,
+  reasonCodes: Array<string | undefined>,
+): GateDecisionRecord {
+  const uniqueReasonCodes = [...new Set(reasonCodes.filter(
+    (reason): reason is string => typeof reason === "string" && reason.length > 0,
+  ))];
+  return {
+    stage,
+    disposition,
+    reasonCodes: uniqueReasonCodes,
+    ...(disposition === "BLOCK" && uniqueReasonCodes[0]
+      ? { selectedBlockingReason: uniqueReasonCodes[0] }
+      : {}),
+  };
 }
 
 @Injectable()
@@ -171,6 +197,12 @@ export class PipelineRunnerService {
     const startedAt = new Date();
     const symbol = String(job.symbol);
     const runId = String(job.runId);
+    let evaluatedGateRecords: GateDecisionRecord[] | undefined;
+    let evaluatedResult: Record<string, unknown> | undefined;
+    let riskStageReached = false;
+    let executionStageReached = false;
+    let riskAssessment: Awaited<ReturnType<LiveTradingService["assessPipelineDecision"]>> | undefined;
+    let liveExecution: Awaited<ReturnType<LiveTradingService["executePipeline"]>> | undefined;
     await this.repository.updateRun(runId, {
       status: "RUNNING",
       startedAt,
@@ -585,11 +617,11 @@ export class PipelineRunnerService {
         actionable: boolean;
         blockedReasons: string[];
         advisoryReasons: string[];
+        gates: GateDecisionRecord[];
       }> = [];
       let selectedGate: {
         strategyKey: string;
         output: Awaited<ReturnType<DecisionService["calibrateForExecution"]>>;
-        filter: ReturnType<DecisionRiskPolicyService["evaluate"]>;
         judge: ReturnType<DecisionJudgeService["evaluate"]>;
         multiTimeframeFilter: ReturnType<typeof evaluateMultiTimeframeDecision>;
         quant: Awaited<ReturnType<QuantExecutionPolicyService["evaluate"]>>;
@@ -597,6 +629,7 @@ export class PipelineRunnerService {
         dislocationCanary: boolean;
         blockedReasons: string[];
         advisoryReasons: string[];
+        gates: GateDecisionRecord[];
       } | undefined;
       for (const candidate of rankedCandidates) {
         const calibrated = await this.decision.calibrateForExecution(
@@ -669,23 +702,56 @@ export class PipelineRunnerService {
           judgeCanaryCompatible &&
           historicalGateReasonsAreAdvisory(candidateBlockedReasons);
         const candidateActionable = standardActionable || dislocationCanary;
-        const advisoryReasons = dislocationCanary
-          ? [...new Set([
-              ...candidateBlockedReasons,
-              ...(candidateQuant.reason ? [candidateQuant.reason] : []),
-            ])]
-          : [];
+        const candidateGates: GateDecisionRecord[] = [
+          gateRecord(
+            "SIGNAL_FILTER",
+            candidateFilter.actionable
+              ? "PASS"
+              : dislocationCanary ? "ADVISORY" : "BLOCK",
+            [candidateFilter.reason],
+          ),
+          gateRecord(
+            "JUDGE",
+            candidateJudge.approved
+              ? candidateJudge.severity === "REDUCE_SIZE" ? "REDUCE_SIZE" : "PASS"
+              : dislocationCanary ? "ADVISORY" : "BLOCK",
+            candidateJudge.reasons,
+          ),
+          gateRecord(
+            "QUANT",
+            !candidateQuant.allowed
+              ? "BLOCK"
+              : candidateQuant.severity === "REDUCE_SIZE"
+                ? "REDUCE_SIZE"
+                : candidateQuant.advisory ? "ADVISORY" : "PASS",
+            [
+              candidateQuant.reason,
+              ...("reasons" in candidateQuant ? candidateQuant.reasons ?? [] : []),
+            ],
+          ),
+          gateRecord(
+            "MULTI_TIMEFRAME",
+            candidateMultiTimeframe.allowed ? "PASS" : "BLOCK",
+            [candidateMultiTimeframe.reason],
+          ),
+        ];
+        const canonicalBlockedReasons = candidateGates
+          .filter((gate) => gate.disposition === "BLOCK")
+          .flatMap((gate) => gate.reasonCodes);
+        const advisoryReasons = candidateGates
+          .filter((gate) => gate.disposition === "ADVISORY" || gate.disposition === "REDUCE_SIZE")
+          .flatMap((gate) => gate.reasonCodes);
         const evaluated = {
           strategyKey: candidate.strategyKey,
           output: calibrated,
-          filter: candidateFilter,
           judge: candidateJudge,
           multiTimeframeFilter: candidateMultiTimeframe,
           quant: candidateQuant,
           actionable: candidateActionable,
           dislocationCanary,
-          blockedReasons: dislocationCanary ? [] : candidateBlockedReasons,
+          blockedReasons: canonicalBlockedReasons,
           advisoryReasons,
+          gates: candidateGates,
         };
         gateAttempts.push({
           strategyKey: candidate.strategyKey,
@@ -693,7 +759,8 @@ export class PipelineRunnerService {
           score: candidate.score,
           actionable: candidateActionable,
           blockedReasons: [...new Set(evaluated.blockedReasons)],
-          advisoryReasons,
+          advisoryReasons: [...new Set(advisoryReasons)],
+          gates: candidateGates,
         });
         selectedGate ??= evaluated;
         if (candidateActionable) {
@@ -705,7 +772,6 @@ export class PipelineRunnerService {
       const {
         strategyKey,
         output,
-        filter,
         judge,
         multiTimeframeFilter,
         quant,
@@ -713,6 +779,7 @@ export class PipelineRunnerService {
         dislocationCanary,
         blockedReasons: selectedBlockedReasons,
         advisoryReasons: selectedAdvisoryReasons,
+        gates: candidateGates,
       } = selectedGate;
       const executionStrategySelection = {
         ...strategySelection,
@@ -724,11 +791,44 @@ export class PipelineRunnerService {
       const decisionCompletedAt = new Date();
       const sourceTimestamp = indicatorSnapshot?.candleCloseTime ??
         recentCandles[0]?.closeTime;
+      const sourceDataCutoff = recentCandles[0]?.closeTime ??
+        indicatorSnapshot?.candleCloseTime;
       const sourceDataAgeMs = sourceTimestamp
         ? Math.max(0, decisionCompletedAt.getTime() - new Date(sourceTimestamp).getTime())
         : undefined;
-      const quantBlockReason = quant.allowed ? undefined : quant.reason;
-      const reason = filter.reason ?? judge.reasons[0] ?? quantBlockReason ?? multiTimeframeFilter.reason;
+      const configurationVersion = output.learningConfiguration?.version ??
+        BUILT_IN_CONFIGURATION_VERSION;
+      const evaluationIdentity = sourceDataCutoff
+        ? {
+            userId: job.userId,
+            provider: String(job.provider),
+            symbol,
+            timeframe: String(interval),
+            sourceDataCutoff: new Date(sourceDataCutoff),
+            strategyKey,
+            direction: output.decision,
+            configurationVersion,
+          }
+        : undefined;
+      const evaluationKey = evaluationIdentity
+        ? buildEvaluationKey(evaluationIdentity)
+        : undefined;
+      if (evaluationKey) {
+        const identityResult = await this.repository.persistEvaluationIdentity?.(
+          runId,
+          evaluationKey,
+          evaluationIdentity,
+        );
+        if (identityResult?.sampleReused) {
+          this.logger.log({
+            event: "pipeline_evaluation_sample_reused",
+            runId,
+            evaluationKey,
+            paperSignalId: identityResult.paperSignal?.id,
+          });
+        }
+      }
+      const candidateBlockingGate = selectBlockingGate(candidateGates);
       const candidateDecision = {
         decision: output.decision,
         confidence: output.confidence,
@@ -743,7 +843,39 @@ export class PipelineRunnerService {
           ...selectedAdvisoryReasons,
           ...('advisory' in quant && quant.advisory && quant.reason ? [quant.reason] : []),
         ])],
+        ...(output.executionContext ? { executionContext: output.executionContext } : {}),
       };
+      evaluatedGateRecords = [...candidateGates];
+      evaluatedResult = {
+        ...output,
+        candidateDecision,
+        selectedStrategyKey: strategyKey,
+        strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue,
+        actionable,
+        skippedReason: candidateBlockingGate?.reason,
+        gates: evaluatedGateRecords as unknown as Prisma.InputJsonValue,
+        ...(candidateBlockingGate
+          ? { blockingGate: candidateBlockingGate as unknown as Prisma.InputJsonValue }
+          : {}),
+        signalFilter: {
+          allowed: signalFilter.allowed,
+          preliminaryRegime: signalFilter.preliminaryRegime,
+        },
+        multiTimeframe: {
+          ...multiTimeframe,
+          decisionConfirmation: multiTimeframeFilter.confirmation,
+          allowed: multiTimeframeFilter.allowed,
+          reason: multiTimeframeFilter.reason,
+        },
+        judge: judge as unknown as Prisma.InputJsonValue,
+        quant: quant as unknown as Prisma.InputJsonValue,
+      };
+      await this.repository.updateRun(runId, {
+        evaluationKey,
+        configurationVersion,
+        skippedReason: candidateBlockingGate?.reason,
+        result: evaluatedResult as unknown as Prisma.InputJsonValue,
+      });
       await this.finishStep(runId, "decision", output, decisionCompletedAt);
       this.analytics.recordStageTelemetry({
         pipelineId: job.pipelineId,
@@ -758,7 +890,8 @@ export class PipelineRunnerService {
         opportunityScore: output.opportunityScore,
         riskScore: output.riskScore,
         decision: output.decision,
-        rejectReason: reason,
+        rejectReason: candidateBlockingGate?.reason,
+        blockingStage: candidateBlockingGate?.stage,
         executionResult: actionable ? 'APPROVED' : 'REJECTED',
         durationMs: decisionCompletedAt.getTime() - startedAt.getTime(),
         tokenUsage: 0,
@@ -781,8 +914,6 @@ export class PipelineRunnerService {
       const volumeRatio = Number.isFinite(Number(indicatorSnapshot?.values.volumeChangePercent))
         ? 1 + Number(indicatorSnapshot?.values.volumeChangePercent) / 100
         : undefined;
-      let riskAssessment: Awaited<ReturnType<LiveTradingService["assessPipelineDecision"]>> | undefined;
-      let liveExecution: Awaited<ReturnType<LiveTradingService["executePipeline"]>> | undefined;
       let submissionStartedAt: Date | undefined;
       let executionGateReason: string | undefined;
       let canaryCooldownKey: string | undefined;
@@ -817,12 +948,14 @@ export class PipelineRunnerService {
             provider: String(job.provider),
             interval: String(interval),
             quant,
+            ...(output.executionContext ? { canonicalExecutionContext: output.executionContext } : {}),
             tradePlanContext: {
                   ...(Number.isFinite(lastPrice) ? { currentPrice: lastPrice } : {}),
                   ...(indicatorSnapshot?.values?.squeezeState ? { squeezeState: indicatorSnapshot.values.squeezeState } : {}),
                   gateSeverity: judge?.severity === 'REDUCE_SIZE' || (quant && 'severity' in quant && quant.severity === 'REDUCE_SIZE') ? 'REDUCE_SIZE' : 'APPROVE',
                   ...(synthesizedOutput?.anticipatorySignals?.liquiditySweep ? { liquiditySweep: synthesizedOutput.anticipatorySignals.liquiditySweep.detected } : {}),
                   ...(synthesizedOutput?.anticipatorySignals?.derivativesImbalance?.squeezeProbability !== undefined ? { derivativesImbalance: synthesizedOutput.anticipatorySignals.derivativesImbalance.squeezeProbability } : {}),
+                  ...(synthesizedOutput?.executionContext ? { executionContext: synthesizedOutput.executionContext } : {}),
               timeframeMs: timeframeMilliseconds(String(interval)),
               ...(Number.isFinite(Number(indicatorSnapshot?.values.rsi14))
                 ? { rsi: Number(indicatorSnapshot?.values.rsi14) }
@@ -918,8 +1051,16 @@ export class PipelineRunnerService {
             if (canaryReserved) canaryCooldownKey = cooldownKey;
             else executionGateReason = "DISLOCATION_CANARY_COOLDOWN_ACTIVE";
           }
+          if (proactive?.thesis.setup === 'RECOVERY_RECLAIM' || output.reasoning === 'RECOVERY_RECLAIM') {
+            executionGateReason = "RECOVERY_SHADOW_ONLY";
+            pipelineOutcome = { outcome: "SKIPPED", reason: "RECOVERY_SHADOW_ONLY" };
+          }
           if (!executionGateReason) {
             const assess = async () => {
+              riskStageReached = true;
+              riskAssessment = undefined;
+              executionStageReached = false;
+              liveExecution = undefined;
               riskAssessment = await this.liveTrading.assessPipelineDecision({
                 userId: job.userId,
                 pipelineRunId: runId,
@@ -943,6 +1084,7 @@ export class PipelineRunnerService {
                   gateSeverity: judge?.severity === 'REDUCE_SIZE' || (quant && 'severity' in quant && quant.severity === 'REDUCE_SIZE') ? 'REDUCE_SIZE' : 'APPROVE',
                   ...(synthesizedOutput?.anticipatorySignals?.liquiditySweep ? { liquiditySweep: synthesizedOutput.anticipatorySignals.liquiditySweep.detected } : {}),
                   ...(synthesizedOutput?.anticipatorySignals?.derivativesImbalance?.squeezeProbability !== undefined ? { derivativesImbalance: synthesizedOutput.anticipatorySignals.derivativesImbalance.squeezeProbability } : {}),
+                  ...(synthesizedOutput?.executionContext ? { executionContext: synthesizedOutput.executionContext } : {}),
                   ...(proactive ? anticipatoryDecisionContext(proactive.snapshot).market : {}),
                   timeframeMs: timeframeMilliseconds(String(interval)),
                   ...(Number.isFinite(Number(indicatorSnapshot?.values.rsi14))
@@ -995,6 +1137,8 @@ export class PipelineRunnerService {
 
             const execute = async () => {
               if (riskAssessment?.outcome === "RISK_APPROVED") {
+                executionStageReached = true;
+                liveExecution = undefined;
                 if (job.pipelineId === 'proactive-thesis' && proactiveMode !== 'DEMO') {
                   return { outcome: 'SKIPPED' as const, reason: 'SKIPPED_BY_PROACTIVE_MODE' };
                 }
@@ -1070,13 +1214,31 @@ export class PipelineRunnerService {
             ])],
           }
         : candidateDecision;
-      const finalSkippedReason = executionGateReason ?? (!actionable
-        ? reason
-        : !riskApproved
-          ? risk?.reason ?? riskAssessment?.outcome ?? "RISK_NOT_APPROVED"
-          : !orderSubmitted
-            ? liveExecution?.errorCode ?? liveExecution?.outcome ?? "ORDER_NOT_SUBMITTED"
-            : undefined);
+      const gates = [...candidateGates];
+      if (executionGateReason) {
+        gates.push(gateRecord("EXECUTION", "BLOCK", [executionGateReason]));
+      } else if (riskAssessment) {
+        const riskReason = riskApproved
+          ? risk?.reason
+          : risk?.reason ?? riskAssessment.outcome ?? "RISK_NOT_APPROVED";
+        gates.push(gateRecord(
+          "RISK",
+          riskApproved ? "PASS" : "BLOCK",
+          [riskReason],
+        ));
+        if (riskApproved) {
+          const executionReason = orderSubmitted
+            ? undefined
+            : liveExecution?.errorCode ?? liveExecution?.outcome ?? "ORDER_NOT_SUBMITTED";
+          gates.push(gateRecord(
+            "EXECUTION",
+            orderSubmitted ? "PASS" : "BLOCK",
+            [executionReason],
+          ));
+        }
+      }
+      const blockingGate = selectBlockingGate(gates);
+      const finalSkippedReason = blockingGate?.reason;
       this.analytics.recordStageTelemetry({
         pipelineId: job.pipelineId,
         runId,
@@ -1090,7 +1252,8 @@ export class PipelineRunnerService {
         opportunityScore: output.opportunityScore,
         riskScore: risk?.riskScore ?? 0,
         decision: finalExecutionDecision.decision,
-        rejectReason: finalSkippedReason,
+        rejectReason: blockingGate?.reason,
+        blockingStage: blockingGate?.stage,
         executionResult: orderSubmitted ? 'EXECUTED' : riskApproved ? 'RISK_APPROVED' : 'REJECTED',
         durationMs: completedAt.getTime() - startedAt.getTime(),
         tokenUsage: 0,
@@ -1111,11 +1274,12 @@ export class PipelineRunnerService {
         confidence: output.confidence,
         dataQuality: output.dataQuality,
         marketRegime: output.regime.type,
-        configurationVersion: output.learningConfiguration?.version,
+        configurationVersion,
+        evaluationKey,
         learningStage: output.learningConfiguration?.stage,
         timeframe: String(interval),
         skippedReason: finalSkippedReason,
-        storedContext: { analyses, fusionOutput, candidateDecision: finalCandidateDecision, strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue },
+        storedContext: { analyses, fusionOutput, candidateDecision: finalCandidateDecision, strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue, ...(output.executionContext ? { executionContext: output.executionContext as unknown as Prisma.InputJsonValue } : {}) },
         result: {
           ...output,
           candidateDecision: finalCandidateDecision,
@@ -1123,6 +1287,10 @@ export class PipelineRunnerService {
           strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue,
           actionable: finalActionable,
           skippedReason: finalSkippedReason,
+          gates: gates as unknown as Prisma.InputJsonValue,
+          ...(blockingGate
+            ? { blockingGate: blockingGate as unknown as Prisma.InputJsonValue }
+            : {}),
           signalFilter: {
             allowed: signalFilter.allowed,
             preliminaryRegime: signalFilter.preliminaryRegime,
@@ -1140,14 +1308,14 @@ export class PipelineRunnerService {
         },
       });
       await this.alerts.contextual(runId, symbol, analyses);
-      if (!finalActionable) {
+      if (!finalActionable && blockingGate) {
         await this.alerts.blockedOpportunity({
           runId,
           userId: job.userId,
           symbol,
           decision: finalCandidateDecision.decision,
           confidence: finalCandidateDecision.confidence,
-          blockedReasons: finalCandidateDecision.blockedReasons,
+          blockingGate,
           analyses,
           multiTimeframeConfirmation: multiTimeframeFilter.confirmation,
           priceChangePercent: Number.isFinite(Number(indicatorSnapshot?.values.priceChangePercent))
@@ -1172,25 +1340,68 @@ export class PipelineRunnerService {
         error instanceof Error && error.message === "PIPELINE_TIMEOUT";
       const isNoConnection =
         error instanceof Error && error.message.includes("NO_ELIGIBLE_EXCHANGE_CONNECTION");
-      await this.repository.updateRun(runId, {
-        status: cancelled ? "CANCELLED" : executionLockBusy ? "QUEUED" : timedOut ? "TIMEOUT" : "FAILED",
-        completedAt: executionLockBusy ? null : completedAt,
-        durationMs: completedAt.getTime() - startedAt.getTime(),
-        errorCode: cancelled
-          ? "CANCELLED_BY_USER"
-          : executionLockBusy
-            ? "EXECUTION_LOCK_BUSY"
+      const errorCode = cancelled
+        ? "CANCELLED_BY_USER"
+        : executionLockBusy
+          ? "EXECUTION_LOCK_BUSY"
           : timedOut
             ? "PIPELINE_TIMEOUT"
             : isNoConnection
               ? "NO_ELIGIBLE_EXCHANGE_CONNECTION"
               : executionRetryable
                 ? "RETRYABLE_EXCHANGE_FAILURE"
-                : "PIPELINE_EXECUTION_FAILED",
+                : "PIPELINE_EXECUTION_FAILED";
+      const failureGates = evaluatedGateRecords
+        ? [...evaluatedGateRecords]
+        : undefined;
+      if (failureGates && riskStageReached) {
+        const risk = riskAssessment?.risk;
+        const riskApproved = Boolean(risk?.approved);
+        failureGates.push(gateRecord(
+          "RISK",
+          riskApproved ? "PASS" : "BLOCK",
+          [riskApproved
+            ? risk?.reason
+            : risk?.reason ?? riskAssessment?.outcome ?? errorCode],
+        ));
+      }
+      if (failureGates && executionStageReached) {
+        const orderSubmitted = liveExecution?.outcome === "ORDER_SUBMITTED";
+        failureGates.push(gateRecord(
+          "EXECUTION",
+          orderSubmitted ? "PASS" : "BLOCK",
+          [orderSubmitted
+            ? undefined
+            : liveExecution?.errorCode ?? liveExecution?.outcome ?? errorCode],
+        ));
+      }
+      const failureBlockingGate = failureGates
+        ? selectBlockingGate(failureGates)
+        : undefined;
+      await this.repository.updateRun(runId, {
+        status: cancelled ? "CANCELLED" : executionLockBusy ? "QUEUED" : timedOut ? "TIMEOUT" : "FAILED",
+        completedAt: executionLockBusy ? null : completedAt,
+        durationMs: completedAt.getTime() - startedAt.getTime(),
+        errorCode,
+        skippedReason: failureBlockingGate?.reason,
         safeErrorMessage:
           error instanceof Error
             ? error.message.slice(0, 300)
             : "Pipeline execution failed",
+        ...(evaluatedResult && failureGates
+          ? {
+              result: {
+                ...evaluatedResult,
+                skippedReason: failureBlockingGate?.reason,
+                gates: failureGates as unknown as Prisma.InputJsonValue,
+                ...(failureBlockingGate
+                  ? { blockingGate: failureBlockingGate as unknown as Prisma.InputJsonValue }
+                  : {}),
+                riskAssessment,
+                liveExecution,
+              },
+            }
+          : {}),
       });
       if (cancelled) return;
       if (!executionLockBusy && !executionRetryable) await this.alerts.repeatedFailure(runId, symbol);
@@ -1397,19 +1608,25 @@ export class PipelineRunnerService {
   ): Promise<void> {
     if (evaluation.rejected.length === 0) return;
 
-    const records = evaluation.rejected.map((signal: ConfluenceSignal) => ({
-      id: randomUUID(),
-      userId,
-      pipelineRunId: signal.pipelineRunId,
-      symbol: signal.symbol,
-      provider: signal.executionContext.provider as unknown as ExchangeProvider,
-      decision: signal.decision,
-      confidence: signal.confidence,
-      mode: "CONFLUENCE_REJECTED",
-      referencePrice: signal.referencePrice,
-      outcome: "PENDING",
-      marketRegime: signal.regime,
-    }));
+    const records = await Promise.all(evaluation.rejected.map(
+      async (signal: ConfluenceSignal) => {
+        const run = await this.repository.findRun(signal.pipelineRunId);
+        return {
+          id: randomUUID(),
+          userId,
+          pipelineRunId: signal.pipelineRunId,
+          evaluationKey: run?.evaluationKey ?? undefined,
+          symbol: signal.symbol,
+          provider: signal.executionContext.provider as unknown as ExchangeProvider,
+          decision: signal.decision,
+          confidence: signal.confidence,
+          mode: "CONFLUENCE_REJECTED",
+          referencePrice: signal.referencePrice,
+          outcome: "PENDING",
+          marketRegime: signal.regime,
+        };
+      },
+    ));
 
     await this.repository.createPaperSignals(records).catch((err) => {
       this.logger.error({

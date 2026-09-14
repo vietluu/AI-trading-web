@@ -1,6 +1,6 @@
 # Phase 1 Gate Provenance and Deduplication Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Persist one truthful blocker per candidate and prevent scheduled/event duplicates from inflating paper and performance samples.
 
@@ -28,7 +28,7 @@
 **Interfaces:**
 - Produces: `GateStage`, `GateDisposition`, `GateDecisionRecord`, and `selectBlockingGate(records)`.
 
-- [ ] **Step 1: Write failing tests for ordered blocker selection**
+- [x] **Step 1: Write failing tests for ordered blocker selection**
 
 ```ts
 expect(selectBlockingGate([
@@ -38,12 +38,12 @@ expect(selectBlockingGate([
 expect(selectBlockingGate([{ stage: 'JUDGE', disposition: 'PASS', reasonCodes: ['VALID_EXACT_EVIDENCE'] }])).toBeUndefined();
 ```
 
-- [ ] **Step 2: Run the focused test and confirm it fails because the module is absent**
+- [x] **Step 2: Run the focused test and confirm it fails because the module is absent**
 
 Run: `pnpm --filter @platform/api test -- gate-decision.spec.ts`
 Expected: FAIL resolving `gate-decision`.
 
-- [ ] **Step 3: Implement immutable records and execution-order selection**
+- [x] **Step 3: Implement immutable records and execution-order selection**
 
 ```ts
 export type GateStage = 'SIGNAL_FILTER' | 'JUDGE' | 'QUANT' | 'MULTI_TIMEFRAME' | 'RISK' | 'EXECUTION';
@@ -55,12 +55,12 @@ export function selectBlockingGate(records: GateDecisionRecord[]) {
 }
 ```
 
-- [ ] **Step 4: Run the focused test**
+- [x] **Step 4: Run the focused test**
 
 Run: `pnpm --filter @platform/api test -- gate-decision.spec.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Commit the domain contract**
+- [x] **Step 5: Commit the domain contract**
 
 ```bash
 git add apps/api/src/modules/pipeline/domain/gate-decision.ts apps/api/test/pipeline/gate-decision.spec.ts
@@ -84,7 +84,7 @@ git commit -m "feat(pipeline): add canonical gate decision contract"
 - Consumes: `selectBlockingGate(records)` from Task 1.
 - Produces: `result.gates`, `result.blockingGate`, and matching `skippedReason`.
 
-- [ ] **Step 1: Add a failing runtime regression for the production mislabel**
+- [x] **Step 1: Add a failing runtime regression for the production mislabel**
 
 ```ts
 expect(run.result.blockingGate).toEqual({ stage: 'QUANT', reason: 'QUANT_ASSUMPTION_MISMATCH' });
@@ -92,28 +92,28 @@ expect(run.skippedReason).toBe('QUANT_ASSUMPTION_MISMATCH');
 expect(run.result.gates).toContainEqual(expect.objectContaining({ stage: 'JUDGE', disposition: 'PASS' }));
 ```
 
-- [ ] **Step 2: Run the runtime, alert, and analytics tests**
+- [x] **Step 2: Run the runtime, alert, and analytics tests**
 
 Run: `pnpm --filter @platform/api test -- pipeline-runtime.spec.ts pipeline-alert.service.spec.ts pipeline-analytics.spec.ts`
 Expected: FAIL because canonical gate fields are absent.
 
-- [ ] **Step 3: Build ordered gate records at candidate evaluation and derive the blocker once**
+- [x] **Step 3: Build ordered gate records at candidate evaluation and derive the blocker once**
 
 Replace `filter.reason ?? judge.reasons[0] ?? quantBlockReason` with records in the order `SIGNAL_FILTER`, `JUDGE`, `QUANT`, `MULTI_TIMEFRAME`, then append `RISK` and `EXECUTION` when reached. Store passing Judge reasons with `PASS`, Quant reductions with `REDUCE_SIZE`, and only use `selectBlockingGate` for `skippedReason`.
 
-- [ ] **Step 4: Route alerts, analytics, health, shared response parsing, and UI through `blockingGate`**
+- [x] **Step 4: Route alerts, analytics, health, shared response parsing, and UI through `blockingGate`**
 
 ```ts
 rejectReason: blockingGate?.reason,
 blockingStage: blockingGate?.stage,
 ```
 
-- [ ] **Step 5: Run focused API tests and web type checking**
+- [x] **Step 5: Run focused API tests and web type checking**
 
 Run: `pnpm --filter @platform/api test -- pipeline-runtime.spec.ts pipeline-alert.service.spec.ts pipeline-analytics.spec.ts && pnpm --filter @platform/web typecheck`
 Expected: PASS.
 
-- [ ] **Step 6: Commit canonical provenance integration**
+- [x] **Step 6: Commit canonical provenance integration**
 
 ```bash
 git add apps/api/src/modules/pipeline packages/shared/src/schemas/pipeline.ts apps/web/src/app/ai/pipeline-runs
@@ -134,19 +134,19 @@ git commit -m "fix(pipeline): persist truthful blocking gate provenance"
 **Interfaces:**
 - Produces: `buildEvaluationKey(input): string`, nullable `PipelineRun.evaluationKey`, and unique `PaperSignal.evaluationKey`.
 
-- [ ] **Step 1: Write failing identity tests**
+- [x] **Step 1: Write failing identity tests**
 
 ```ts
 expect(buildEvaluationKey(scheduleInput)).toBe(buildEvaluationKey(eventInput));
 expect(buildEvaluationKey({ ...scheduleInput, sourceDataCutoff: nextCandle })).not.toBe(buildEvaluationKey(scheduleInput));
 ```
 
-- [ ] **Step 2: Run the focused tests and confirm missing behavior**
+- [x] **Step 2: Run the focused tests and confirm missing behavior**
 
 Run: `pnpm --filter @platform/api test -- pipeline-idempotency.spec.ts performance-provenance.spec.ts`
 Expected: FAIL because `evaluationKey` is unavailable.
 
-- [ ] **Step 3: Implement SHA-256 identity from normalized cohort fields**
+- [x] **Step 3: Implement SHA-256 identity from normalized cohort fields**
 
 ```ts
 buildEvaluationKey({ userId, provider, symbol, timeframe, sourceDataCutoff, strategyKey, direction, configurationVersion }): string
@@ -154,20 +154,20 @@ buildEvaluationKey({ userId, provider, symbol, timeframe, sourceDataCutoff, stra
 
 Use uppercase provider/symbol/direction, canonical timeframe, ISO cutoff, and explicit configuration version; do not include trigger source.
 
-- [ ] **Step 4: Add nullable columns, dry-run duplicate query, and partial unique indexes**
+- [x] **Step 4: Add nullable columns, dry-run duplicate query, and partial unique indexes**
 
 The migration adds `evaluationKey` to `pipeline_runs` and `paper_signals`, reports existing duplicate groups before index creation, and creates a unique partial index on non-null paper-signal keys. Do not backfill legacy rows.
 
-- [ ] **Step 5: Use create-or-reuse semantics and exclude duplicates from performance labeling**
+- [x] **Step 5: Use create-or-reuse semantics and exclude duplicates from performance labeling**
 
 Catch Prisma unique-conflict `P2002`, load the existing run/signal by evaluation key, and return it without creating an additional calibration sample.
 
-- [ ] **Step 6: Verify schema and tests**
+- [x] **Step 6: Verify schema and tests**
 
 Run: `pnpm --filter @platform/api exec prisma validate && pnpm --filter @platform/api test -- pipeline-idempotency.spec.ts performance-provenance.spec.ts`
 Expected: schema valid and tests PASS.
 
-- [ ] **Step 7: Commit durable deduplication**
+- [x] **Step 7: Commit durable deduplication**
 
 ```bash
 git add apps/api/prisma apps/api/src/modules/pipeline apps/api/test/pipeline apps/api/test/reflection

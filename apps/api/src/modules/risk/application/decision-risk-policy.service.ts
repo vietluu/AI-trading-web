@@ -17,10 +17,11 @@ export interface DecisionRiskPolicyResult {
   actionable: boolean;
   decision: DecisionOutput['decision'];
   reason?: DecisionRiskPolicyReason;
+  evEvaluationPath?: 'EXECUTION_EVIDENCE' | 'LEGACY_EXPECTED_VALUE';
 }
 
 export class DecisionRiskPolicyService {
-  evaluate(output: Pick<DecisionOutput, 'decision' | 'confidence' | 'dataQuality' | 'coreDataQuality' | 'directionalAgreement' | 'evidenceCoverage' | 'conflictLevel' | 'opportunityScore' | 'expectedValue' | 'adaptiveThreshold' | 'riskScore' | 'volatilityAdjustment' | 'agreementScore' | 'regime'>, context?: AdaptivePolicyContext): DecisionRiskPolicyResult {
+  evaluate(output: Pick<DecisionOutput, 'decision' | 'confidence' | 'dataQuality' | 'coreDataQuality' | 'directionalAgreement' | 'evidenceCoverage' | 'conflictLevel' | 'opportunityScore' | 'expectedValue' | 'adaptiveThreshold' | 'riskScore' | 'volatilityAdjustment' | 'agreementScore' | 'regime' | 'executionEvidence'>, context?: AdaptivePolicyContext): DecisionRiskPolicyResult {
     if (!context?.symbol) return { actionable: false, decision: 'WAIT', reason: 'SYMBOL_REQUIRED' };
     const policy = adaptiveTradingPolicy({ ...context, symbol: context.symbol, regime: output.regime?.type ?? context.regime ?? 'RANGING' });
     if (output.decision === 'WAIT') {
@@ -59,15 +60,29 @@ export class DecisionRiskPolicyService {
     if (output.confidence < output.adaptiveThreshold) {
       return { actionable: false, decision: 'WAIT', reason: 'CONFIDENCE_BELOW_THRESHOLD' };
     }
-    if (output.expectedValue <= policy.minExpectedValue) {
-      return { actionable: false, decision: 'WAIT', reason: 'EXPECTED_VALUE_NEGATIVE' };
+    const hasExecutionEvidence = output.executionEvidence !== undefined;
+    const evValue =
+      output.executionEvidence?.expectedNetR !== undefined
+        ? output.executionEvidence.expectedNetR
+        : output.expectedValue;
+
+    const evEvaluationPath: 'EXECUTION_EVIDENCE' | 'LEGACY_EXPECTED_VALUE' | undefined =
+      hasExecutionEvidence
+        ? output.executionEvidence?.expectedNetR !== undefined
+          ? 'EXECUTION_EVIDENCE'
+          : 'LEGACY_EXPECTED_VALUE'
+        : undefined;
+    const provenance = evEvaluationPath ? { evEvaluationPath } : {};
+
+    if (evValue <= policy.minExpectedValue) {
+      return { actionable: false, decision: 'WAIT', reason: 'EXPECTED_VALUE_NEGATIVE', ...provenance };
     }
     if (output.opportunityScore < thresholdFloor) {
-      return { actionable: false, decision: 'WAIT', reason: 'OPPORTUNITY_BELOW_THRESHOLD' };
+      return { actionable: false, decision: 'WAIT', reason: 'OPPORTUNITY_BELOW_THRESHOLD', ...provenance };
     }
     if (output.riskScore > policy.maxRiskScore) {
-      return { actionable: false, decision: 'WAIT', reason: 'RISK_SCORE_TOO_HIGH' };
+      return { actionable: false, decision: 'WAIT', reason: 'RISK_SCORE_TOO_HIGH', ...provenance };
     }
-    return { actionable: true, decision: output.decision };
+    return { actionable: true, decision: output.decision, ...provenance };
   }
 }

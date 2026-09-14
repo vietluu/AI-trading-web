@@ -363,7 +363,7 @@ model PaperSignal {
   id                   String            @id @default(uuid()) @db.Uuid
   userId               String            @db.Uuid
   pipelineRunId        String?           @unique @db.Uuid
-  evaluationKey        String?
+  evaluationKey        String?           @unique
   symbol               String
   provider             ExchangeProvider?
   decision             String
@@ -380,7 +380,6 @@ model PaperSignal {
   @@index([userId, createdAt])
   @@index([userId, mode, outcome, createdAt])
   @@index([userId, mode, outcome, configurationVersion, createdAt])
-  @@index([evaluationKey])
   @@map("paper_signals")
 }
 
@@ -2580,4 +2579,44 @@ model TradeLifecycleOutcome {
   @@index([configurationHash])
   @@index([status, closedAt])
   @@map("trade_lifecycle_outcomes")
+}
+
+model ShadowExecutionPlan {
+  id                   String       @id @default(uuid()) @db.Uuid
+  evaluationKey        String       @unique
+  symbol               String
+  provider             String
+  timeframe            String
+  direction            String       // LONG, SHORT
+  setup                String
+  cohortKey            String
+  status               String       @default("PENDING") // PENDING, FILLED, EXPIRED, STOPPED, TARGET_REACHED, CANCELLED
+  entryPrice           Decimal      @db.Decimal(24, 8)
+  stopLoss             Decimal      @db.Decimal(24, 8)
+  targets              Json
+  quantity             Decimal?     @db.Decimal(30, 12)
+  riskFraction         Decimal?     @db.Decimal(10, 4)
+  sourceDataCutoff     DateTime
+  expiresAt            DateTime
+  feeBps               Decimal      @db.Decimal(10, 4)
+  slippageBps          Decimal      @db.Decimal(10, 4)
+  fundingBps           Decimal      @db.Decimal(10, 4)
+  grossPnl             Decimal?     @db.Decimal(24, 8)
+  netPnl               Decimal?     @db.Decimal(24, 8)
+  netR                 Decimal?     @db.Decimal(24, 8)
+  mfe                  Decimal?     @db.Decimal(24, 8)
+  mae                  Decimal?     @db.Decimal(24, 8)
+  durationCandles      Int?
+  terminalReason       String?
+  isComplete           Boolean      @default(false)
+  configurationHash    String
+  schemaVersion        Int          @default(1)
+  calculationVersion   Int          @default(1)
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  @@index([symbol, timeframe, sourceDataCutoff])
+  @@index([cohortKey])
+  @@index([status, isComplete])
+  @@map("shadow_execution_plans")
 }

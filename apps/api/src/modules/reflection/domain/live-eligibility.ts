@@ -99,3 +99,6 @@ export function computeConfigurationHash(
 
   return createHash("sha256").update(canonical).digest("hex");
 }
+
+export * from './recovery-promotion-policy';
+

@@ -147,3 +147,59 @@ export interface PerformanceMetrics {
   executedDecisions?: number;
 }
 
+export const RecoveryCohortMetricsSchema = z.object({
+  sampleSize: z.number().int().nonnegative(),
+  winCount: z.number().int().nonnegative(),
+  lossCount: z.number().int().nonnegative(),
+  scratchCount: z.number().int().nonnegative(),
+  winRate: z.number(),
+  meanNetR: z.number(),
+  lowerConfidenceBoundNetR: z.number(),
+  profitFactor: z.number(),
+  grossProfit: z.number(),
+  grossLoss: z.number(),
+  maxDrawdown: z.number(),
+  averageMfe: z.number(),
+  averageMae: z.number(),
+  stopBeforeTargetRate: z.number(),
+  exclusions: z.object({
+    duplicateCount: z.number().int().nonnegative(),
+    incompleteCount: z.number().int().nonnegative(),
+    supersededCount: z.number().int().nonnegative(),
+    corruptedCount: z.number().int().nonnegative(),
+    totalExcluded: z.number().int().nonnegative(),
+  }),
+  sensitivity: z.object({
+    doubledCostProfitFactor: z.number(),
+    doubledCostMeanNetR: z.number(),
+    doubledCostResilient: z.boolean(),
+  }),
+});
+export type RecoveryCohortMetrics = z.infer<typeof RecoveryCohortMetricsSchema>;
+
+export const RecoveryCohortResponseSchema = z.object({
+  cohortKey: z.string(),
+  control: z.object({
+    type: z.literal('CONTROL_REALIZED'),
+    metrics: RecoveryCohortMetricsSchema,
+  }),
+  candidate: z.object({
+    type: z.literal('CANDIDATE_SHADOW'),
+    isSimulated: z.literal(true),
+    metrics: RecoveryCohortMetricsSchema,
+    walkForwardFolds: z.array(z.object({
+      foldIndex: z.number().int(),
+      sampleSize: z.number().int(),
+      meanNetR: z.number(),
+      profitFactor: z.number(),
+    })),
+    calibrationQuality: z.enum(['GOOD', 'UNRELIABLE', 'DEGRADED']),
+    promotionEligibility: z.object({
+      eligible: z.boolean(),
+      reasons: z.array(z.string()),
+    }),
+  }),
+  generatedAt: z.string().datetime(),
+});
+export type RecoveryCohortResponse = z.infer<typeof RecoveryCohortResponseSchema>;
+

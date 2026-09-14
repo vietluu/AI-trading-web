@@ -97,6 +97,9 @@ describe("Data-Quality Driven Decision Weighting", () => {
     const output = service.decide(baseInput);
 
     expect(output.decision).toBe("LONG");
+    expect(output.executionContext?.action).toBe("WAIT");
+    expect(output.thesis?.action).toBe("WAIT");
+    expect(output.thesis?.nextActionCondition).toMatch(/pullback|retest/i);
     expect(output.signals.bullishFactors.length).toBeGreaterThan(0);
     // OnChain has INSUFFICIENT quality -> cannot contribute bullish/bearish signals
     expect(output.signals.bullishFactors.some(f => f.toLowerCase().includes("on-chain"))).toBe(false);

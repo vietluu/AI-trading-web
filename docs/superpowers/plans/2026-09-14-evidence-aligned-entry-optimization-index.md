@@ -22,16 +22,17 @@
 
 ## Ordered Plans
 
-1. `2026-09-14-phase-1-gate-provenance-deduplication.md`
-2. `2026-09-14-phase-2-exact-quant-cohorts.md`
-3. `2026-09-14-phase-3-recovery-reclaim-state-machine.md`
-4. `2026-09-14-phase-4-governed-shadow-probes.md`
-5. `2026-09-14-phase-5-pnl-evaluation-promotion.md`
+1. [x] `2026-09-14-phase-1-gate-provenance-deduplication.md` (Completed)
+2. [x] `2026-09-14-phase-2-exact-quant-cohorts.md` (Completed)
+3. [x] `2026-09-14-phase-3-recovery-reclaim-state-machine.md` (Completed)
+4. [x] `2026-09-14-phase-4-governed-shadow-probes.md` (Completed)
+5. [x] `2026-09-14-phase-5-pnl-evaluation-promotion.md` (Completed)
 
 ## Release Checkpoints
 
-- Phase 1: blocker audit reconciles and duplicate samples stop increasing.
-- Phase 2: no mismatched timeframe/policy can authorize execution.
-- Phase 3: recovery decisions reproduce from closed candles without future data.
-- Phase 4: shadow plans use execution-equivalent terms and never call exchange APIs.
-- Phase 5: control/candidate reports reconcile post-cost PnL and enforce promotion eligibility.
+- [x] Phase 1: blocker audit reconciles and duplicate samples stop increasing.
+- [x] Phase 2: no mismatched timeframe/policy can authorize execution.
+- [x] Phase 3: recovery decisions reproduce from closed candles without future data.
+- [x] Phase 4: shadow plans use execution-equivalent terms and never call exchange APIs.
+- [x] Phase 5: control/candidate reports reconcile post-cost PnL and enforce promotion eligibility.
+

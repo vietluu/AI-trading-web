@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DecisionOutput } from "@platform/shared";
+import { buildExecutionContext } from "../../src/modules/pipeline/domain/execution-context";
 import {
   calculateDrawdown,
   calculatePositionSize,
@@ -8,6 +9,7 @@ import {
   type RiskInput,
   type RiskLimits,
 } from "../../src/modules/risk/domain/risk-engine";
+import { DecisionRiskPolicyService } from "../../src/modules/risk/application/decision-risk-policy.service";
 
 const limits: RiskLimits = {
   riskPerTrade: 0.02,
@@ -333,6 +335,96 @@ describe("risk engine", () => {
     expect(released.positionSize).toBeCloseTo((200 / 1040) * 0.5, 8);
   });
 
+  it("applies thesis-aware cooldown to same direction but permits confirmed opposite transition probe", () => {
+    const sameDirectionSameSetupAfterLoss = input({
+      decision: decision({ decision: "LONG" }),
+      executionContext: buildExecutionContext({
+        regime: "TRENDING",
+        setup: "TREND_PULLBACK",
+        action: "ENTER",
+        price: 50_000,
+        support: 49_000,
+        resistance: 52_000,
+        atr: 500,
+        sourceDataCutoff: new Date("2026-08-02T00:10:00Z"),
+        primaryCandleClosed: true,
+        triggerConfirmed: true,
+      }),
+      recentClosedTrades: [
+        {
+          symbol: "BTC-USDT",
+          direction: "LONG",
+          setup: "TREND_PULLBACK",
+          regime: "TRENDING",
+          sourceDataCutoff: "2026-08-02T00:00:00.000Z",
+          netPnl: -10,
+          closedAt: new Date("2026-08-02T00:05:00Z"),
+        },
+      ],
+    });
+
+    const oppositeWithoutNewTrigger = input({
+      decision: decision({ decision: "SHORT" }),
+      executionContext: buildExecutionContext({
+        regime: "PRE_BREAKOUT",
+        setup: "TRANSITION_PROBE",
+        action: "PROBE",
+        price: 49_800,
+        support: 49_000,
+        resistance: 50_500,
+        atr: 500,
+        sourceDataCutoff: new Date("2026-08-02T00:10:00Z"),
+        primaryCandleClosed: true,
+        triggerConfirmed: false,
+      }),
+      recentClosedTrades: [
+        {
+          symbol: "BTC-USDT",
+          direction: "LONG",
+          setup: "TREND_PULLBACK",
+          regime: "TRENDING",
+          sourceDataCutoff: "2026-08-02T00:00:00.000Z",
+          netPnl: -10,
+          closedAt: new Date("2026-08-02T00:05:00Z"),
+        },
+      ],
+    });
+
+    const oppositeTransitionAfterLoss = input({
+      decision: decision({ decision: "SHORT" }),
+      executionContext: buildExecutionContext({
+        regime: "PRE_BREAKOUT",
+        setup: "TRANSITION_PROBE",
+        action: "PROBE",
+        price: 49_800,
+        support: 49_000,
+        resistance: 50_500,
+        atr: 500,
+        sourceDataCutoff: new Date("2026-08-02T00:10:00Z"),
+        primaryCandleClosed: true,
+        triggerConfirmed: true,
+      }),
+      recentClosedTrades: [
+        {
+          symbol: "BTC-USDT",
+          direction: "LONG",
+          setup: "TREND_PULLBACK",
+          regime: "TRENDING",
+          sourceDataCutoff: "2026-08-02T00:00:00.000Z",
+          netPnl: -10,
+          closedAt: new Date("2026-08-02T00:05:00Z"),
+        },
+      ],
+    });
+
+    expect(evaluateRisk(sameDirectionSameSetupAfterLoss, limits).reason)
+      .toBe("LOSS_REENTRY_COOLDOWN_ACTIVE");
+    expect(evaluateRisk(oppositeTransitionAfterLoss, limits).tradePlan?.riskTier)
+      .toBe("PROBE");
+    expect(evaluateRisk(oppositeWithoutNewTrigger, limits).reason)
+      .toBe("LOSS_REVERSAL_TRIGGER_REQUIRED");
+  });
+
   it("opens a timed circuit breaker after three consecutive losses", () => {
     const recentClosedTrades = [
       { netPnl: -10, closedAt: new Date("2026-08-02T00:00:00Z") },
@@ -499,4 +591,140 @@ describe("risk engine", () => {
     // For MAJOR with maxLeverage 50, it is capped at 30x
     expect(btcResult.leverage).toBeLessThanOrEqual(30);
   });
+
+  it("rejects when executionContext violates setup location", () => {
+    const invalidZroContext = buildExecutionContext({
+      regime: "RANGING",
+      setup: "RANGE_REVERSION",
+      action: "ENTER",
+      price: 1.0171,
+      support: 1.0151,
+      resistance: 1.0245,
+      atr: 0.00467606,
+      sourceDataCutoff: new Date().toISOString(),
+      primaryCandleClosed: true,
+      triggerConfirmed: true,
+    });
+
+    const result = evaluateRisk(
+      input({
+        symbol: "ZRO-USDT",
+        decision: decision({
+          decision: "SHORT",
+          executionContext: invalidZroContext,
+        }),
+        marketData: {
+          price: 1.0171,
+          volatility: 0.02,
+          tradePlanContext: {
+            atr: 0.00467606,
+            support: 1.0151,
+            resistance: 1.0245,
+            executionContext: invalidZroContext,
+          },
+        },
+        executionContext: invalidZroContext,
+      }),
+      limits,
+    );
+
+    expect(result.approved).toBe(false);
+    expect(result.reason).toBe("RANGE_SHORT_NOT_AT_UPPER_BOUNDARY");
+  });
+
+  it("preserves range reversal strategy in tradePlan when executionContext is present", () => {
+    const validRangeContext = buildExecutionContext({
+      regime: "RANGING",
+      setup: "RANGE_REVERSION",
+      action: "ENTER",
+      price: 1.0235,
+      support: 1.0151,
+      resistance: 1.0245,
+      atr: 0.00467606,
+      sourceDataCutoff: new Date().toISOString(),
+      primaryCandleClosed: true,
+      triggerConfirmed: true,
+    });
+
+    const result = evaluateRisk(
+      input({
+        symbol: "ZRO-USDT",
+        decision: decision({
+          decision: "SHORT",
+          executionContext: validRangeContext,
+        }),
+        marketData: {
+          price: 1.0235,
+          volatility: 0.02,
+          tradePlanContext: {
+            atr: 0.00467606,
+            support: 1.0151,
+            resistance: 1.0245,
+            adx: 30, // would trigger quantitative trend if not protected
+            efficiencyRatio: 0.4,
+            ema20: 1.0200,
+            ema50: 1.0220,
+            executionContext: validRangeContext,
+          },
+        },
+        executionContext: validRangeContext,
+      }),
+      limits,
+    );
+
+    expect(result.tradePlan).toBeDefined();
+    expect(result.tradePlan?.regime).toBe("RANGING");
+    expect(result.tradePlan?.strategy).toBe("RANGE_REVERSAL");
+  });
 });
+
+describe("DecisionRiskPolicyService executionEvidence EV gate", () => {
+  const service = new DecisionRiskPolicyService();
+  const baseDecision = decision();
+
+  it("reads expectedNetR for the EV gate when present", () => {
+    const negativeNetRDecision = {
+      ...baseDecision,
+      expectedValue: 0.7,
+      executionEvidence: {
+        signalStrength: 80,
+        expectedNetR: -0.1,
+        calibrationQuality: 'RELIABLE' as const,
+      },
+    };
+
+    const result = service.evaluate(negativeNetRDecision, { symbol: 'BTC-USDT' });
+    expect(result.actionable).toBe(false);
+    expect(result.reason).toBe('EXPECTED_VALUE_NEGATIVE');
+    expect(result.evEvaluationPath).toBe('EXECUTION_EVIDENCE');
+  });
+
+  it("passes EV gate when expectedNetR is positive", () => {
+    const positiveNetRDecision = {
+      ...baseDecision,
+      expectedValue: 0.1,
+      executionEvidence: {
+        signalStrength: 80,
+        expectedNetR: 0.8,
+        calibrationQuality: 'RELIABLE' as const,
+      },
+    };
+
+    const result = service.evaluate(positiveNetRDecision, { symbol: 'BTC-USDT' });
+    expect(result.actionable).toBe(true);
+    expect(result.evEvaluationPath).toBe('EXECUTION_EVIDENCE');
+  });
+
+  it("falls back to legacy expectedValue when executionEvidence is omitted", () => {
+    const legacyDecision = {
+      ...baseDecision,
+      expectedValue: 0.7,
+      executionEvidence: undefined,
+    };
+
+    const result = service.evaluate(legacyDecision, { symbol: 'BTC-USDT' });
+    expect(result.actionable).toBe(true);
+    expect(result.evEvaluationPath).toBeUndefined();
+  });
+});
+

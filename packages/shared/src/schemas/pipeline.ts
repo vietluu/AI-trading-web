@@ -20,6 +20,60 @@ export const PipelineRunStatusSchema = z.enum([
   "TIMEOUT",
   "SKIPPED",
 ]);
+
+export const CanonicalRegimeSchema = z.enum([
+  "RANGING",
+  "PRE_BREAKOUT",
+  "BREAKOUT",
+  "TRENDING",
+  "UNCERTAIN",
+]);
+export type CanonicalRegime = z.infer<typeof CanonicalRegimeSchema>;
+
+export const CanonicalSetupSchema = z.enum([
+  "RANGE_REVERSION",
+  "TRANSITION_PROBE",
+  "BREAKOUT_RETEST",
+  "TREND_PULLBACK",
+]);
+export type CanonicalSetup = z.infer<typeof CanonicalSetupSchema>;
+
+export const EntryActionSchema = z.enum(["WAIT", "PROBE", "ENTER"]);
+export type EntryAction = z.infer<typeof EntryActionSchema>;
+
+export const RiskTierSchema = z.enum(["NONE", "PROBE", "NORMAL"]);
+export type RiskTier = z.infer<typeof RiskTierSchema>;
+
+export const ExecutionContextSchema = z
+  .object({
+    regime: CanonicalRegimeSchema,
+    regimeDetail: z.string().min(1).optional(),
+    setup: CanonicalSetupSchema,
+    action: EntryActionSchema,
+    riskTier: RiskTierSchema,
+    sourceDataCutoff: z.string().datetime(),
+    usesClosedPrimaryCandle: z.boolean(),
+    triggerConfirmed: z.boolean(),
+    priceLocation: z
+      .object({
+        rangePercentile: z.number().min(0).max(1).optional(),
+        distanceFromSupportAtr: z.number().nonnegative().optional(),
+        distanceFromResistanceAtr: z.number().nonnegative().optional(),
+        distanceFromTriggerAtr: z.number().nonnegative().optional(),
+        moveConsumedPct: z.number().nonnegative().optional(),
+      })
+      .strict(),
+  })
+  .strict();
+export type ExecutionContext = z.infer<typeof ExecutionContextSchema>;
+
+export const StoredPipelineContextSchema = z
+  .object({
+    executionContext: ExecutionContextSchema.optional(),
+  })
+  .passthrough();
+export type StoredPipelineContext = z.infer<typeof StoredPipelineContextSchema>;
+
 export const PipelineSymbolSchema = z
   .string()
   .min(3)
@@ -44,6 +98,40 @@ export const PipelineRunRequestSchema = z
   })
   .strict();
 export type PipelineRunRequest = z.infer<typeof PipelineRunRequestSchema>;
+
+export const PipelineGateStageSchema = z.enum([
+  "SIGNAL_FILTER",
+  "JUDGE",
+  "QUANT",
+  "MULTI_TIMEFRAME",
+  "RISK",
+  "EXECUTION",
+]);
+export const PipelineGateDispositionSchema = z.enum([
+  "PASS",
+  "ADVISORY",
+  "REDUCE_SIZE",
+  "BLOCK",
+]);
+export const PipelineGateDecisionRecordSchema = z.object({
+  stage: PipelineGateStageSchema,
+  disposition: PipelineGateDispositionSchema,
+  reasonCodes: z.array(z.string()),
+  selectedBlockingReason: z.string().optional(),
+});
+export const PipelineBlockingGateSchema = z.object({
+  stage: PipelineGateStageSchema,
+  reason: z.string(),
+});
+export const PipelineRunResultSchema = z.object({
+  gates: z.array(PipelineGateDecisionRecordSchema).optional(),
+  blockingGate: PipelineBlockingGateSchema.optional(),
+}).passthrough();
+export type PipelineGateStage = z.infer<typeof PipelineGateStageSchema>;
+export type PipelineGateDisposition = z.infer<typeof PipelineGateDispositionSchema>;
+export type PipelineGateDecisionRecord = z.infer<typeof PipelineGateDecisionRecordSchema>;
+export type PipelineBlockingGate = z.infer<typeof PipelineBlockingGateSchema>;
+export type PipelineRunResult = z.infer<typeof PipelineRunResultSchema>;
 
 export const PipelineScheduleInputSchema = z
   .object({

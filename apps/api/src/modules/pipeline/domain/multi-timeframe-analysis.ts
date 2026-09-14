@@ -9,6 +9,7 @@ export interface TimeframeIndicatorInput {
   ema20?: number;
   ema50?: number;
   rsi?: number;
+  isClosed?: boolean;
 }
 
 export interface MultiTimeframeAnalysis {
@@ -21,12 +22,15 @@ export interface MultiTimeframeAnalysis {
     ema20?: number;
     ema50?: number;
     rsi?: number;
+    isClosed?: boolean;
   }>;
   directionalFrames: number;
   bullishWeight: number;
   bearishWeight: number;
   bullishConfirmation: number;
   bearishConfirmation: number;
+  normalEntryConfirmed?: boolean;
+  probeEligible?: boolean;
 }
 
 export function selectPipelineTimeframes(
@@ -72,6 +76,7 @@ export function analyzeMultiTimeframe(
       timeframe: input.timeframe,
       trend,
       weight,
+      ...(input.isClosed !== undefined ? { isClosed: input.isClosed } : {}),
       ...(finite(input.close) ? { close: input.close } : {}),
       ...(finite(input.ema20) ? { ema20: input.ema20 } : {}),
       ...(finite(input.ema50) ? { ema50: input.ema50 } : {}),
@@ -87,6 +92,100 @@ export function analyzeMultiTimeframe(
     bearishWeight,
     bullishConfirmation: confirmation(bullishWeight, directionalWeight),
     bearishConfirmation: confirmation(bearishWeight, directionalWeight),
+  };
+}
+
+export interface EvaluateMultiTimeframeConfirmationInput {
+  direction: 'LONG' | 'SHORT' | 'WAIT';
+  primaryTimeframe: PipelineTimeframe;
+  frames: Array<{
+    timeframe: PipelineTimeframe;
+    trend: TimeframeTrend;
+    weight: number;
+    isClosed?: boolean;
+    close?: number;
+    ema20?: number;
+    ema50?: number;
+    rsi?: number;
+  }>;
+}
+
+export interface MultiTimeframeConfirmationResult {
+  normalEntryConfirmed: boolean;
+  probeEligible: boolean;
+  directionalFrames: number;
+  bullishWeight: number;
+  bearishWeight: number;
+  bullishConfirmation: number;
+  bearishConfirmation: number;
+  allowed: boolean;
+  reason?: 'MULTI_TIMEFRAME_CONFLICT' | 'HIGHER_TIMEFRAME_OVERBOUGHT' | 'HIGHER_TIMEFRAME_OVERSOLD';
+  confirmation: number;
+}
+
+export function evaluateMultiTimeframeConfirmation(
+  input: EvaluateMultiTimeframeConfirmationInput,
+): MultiTimeframeConfirmationResult {
+  const primaryFrame = input.frames.find((f) => f.timeframe === input.primaryTimeframe);
+  const isPrimaryClosed = primaryFrame?.isClosed !== false;
+
+  let bullishWeight = 0;
+  let bearishWeight = 0;
+  let directionalFrames = 0;
+
+  for (const frame of input.frames) {
+    if (frame.trend === 'BULLISH') {
+      bullishWeight += frame.weight;
+      directionalFrames += 1;
+    } else if (frame.trend === 'BEARISH') {
+      bearishWeight += frame.weight;
+      directionalFrames += 1;
+    }
+  }
+
+  const directionalWeight = bullishWeight + bearishWeight;
+  const bullishConfirmation = confirmation(bullishWeight, directionalWeight);
+  const bearishConfirmation = confirmation(bearishWeight, directionalWeight);
+
+  const analysis: MultiTimeframeAnalysis = {
+    primaryTimeframe: input.primaryTimeframe,
+    frames: input.frames.map((f) => ({
+      timeframe: f.timeframe,
+      trend: f.trend,
+      weight: f.weight,
+      close: f.close,
+      ema20: f.ema20,
+      ema50: f.ema50,
+      rsi: f.rsi,
+      isClosed: f.isClosed,
+    })),
+    directionalFrames,
+    bullishWeight,
+    bearishWeight,
+    bullishConfirmation,
+    bearishConfirmation,
+  };
+
+  const decisionEval = evaluateMultiTimeframeDecision(input.direction, analysis);
+
+  const directionMatchesTrend =
+    (input.direction === 'LONG' && bullishConfirmation > 40) ||
+    (input.direction === 'SHORT' && bearishConfirmation > 40);
+
+  const normalEntryConfirmed = isPrimaryClosed && decisionEval.allowed && directionMatchesTrend;
+  const probeEligible = decisionEval.allowed && directionMatchesTrend;
+
+  return {
+    normalEntryConfirmed,
+    probeEligible,
+    directionalFrames,
+    bullishWeight,
+    bearishWeight,
+    bullishConfirmation,
+    bearishConfirmation,
+    allowed: decisionEval.allowed,
+    reason: decisionEval.reason,
+    confirmation: decisionEval.confirmation,
   };
 }
 
