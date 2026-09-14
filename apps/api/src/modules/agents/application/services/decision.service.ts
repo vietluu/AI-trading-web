@@ -27,8 +27,11 @@ import {
   REGIME_FACTOR,
 } from "../../domain/constants/decision.constants";
 import { PrismaService } from "../../../../database/prisma.service";
-import { calibrateConfidenceWithFallback } from "../../../reflection/domain/confidence-calibration";
 import { ConfigService } from "@nestjs/config";
+import {
+  calibrateConfidenceWithFallback,
+  buildExecutionEvidenceScore,
+} from "../../../reflection/domain/confidence-calibration";
 import { createHash } from "node:crypto";
 import { adaptiveTradingPolicy, assetLiquidityClass, parseSpreadBps } from "../../../pipeline/domain/adaptive-trading-policy";
 import { classifyDetailedRegime, computeRegimeAdaptiveWeights } from "../../domain/analysis/regime-adaptive-weights";
@@ -220,11 +223,20 @@ export class DecisionService {
       finalDecisionAction = "WAIT";
     }
 
+    const executionEvidence = buildExecutionEvidenceScore({
+      signalStrength: decision.confidence,
+      confidenceCalibration,
+      expectedReward: decision.expectedReward,
+      expectedLoss: decision.expectedLoss,
+      executionCost: decision.executionCost,
+    });
+
     const calibratedDecision: DecisionOutput = {
       ...decision,
       decision: finalDecisionAction,
       confidence: finalConfidence,
       confidenceCalibration,
+      executionEvidence,
       expectedWinProbability: Number(expectedWinProbability.toFixed(3)),
       expectedValue: finalExpectedValue,
       profitFactorEstimate: Number(profitFactorEstimate.toFixed(3)),
@@ -371,11 +383,20 @@ export class DecisionService {
       finalDecisionAction = "WAIT";
     }
 
+    const executionEvidence = buildExecutionEvidenceScore({
+      signalStrength: decision.confidence,
+      confidenceCalibration,
+      expectedReward: decision.expectedReward,
+      expectedLoss: decision.expectedLoss,
+      executionCost: decision.executionCost,
+    });
+
     return {
       ...decision,
       decision: finalDecisionAction,
       confidence: finalConfidence,
       confidenceCalibration,
+      executionEvidence,
       expectedWinProbability: Number(expectedWinProbability.toFixed(3)),
       expectedValue: finalExpectedValue,
       profitFactorEstimate: Number(

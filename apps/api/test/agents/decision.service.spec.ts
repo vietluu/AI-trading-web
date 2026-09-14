@@ -582,4 +582,40 @@ describe('DecisionService', () => {
     expect(helper.calibrationCache.has('key-oldest')).toBe(false);
     expect(helper.calibrationCache.size).toBe(500);
   });
+
+  it('populates executionEvidence with separated metrics and calibrationQuality on decision output', async () => {
+    const mockPrisma = {
+      performanceRecord: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      selfLearningConfiguration: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        findUnique: vi.fn().mockResolvedValue(null),
+      },
+      aIMemory: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+    };
+    const service = new DecisionService({} as never, mockPrisma as never);
+    const { analyses, fusionOutput } = fixture();
+    const result = await service.decideForUser(
+      {
+        symbol: 'BTC-USDT',
+        fusionOutput,
+        ...analyses,
+      },
+      {
+        userId: 'user-1',
+        metadata: {
+          provider: 'OKX_FUTURES',
+          timeframe: '15m',
+        },
+      },
+    );
+
+    expect(result.executionEvidence).toBeDefined();
+    expect(result.executionEvidence?.signalStrength).toBe(result.confidence);
+    expect(result.executionEvidence?.calibrationQuality).toBe('INSUFFICIENT');
+    expect(result.executionEvidence?.estimatedWinProbability).toBeUndefined();
+  });
 });
