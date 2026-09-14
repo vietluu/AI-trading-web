@@ -993,6 +993,9 @@ export class PipelineRunnerService {
           if (!executionGateReason) {
             const assess = async () => {
               riskStageReached = true;
+              riskAssessment = undefined;
+              executionStageReached = false;
+              liveExecution = undefined;
               riskAssessment = await this.liveTrading.assessPipelineDecision({
                 userId: job.userId,
                 pipelineRunId: runId,
@@ -1069,6 +1072,7 @@ export class PipelineRunnerService {
             const execute = async () => {
               if (riskAssessment?.outcome === "RISK_APPROVED") {
                 executionStageReached = true;
+                liveExecution = undefined;
                 if (job.pipelineId === 'proactive-thesis' && proactiveMode !== 'DEMO') {
                   return { outcome: 'SKIPPED' as const, reason: 'SKIPPED_BY_PROACTIVE_MODE' };
                 }

@@ -120,7 +120,7 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     }));
   });
 
-  it('persists canonical gate provenance across blocked, approved, and failed outcomes', async () => {
+  it('persists canonical gate provenance across blocked, approved, failed, and reassessment outcomes', async () => {
     const repository = {
       updateRun: vi.fn().mockResolvedValue({}),
       updateStep: vi.fn().mockResolvedValue({}),
@@ -374,6 +374,44 @@ describe('Phase 6.6 pipeline runtime policies', () => {
       reason: 'PIPELINE_EXECUTION_FAILED',
     });
     expect(failedDuringExecutionRun?.skippedReason).toBe('PIPELINE_EXECUTION_FAILED');
+
+    repository.updateRun.mockClear();
+    liveTrading.assessPipelineDecision
+      .mockResolvedValueOnce({
+        outcome: 'RISK_APPROVED',
+        risk: { approved: true, reason: 'ok', riskScore: 20 },
+      })
+      .mockRejectedValueOnce(
+        new Error('NO_ELIGIBLE_EXCHANGE_CONNECTION: reassessment connection lookup failed'),
+      );
+    liveTrading.executePipeline.mockResolvedValueOnce({
+      outcome: 'EXECUTION_FAILED',
+      errorCode: 'ENTRY_PRICE_DRIFT',
+      retryable: true,
+    });
+
+    await expect(approvedService.run({
+      pipelineId: 'FULL_ANALYSIS_DECISION',
+      runId: 'run-reassessment-failure',
+      userId: 'user-1',
+      provider: 'BINANCE_FUTURES',
+      symbol: 'ETH-USDT',
+      params: { interval: '1h', strategyIds: ['ai-core', 'trend'] },
+      trigger: 'EVENT',
+    } as never)).rejects.toThrow('NO_ELIGIBLE_EXCHANGE_CONNECTION');
+
+    const failedReassessmentRun = persistedUpdate('run-reassessment-failure', 'FAILED');
+    expect(failedReassessmentRun?.result?.gates?.at(-1)).toEqual(
+      expect.objectContaining({ stage: 'RISK', disposition: 'BLOCK' }),
+    );
+    expect(failedReassessmentRun?.result?.gates).not.toContainEqual(
+      expect.objectContaining({ stage: 'EXECUTION' }),
+    );
+    expect(failedReassessmentRun?.result?.blockingGate).toEqual({
+      stage: 'RISK',
+      reason: 'NO_ELIGIBLE_EXCHANGE_CONNECTION',
+    });
+    expect(failedReassessmentRun?.skippedReason).toBe('NO_ELIGIBLE_EXCHANGE_CONNECTION');
 
     repository.updateRun.mockClear();
     const provenanceService = new PipelineRunnerService(
