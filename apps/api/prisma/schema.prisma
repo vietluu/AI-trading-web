@@ -363,6 +363,7 @@ model PaperSignal {
   id                   String            @id @default(uuid()) @db.Uuid
   userId               String            @db.Uuid
   pipelineRunId        String?           @unique @db.Uuid
+  evaluationKey        String?
   symbol               String
   provider             ExchangeProvider?
   decision             String
@@ -379,6 +380,7 @@ model PaperSignal {
   @@index([userId, createdAt])
   @@index([userId, mode, outcome, createdAt])
   @@index([userId, mode, outcome, configurationVersion, createdAt])
+  @@index([evaluationKey])
   @@map("paper_signals")
 }
 
@@ -563,6 +565,7 @@ model PipelineRun {
   configurationVersion    Int?
   learningStage           String?
   timeframe               String?
+  evaluationKey           String?
   skippedReason           String?
   errorCode               String?
   safeErrorMessage        String?
@@ -586,6 +589,7 @@ model PipelineRun {
   @@index([pipelineId, symbol, createdAt])
   @@index([correlationId])
   @@index([replayOfRunId])
+  @@index([evaluationKey])
   @@map("pipeline_runs")
 }
 
@@ -647,11 +651,13 @@ model PerformanceRecord {
   marketRegime          String?
   majorNews             Boolean            @default(false)
   provenanceEligible    Boolean            @default(false)
+  evaluationKey         String?
   evaluatedAt           DateTime           @default(now())
   user                  User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   run                   PipelineRun        @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   @@unique([runId, horizon])
+  @@unique([evaluationKey, horizon])
   @@index([userId, evaluatedAt])
   @@index([userId, horizon, evaluatedAt])
   @@index([userId, horizon, marketRegime, evaluatedAt])

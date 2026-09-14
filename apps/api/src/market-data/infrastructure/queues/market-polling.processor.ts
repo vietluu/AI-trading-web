@@ -7,6 +7,7 @@ import { MarketBackfillService } from '../../application/market-backfill.service
 import { PublicExchangeService } from '../../../exchange/application/public-exchange.service';
 import { MarketEventBus } from '../event-bus/market-event-bus';
 import { MarketEventType } from '../../domain/market-data.enums';
+import { MarketDataRepository } from '../persistence/market-data.repository';
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -24,6 +25,7 @@ export class MarketPollingProcessor extends WorkerHost {
     private readonly backfillService: MarketBackfillService,
     private readonly exchangeService: PublicExchangeService,
     private readonly eventBus: MarketEventBus,
+    private readonly repository: MarketDataRepository,
   ) {
     super();
   }
@@ -138,6 +140,25 @@ export class MarketPollingProcessor extends WorkerHost {
     for (const provider of config.providers) {
       try {
         const instruments = await this.exchangeService.instruments(provider);
+        for (const instrument of instruments) {
+          await this.repository.upsertInstrument({
+            provider,
+            symbol: instrument.symbol,
+            baseAsset: instrument.baseAsset,
+            quoteAsset: instrument.quoteAsset,
+            settlementAsset: instrument.settlementAsset,
+            type: instrument.instrumentType,
+            status: instrument.status,
+            pricePrecision: instrument.pricePrecision,
+            quantityPrecision: instrument.quantityPrecision,
+            tickSize: instrument.tickSize,
+            stepSize: instrument.stepSize,
+            minQuantity: instrument.minQuantity,
+            maxQuantity: instrument.maxQuantity,
+            minNotional: instrument.minNotional,
+            contractSize: instrument.contractSize,
+          });
+        }
         this.logger.log(`Refreshed ${instruments.length} instruments for ${provider}`);
         await delay(200);
       } catch (error) {
