@@ -832,7 +832,7 @@ export class PipelineRunnerService {
         selectedStrategyKey: strategyKey,
         strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue,
         actionable,
-        skippedReason: candidateBlockingGate?.reason,
+        skippedReason: candidateBlockingGate?.reason ?? null,
         gates: evaluatedGateRecords as unknown as Prisma.InputJsonValue,
         ...(candidateBlockingGate
           ? { blockingGate: candidateBlockingGate as unknown as Prisma.InputJsonValue }
@@ -853,7 +853,7 @@ export class PipelineRunnerService {
       await this.repository.updateRun(runId, {
         evaluationKey,
         configurationVersion,
-        skippedReason: candidateBlockingGate?.reason,
+        skippedReason: candidateBlockingGate?.reason ?? null,
         result: evaluatedResult as unknown as Prisma.InputJsonValue,
       });
       await this.finishStep(runId, "decision", output, decisionCompletedAt);
@@ -1258,7 +1258,7 @@ export class PipelineRunnerService {
         evaluationKey,
         learningStage: output.learningConfiguration?.stage,
         timeframe: String(interval),
-        skippedReason: finalSkippedReason,
+        skippedReason: finalSkippedReason ?? null,
         storedContext: { analyses, fusionOutput, candidateDecision: finalCandidateDecision, strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue, ...(output.executionContext ? { executionContext: output.executionContext as unknown as Prisma.InputJsonValue } : {}) },
         result: {
           ...output,
@@ -1266,7 +1266,7 @@ export class PipelineRunnerService {
           selectedStrategyKey: strategyKey,
           strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue,
           actionable: finalActionable,
-          skippedReason: finalSkippedReason,
+          skippedReason: finalSkippedReason ?? null,
           gates: gates as unknown as Prisma.InputJsonValue,
           ...(blockingGate
             ? { blockingGate: blockingGate as unknown as Prisma.InputJsonValue }
@@ -1363,7 +1363,7 @@ export class PipelineRunnerService {
         completedAt: executionLockBusy ? null : completedAt,
         durationMs: completedAt.getTime() - startedAt.getTime(),
         errorCode,
-        skippedReason: failureBlockingGate?.reason,
+        skippedReason: failureBlockingGate?.reason ?? null,
         safeErrorMessage:
           error instanceof Error
             ? error.message.slice(0, 300)
@@ -1372,7 +1372,7 @@ export class PipelineRunnerService {
           ? {
               result: {
                 ...evaluatedResult,
-                skippedReason: failureBlockingGate?.reason,
+                skippedReason: failureBlockingGate?.reason ?? null,
                 gates: failureGates as unknown as Prisma.InputJsonValue,
                 ...(failureBlockingGate
                   ? { blockingGate: failureBlockingGate as unknown as Prisma.InputJsonValue }
