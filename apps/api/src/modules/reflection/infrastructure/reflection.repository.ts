@@ -192,16 +192,6 @@ export class ReflectionRepository {
       : after;
   }
   createRecord(data: Prisma.PerformanceRecordUncheckedCreateInput) {
-    if (data.evaluationKey) {
-      return this.prisma.performanceRecord.create({ data }).catch(async (error: unknown) => {
-        if (!isPrismaUniqueConflict(error)) throw error;
-        const existing = await this.prisma.performanceRecord.findFirst({
-          where: { evaluationKey: data.evaluationKey, horizon: data.horizon },
-        });
-        if (existing) return existing;
-        throw error;
-      });
-    }
     return this.prisma.performanceRecord.upsert({
       where: { runId_horizon: { runId: data.runId, horizon: data.horizon } },
       create: data,
@@ -271,7 +261,3 @@ export class ReflectionRepository {
   }
 }
 
-function isPrismaUniqueConflict(error: unknown): error is { code: "P2002" } {
-  return typeof error === "object" && error !== null &&
-    "code" in error && error.code === "P2002";
-}

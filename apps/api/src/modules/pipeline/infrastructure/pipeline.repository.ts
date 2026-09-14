@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma, type PipelineRunStatus, type PipelineTrigger, type ExchangeProvider } from '@prisma/client';
-import { createHash } from 'node:crypto';
 import { PrismaService } from '../../../database/prisma.service';
 import {
   buildEvaluationKey,
@@ -12,7 +11,7 @@ export class PipelineRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   createRun(data: { id: string; userId: string; pipelineId: string; symbol: string; provider: ExchangeProvider; trigger: PipelineTrigger; params: Record<string, unknown>; traceId: string; correlationId: string; replayOfRunId?: string; scheduleId?: string; storedContext?: unknown }) {
-    return this.prisma.pipelineRun.create({ data: { ...data, evaluationKey: evaluationKeyForRun(data.id), params: data.params as Prisma.InputJsonValue, storedContext: data.storedContext as Prisma.InputJsonValue | undefined } });
+    return this.prisma.pipelineRun.create({ data: { ...data, params: data.params as Prisma.InputJsonValue, storedContext: data.storedContext as Prisma.InputJsonValue | undefined } });
   }
   findRun(id: string, userId?: string) { return this.prisma.pipelineRun.findFirst({ where: { id, ...(userId ? { userId } : {}) }, include: { steps: { orderBy: { createdAt: 'asc' } }, alerts: { orderBy: { createdAt: 'asc' } } } }); }
   listRuns(userId: string, filters: { status?: PipelineRunStatus; page: number; limit: number }) {
@@ -94,11 +93,7 @@ export class PipelineRepository {
     outcome: string;
     marketRegime?: string;
   }>) {
-    return Promise.all(data.map(async (input) => {
-      const record = {
-        ...input,
-        evaluationKey: input.evaluationKey ?? (input.pipelineRunId ? evaluationKeyForRun(input.pipelineRunId) : undefined),
-      };
+    return Promise.all(data.map(async (record) => {
       try {
         return await this.prisma.paperSignal.create({ data: record });
       } catch (error) {
@@ -140,8 +135,4 @@ export class PipelineRepository {
 function isPrismaUniqueConflict(error: unknown): error is { code: "P2002" } {
   return typeof error === "object" && error !== null &&
     "code" in error && error.code === "P2002";
-}
-
-function evaluationKeyForRun(runId: string): string {
-  return createHash('sha256').update(`pipeline-run:${runId}`).digest('hex');
 }

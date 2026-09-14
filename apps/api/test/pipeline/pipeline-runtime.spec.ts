@@ -270,7 +270,7 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     expect(liveTrading.executePipeline).toHaveBeenCalledWith('user-1', 'run-2');
     expect(redis.compareAndDelete).toHaveBeenCalled();
     expect(repository.updateRun).toHaveBeenCalledWith('run-2', expect.objectContaining({
-      status: 'COMPLETED', decision: 'LONG', skippedReason: undefined,
+      status: 'COMPLETED', decision: 'LONG', skippedReason: null,
     }));
     const approvedRun = persistedUpdate('run-2', 'COMPLETED');
     expect(approvedRun?.result?.gates).toEqual([
@@ -545,7 +545,7 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     } as never);
 
     expect(repository.updateRun).toHaveBeenCalledWith('run-3', expect.objectContaining({
-      status: 'COMPLETED', decision: 'LONG', skippedReason: undefined,
+      status: 'COMPLETED', decision: 'LONG', skippedReason: null,
     }));
     const fallbackCalls = JSON.stringify(repository.updateRun.mock.calls);
     expect(fallbackCalls).toContain('"initialSelectedStrategyKey":"momentum-scalp"');
@@ -679,7 +679,7 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     );
     expect(repository.updateRun).toHaveBeenCalledWith('dislocation-run', expect.objectContaining({
       decision: 'LONG',
-      skippedReason: undefined,
+      skippedReason: null,
     }));
 
     liveTrading.assessPipelineDecision.mockClear();
@@ -1281,7 +1281,7 @@ describe("drift reassessment boundary", () => {
       expect.objectContaining({
         status: 'COMPLETED',
         decision: 'LONG',
-        skippedReason: undefined,
+        skippedReason: null,
       }),
     );
     expect(liveTrading.assessPipelineDecision).toHaveBeenCalled();

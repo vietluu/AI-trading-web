@@ -176,10 +176,9 @@ export class PerformanceService {
           this.config.get<number>("EVALUATION_ROUND_TRIP_COST_PCT", 0.1),
         );
         const context = flags(run.storedContext);
-        const created = await this.repository.createRecord({
+        await this.repository.createRecord({
           userId: run.userId,
           runId: run.id,
-          evaluationKey: run.evaluationKey,
           symbol: run.symbol,
           horizon: item.horizon,
           strategyKey: candidate?.strategyKey,
@@ -200,7 +199,6 @@ export class PerformanceService {
           marketRegime: run.marketRegime,
           provenanceEligible: true,
         });
-        if (created.runId !== run.id) continue;
         evaluated++;
         evaluatedUserIds.add(run.userId);
         if (result.outcome === 'WRONG') {

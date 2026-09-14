@@ -659,7 +659,6 @@ export class SelfLearningService {
         mode: 'SHADOW',
         outcome: 'PENDING',
         configurationVersion: candidateVersion,
-        evaluationKey: { not: null },
       },
       orderBy: { createdAt: 'asc' },
       take: 500,
@@ -1523,3 +1522,4 @@ export class SelfLearningService {
     return calculateCriticLift(candidates);
   }
 }
+

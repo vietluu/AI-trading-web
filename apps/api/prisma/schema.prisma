@@ -562,9 +562,9 @@ model PipelineRun {
   dataQuality             String?
   marketRegime            String?
   configurationVersion    Int?
+  evaluationKey           String?
   learningStage           String?
   timeframe               String?
-  evaluationKey           String?
   skippedReason           String?
   errorCode               String?
   safeErrorMessage        String?
@@ -650,13 +650,11 @@ model PerformanceRecord {
   marketRegime          String?
   majorNews             Boolean            @default(false)
   provenanceEligible    Boolean            @default(false)
-  evaluationKey         String?
   evaluatedAt           DateTime           @default(now())
   user                  User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   run                   PipelineRun        @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   @@unique([runId, horizon])
-  @@unique([evaluationKey, horizon])
   @@index([userId, evaluatedAt])
   @@index([userId, horizon, evaluatedAt])
   @@index([userId, horizon, marketRegime, evaluatedAt])
@@ -2620,3 +2618,4 @@ model ShadowExecutionPlan {
   @@index([status, isComplete])
   @@map("shadow_execution_plans")
 }
+

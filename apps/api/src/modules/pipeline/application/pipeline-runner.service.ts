@@ -101,26 +101,6 @@ function marketDislocationFromParams(value: unknown): {
   };
 }
 
-function resultWithBlockingReason(
-  result: unknown,
-  stage: string,
-  reason: string,
-): Prisma.InputJsonValue {
-  const base = result && typeof result === "object" && !Array.isArray(result)
-    ? result as Record<string, unknown>
-    : {};
-  const existingGates: Prisma.InputJsonValue[] = Array.isArray(base.gates)
-    ? base.gates.filter((gate): gate is Prisma.InputJsonValue => gate !== undefined)
-    : [];
-  const output: Prisma.InputJsonObject = {
-    ...base,
-    skippedReason: reason,
-    blockingGate: { stage, reason },
-    gates: [...existingGates, { stage, decision: "BLOCK", reasons: [reason] }],
-  };
-  return output;
-}
-
 function historicalGateReasonsAreAdvisory(reasons: string[]): boolean {
   return reasons.every((reason) =>
     DISLOCATION_CANARY_ADVISORY_REASONS.has(reason),
@@ -852,7 +832,7 @@ export class PipelineRunnerService {
         selectedStrategyKey: strategyKey,
         strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue,
         actionable,
-        skippedReason: candidateBlockingGate?.reason,
+        skippedReason: candidateBlockingGate?.reason ?? null,
         gates: evaluatedGateRecords as unknown as Prisma.InputJsonValue,
         ...(candidateBlockingGate
           ? { blockingGate: candidateBlockingGate as unknown as Prisma.InputJsonValue }
@@ -873,7 +853,7 @@ export class PipelineRunnerService {
       await this.repository.updateRun(runId, {
         evaluationKey,
         configurationVersion,
-        skippedReason: candidateBlockingGate?.reason,
+        skippedReason: candidateBlockingGate?.reason ?? null,
         result: evaluatedResult as unknown as Prisma.InputJsonValue,
       });
       await this.finishStep(runId, "decision", output, decisionCompletedAt);
@@ -1278,7 +1258,7 @@ export class PipelineRunnerService {
         evaluationKey,
         learningStage: output.learningConfiguration?.stage,
         timeframe: String(interval),
-        skippedReason: finalSkippedReason,
+        skippedReason: finalSkippedReason ?? null,
         storedContext: { analyses, fusionOutput, candidateDecision: finalCandidateDecision, strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue, ...(output.executionContext ? { executionContext: output.executionContext as unknown as Prisma.InputJsonValue } : {}) },
         result: {
           ...output,
@@ -1286,7 +1266,7 @@ export class PipelineRunnerService {
           selectedStrategyKey: strategyKey,
           strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue,
           actionable: finalActionable,
-          skippedReason: finalSkippedReason,
+          skippedReason: finalSkippedReason ?? null,
           gates: gates as unknown as Prisma.InputJsonValue,
           ...(blockingGate
             ? { blockingGate: blockingGate as unknown as Prisma.InputJsonValue }
@@ -1383,7 +1363,7 @@ export class PipelineRunnerService {
         completedAt: executionLockBusy ? null : completedAt,
         durationMs: completedAt.getTime() - startedAt.getTime(),
         errorCode,
-        skippedReason: failureBlockingGate?.reason,
+        skippedReason: failureBlockingGate?.reason ?? null,
         safeErrorMessage:
           error instanceof Error
             ? error.message.slice(0, 300)
@@ -1392,7 +1372,7 @@ export class PipelineRunnerService {
           ? {
               result: {
                 ...evaluatedResult,
-                skippedReason: failureBlockingGate?.reason,
+                skippedReason: failureBlockingGate?.reason ?? null,
                 gates: failureGates as unknown as Prisma.InputJsonValue,
                 ...(failureBlockingGate
                   ? { blockingGate: failureBlockingGate as unknown as Prisma.InputJsonValue }
@@ -1520,15 +1500,6 @@ export class PipelineRunnerService {
 
     try {
       let riskAssessment: Awaited<ReturnType<LiveTradingService["assessPipelineDecision"]>> | undefined;
-      let liveExecution: Awaited<ReturnType<LiveTradingService["executePipeline"]>> | { outcome: string } | undefined;
-
-      const persistSelectedBlocker = async (stage: string, reason: string) => {
-        const run = await this.repository.findRun(selected.pipelineRunId, userId);
-        await this.repository.updateRun(selected.pipelineRunId, {
-          skippedReason: reason,
-          result: resultWithBlockingReason(run?.result, stage, reason),
-        });
-      };
 
       const assess = async () => {
         riskAssessment = await this.liveTrading.assessPipelineDecision({
@@ -1543,13 +1514,6 @@ export class PipelineRunnerService {
           tradePlanContext: selected.executionContext.tradePlanContext as TradePlanMarketContext,
         });
         if (riskAssessment.outcome === "NO_ELIGIBLE_EXCHANGE_CONNECTION") {
-          await persistSelectedBlocker("RISK", "NO_ELIGIBLE_EXCHANGE_CONNECTION").catch((error: unknown) => {
-            this.logger.warn({
-              event: "confluence_selected_run_update_failed",
-              pipelineRunId: selected.pipelineRunId,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          });
           throw new Error(
             "NO_ELIGIBLE_EXCHANGE_CONNECTION: Active verified exchange connection is required to run live risk assessment.",
           );
@@ -1558,30 +1522,18 @@ export class PipelineRunnerService {
 
       const execute = async () => {
         if (riskAssessment?.outcome === "RISK_APPROVED") {
-          liveExecution = await this.liveTrading.executePipeline(
+          return this.liveTrading.executePipeline(
             userId,
             selected.pipelineRunId,
           );
-          return liveExecution;
         }
-        liveExecution = { outcome: riskAssessment?.outcome ?? "SKIPPED" };
-        return liveExecution;
+        return { outcome: riskAssessment?.outcome ?? "SKIPPED" };
       };
 
       await executeWithSingleDriftReassessment({
         assess,
         execute,
       });
-
-      if (liveExecution?.outcome !== "ORDER_SUBMITTED") {
-        await persistSelectedBlocker("EXECUTION", liveExecution?.outcome ?? "ORDER_NOT_SUBMITTED").catch((error: unknown) => {
-          this.logger.warn({
-            event: "confluence_selected_run_update_failed",
-            pipelineRunId: selected.pipelineRunId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        });
-      }
 
       if (this.alerts) {
         this.alerts.confluenceEvaluation({
@@ -1639,11 +1591,6 @@ export class PipelineRunnerService {
       await this.repository
         .updateRun(signal.pipelineRunId, {
           skippedReason: "CONFLUENCE_NOT_SELECTED",
-          result: resultWithBlockingReason(
-            (await this.repository.findRun(signal.pipelineRunId, userId))?.result,
-            "EXECUTION",
-            "CONFLUENCE_NOT_SELECTED",
-          ),
         })
         .catch((err) => {
           this.logger.warn({
