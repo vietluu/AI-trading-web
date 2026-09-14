@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { FusionRunInputSchema } from "../src/schemas/agents.js";
 import {
+  ExecutionContextSchema,
   PipelineRunResultSchema,
   PipelineScheduleInputSchema,
+  StoredPipelineContextSchema,
 } from "../src/schemas/pipeline.js";
 
 const schedule = {
@@ -68,6 +70,33 @@ describe("PipelineRunResultSchema", () => {
         stage: "QUANT",
         reason: "QUANT_ASSUMPTION_MISMATCH",
       },
+    });
+  });
+});
+
+describe("ExecutionContextSchema", () => {
+  const context = {
+    regime: "RANGING",
+    setup: "RANGE_REVERSION",
+    action: "ENTER",
+    riskTier: "NORMAL",
+    sourceDataCutoff: "2026-09-12T22:59:59.999Z",
+    usesClosedPrimaryCandle: true,
+    triggerConfirmed: true,
+    priceLocation: {
+      rangePercentile: 0.8,
+      distanceFromSupportAtr: 1.5,
+      distanceFromResistanceAtr: 0.25,
+    },
+  };
+
+  it("accepts the canonical execution context persisted by pipeline runs", () => {
+    expect(ExecutionContextSchema.parse(context)).toEqual(context);
+  });
+
+  it("keeps historical stored contexts valid when execution context is absent", () => {
+    expect(StoredPipelineContextSchema.parse({ analyses: {} })).toEqual({
+      analyses: {},
     });
   });
 });

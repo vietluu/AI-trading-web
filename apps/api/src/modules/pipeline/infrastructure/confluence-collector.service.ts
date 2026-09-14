@@ -4,6 +4,10 @@ import type {
   ConfluenceBatchMeta,
   ConfluenceSignal,
 } from "../domain/confluence-engine.types";
+import {
+  type OpportunityCandidate,
+  rankOpportunities,
+} from "../domain/market-context";
 
 const BATCH_DEFAULT_TTL_SECONDS = 120;
 
@@ -21,8 +25,49 @@ function parseHgetAll(arr: unknown[]): Record<string, string> {
 @Injectable()
 export class ConfluenceCollectorService {
   private readonly logger = new Logger(ConfluenceCollectorService.name);
+  private readonly pendingMap = new Map<string, OpportunityCandidate>();
 
   constructor(private readonly redis: RedisService) {}
+
+  /**
+   * Adds or updates a candidate opportunity.
+   * Repeated observations of the same symbol, direction, setup, and structural trigger
+   * update one opportunity rather than creating duplicate independent entries.
+   */
+  add(candidate: OpportunityCandidate): Promise<void> {
+    const key = `${candidate.symbol}|${candidate.decision}|${candidate.setup ?? ''}|${candidate.triggerId ?? ''}`;
+    const existing = this.pendingMap.get(key);
+    if (!existing) {
+      this.pendingMap.set(key, candidate);
+      return Promise.resolve();
+    }
+    const existingTime = existing.sourceDataCutoff ? new Date(existing.sourceDataCutoff).getTime() : 0;
+    const newTime = candidate.sourceDataCutoff ? new Date(candidate.sourceDataCutoff).getTime() : Date.now();
+    if (newTime >= existingTime) {
+      this.pendingMap.set(key, {
+        ...existing,
+        ...candidate,
+        sourceDataCutoff: candidate.sourceDataCutoff ?? existing.sourceDataCutoff,
+      });
+    }
+    return Promise.resolve();
+  }
+
+  /**
+   * Returns deterministic portfolio-ranked pending opportunities.
+   */
+  pending(): Promise<OpportunityCandidate[]> {
+    const list = Array.from(this.pendingMap.values());
+    return Promise.resolve(rankOpportunities(list));
+  }
+
+  /**
+   * Clears the pending candidate opportunities.
+   */
+  clearPending(): Promise<void> {
+    this.pendingMap.clear();
+    return Promise.resolve();
+  }
 
   /**
    * Initializes a new confluence collection batch in Redis.

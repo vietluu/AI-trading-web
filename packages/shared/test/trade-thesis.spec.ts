@@ -2,9 +2,47 @@ import { describe, expect, it } from 'vitest';
 import {
   TradeThesisSchema,
   ThesisValidationResultSchema,
+  ExecutableThesisSchema,
 } from '../src/schemas/agents.js';
 
 describe('TradeThesis schemas', () => {
+  const executableThesis = {
+    action: 'ENTER' as const,
+    setup: 'RANGE_REVERSION' as const,
+    entryZone: { lower: 108_000, upper: 108_500 },
+    trigger: {
+      kind: 'BOUNDARY_RECLAIM',
+      confirmed: true,
+      observedAt: '2026-09-09T11:59:00.000Z',
+    },
+    invalidation: { price: 107_500, reason: 'Loss of range low' },
+    targets: [{ price: 110_000, fraction: 1, role: 'RANGE_MIDPOINT' }],
+    maximumChaseDistanceAtr: 0.8,
+    expectedNetR: 2,
+    evidenceFor: ['Validated lower range boundary'],
+    evidenceAgainst: [],
+    whyEntryIsNotLate: 'Price remains inside the approved entry zone.',
+  };
+
+  it('requires executable fields for ENTER and a next action for WAIT', () => {
+    expect(ExecutableThesisSchema.safeParse(executableThesis).success).toBe(true);
+    expect(ExecutableThesisSchema.safeParse({
+      ...executableThesis,
+      entryZone: undefined,
+      invalidation: undefined,
+      targets: [],
+      whyEntryIsNotLate: undefined,
+    }).success).toBe(false);
+    expect(ExecutableThesisSchema.safeParse({
+      ...executableThesis,
+      action: 'WAIT',
+      entryZone: undefined,
+      invalidation: undefined,
+      targets: [],
+      whyEntryIsNotLate: undefined,
+    }).success).toBe(false);
+  });
+
   const validThesis = {
     thesisVersion: 1,
     decisionSource: 'AI' as const,

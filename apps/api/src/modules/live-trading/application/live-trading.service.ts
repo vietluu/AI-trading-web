@@ -1,6 +1,48 @@
 import { assertDeclaredLimitOrder } from '../../../exchange/domain/declared-limit-order';
 import type { AnticipatoryExecutionInput } from '../../agents/domain/analysis/anticipatory-snapshot-builder';
 import { proactiveOrderTerms, proactiveAuthorizationAllowed, ProactiveAuthorizationSchema, StoredProbeSchema, thesisTriggersSatisfied } from '../../risk/domain/thesis-execution';
+import { normalizeTerminalOrderStatus } from "../domain/closed-trade-cycle";
+
+export function resolveExecutionOrderTerms(
+  plan: unknown,
+  now: Date = new Date(),
+): {
+  orderType: 'LIMIT' | 'MARKET';
+  limitPrice?: string;
+  timeInForce?: 'IOC';
+  expiresAt?: string;
+} {
+  if (
+    plan &&
+    typeof plan === 'object' &&
+    'orderType' in plan &&
+    (plan as { orderType?: string }).orderType === 'LIMIT'
+  ) {
+    const p = plan as {
+      orderType: 'LIMIT';
+      limitEntryPrice?: number | string;
+      limitTtlCandles?: number;
+      timeframeMs?: number;
+      expiresAt?: string;
+    };
+    const limitPrice =
+      p.limitEntryPrice !== undefined && p.limitEntryPrice !== null
+        ? String(p.limitEntryPrice)
+        : undefined;
+    const ttlCandles = Number(p.limitTtlCandles ?? 1);
+    const timeframeMs = Number(p.timeframeMs ?? 900_000);
+    const expiresAt =
+      p.expiresAt ??
+      new Date(now.getTime() + ttlCandles * timeframeMs).toISOString();
+    return {
+      orderType: 'LIMIT',
+      limitPrice,
+      timeInForce: 'IOC',
+      expiresAt,
+    };
+  }
+  return { orderType: 'MARKET' };
+}
 import {
   ConflictException,
   ForbiddenException,
@@ -1023,6 +1065,7 @@ export class LiveTradingService {
       executionLeverage: sizing.leverage,
       referencePrice: sizing.referencePrice,
     });
+    const approvedTerms = resolveExecutionOrderTerms(assessment.tradePlan, new Date());
     const result = await this.submit(
       userId,
       connection,
@@ -1043,6 +1086,7 @@ export class LiveTradingService {
           : {}),
         referencePrice: String(assessment.referencePrice),
         maxAdverseDriftBps: this.config.values.maxEntryDriftBps,
+        ...(approvedTerms.orderType === 'LIMIT' ? approvedTerms : {}),
       },
       opposite ? "REVERSE" : "OPEN",
       assessment,
@@ -1481,7 +1525,14 @@ export class LiveTradingService {
               : []),
           ],
         },
-        data: { status: order.status, averagePrice: order.averagePrice },
+        data: {
+          status: normalizeTerminalOrderStatus(
+            order.status,
+            Number(order.originalQuantity ?? 0),
+            Number(order.executedQuantity ?? 0),
+          ),
+          averagePrice: order.averagePrice,
+        },
       }),
     );
     await processInBatches(
@@ -1494,9 +1545,14 @@ export class LiveTradingService {
           order,
           protectiveOpeningOrders,
         );
+        const normalizedStatus = normalizeTerminalOrderStatus(
+          order.status,
+          Number(order.originalQuantity ?? 0),
+          Number(order.executedQuantity ?? 0),
+        );
         const updateData = {
           exchangeOrderId: order.exchangeOrderId,
-          status: order.status,
+          status: normalizedStatus,
           quantity: order.originalQuantity,
           averagePrice: order.averagePrice,
           updatedAt: order.updatedAt ?? syncedAt,
@@ -1547,7 +1603,7 @@ export class LiveTradingService {
             quantity: order.originalQuantity,
             leverage: 1,
             averagePrice: order.averagePrice,
-            status: order.status,
+            status: normalizedStatus,
             purpose: inferredPurpose ?? "IMPORTED",
             reduceOnly: order.reduceOnly ?? false,
             createdAt: order.createdAt ?? syncedAt,
@@ -1571,7 +1627,11 @@ export class LiveTradingService {
             ],
           },
           data: {
-            status: order.status,
+            status: normalizeTerminalOrderStatus(
+              order.status,
+              Number(order.originalQuantity ?? 0),
+              Number(order.executedQuantity ?? 0),
+            ),
             averagePrice: order.averagePrice,
             updatedAt: order.updatedAt ?? syncedAt,
           },
@@ -1958,6 +2018,19 @@ export class LiveTradingService {
     if (!command.reduceOnly && assessment?.executionAuthorization) {
       if (!proactiveAuthorizationAllowed(assessment.executionAuthorization, connection.id, connection.environment) || process.env.PROACTIVE_AI_MODE !== 'DEMO') throw new ForbiddenException('PROACTIVE_EXECUTION_NOT_AUTHORIZED');
       command = { ...command, ...proactiveOrderTerms(assessment.tradePlan, assessment.executionAuthorization) };
+    } else if (!command.reduceOnly && assessment?.tradePlan) {
+      const approvedTerms = resolveExecutionOrderTerms(assessment.tradePlan, new Date());
+      if (approvedTerms.orderType === 'LIMIT') {
+        if (command.orderType && command.orderType !== 'LIMIT') {
+          throw new ConflictException('EXECUTION_PLAN_DRIFT');
+        }
+        if (command.limitPrice && approvedTerms.limitPrice && command.limitPrice !== approvedTerms.limitPrice) {
+          throw new ConflictException('EXECUTION_PLAN_DRIFT');
+        }
+        command = { ...command, ...approvedTerms };
+      } else if (command.orderType && command.orderType !== 'MARKET') {
+        throw new ConflictException('EXECUTION_PLAN_DRIFT');
+      }
     }
     assertDeclaredLimitOrder(command, connection.provider);
     // Validate against the connection's actual environment before reserving a
@@ -2202,7 +2275,11 @@ export class LiveTradingService {
       clientOrderId,
       quantity: order.originalQuantity,
       averagePrice: order.averagePrice,
-      status: order.status,
+      status: normalizeTerminalOrderStatus(
+        order.status,
+        Number(order.originalQuantity ?? 0),
+        Number(order.executedQuantity ?? 0),
+      ),
       protectiveClientOrderId: order.protectiveClientOrderId,
     };
     if (clientOrderId === requestedClientOrderId) {

@@ -527,6 +527,79 @@ describe("QuantExecutionPolicyService", () => {
     expect(result.allowed).toBe(false);
     expect(result.severity).toBe('BLOCK');
   });
+
+  it("assigns riskTier and matched cohort based on exact evidence maturity and quality", async () => {
+    const exactNegativeFixture = (overrides: Record<string, unknown> = {}) => ({
+      ...input,
+      setup: "TREND_PULLBACK",
+      regime: "TRENDING",
+      direction: "LONG",
+      executionPolicy: "STANDARD",
+      configurationVersion: "v1",
+      decision: strongDecision() as never,
+      multiTimeframeConfirmation: 100,
+      primaryRsi: 68.06,
+      ...overrides,
+    });
+
+    const negativeValidation = valid({
+      probabilityOfProfit: 30,
+      probabilityOfRuin: 100,
+      outOfSampleSharpe: -1.36,
+      walkForwardStable: false,
+      metricsJson: {
+        sampleEvidence: { totalTrades: 80, outOfSampleTrades: 20 },
+        cohort: {
+          symbol: "ETH-USDT",
+          setup: "TREND_PULLBACK",
+          regime: "TRENDING",
+          direction: "LONG",
+          executionPolicy: "STANDARD",
+          configurationVersion: 1,
+        },
+        executionAssumptions: { leverage: 1, riskPerTrade: 0.02, riskRewardRatio: 1.5 },
+      },
+    });
+
+    const { policy: negPolicy } = service(negativeValidation);
+    const negResult = await negPolicy.evaluate(exactNegativeFixture());
+    expect(negResult.riskTier).toBe("BLOCKED");
+
+    const immatureValidation = valid({
+      metricsJson: {
+        sampleEvidence: { totalTrades: 12, outOfSampleTrades: 4 },
+        cohort: {
+          symbol: "ETH-USDT",
+          setup: "TREND_PULLBACK",
+          regime: "TRENDING",
+          direction: "LONG",
+          executionPolicy: "STANDARD",
+          configurationVersion: 1,
+        },
+        executionAssumptions: { leverage: 1, riskPerTrade: 0.02, riskRewardRatio: 1.5 },
+      },
+    });
+    const { policy: immPolicy } = service(immatureValidation);
+    const immResult = await immPolicy.evaluate(exactNegativeFixture({ mode: "DEMO" }));
+    expect(immResult.riskTier).toBe("PROBE");
+
+    const { policy: posPolicy } = service(valid({
+      metricsJson: {
+        sampleEvidence: { totalTrades: 50, outOfSampleTrades: 15 },
+        cohort: {
+          symbol: "ETH-USDT",
+          setup: "TREND_PULLBACK",
+          regime: "TRENDING",
+          direction: "LONG",
+          executionPolicy: "STANDARD",
+          configurationVersion: 1,
+        },
+        executionAssumptions: { leverage: 1, riskPerTrade: 0.02, riskRewardRatio: 1.5 },
+      },
+    }));
+    const posResult = await posPolicy.evaluate(exactNegativeFixture());
+    expect(posResult.riskTier).toBe("NORMAL");
+  });
 });
 
 

@@ -68,4 +68,62 @@ describe("pipeline telemetry semantics", () => {
       blockingStage: "QUANT",
     });
   });
+
+  it("aggregates adaptive rollout metrics accurately", () => {
+    const service = new PipelineAnalyticsService();
+    const metrics = service.buildAdaptiveRolloutMetrics([
+      {
+        ...record("execution", "EXECUTED"),
+        regime: "RANGING",
+        setup: "RANGE_REVERSION",
+        action: "ENTER",
+        riskTier: "NORMAL",
+        approvedOrderType: "LIMIT",
+        submittedOrderType: "LIMIT",
+        planDrift: false,
+        lifecycleNetR: 1.5,
+      },
+      {
+        ...record("execution", "EXECUTED"),
+        regime: "RANGING",
+        setup: "TRANSITION_PROBE",
+        action: "PROBE",
+        riskTier: "PROBE",
+        approvedOrderType: "MARKET",
+        submittedOrderType: "MARKET",
+        planDrift: false,
+        lifecycleNetR: -0.5,
+      },
+      {
+        ...record("execution", "WAIT"),
+        regime: "TRENDING",
+        setup: "BREAKOUT_RETEST",
+        action: "WAIT",
+        rejectReason: "ENTRY_CHASE_DISTANCE_EXCEEDED",
+        triggerDistance: 1.2,
+      },
+      {
+        ...record("execution", "EXECUTED"),
+        regime: "TRENDING",
+        setup: "TREND_PULLBACK",
+        action: "ENTER",
+        approvedOrderType: "LIMIT",
+        submittedOrderType: "MARKET",
+        planDrift: true,
+        lifecycleNetR: 0.8,
+      },
+    ]);
+
+    expect(metrics.totalRecords).toBe(4);
+    expect(metrics.rangeOpportunitiesCount).toBe(2);
+    expect(metrics.rangeParticipationsCount).toBe(2);
+    expect(metrics.rangeParticipationRate).toBe(1);
+    expect(metrics.probeCount).toBe(1);
+    expect(metrics.chaseCount).toBe(1);
+    expect(metrics.chaseRate).toBe(0.25);
+    expect(metrics.planDriftCount).toBe(1);
+    expect(metrics.postCostExpectancy).toBeCloseTo((1.5 - 0.5 + 0.8) / 3, 4);
+    expect(metrics.profitFactor).toBeCloseTo((1.5 + 0.8) / 0.5, 4);
+    expect(metrics.maxDrawdownR).toBeCloseTo(0.5, 4);
+  });
 });

@@ -1,4 +1,5 @@
 import { evaluateEvidenceGate } from '../domain/evidence-gate';
+import { validateSetupLocation } from '../domain/execution-context';
 import { Injectable } from '@nestjs/common';
 import type { DecisionOutput, FusionInput } from '@platform/shared';
 import {
@@ -131,6 +132,22 @@ export class DecisionJudgeService {
     if (decision.decision !== 'WAIT' && decision.profitFactorEstimate < policy.minProfitFactor) reasons.push('PROFIT_FACTOR_TOO_LOW');
     if (decision.riskScore >= policy.maxRiskScore) reasons.push('DECISION_RISK_TOO_HIGH');
     if (spreadBps !== undefined && spreadBps > policy.maxSpreadBps) reasons.push('SPREAD_TOO_WIDE');
+
+    // Execution context setup and location gate
+    if (decision.executionContext && decision.decision !== 'WAIT') {
+      const locationReasons = validateSetupLocation(
+        decision.executionContext,
+        decision.decision,
+      );
+      reasons.push(...locationReasons);
+
+      if (
+        decision.thesis?.setup &&
+        decision.thesis.setup !== decision.executionContext.setup
+      ) {
+        reasons.push('REGIME_SETUP_MISMATCH');
+      }
+    }
 
     // Macro Pre-News Blackout Gate & Direction Alignment Guard
     if (decision.decision !== 'WAIT' && analyses.macro) {

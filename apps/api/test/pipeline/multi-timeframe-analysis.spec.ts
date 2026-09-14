@@ -1,11 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import {
   analyzeMultiTimeframe,
+  evaluateMultiTimeframeConfirmation,
   evaluateMultiTimeframeDecision,
   selectPipelineTimeframes,
 } from '../../src/modules/pipeline/domain/multi-timeframe-analysis';
 
 describe('multi-timeframe pipeline analysis', () => {
+  it('does not confirm normal entry from an open primary candle', () => {
+    const result = evaluateMultiTimeframeConfirmation({
+      direction: 'SHORT',
+      primaryTimeframe: '15m',
+      frames: [
+        { timeframe: '15m', trend: 'BEARISH', weight: 1, isClosed: false },
+        { timeframe: '1h', trend: 'BEARISH', weight: 2, isClosed: true },
+      ],
+    });
+    expect(result.normalEntryConfirmed).toBe(false);
+    expect(result.probeEligible).toBe(true);
+  });
+
   it('uses 15m as setup timeframe while retaining all user preferences', () => {
     expect(selectPipelineTimeframes(undefined, ['5m', '15m', '1h', '4h'])).toEqual({
       primary: '15m',

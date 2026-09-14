@@ -226,18 +226,70 @@ In the event of anomalous behavior, market disruption, or exchange maintenance:
 
 ---
 
-## 7. Recovery Rollout Audit & Verification Procedure
+## 7. Adaptive Professional Entry Rollout Protocol & Telemetry
+
+The Adaptive Professional Entry enhancement upgrades entry precision across ranging boundaries, intrabar transition probes, breakout retests, and pullback reclaims.
+
+### 7.1. Rollout Stages & Promotion Progression
+
+1. **Stage 1: Replay & Offline Backtest**
+   - Replay historical candles (e.g. ZRO-USDT Sept 11–13 ranging dataset).
+   - Validate that range reversion enters only at extremes (percentile $\le 30\%$ for long, $\ge 70\%$ for short).
+   - Confirm late entries in the middle 40% of ranges are strictly rejected (`RANGE_SHORT_NOT_AT_UPPER_BOUNDARY` / `WAIT`).
+
+2. **Stage 2: Counterfactual Shadow Mode**
+   - Run live incoming quotes through shadow pipeline.
+   - Record canonical setup telemetry and verify zero plan drift.
+   - Accumulate $\ge 50$ completed counterfactual lifecycles.
+
+3. **Stage 3: DEMO Canary**
+   - Connect to Binance/OKX testnet.
+   - Execute staged probe sizing (capped at $20\%$ nominal size factor) on intrabar transitions.
+   - Enforce limit order preservation: approved LIMIT terms must execute as IOC limit orders, never mutated to market orders.
+
+4. **Stage 4: Approved Live Canary**
+   - Minimum 50 demo executions with positive expectancy.
+   - Two-step operator signoff on frozen configuration hash.
+
+### 7.2. Hard Stop Conditions (Immediate Demotion to Shadow)
+
+The pipeline automatically halts and demotes to `SHADOW` upon any of the following triggers:
+
+| Breach Condition | Threshold / Trigger | Action |
+|---|---|---|
+| **Plan Drift** | `planDriftCount > 0` (submitted order type or price deviates from approved plan) | Immediate Demotion & Circuit Breaker |
+| **Chase Rate Inflation** | `chaseRate > 0.25` (signals exceeding ATR chase distance) | Immediate Reversion to Closed-Candle Only |
+| **Negative Holdout Expectancy** | `postCostExpectancy <= 0.0 R` over rolling 30 trades | Freeze Live Order Routing |
+| **Excessive Drawdown** | `maxDrawdownR > 5.0 R` or portfolio drawdown $> 10\%$ | Emergency Halt & Risk Review |
+
+### 7.3. Telemetry Schema & Aggregated Metrics
+
+Telemetry is recorded per stage execution via `PipelineAnalyticsService`:
+- **Granular Fields:** `regime`, `setup`, `rangePercentile`, `triggerDistance`, `consumedMove`, `candleFinality`, `action`, `riskTier`, `judgeVerdict`, `quantReason`, `approvedOrderType`, `submittedOrderType`, `planDrift`, `lifecycleNetR`.
+- **Aggregated Rollout Metrics:**
+  - `rangeOpportunitiesCount`: Total opportunities identified in ranging regimes.
+  - `rangeParticipationRate`: Ratio of executed range entries to total valid range setups.
+  - `probeCount`: Number of reduced-risk ($20\%$ size factor) transition probes.
+  - `chaseCount` & `chaseRate`: Signals rejected for exceeding ATR distance from trigger.
+  - `planDriftCount`: Count of mismatches between approved and submitted order terms (must remain 0).
+  - `postCostExpectancy`: Average lifecycle Net R net of all trading costs, fees, and slippage.
+  - `profitFactor`: Ratio of gross gains to gross losses across closed lifecycle trades.
+  - `maxDrawdownR`: Maximum peak-to-trough equity decline measured in R.
+
+---
+
+## 8. Recovery Rollout Audit & Verification Procedure
 
 Before approving or inspecting any recovery setup transitions (`RECOVERY_RECLAIM`), operators must run the read-only audit procedure:
 
-### 7.1. Read-Only Audit Execution
+### 8.1. Read-Only Audit Execution
 
 Run the audit script across staging or production:
 ```bash
 pnpm --filter @platform/api audit:recovery-rollout
 ```
 
-### 7.2. Invariant Checks Performed
+### 8.2. Invariant Checks Performed
 1. **Disabled DEMO Probe Flag:** Verifies that `RECOVERY_DEMO_PROBE_ENABLED` is `false` (or unset), preventing premature automated probe placement.
 2. **Zero Production Recovery Orders:** Queries `live_orders` to ensure zero live recovery orders exist (`clientOrderId LIKE '%RECOVERY%'`).
 3. **Evaluation Key Uniqueness:** Verifies that all `shadow_execution_plans` have unique evaluation keys.

@@ -1428,6 +1428,7 @@ export class SelfLearningService {
         netR: { not: null },
         ...(params.setup ? { setup: params.setup } : {}),
         ...(params.timeframe ? { timeframe: params.timeframe } : {}),
+        ...(params.configurationHash ? { configurationHash: params.configurationHash } : {}),
         ...(options?.asOf ? { closedAt: { lte: options.asOf } } : {}),
       },
       orderBy: { closedAt: 'desc' },

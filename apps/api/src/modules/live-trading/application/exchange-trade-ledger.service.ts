@@ -211,7 +211,7 @@ export class ExchangeTradeLedgerService {
         connectionId: connection.id,
         symbol: fills[0]!.symbol,
         purpose: { in: ["OPEN", "REVERSE"] },
-        status: "FILLED",
+        status: { in: ["FILLED", "PARTIALLY_FILLED_CANCELED"] },
         createdAt: { lte: fills[0]!.executedAt },
       },
       orderBy: { createdAt: "desc" },

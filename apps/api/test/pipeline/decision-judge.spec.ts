@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DecisionJudgeService } from '../../src/modules/pipeline/application/decision-judge.service';
+import { buildExecutionContext } from '../../src/modules/pipeline/domain/execution-context';
 
 describe('DecisionJudgeService', () => {
   const judge = new DecisionJudgeService();
@@ -462,6 +463,233 @@ describe('macro news blackout and direction alignment gates', () => {
     expect(result.approved).toBe(false);
     expect(result.severity).toBe('BLOCK');
     expect(result.reasons).toContain('CALIBRATION_UNRELIABLE');
+  });
+});
+
+describe('execution context setup enforcement', () => {
+  const judge = new DecisionJudgeService();
+  const now = Date.parse('2026-09-13T06:00:00.000Z');
+  const analysesFixture = () => {
+    const good = { dataQuality: 'GOOD', generatedAt: new Date(now).toISOString() };
+    return {
+      market: good,
+      technical: good,
+      news: good,
+      sentiment: good,
+      macro: good,
+      onchain: good,
+    } as never;
+  };
+
+  const decisionFixture = (overrides: Record<string, unknown> = {}) => ({
+    decision: 'SHORT',
+    dataQuality: 'GOOD',
+    conflictLevel: 'LOW',
+    confidence: 85,
+    expectedValue: 0.8,
+    profitFactorEstimate: 1.8,
+    riskScore: 30,
+    generatedAt: new Date(now).toISOString(),
+    confidenceCalibration: {
+      status: 'CALIBRATED',
+      rawScore: 85,
+      empiricalProbability: 0.65,
+      sampleSize: 120,
+      bucketSampleSize: 40,
+      brierScore: 0.22,
+      scope: 'EXACT',
+      fallbackUsed: false,
+      hardGateEligible: true,
+    },
+    ...overrides,
+  });
+
+  it('rejects bearish indicators when a range short is near support', () => {
+    const zroExecutionContext = buildExecutionContext({
+      regime: 'RANGING',
+      setup: 'RANGE_REVERSION',
+      action: 'ENTER',
+      price: 1.0171,
+      support: 1.0151,
+      resistance: 1.0245,
+      atr: 0.00467606,
+      sourceDataCutoff: new Date(now).toISOString(),
+      primaryCandleClosed: true,
+      triggerConfirmed: true,
+    });
+
+    const review = judge.evaluate(
+      decisionFixture({
+        decision: 'SHORT',
+        executionContext: zroExecutionContext,
+      }) as never,
+      analysesFixture(),
+      { symbol: 'ZRO-USDT', requireCalibratedConfidence: true },
+      now,
+    );
+
+    expect(review.approved).toBe(false);
+    expect(review.reasons).toContain('RANGE_SHORT_NOT_AT_UPPER_BOUNDARY');
+  });
+
+  it('rejects when regime and setup are mismatched', () => {
+    const mismatchedContext = buildExecutionContext({
+      regime: 'RANGING',
+      setup: 'TREND_PULLBACK',
+      action: 'ENTER',
+      price: 100,
+      atr: 1,
+      sourceDataCutoff: new Date(now).toISOString(),
+      primaryCandleClosed: true,
+      triggerConfirmed: true,
+    });
+
+    const review = judge.evaluate(
+      decisionFixture({
+        decision: 'LONG',
+        executionContext: mismatchedContext,
+      }) as never,
+      analysesFixture(),
+      { symbol: 'BTC-USDT' },
+      now,
+    );
+
+    expect(review.approved).toBe(false);
+    expect(review.reasons).toContain('REGIME_SETUP_MISMATCH');
+  });
+
+  it('rejects when primary candle is not closed for ENTER action', () => {
+    const openCandleContext = buildExecutionContext({
+      regime: 'TRENDING',
+      setup: 'TREND_PULLBACK',
+      action: 'ENTER',
+      price: 100,
+      atr: 1,
+      sourceDataCutoff: new Date(now).toISOString(),
+      primaryCandleClosed: false,
+      triggerConfirmed: true,
+    });
+
+    const review = judge.evaluate(
+      decisionFixture({
+        decision: 'LONG',
+        executionContext: openCandleContext,
+      }) as never,
+      analysesFixture(),
+      { symbol: 'BTC-USDT' },
+      now,
+    );
+
+    expect(review.approved).toBe(false);
+    expect(review.reasons).toContain('PRIMARY_CANDLE_NOT_CLOSED');
+  });
+
+  it('rejects when entry trigger is unconfirmed', () => {
+    const unconfirmedContext = buildExecutionContext({
+      regime: 'BREAKOUT',
+      setup: 'BREAKOUT_RETEST',
+      action: 'ENTER',
+      price: 100,
+      atr: 1,
+      sourceDataCutoff: new Date(now).toISOString(),
+      primaryCandleClosed: true,
+      triggerConfirmed: false,
+    });
+
+    const review = judge.evaluate(
+      decisionFixture({
+        decision: 'LONG',
+        executionContext: unconfirmedContext,
+      }) as never,
+      analysesFixture(),
+      { symbol: 'BTC-USDT' },
+      now,
+    );
+
+    expect(review.approved).toBe(false);
+    expect(review.reasons).toContain('ENTRY_TRIGGER_NOT_CONFIRMED');
+  });
+
+  it('rejects when entry chase distance is exceeded', () => {
+    const chasedContext = buildExecutionContext({
+      regime: 'BREAKOUT',
+      setup: 'BREAKOUT_RETEST',
+      action: 'ENTER',
+      price: 102,
+      triggerPrice: 100,
+      atr: 1,
+      sourceDataCutoff: new Date(now).toISOString(),
+      primaryCandleClosed: true,
+      triggerConfirmed: true,
+    });
+
+    const review = judge.evaluate(
+      decisionFixture({
+        decision: 'LONG',
+        executionContext: chasedContext,
+      }) as never,
+      analysesFixture(),
+      { symbol: 'BTC-USDT' },
+      now,
+    );
+
+    expect(review.approved).toBe(false);
+    expect(review.reasons).toContain('ENTRY_CHASE_DISTANCE_EXCEEDED');
+  });
+
+  it('rejects when expected move is already consumed', () => {
+    const consumedContext = buildExecutionContext({
+      regime: 'TRENDING',
+      setup: 'TREND_PULLBACK',
+      action: 'ENTER',
+      price: 100,
+      atr: 1,
+      moveConsumedPct: 0.6,
+      sourceDataCutoff: new Date(now).toISOString(),
+      primaryCandleClosed: true,
+      triggerConfirmed: true,
+    });
+
+    const review = judge.evaluate(
+      decisionFixture({
+        decision: 'LONG',
+        executionContext: consumedContext,
+      }) as never,
+      analysesFixture(),
+      { symbol: 'BTC-USDT' },
+      now,
+    );
+
+    expect(review.approved).toBe(false);
+    expect(review.reasons).toContain('EXPECTED_MOVE_ALREADY_CONSUMED');
+  });
+
+  it('approves a valid range short at the upper boundary', () => {
+    const validUpperBoundaryContext = buildExecutionContext({
+      regime: 'RANGING',
+      setup: 'RANGE_REVERSION',
+      action: 'ENTER',
+      price: 1.0235,
+      support: 1.0151,
+      resistance: 1.0245,
+      atr: 0.00467606,
+      sourceDataCutoff: new Date(now).toISOString(),
+      primaryCandleClosed: true,
+      triggerConfirmed: true,
+    });
+
+    const review = judge.evaluate(
+      decisionFixture({
+        decision: 'SHORT',
+        executionContext: validUpperBoundaryContext,
+      }) as never,
+      analysesFixture(),
+      { symbol: 'ZRO-USDT', requireCalibratedConfidence: true },
+      now,
+    );
+
+    expect(review.approved).toBe(true);
+    expect(review.verdict).toBe('APPROVE');
   });
 });
 

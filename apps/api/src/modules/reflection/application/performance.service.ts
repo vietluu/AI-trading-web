@@ -294,6 +294,44 @@ export class PerformanceService {
       })),
     });
   }
+
+  executablePerformance(input: {
+    lifecycle?: {
+      status?: string;
+      exitReason?: string;
+      netR?: number | null;
+      realizedNetPnl?: number | null;
+    } | null;
+    horizon?: {
+      outcome?: "CORRECT" | "WRONG" | "NEUTRAL";
+      returnPct?: number;
+    } | null;
+  }): Promise<{
+    source: 'TRADE_LIFECYCLE' | 'DIAGNOSTIC_HORIZON';
+    outcome: 'CORRECT' | 'WRONG' | 'SCRATCH' | 'NEUTRAL';
+    netR?: number;
+    realizedNetPnl?: number;
+    exitReason?: string;
+  }> {
+    if (input.lifecycle && (input.lifecycle.status === 'FINALIZED' || input.lifecycle.exitReason || input.lifecycle.netR !== undefined)) {
+      const netR = input.lifecycle.netR != null ? Number(input.lifecycle.netR) : (input.lifecycle.exitReason === 'STOP_LOSS' ? -1 : 0);
+      const isLoss = netR < 0 || input.lifecycle.exitReason === 'STOP_LOSS';
+      const outcome = isLoss ? 'WRONG' : netR > 0 ? 'CORRECT' : 'SCRATCH';
+      return Promise.resolve({
+        source: 'TRADE_LIFECYCLE',
+        outcome,
+        netR,
+        realizedNetPnl: input.lifecycle.realizedNetPnl != null ? Number(input.lifecycle.realizedNetPnl) : undefined,
+        exitReason: input.lifecycle.exitReason,
+      });
+    }
+
+    return Promise.resolve({
+      source: 'DIAGNOSTIC_HORIZON',
+      outcome: input.horizon?.outcome ?? 'NEUTRAL',
+    });
+  }
+
   async calibration(userId: string, symbol?: string) {
     const rows = await this.repository.records(userId, "MID", 500, symbol, true);
     return buildReliabilityCurve(

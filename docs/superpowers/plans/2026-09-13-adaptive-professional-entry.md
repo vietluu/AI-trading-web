@@ -45,7 +45,7 @@
 - Consumes: price, support, resistance, ATR, trigger, source cutoff, candle finality, regime, setup, and action.
 - Produces: `ExecutionContext`, `buildExecutionContext(input)`, and `validateSetupLocation(context, direction)`.
 
-- [ ] **Step 1: Write failing ZRO, valid-boundary, and intrabar tests**
+- [x] **Step 1: Write failing ZRO, valid-boundary, and intrabar tests**
 
 ```ts
 it('rejects the ZRO normal short near range support', () => {
@@ -84,13 +84,13 @@ it('makes an intrabar transition probe-only', () => {
 });
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/execution-context.spec.ts`
 
 Expected: FAIL because the module does not exist.
 
-- [ ] **Step 3: Implement the contract and validators**
+- [x] **Step 3: Implement the contract and validators**
 
 ```ts
 export type CanonicalRegime = 'RANGING' | 'PRE_BREAKOUT' | 'BREAKOUT' | 'TRENDING' | 'UNCERTAIN';
@@ -119,17 +119,17 @@ export interface ExecutionContext {
 
 Clamp range percentile to `[0,1]`. Reject range LONG above `0.30`, range SHORT below `0.70`, normal `ENTER` on an open primary candle, unconfirmed triggers, chase distance beyond the configured ATR limit, and consumed move above 50%.
 
-- [ ] **Step 4: Add the equivalent Zod schema**
+- [x] **Step 4: Add the equivalent Zod schema**
 
 Add `ExecutionContextSchema` and its inferred type to `packages/shared/src/schemas/pipeline.ts`; make `storedContext.executionContext` optional for historical compatibility.
 
-- [ ] **Step 5: Verify GREEN**
+- [x] **Step 5: Verify GREEN**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/execution-context.spec.ts && pnpm --filter @platform/shared test -- test/pipeline.spec.ts`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/api/src/modules/pipeline/domain/execution-context.ts apps/api/test/pipeline/execution-context.spec.ts packages/shared/src/schemas/pipeline.ts packages/shared/test/pipeline.spec.ts
@@ -152,7 +152,7 @@ git commit -m "feat(pipeline): add canonical execution context"
 - Consumes: Task 1 `ExecutionContext`, analyst evidence, and existing `DecisionOutput` inputs.
 - Produces: one structured executable thesis with action, entry zone, trigger, invalidation, targets, chase limit, evidence for/against, and a late-entry assessment.
 
-- [ ] **Step 1: Write failing playbook tests**
+- [x] **Step 1: Write failing playbook tests**
 
 ```ts
 it('selects range reversal at a validated lower boundary', async () => {
@@ -179,13 +179,13 @@ it('returns an actionable wait condition instead of chasing', async () => {
 });
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @platform/api test -- test/agents/decision.service.spec.ts test/agents/decision-data-quality.spec.ts && pnpm --filter @platform/shared test -- test/trade-thesis.spec.ts`
 
 Expected: FAIL because DecisionOutput does not yet require an executable thesis or canonical playbook action.
 
-- [ ] **Step 3: Extend the structured thesis schema**
+- [x] **Step 3: Extend the structured thesis schema**
 
 Require this shape for actionable decisions and rules fallback:
 
@@ -208,11 +208,11 @@ interface ExecutableThesis {
 
 Validator rules require entry, invalidation, target, chase, and not-late justification for `PROBE/ENTER`; `WAIT` requires `nextActionCondition`. Narrative text cannot compensate for missing fields.
 
-- [ ] **Step 4: Select one playbook from regime and location**
+- [x] **Step 4: Select one playbook from regime and location**
 
 In Decision, evaluate `RANGE_REVERSION`, `TRANSITION_PROBE`, `BREAKOUT_RETEST`, and `TREND_PULLBACK` candidates. Ranging selects matching boundaries; pre-breakout requires compression plus structural pressure and at least one confirming sweep/volume/derivatives observation; breakout requires trigger and acceptable chase; trending requires a pullback zone. Return `WAIT` when no candidate has both valid location and trigger.
 
-- [ ] **Step 5: Verify GREEN and commit**
+- [x] **Step 5: Verify GREEN and commit**
 
 Run: `pnpm --filter @platform/api test -- test/agents/decision.service.spec.ts test/agents/decision-data-quality.spec.ts && pnpm --filter @platform/shared test -- test/trade-thesis.spec.ts`
 
@@ -235,7 +235,7 @@ git commit -m "feat(agents): produce executable regime playbooks"
 - Consumes: Task 1 context builder and current candles/indicators.
 - Produces: identical `executionContext` in decision result, stored context, confluence payload, and Risk request.
 
-- [ ] **Step 1: Write failing finality test**
+- [x] **Step 1: Write failing finality test**
 
 ```ts
 it('does not confirm normal entry from an open primary candle', () => {
@@ -253,23 +253,23 @@ it('does not confirm normal entry from an open primary candle', () => {
 
 Add a pipeline test asserting deep equality between persisted context and `assessPipelineDecision({ executionContext })`.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/multi-timeframe-analysis.spec.ts test/pipeline/pipeline.service.spec.ts`
 
 Expected: FAIL because finality and context propagation are absent.
 
-- [ ] **Step 3: Implement finality and single-build propagation**
+- [x] **Step 3: Implement finality and single-build propagation**
 
 Extend frame input with `isClosed`. Return `normalEntryConfirmed` using closed frames only and `probeEligible` using explicitly labeled live observations. Build the context once after regime/indicator selection and pass the same object through `candidateDecision`, `storedContext`, confluence, and `assessPipelineDecision`.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/multi-timeframe-analysis.spec.ts test/pipeline/pipeline.service.spec.ts test/pipeline/pipeline-confluence.integration.spec.ts`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/modules/pipeline/domain/multi-timeframe-analysis.ts apps/api/src/modules/pipeline/application/pipeline-runner.service.ts apps/api/test/pipeline/multi-timeframe-analysis.spec.ts apps/api/test/pipeline/pipeline.service.spec.ts
@@ -293,7 +293,7 @@ git commit -m "feat(pipeline): propagate closed-candle execution context"
 - Consumes: `ExecutionContext` and `validateSetupLocation`.
 - Produces: deterministic reject codes and a plan whose regime/setup equal the approved context.
 
-- [ ] **Step 1: Write failing Judge and plan immutability tests**
+- [x] **Step 1: Write failing Judge and plan immutability tests**
 
 ```ts
 it('rejects bearish indicators when a range short is near support', () => {
@@ -311,23 +311,23 @@ it('does not convert range reversal into trend pullback', () => {
 });
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/decision-judge.spec.ts test/risk/risk-engine.spec.ts test/risk/trade-plan-engine.spec.ts`
 
 Expected: FAIL because Judge lacks location validation and Risk re-infers setup.
 
-- [ ] **Step 3: Enforce context**
+- [x] **Step 3: Enforce context**
 
 Judge blocks `REGIME_SETUP_MISMATCH`, boundary violations, `PRIMARY_CANDLE_NOT_CLOSED`, `ENTRY_TRIGGER_NOT_CONFIRMED`, `ENTRY_CHASE_DISTANCE_EXCEEDED`, and `EXPECTED_MOVE_ALREADY_CONSUMED`. Add `executionContext` to `RiskInput`; select the trade-plan branch from `context.setup` and reject instead of reclassifying.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/decision-judge.spec.ts test/risk/risk-engine.spec.ts test/risk/trade-plan-engine.spec.ts`
 
 Expected: PASS, including a positive upper-boundary short.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/modules/pipeline/application/decision-judge.service.ts apps/api/src/modules/risk/domain/risk-engine.types.ts apps/api/src/modules/risk/domain/risk-engine.ts apps/api/src/modules/risk/domain/trade-plan-engine.ts apps/api/test/pipeline/decision-judge.spec.ts apps/api/test/risk/risk-engine.spec.ts apps/api/test/risk/trade-plan-engine.spec.ts
@@ -350,7 +350,7 @@ git commit -m "fix(trading): enforce canonical setup and entry location"
 - Consumes: approved plan order type/price/TTL and exchange fills.
 - Produces: identical submitted terms and `PARTIALLY_FILLED_CANCELED` audit state.
 
-- [ ] **Step 1: Write failing execution-integrity test**
+- [x] **Step 1: Write failing execution-integrity test**
 
 ```ts
 it('submits an approved pullback as LIMIT without market fallback', async () => {
@@ -366,13 +366,13 @@ it('submits an approved pullback as LIMIT without market fallback', async () => 
 
 Add a test where requested quantity 2,776, filled quantity 746, and terminal canceled status produces `PARTIALLY_FILLED_CANCELED` while retaining the 746-unit lifecycle.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @platform/api test -- test/live-trading/proactive-execution-evidence.spec.ts test/exchange/proactive-limit-order.spec.ts test/live-trading/exchange-trade-ledger.spec.ts`
 
 Expected: LIMIT propagation or partial-fill assertion FAILS.
 
-- [ ] **Step 3: Implement immutable terms and reconciliation**
+- [x] **Step 3: Implement immutable terms and reconciliation**
 
 ```ts
 const orderTerms = plan.orderType === 'LIMIT'
@@ -387,13 +387,13 @@ const orderTerms = plan.orderType === 'LIMIT'
 
 Persist approved/submitted terms, reject mismatches with `EXECUTION_PLAN_DRIFT`, and normalize canceled orders with positive incomplete fills to `PARTIALLY_FILLED_CANCELED`.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `pnpm --filter @platform/api test -- test/live-trading/proactive-execution-evidence.spec.ts test/exchange/proactive-limit-order.spec.ts test/live-trading/exchange-trade-ledger.spec.ts test/live-trading/closed-trade-cycle.spec.ts`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/modules/live-trading/application/live-trading.service.ts apps/api/src/modules/live-trading/application/exchange-trade-ledger.service.ts apps/api/src/modules/live-trading/domain/closed-trade-cycle.ts apps/api/test/live-trading/proactive-execution-evidence.spec.ts apps/api/test/exchange/proactive-limit-order.spec.ts apps/api/test/live-trading/exchange-trade-ledger.spec.ts apps/api/test/live-trading/closed-trade-cycle.spec.ts
@@ -414,7 +414,7 @@ git commit -m "fix(execution): preserve limit plans and partial fills"
 - Consumes: prior trade direction/setup/regime/configuration and new context.
 - Produces: full cooldown for repeated losing theses and capped reversal probes for confirmed transitions.
 
-- [ ] **Step 1: Write failing cooldown tests**
+- [x] **Step 1: Write failing cooldown tests**
 
 ```ts
 expect(evaluateRisk(sameDirectionSameSetupAfterLoss).reason)
@@ -425,17 +425,17 @@ expect(evaluateRisk(oppositeWithoutNewTrigger).reason)
   .toBe('LOSS_REVERSAL_TRIGGER_REQUIRED');
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @platform/api test -- test/risk/risk-engine.spec.ts test/risk/staged-entry-risk.spec.ts`
 
 Expected: reversal cases FAIL because cooldown ignores thesis identity.
 
-- [ ] **Step 3: Implement contextual cooldown**
+- [x] **Step 3: Implement contextual cooldown**
 
 Extend `RecentClosedTradeRecord` with symbol, direction, setup, regime, configuration hash, PnL, and close time. Keep existing cooldown for the same thesis. Permit the opposite direction only for a new `TRANSITION_PROBE` with a different cutoff and confirmed trigger, capped at `0.2` normal size; otherwise return `LOSS_REVERSAL_TRIGGER_REQUIRED`.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run: `pnpm --filter @platform/api test -- test/risk/risk-engine.spec.ts test/risk/staged-entry-risk.spec.ts`
 
@@ -458,7 +458,7 @@ git commit -m "feat(risk): make loss cooldown thesis aware"
 - Consumes: symbol, setup, regime, direction, execution policy/version, and validation.
 - Produces: `riskTier: 'NORMAL' | 'PROBE' | 'BLOCKED'`, matched cohort, size, and reason.
 
-- [ ] **Step 1: Write failing tier tests**
+- [x] **Step 1: Write failing tier tests**
 
 ```ts
 expect((await policy.evaluate(exactNegativeFixture({
@@ -470,17 +470,17 @@ expect((await policy.evaluate(positiveExactFixture())).riskTier)
   .toBe('NORMAL');
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/quant-execution-policy.spec.ts test/pipeline/evidence-gate.spec.ts`
 
 Expected: FAIL because the result lacks matched setup and risk tier.
 
-- [ ] **Step 3: Implement cohort matching and tier composition**
+- [x] **Step 3: Implement cohort matching and tier composition**
 
 Use `{symbol, setup, regime, direction, executionPolicy, configurationVersion}` as the key. Mature exact negative evidence is `BLOCKED`; immature, stale, or mismatched evidence in shadow/DEMO is `PROBE` capped at 0.2; mature positive exact evidence is `NORMAL`. Global fallback never overrides exact negative evidence. Map tiers to existing `BLOCK`, `REDUCE_SIZE`, and `APPROVE` composition.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/quant-execution-policy.spec.ts test/pipeline/evidence-gate.spec.ts test/pipeline/pipeline.service.spec.ts`
 
@@ -505,7 +505,7 @@ git commit -m "feat(quant): size execution by matched cohort"
 - Consumes: finalized `TradeLifecycleOutcome` joined to thesis cohort.
 - Produces: lifecycle calibration for executable setups; horizon metrics remain diagnostic.
 
-- [ ] **Step 1: Write failing SL-before-horizon test**
+- [x] **Step 1: Write failing SL-before-horizon test**
 
 ```ts
 it('keeps a stopped trade wrong when the one-hour mark later agrees', async () => {
@@ -519,17 +519,17 @@ it('keeps a stopped trade wrong when the one-hour mark later agrees', async () =
 });
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @platform/api test -- test/reflection/performance-provenance.spec.ts test/reflection/self-learning.service.spec.ts test/reflection/thesis-cohort.spec.ts`
 
 Expected: FAIL because horizon outcomes can feed executable calibration.
 
-- [ ] **Step 3: Separate diagnostic and executable learning**
+- [x] **Step 3: Separate diagnostic and executable learning**
 
 Select finalized lifecycle rows for promotion/calibration and return `{source:'TRADE_LIFECYCLE', outcome, netR, realizedNetPnl, exitReason}`. Key cohorts by configuration hash, symbol, setup, regime, direction, and execution policy. Retain horizon results in reports only.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run: `pnpm --filter @platform/api test -- test/reflection/performance-provenance.spec.ts test/reflection/self-learning.service.spec.ts test/reflection/thesis-cohort.spec.ts test/reflection/live-eligibility.spec.ts`
 
@@ -553,7 +553,7 @@ git commit -m "fix(learning): calibrate execution from lifecycle outcomes"
 - Consumes: closed BTC/ETH anchor candles and canonical candidate contexts.
 - Produces: shared `MarketContext`, one updated opportunity per structural trigger, and deterministic portfolio ranking.
 
-- [ ] **Step 1: Write failing anchor and deduplication tests**
+- [x] **Step 1: Write failing anchor and deduplication tests**
 
 ```ts
 it('adds BTC and ETH context to an altcoin candidate', () => {
@@ -571,17 +571,17 @@ it('updates one opportunity for repeated observations of the same trigger', asyn
 
 Define the local test builders in this test file: `anchorCandles` contains closed 15-minute BTC and ETH rows; `candidate` returns a complete existing `ConfluenceSignal` with overrides for symbol, setup, and trigger ID.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/confluence-collector.service.spec.ts test/pipeline/pipeline-confluence.integration.spec.ts`
 
 Expected: FAIL because anchor context and structural-trigger deduplication do not exist.
 
-- [ ] **Step 3: Implement common context and ranking**
+- [x] **Step 3: Implement common context and ranking**
 
 Build anchor trend/volatility/correlation only from closed candles. Key pending opportunities by `{symbol, direction, setup, triggerId}` and update their newest cutoff. Rank unique candidates by post-cost expected R, location score, trigger freshness, evidence quality, and portfolio correlation penalty; preserve deterministic tie-breaking by cutoff then symbol.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/confluence-collector.service.spec.ts test/pipeline/pipeline-confluence.integration.spec.ts`
 
@@ -604,7 +604,7 @@ git commit -m "feat(pipeline): rank unique opportunities with market anchors"
 - Consumes: Tasks 1–9 outputs.
 - Produces: replay/shadow evidence for range participation, probes, chase, plan drift, expectancy, and drawdown.
 
-- [ ] **Step 1: Write failing acceptance matrix**
+- [x] **Step 1: Write failing acceptance matrix**
 
 ```ts
 const cases = {
@@ -617,23 +617,23 @@ const cases = {
 
 Assert submitted and approved plans are identical for actionable cases.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/adaptive-professional-entry.integration.spec.ts`
 
 Expected: FAIL until all boundaries are connected.
 
-- [ ] **Step 3: Add telemetry and operations guidance**
+- [x] **Step 3: Add telemetry and operations guidance**
 
 Record regime, setup, range percentile, trigger distance, consumed move, candle finality, action, risk tier, Judge verdict, Quant reason, approved/submitted order types, plan drift, and lifecycle net R. Aggregate range participation, probe count, chase rate, drift count, post-cost expectancy, profit factor, and drawdown. Document replay → shadow → DEMO rollout and stop on any plan drift, increased chase, negative holdout expectancy, or excess drawdown.
 
-- [ ] **Step 4: Run focused integration tests**
+- [x] **Step 4: Run focused integration tests**
 
 Run: `pnpm --filter @platform/api test -- test/pipeline/adaptive-professional-entry.integration.spec.ts test/pipeline/pipeline-analytics.spec.ts test/pipeline/proactive-thesis.integration.spec.ts test/pipeline/proactive-joined-execution.spec.ts`
 
 Expected: PASS.
 
-- [ ] **Step 5: Run full verification**
+- [x] **Step 5: Run full verification**
 
 ```bash
 pnpm --filter @platform/shared test
@@ -645,7 +645,7 @@ pnpm --filter @platform/api build
 
 Expected: every command exits 0 with no failures.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/api/test/pipeline/adaptive-professional-entry.integration.spec.ts apps/api/src/modules/pipeline/application/pipeline-analytics.service.ts apps/api/test/pipeline/pipeline-analytics.spec.ts docs/operations/proactive-ai-trading.md
@@ -654,13 +654,13 @@ git commit -m "test(trading): verify adaptive professional entries"
 
 ## Rollout Review Checklist
 
-- [ ] ZRO near-support normal short is rejected.
-- [ ] Valid range-boundary trades remain actionable.
-- [ ] Intrabar transition is capped at 20% normal size.
-- [ ] Same-thesis cooldown remains; confirmed reversal may probe.
-- [ ] Mature exact negative Quant evidence blocks normal execution.
-- [ ] Approved LIMIT parameters equal submitted parameters.
-- [ ] Partial fills remain visible in order, position, and trade history.
-- [ ] Executable calibration uses lifecycle outcomes after fees and funding.
-- [ ] Shadow reports frequency, chase rate, post-cost expectancy, profit factor, and drawdown.
-- [ ] DEMO promotion is rejected when execution-plan drift is nonzero.
+- [x] ZRO near-support normal short is rejected.
+- [x] Valid range-boundary trades remain actionable.
+- [x] Intrabar transition is capped at 20% normal size.
+- [x] Same-thesis cooldown remains; confirmed reversal may probe.
+- [x] Mature exact negative Quant evidence blocks normal execution.
+- [x] Approved LIMIT parameters equal submitted parameters.
+- [x] Partial fills remain visible in order, position, and trade history.
+- [x] Executable calibration uses lifecycle outcomes after fees and funding.
+- [x] Shadow reports frequency, chase rate, post-cost expectancy, profit factor, and drawdown.
+- [x] DEMO promotion is rejected when execution-plan drift is nonzero.

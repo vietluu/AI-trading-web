@@ -118,6 +118,20 @@ export function classifyExecutionEvidence(
     };
   }
 
+  const normalizePolicy = (p?: string) => {
+    if (!p) return 'DEFAULT';
+    const upper = String(p).toUpperCase();
+    return upper === 'STANDARD' ? 'DEFAULT' : upper;
+  };
+
+  const normalizeVersion = (v?: string | number) => {
+    if (v === undefined || v === null) return 1;
+    if (typeof v === 'number') return v;
+    const stripped = String(v).replace(/^v/i, '');
+    const num = Number(stripped);
+    return Number.isFinite(num) ? num : v;
+  };
+
   // Exact match check
   const directionMatches =
     valDirection.toUpperCase() === 'BOTH' ||
@@ -130,14 +144,17 @@ export function classifyExecutionEvidence(
     normalizeRegime(valRegime, request.direction) ===
       normalizeRegime(request.regime, request.direction);
 
+  const policyMatches = normalizePolicy(valPolicy) === normalizePolicy(reqPolicy);
+  const versionMatches = normalizeVersion(valVersion) === normalizeVersion(reqConfigVersion);
+
   const isExactCohort =
     valSymbol === request.symbol &&
     valStrategy === reqStrategy &&
     valInterval === request.timeframe &&
     directionMatches &&
     regimeMatches &&
-    valPolicy === reqPolicy &&
-    valVersion === reqConfigVersion;
+    policyMatches &&
+    versionMatches;
 
   if (!isExactCohort) {
     return {

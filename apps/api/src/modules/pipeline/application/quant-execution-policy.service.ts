@@ -8,18 +8,29 @@ import { RiskConfigService } from "../../risk/application/risk-config.service";
 import {
   classifyExecutionEvidence,
   CohortEvidenceStatus,
-  ExecutionCohortKey,
 } from '../domain/execution-cohort';
 
 export interface QuantExecutionPolicyResult {
   severity: 'BLOCK' | 'REDUCE_SIZE' | 'APPROVE';
+  riskTier?: 'NORMAL' | 'PROBE' | 'BLOCKED';
   allowed: boolean;
   evaluated?: boolean;
   advisory?: boolean;
   dislocationCanary?: boolean;
   sizeFactor?: number;
   evidenceStatus?: CohortEvidenceStatus;
-  matchedCohort?: ExecutionCohortKey;
+  matchedCohort?: {
+    symbol: string;
+    strategyKey?: string;
+    setup?: string;
+    regime?: string;
+    direction?: string;
+    timeframe?: string;
+    executionPolicy?: string;
+    configurationVersion?: number | string;
+    sampleSize?: number;
+    matchType?: 'EXACT' | 'FAMILY' | 'GLOBAL_FALLBACK';
+  };
   reason?: "QUANT_VALIDATION_MISSING" | "QUANT_VALIDATION_STALE" |
     "QUANT_WALK_FORWARD_UNSTABLE" | "QUANT_PROBABILITY_TOO_LOW" |
     "QUANT_RUIN_RISK_TOO_HIGH" | "QUANT_OUT_OF_SAMPLE_EDGE_MISSING" |
@@ -52,6 +63,11 @@ export class QuantExecutionPolicyService {
     provider: string;
     timeframe: string;
     strategyKey?: string;
+    setup?: string;
+    regime?: string;
+    direction?: string;
+    executionPolicy?: string;
+    configurationVersion?: string;
     mode?: "SHADOW" | "DEMO" | "LIVE";
     decision: Pick<DecisionOutput,
       "decision" | "regime" | "confidence" | "opportunityScore" |
@@ -72,8 +88,25 @@ export class QuantExecutionPolicyService {
     };
     now?: Date;
   }): Promise<QuantExecutionPolicyResult> {
+    const cohortSetup = input.setup ?? (input.decision.regime as { setup?: string } | undefined)?.setup;
+    const cohortRegime = input.regime ?? input.decision.regime?.type;
+    const cohortDirection = input.direction ?? input.decision.decision;
+    const cohortPolicy = input.executionPolicy ?? "STANDARD";
+    const cohortVersion = input.configurationVersion ?? "v1";
+
+    const matchedCohort: NonNullable<QuantExecutionPolicyResult['matchedCohort']> = {
+      symbol: input.symbol,
+      setup: cohortSetup,
+      regime: cohortRegime,
+      direction: cohortDirection,
+      executionPolicy: cohortPolicy,
+      configurationVersion: cohortVersion,
+      sampleSize: 0,
+      matchType: "EXACT",
+    };
+
     if (input.decision.decision === "WAIT") {
-      return { severity: 'BLOCK', allowed: false, evaluated: false, reason: 'QUANT_NOT_APPLICABLE' };
+      return { severity: 'BLOCK', riskTier: 'BLOCKED', allowed: false, evaluated: false, reason: 'QUANT_NOT_APPLICABLE', matchedCohort };
     }
     const now = input.now ?? new Date();
     const [validation, regime] = await Promise.all([
@@ -97,17 +130,24 @@ export class QuantExecutionPolicyService {
       : undefined;
       
     if (this.hasFreshRegimeConflict(input, regime, now)) {
-      return { severity: 'BLOCK', allowed: false, reason: "QUANT_REGIME_CONFLICT", ...(regimeEvidence ? { regime: regimeEvidence } : {}) };
+      return { severity: 'BLOCK', riskTier: 'BLOCKED', allowed: false, reason: "QUANT_REGIME_CONFLICT", matchedCohort, ...(regimeEvidence ? { regime: regimeEvidence } : {}) };
     }
-    
     const liveLimits = await this.riskConfig?.getUserLimits(input.userId);
+    const parsedConfigVersion = typeof cohortVersion === 'number'
+      ? cohortVersion
+      : (typeof cohortVersion === 'string'
+          ? (Number.isFinite(parseInt(cohortVersion.replace(/^v/i, ''), 10)) ? parseInt(cohortVersion.replace(/^v/i, ''), 10) : undefined)
+          : undefined);
+
     const cohortClassification = classifyExecutionEvidence(
       {
         symbol: input.symbol,
         strategyKey: input.strategyKey ?? 'ai-core',
-        direction: input.decision.decision === 'LONG' ? 'LONG' : 'SHORT',
-        regime: regime?.regime ?? (input.decision.regime.type === 'TRENDING' ? 'BULL' : input.decision.regime.type),
+        direction: (cohortDirection === 'SHORT' ? 'SHORT' : 'LONG'),
+        regime: regime?.regime ?? (cohortRegime === 'TRENDING' ? 'BULL' : cohortRegime ?? 'RANGING'),
         timeframe: input.timeframe,
+        executionPolicy: cohortPolicy,
+        configurationVersion: parsedConfigVersion,
         userLimits: liveLimits,
       },
       validation,
@@ -115,7 +155,11 @@ export class QuantExecutionPolicyService {
     );
 
     const evidenceStatus = cohortClassification.status;
-    const matchedCohort = cohortClassification.matchedCohort;
+    Object.assign(matchedCohort, {
+      ...(cohortClassification.matchedCohort ?? {}),
+      sampleSize: cohortClassification.totalTrades ?? 0,
+      matchType: evidenceStatus.startsWith('EXACT') ? 'EXACT' : 'GLOBAL_FALLBACK',
+    });
 
     const evidence = validation
       ? {
@@ -145,6 +189,7 @@ export class QuantExecutionPolicyService {
        }
        return {
          severity: 'BLOCK',
+         riskTier: 'BLOCKED',
          allowed: false,
          evaluated: false,
          reason,
@@ -156,22 +201,44 @@ export class QuantExecutionPolicyService {
     }
 
     const applyGate = (res: QuantExecutionPolicyResult): QuantExecutionPolicyResult => {
-      const base: QuantExecutionPolicyResult = {
-        ...res,
-        evidenceStatus: res.evidenceStatus ?? evidenceStatus,
-        matchedCohort: res.matchedCohort ?? matchedCohort,
-      };
-      if (base.severity === 'BLOCK') return { ...base, reasons: gateResult.reasons };
-      if (gateResult.severity === 'REDUCE_SIZE') {
-        const currentSize = base.sizeFactor ?? 1.0;
+      const severity = res.severity === 'BLOCK' || gateResult.severity === 'BLOCK'
+        ? 'BLOCK'
+        : (res.severity === 'REDUCE_SIZE' || gateResult.severity === 'REDUCE_SIZE' ? 'REDUCE_SIZE' : 'APPROVE');
+      const riskTier = severity === 'BLOCK' ? 'BLOCKED' : (severity === 'REDUCE_SIZE' ? 'PROBE' : 'NORMAL');
+      const combinedReasons = Array.from(new Set([...(res.reasons ?? []), ...(gateResult.reasons ?? [])]));
+
+      if (severity === 'BLOCK') {
         return {
-          ...base,
-          severity: 'REDUCE_SIZE',
-          sizeFactor: Math.min(currentSize, gateResult.sizeFactor ?? 1.0),
-          reasons: Array.from(new Set([...(base.reasons ?? []), ...gateResult.reasons])),
+          ...res,
+          severity: 'BLOCK',
+          riskTier,
+          allowed: false,
+          evidenceStatus: res.evidenceStatus ?? evidenceStatus,
+          matchedCohort: res.matchedCohort ?? matchedCohort,
+          reasons: combinedReasons,
         };
       }
-      return { ...base, reasons: gateResult.reasons };
+      if (severity === 'REDUCE_SIZE') {
+        const currentSize = res.sizeFactor ?? 1.0;
+        const gateSize = gateResult.sizeFactor ?? 1.0;
+        return {
+          ...res,
+          severity: 'REDUCE_SIZE',
+          riskTier,
+          sizeFactor: Math.min(currentSize, gateSize),
+          evidenceStatus: res.evidenceStatus ?? evidenceStatus,
+          matchedCohort: res.matchedCohort ?? matchedCohort,
+          reasons: combinedReasons,
+        };
+      }
+      return {
+        ...res,
+        severity: 'APPROVE',
+        riskTier,
+        evidenceStatus: res.evidenceStatus ?? evidenceStatus,
+        matchedCohort: res.matchedCohort ?? matchedCohort,
+        reasons: combinedReasons,
+      };
     };
 
     if (evidenceStatus === 'MISSING') {
@@ -232,12 +299,13 @@ export class QuantExecutionPolicyService {
     },
   ): QuantExecutionPolicyResult {
     if (input.mode === "LIVE") {
-      return { severity: 'BLOCK', allowed: false, evaluated: false, reason };
+      return { severity: 'BLOCK', riskTier: 'BLOCKED', allowed: false, evaluated: false, reason };
     }
     const sizeFactor = this.boundedCanarySizeFactor(input);
     if (sizeFactor !== undefined) {
       return {
         severity: 'REDUCE_SIZE',
+        riskTier: 'PROBE',
         allowed: true,
         evaluated: false,
         advisory: true,
@@ -245,7 +313,7 @@ export class QuantExecutionPolicyService {
         sizeFactor,
       };
     }
-    return { severity: 'BLOCK', allowed: false, evaluated: false, reason };
+    return { severity: 'BLOCK', riskTier: 'BLOCKED', allowed: false, evaluated: false, reason };
   }
 
   private boundedCanarySizeFactor(input: {
