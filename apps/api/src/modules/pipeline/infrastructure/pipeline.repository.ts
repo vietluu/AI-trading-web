@@ -116,7 +116,20 @@ export class PipelineRepository {
       }
     }));
   }
+
   metrics() { return this.prisma.pipelineRun.findMany({ select: { status: true, durationMs: true, decision: true, confidence: true, completedAt: true }, orderBy: { createdAt: 'desc' }, take: 1000 }); }
+
+  createShadowPlan(data: Prisma.ShadowExecutionPlanCreateInput) {
+    return this.prisma.shadowExecutionPlan.create({ data });
+  }
+
+  findShadowPlan(where: Prisma.ShadowExecutionPlanWhereUniqueInput) {
+    return this.prisma.shadowExecutionPlan.findUnique({ where });
+  }
+
+  updateShadowPlan(where: Prisma.ShadowExecutionPlanWhereUniqueInput, data: Prisma.ShadowExecutionPlanUpdateInput) {
+    return this.prisma.shadowExecutionPlan.update({ where, data });
+  }
 }
 
 function isPrismaUniqueConflict(error: unknown): error is { code: "P2002" } {
