@@ -91,11 +91,11 @@ export class PerformanceService {
       if (!run.completedAt || !run.decision || run.confidence == null) continue;
       if (run.evaluationKey) {
         if (seenEvaluationKeys.has(run.evaluationKey)) continue;
-        seenEvaluationKeys.add(run.evaluationKey);
         if (await this.repository.evaluationSampleClaimed(
           run.evaluationKey,
           run.id,
         )) continue;
+        seenEvaluationKeys.add(run.evaluationKey);
       }
       const candidate = evaluationCandidate(run.storedContext);
       const evaluatedDecision = candidate?.decision ?? run.decision;

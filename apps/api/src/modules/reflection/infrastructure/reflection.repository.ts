@@ -109,22 +109,29 @@ export class ReflectionRepository {
     evaluationKey: string,
     runId: string,
   ): Promise<boolean> {
-    const [labeledCount, canonicalRun] = await Promise.all([
-      this.prisma.pipelineRun.count({
+    const [labeledRun, eligibleOwner] = await Promise.all([
+      this.prisma.pipelineRun.findFirst({
         where: {
           evaluationKey,
-          id: { not: runId },
           performanceRecords: { some: {} },
         },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: { id: true },
       }),
       this.prisma.pipelineRun.findFirst({
-        where: { evaluationKey },
+        where: {
+          evaluationKey,
+          status: "COMPLETED",
+          completedAt: { not: null },
+          decision: { in: ["LONG", "SHORT", "WAIT"] },
+          confidence: { not: null },
+        },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         select: { id: true },
       }),
     ]);
-    return labeledCount > 0 ||
-      (canonicalRun !== null && canonicalRun.id !== runId);
+    const owner = labeledRun ?? eligibleOwner;
+    return owner !== null && owner.id !== runId;
   }
   candleAtOrBefore(
     provider: "BINANCE_FUTURES" | "OKX_FUTURES",
