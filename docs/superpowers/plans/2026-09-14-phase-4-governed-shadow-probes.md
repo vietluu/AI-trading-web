@@ -1,6 +1,6 @@
 # Phase 4 Governed Shadow Probes Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Simulate recovery plans with execution-equivalent terms and prepare—but do not enable—a capped OKX DEMO probe path.
 
@@ -32,24 +32,24 @@
 **Interfaces:**
 - Produces: `ShadowExecutionPlan` rows and `createPlan(input)`/`finalizePlan(input)` methods.
 
-- [ ] **Step 1: Write failing tests for immutable terms and no exchange dependency**
+- [x] **Step 1: Write failing tests for immutable terms and no exchange dependency**
 
 Assert plan creation requires entry, stop, targets, expiry, costs, cutoff, cohort key, and configuration hash; duplicate evaluation keys return the existing plan.
 
-- [ ] **Step 2: Run focused tests**
+- [x] **Step 2: Run focused tests**
 
 Run: `pnpm --filter @platform/api test -- shadow-plan.spec.ts`
 Expected: FAIL because the model/service is absent.
 
-- [ ] **Step 3: Add the additive Prisma model and migration**
+- [x] **Step 3: Add the additive Prisma model and migration**
 
 Persist status, direction, prices, quantity/risk fraction, fee/slippage/funding assumptions, gross/net PnL, net R, MFE/MAE, terminal reason, completeness, evaluation key, and version provenance. Add a unique evaluation key; do not rewrite old paper signals.
 
-- [ ] **Step 4: Implement create/finalize transactions without importing exchange clients**
+- [x] **Step 4: Implement create/finalize transactions without importing exchange clients**
 
 Reject attempts to mutate entry/stop/targets after creation; finalization updates only outcome fields.
 
-- [ ] **Step 5: Validate schema, run tests, and commit**
+- [x] **Step 5: Validate schema, run tests, and commit**
 
 Run: `pnpm --filter @platform/api exec prisma validate && pnpm --filter @platform/api test -- shadow-plan.spec.ts`
 Expected: PASS.
@@ -69,20 +69,20 @@ git commit -m "feat(shadow): persist immutable recovery plans"
 **Interfaces:**
 - Produces: `evaluateShadowPlan(plan, candles): ShadowPlanOutcome`.
 
-- [ ] **Step 1: Write failing path tests**
+- [x] **Step 1: Write failing path tests**
 
 Cover never-filled limit expiry, fill then stop, fill then target, stop/target in the same candle using the conservative stop-first rule, fees/slippage/funding, and incomplete candle history.
 
-- [ ] **Step 2: Run focused tests**
+- [x] **Step 2: Run focused tests**
 
 Run: `pnpm --filter @platform/api test -- shadow-fill-engine.spec.ts`
 Expected: FAIL resolving the engine.
 
-- [ ] **Step 3: Implement deterministic fill/outcome calculation**
+- [x] **Step 3: Implement deterministic fill/outcome calculation**
 
 Reuse order-type, time-in-force, expiry, stop, target, and cost conventions from live trading. Return gross PnL, each cost component, net PnL, net R, MFE, MAE, duration, terminal reason, and completeness.
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 Run: `pnpm --filter @platform/api test -- shadow-fill-engine.spec.ts shadow-plan.spec.ts`
 Expected: PASS.
@@ -105,16 +105,16 @@ git commit -m "feat(shadow): evaluate execution-equivalent recovery outcomes"
 **Interfaces:**
 - Produces: `evaluateRecoveryProbe(input): { approved; reason; sizeFactor }`.
 
-- [ ] **Step 1: Write failing gate tests**
+- [x] **Step 1: Write failing gate tests**
 
 Assert disabled flag, production connection, partial/stale/missing/negative evidence, unreliable calibration, open-symbol probe, account count ≥2, cooldown, chase, or failed Risk returns rejected. Assert eligible exact immature evidence returns size factor 0.10 only when explicitly enabled in the test configuration.
 
-- [ ] **Step 2: Run focused tests**
+- [x] **Step 2: Run focused tests**
 
 Run: `pnpm --filter @platform/api test -- recovery-probe-gate.spec.ts proactive-demo-connection.spec.ts`
 Expected: FAIL because the gate/config is absent.
 
-- [ ] **Step 3: Add validated defaults without enabling execution**
+- [x] **Step 3: Add validated defaults without enabling execution**
 
 ```text
 RECOVERY_DEMO_PROBE_ENABLED=false
@@ -123,11 +123,11 @@ RECOVERY_DEMO_PROBE_MAX_ACCOUNT_POSITIONS=2
 RECOVERY_DEMO_PROBE_COOLDOWN_MS=3600000
 ```
 
-- [ ] **Step 4: Compose the gate into Risk while leaving exchange submission unreachable when disabled**
+- [x] **Step 4: Compose the gate into Risk while leaving exchange submission unreachable when disabled**
 
 Use the minimum of all size factors and require an explicitly selected, verified `OKX_FUTURES/DEMO` connection.
 
-- [ ] **Step 5: Run safety tests and commit**
+- [x] **Step 5: Run safety tests and commit**
 
 Run: `pnpm --filter @platform/api test -- recovery-probe-gate.spec.ts proactive-demo-connection.spec.ts live-trading-safety.spec.ts`
 Expected: PASS and production connections remain rejected.
