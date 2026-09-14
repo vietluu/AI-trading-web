@@ -7,7 +7,7 @@ import type { ReflectionRepository } from '../../src/modules/reflection/infrastr
 
 describe('pipeline evaluation and reflection flow', () => {
   it('turns a completed pipeline decision into horizon records from public candles', async () => {
-    const createRecord = vi.fn().mockResolvedValue({});
+    const createRecord = vi.fn().mockImplementation((data) => Promise.resolve({ id: crypto.randomUUID(), ...data }));
     const startTimestamp = new Date('2026-08-01T00:00:00Z');
     const candleAtOrBefore = vi.fn().mockResolvedValue({ close: new Prisma.Decimal(100), closeTime: startTimestamp });
     const candleAtOrAfter = vi.fn().mockImplementation(
@@ -72,7 +72,7 @@ describe('pipeline evaluation and reflection flow', () => {
   });
 
   it('evaluates a blocked directional candidate in shadow instead of learning WAIT', async () => {
-    const createRecord = vi.fn().mockResolvedValue({});
+    const createRecord = vi.fn().mockImplementation((data) => Promise.resolve({ id: crypto.randomUUID(), ...data }));
     const repository = {
       completedRuns: vi.fn().mockResolvedValue([{
         id: crypto.randomUUID(), userId: crypto.randomUUID(), symbol: 'ZRO-USDT', provider: 'OKX_FUTURES',
