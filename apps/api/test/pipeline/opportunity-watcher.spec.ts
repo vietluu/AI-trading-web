@@ -109,6 +109,94 @@ describe('OpportunityWatcherService', () => {
       sourceDataCutoff: cutoff,
     });
   });
+
+  it('rejects opposite direction transition at the same candle cutoff as CONDITIONS_UNCHANGED', async () => {
+    const cutoff = new Date('2026-09-09T01:00:00.000Z');
+    const snapshotLong = {
+      symbol: 'BTC-USDT',
+      provider: 'BINANCE_FUTURES',
+      timeframe: '15m',
+      sourceDataCutoff: cutoff.toISOString(),
+      schemaVersion: 1,
+      calculationVersion: 2,
+      eligibility: { status: 'ELIGIBLE', reasons: [] },
+      structure: {
+        coverage: 'AVAILABLE',
+        distanceToNearestBoundaryAtr: 0.5,
+        invalidationCandidates: [{ direction: 'LONG', price: 90, reason: 'RANGE_LOW' }],
+        liquiditySweep: { coverage: 'AVAILABLE', detected: true, direction: 'BULLISH_SWEEP', reclaimed: true },
+      },
+      volatility: { coverage: 'AVAILABLE', atr: 10, squeezeState: 'NOT_SQUEEZING', squeezeDurationCandles: 0 },
+      momentum: { coverage: 'AVAILABLE', momentumState: 'ACCELERATING', macd: { histogram: 0.5 } },
+      participation: { coverage: 'AVAILABLE', volumeState: 'EXPANDING' },
+      derivatives: { coverage: 'UNAVAILABLE' },
+      execution: { coverage: 'AVAILABLE', currentPrice: 98, priceTooFarFromCandidateZones: false },
+    };
+    const snapshotShort = {
+      ...snapshotLong,
+      structure: {
+        ...snapshotLong.structure,
+        liquiditySweep: { coverage: 'AVAILABLE', detected: true, direction: 'BEARISH_SWEEP', reclaimed: true },
+      },
+      momentum: { coverage: 'AVAILABLE', momentumState: 'ACCELERATING', macd: { histogram: -0.5 } },
+    };
+
+    const opportunity = {
+      id: 'opportunity-2',
+      userId: 'user-1',
+      provider: 'BINANCE_FUTURES',
+      symbol: 'BTC-USDT',
+      timeframe: '15m',
+      setup: 'LIQUIDITY_SWEEP_REVERSAL',
+      direction: 'LONG',
+      state: 'WATCHING',
+      invalidationPrice: 90,
+      expiresAt: new Date('2026-09-09T05:00:00.000Z'),
+      lastObservedCutoff: cutoff,
+      thesisVersion: 1,
+      idempotencyKey: 'setup-key-2',
+    };
+    const transitions: unknown[] = [];
+    const prisma = {
+      anticipatoryMarketSnapshot: {
+        findUniqueOrThrow: vi.fn().mockResolvedValue({ id: 'snapshot-2' }),
+      },
+      opportunity: {
+        findFirst: vi.fn().mockResolvedValue(opportunity),
+        create: vi.fn(),
+        update: vi.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => {
+          Object.assign(opportunity, data);
+          return Promise.resolve(opportunity);
+        }),
+      },
+      opportunityTransition: {
+        upsert: vi.fn().mockImplementation(({ create }: { create: unknown }) => {
+          transitions.push(create);
+          return Promise.resolve(create);
+        }),
+      },
+      $transaction: vi.fn().mockImplementation((callback: (tx: unknown) => unknown) => callback(prisma)),
+    };
+    const snapshotService = { build: vi.fn().mockResolvedValue(snapshotShort) };
+    const watcher = new OpportunityWatcherService(prisma as never, snapshotService as never);
+
+    const result = await watcher.observe({
+      userId: 'user-1',
+      provider: 'BINANCE_FUTURES',
+      symbol: 'BTC-USDT',
+      timeframe: '15m',
+      sourceDataCutoff: cutoff,
+      now: new Date('2026-09-09T01:00:01.000Z'),
+    } as never);
+
+    expect(result).toMatchObject({
+      opportunityId: 'opportunity-2',
+      state: 'WATCHING',
+      duplicate: true,
+      reasonCode: 'DUPLICATE_CANDLE_CUTOFF',
+    });
+    expect(transitions).toHaveLength(0);
+  });
 });
 
 describe('PipelineSchedulerService observe-mode isolation', () => {
