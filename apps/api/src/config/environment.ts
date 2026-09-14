@@ -528,6 +528,26 @@ const environmentSchema = z
       .enum(["true", "false"])
       .default("false")
       .transform((v) => v === "true"),
+    RECOVERY_DEMO_PROBE_ENABLED: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((v) => v === "true"),
+    RECOVERY_DEMO_PROBE_MAX_SIZE_FACTOR: z.coerce
+      .number()
+      .positive()
+      .max(0.20)
+      .default(0.10),
+    RECOVERY_DEMO_PROBE_MAX_ACCOUNT_POSITIONS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(10)
+      .default(2),
+    RECOVERY_DEMO_PROBE_COOLDOWN_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(3_600_000),
     LIVE_POSITION_SYNC_ENABLED: z
       .enum(["true", "false"])
       .default("true")
