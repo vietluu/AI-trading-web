@@ -67,6 +67,7 @@ export function evaluateShadowPlan(
 
   for (let i = 0; i < relevantCandles.length; i++) {
     const candle = relevantCandles[i];
+    if (!candle) continue;
 
     if (!isFilled) {
       if (candle.openTime >= expiresAtMs) {
@@ -202,7 +203,7 @@ export function evaluateShadowPlan(
   }
 
   const lastCandle = relevantCandles[relevantCandles.length - 1];
-  const markPrice = lastCandle.close;
+  const markPrice = lastCandle?.close ?? plan.entryPrice;
   const durationCandles = relevantCandles.length - fillCandleIndex;
   const grossPnl = isLong
     ? (markPrice - plan.entryPrice) * quantity

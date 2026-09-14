@@ -277,7 +277,7 @@ describe('transitionOpportunity', () => {
           penetration: 1.5,
           reclaimed: true,
         },
-      },
+      } as unknown as AnticipatoryMarketSnapshot['structure'],
     });
     const state = current({
       setup: 'LIQUIDITY_SWEEP_REVERSAL',

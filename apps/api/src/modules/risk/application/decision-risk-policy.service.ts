@@ -66,13 +66,13 @@ export class DecisionRiskPolicyService {
         ? output.executionEvidence.expectedNetR
         : output.expectedValue;
 
-    const provenance = hasExecutionEvidence
-      ? {
-          evEvaluationPath: (output.executionEvidence?.expectedNetR !== undefined
-            ? 'EXECUTION_EVIDENCE'
-            : 'LEGACY_EXPECTED_VALUE') as 'EXECUTION_EVIDENCE' | 'LEGACY_EXPECTED_VALUE',
-        }
-      : {};
+    const evEvaluationPath: 'EXECUTION_EVIDENCE' | 'LEGACY_EXPECTED_VALUE' | undefined =
+      hasExecutionEvidence
+        ? output.executionEvidence?.expectedNetR !== undefined
+          ? 'EXECUTION_EVIDENCE'
+          : 'LEGACY_EXPECTED_VALUE'
+        : undefined;
+    const provenance = evEvaluationPath ? { evEvaluationPath } : {};
 
     if (evValue <= policy.minExpectedValue) {
       return { actionable: false, decision: 'WAIT', reason: 'EXPECTED_VALUE_NEGATIVE', ...provenance };

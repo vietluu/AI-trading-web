@@ -24,20 +24,23 @@ describe('ShadowPlanService', () => {
   const uniqueConflict = () => Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
 
   it('requires all required fields and valid entry/stop geometry', async () => {
-    const plans: any[] = [];
+    const plans: Record<string, unknown>[] = [];
     const prisma = {
       shadowExecutionPlan: {
-        create: ({ data }: any) => {
+        create: ({ data }: { data: Record<string, unknown> }) => {
           plans.push(data);
           return Promise.resolve({ id: 'plan-1', ...data });
         },
-        findUnique: ({ where }: any) => Promise.resolve(plans.find((p) => p.evaluationKey === where.evaluationKey) ?? null),
+        findUnique: ({ where }: { where: { evaluationKey: string } }) =>
+          Promise.resolve(plans.find((p) => p.evaluationKey === where.evaluationKey) ?? null),
       },
     };
     const service = new ShadowPlanService(prisma as never);
 
     // Missing stopLoss
-    await expect(service.createPlan({ ...baseInput, stopLoss: undefined as any })).rejects.toThrow();
+    await expect(
+      service.createPlan({ ...baseInput, stopLoss: undefined as unknown as number }),
+    ).rejects.toThrow();
     // Invalid geometry (stop above entry for LONG)
     await expect(service.createPlan({ ...baseInput, stopLoss: 102_000 })).rejects.toThrow();
     // Empty targets
@@ -58,7 +61,8 @@ describe('ShadowPlanService', () => {
     const prisma = {
       shadowExecutionPlan: {
         create: () => Promise.reject(uniqueConflict()),
-        findUnique: ({ where }: any) => Promise.resolve(where.evaluationKey === baseInput.evaluationKey ? existing : null),
+        findUnique: ({ where }: { where: { evaluationKey: string } }) =>
+          Promise.resolve(where.evaluationKey === baseInput.evaluationKey ? existing : null),
       },
     };
     const service = new ShadowPlanService(prisma as never);
@@ -68,7 +72,7 @@ describe('ShadowPlanService', () => {
   });
 
   it('finalizes a plan updating only outcome fields and rejects mutating order terms', async () => {
-    const stored: any = {
+    const stored: Record<string, unknown> = {
       id: 'plan-1',
       ...baseInput,
       status: 'PENDING',
@@ -76,8 +80,9 @@ describe('ShadowPlanService', () => {
     };
     const prisma = {
       shadowExecutionPlan: {
-        findUnique: ({ where }: any) => Promise.resolve(where.id === stored.id ? stored : null),
-        update: ({ where, data }: any) => {
+        findUnique: ({ where }: { where: { id: string } }) =>
+          Promise.resolve(where.id === stored.id ? stored : null),
+        update: ({ data }: { data: Record<string, unknown> }) => {
           Object.assign(stored, data);
           return Promise.resolve(stored);
         },

@@ -581,7 +581,7 @@ describe("adaptive trade plan engine", () => {
       stopLoss: 109_000,
       targets: [{ price: 112_000, fraction: 1 }],
       expectedNetR: 1.5,
-      trigger: [{ type: 'PRICE_CROSS' as const, operator: '>=' as const, price: 110_000, candleFinality: 'CLOSED' as const }],
+      trigger: [{ type: 'PRICE_CROSS' as const, operator: '>=' as const, price: 110_000, candleFinality: 'CLOSED' as const, description: 'Confirm recovery reclaim' }],
     };
     const plan = buildAdaptiveTradePlan({
       side: "LONG",

@@ -3,7 +3,6 @@ import {
   evaluateRecoveryTransition,
   type RecoveryEvaluationInput,
   type RecoveryObservation,
-  type RecoveryState,
 } from '../../src/modules/pipeline/domain/recovery-reclaim';
 
 describe('RecoveryReclaimStateMachine', () => {

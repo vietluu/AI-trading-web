@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service';
-import type { Prisma } from '@prisma/client';
 import { evaluateShadowPlan, type ShadowCandle } from '../domain/shadow-fill-engine';
 
 export interface CreateShadowPlanInput {
@@ -70,7 +69,7 @@ export class ShadowPlanService {
           status: input.status ?? 'PENDING',
           entryPrice: input.entryPrice,
           stopLoss: input.stopLoss,
-          targets: input.targets as unknown as Prisma.InputJsonValue,
+          targets: input.targets,
           quantity: input.quantity ?? null,
           riskFraction: input.riskFraction ?? null,
           sourceDataCutoff: new Date(input.sourceDataCutoff),
@@ -141,7 +140,7 @@ export class ShadowPlanService {
         direction: plan.direction as 'LONG' | 'SHORT',
         entryPrice: Number(plan.entryPrice),
         stopLoss: Number(plan.stopLoss),
-        targets: plan.targets as any,
+        targets: plan.targets as unknown as Array<{ price: number; fraction: number }>,
         expiresAt: plan.expiresAt,
         sourceDataCutoff: plan.sourceDataCutoff,
         feeBps: Number(plan.feeBps),
@@ -180,7 +179,7 @@ export class ShadowPlanService {
       throw new Error('symbol, provider, and timeframe are required');
     }
     if (input.direction !== 'LONG' && input.direction !== 'SHORT') {
-      throw new Error(`Invalid direction: ${input.direction}`);
+      throw new Error(`Invalid direction: ${String(input.direction)}`);
     }
     if (!Number.isFinite(input.entryPrice) || input.entryPrice <= 0) {
       throw new Error(`Invalid entryPrice: ${input.entryPrice}`);

@@ -1,8 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   classifyExecutionEvidence,
-  ExecutionCohortKey,
-  CohortEvidenceStatus,
 } from '../../src/modules/pipeline/domain/execution-cohort';
 
 describe('ExecutionCohort Matcher', () => {

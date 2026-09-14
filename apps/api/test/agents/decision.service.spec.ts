@@ -604,12 +604,10 @@ describe('DecisionService', () => {
         fusionOutput,
         ...analyses,
       },
+      'user-1',
       {
-        userId: 'user-1',
-        metadata: {
-          provider: 'OKX_FUTURES',
-          timeframe: '15m',
-        },
+        provider: 'OKX_FUTURES',
+        timeframe: '15m',
       },
     );
 

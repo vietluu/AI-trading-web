@@ -223,3 +223,27 @@ In the event of anomalous behavior, market disruption, or exchange maintenance:
   - Leaves protective stop-loss orders intact or places market stops on unprotected fills.
   - Reverts promotion state machine to `SHADOW`.
   - Disables new order intake until explicit operator resumption.
+
+---
+
+## 7. Recovery Rollout Audit & Verification Procedure
+
+Before approving or inspecting any recovery setup transitions (`RECOVERY_RECLAIM`), operators must run the read-only audit procedure:
+
+### 7.1. Read-Only Audit Execution
+
+Run the audit script across staging or production:
+```bash
+pnpm --filter @platform/api audit:recovery-rollout
+```
+
+### 7.2. Invariant Checks Performed
+1. **Disabled DEMO Probe Flag:** Verifies that `RECOVERY_DEMO_PROBE_ENABLED` is `false` (or unset), preventing premature automated probe placement.
+2. **Zero Production Recovery Orders:** Queries `live_orders` to ensure zero live recovery orders exist (`clientOrderId LIKE '%RECOVERY%'`).
+3. **Evaluation Key Uniqueness:** Verifies that all `shadow_execution_plans` have unique evaluation keys.
+4. **Shadow / Executed Separation:** Asserts that shadow plans never hold live exchange order identifiers or account capital reservations.
+5. **Exact Cohort Key Formatting:** Confirms that candidate cohort keys conform to `PROVIDER:SYMBOL:TIMEFRAME:SETUP:MATURITY`.
+6. **PnL Arithmetic Reconciliation:** Asserts that `netPnl <= grossPnl` across all finalized plans, verifying fees, slippage, and funding cost deductions.
+7. **Incomplete Sample Exclusions:** Validates that incomplete plans (`isComplete: false`) are tracked with terminal reason `INCOMPLETE_DATA` and excluded from promotion metrics.
+8. **Canonical Blocker Reconciliation:** Confirms that blocked signals are reconciled without PASS or advisory conflation.
+

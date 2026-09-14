@@ -72,7 +72,7 @@ describe('evaluateRecoveryCohort', () => {
       makeOutcome('2', 'k1', 200, 20, 1.8, 'TAKE_PROFIT'), // duplicate key
       makeOutcome('3', 'k2', 200, 20, 1.8, 'TAKE_PROFIT', { isComplete: false }), // incomplete
       makeOutcome('4', 'k3', 200, 20, 1.8, 'TAKE_PROFIT', { isSuperseded: true }), // superseded
-      makeOutcome('5', 'k4', null as any, 20, null as any, 'TAKE_PROFIT'), // corrupted/missing
+      makeOutcome('5', 'k4', null as unknown as number, 20, null as unknown as number, 'TAKE_PROFIT'), // corrupted/missing
     ];
 
     const report = evaluateRecoveryCohort(records);
