@@ -28,6 +28,7 @@ import {
   getPerformanceAlerts,
   getPerformanceMetrics,
   getPerformanceRecords,
+  getRecoveryCohortComparison,
   getPipelineHealth,
   getPipelineRunDetail,
   getPipelineRuns,
@@ -212,6 +213,13 @@ export function usePerformanceDashboard(symbol?: string) {
   });
 
   return { metrics, records, alerts };
+}
+
+export function useRecoveryCohortComparison(cohortKey?: string) {
+  return useQuery({
+    queryKey: queryKeys.ai.recoveryCohorts(cohortKey),
+    queryFn: () => getRecoveryCohortComparison(cohortKey),
+  });
 }
 
 export function usePortfolioDashboard() {

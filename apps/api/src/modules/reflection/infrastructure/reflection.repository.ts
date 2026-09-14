@@ -237,4 +237,27 @@ export class ReflectionRepository {
   proposal(userId: string, id: string) {
     return this.prisma.improvementProposal.findFirst({ where: { id, userId } });
   }
+
+  async recoveryCohortOutcomes(cohortKey?: string, take = 5000) {
+    const shadowPlans = await this.prisma.shadowExecutionPlan.findMany({
+      where: {
+        status: { in: ['TARGET_REACHED', 'STOPPED', 'EXPIRED', 'FILLED', 'CANCELLED'] },
+        ...(cohortKey ? { cohortKey } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+
+    const controlOutcomes = await this.prisma.tradeLifecycleOutcome.findMany({
+      where: {
+        status: 'FINALIZED',
+        ...(cohortKey ? { symbol: cohortKey.split(':')[1] } : {}),
+      },
+      orderBy: { closedAt: 'desc' },
+      take,
+    });
+
+    return { shadowPlans, controlOutcomes };
+  }
 }
+

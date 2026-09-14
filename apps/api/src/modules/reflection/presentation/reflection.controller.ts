@@ -12,7 +12,7 @@ import { ReflectionService } from '../application/reflection.service';
 import { ReflectionRepository } from '../infrastructure/reflection.repository';
 import { SelfLearningService } from '../application/self-learning.service';
 
-@Controller('ai')
+@Controller(['ai', ''])
 @UseGuards(SessionGuard)
 export class ReflectionController {
   constructor(private readonly performance: PerformanceService, private readonly reflection: ReflectionService, private readonly repository: ReflectionRepository, private readonly selfLearning: SelfLearningService) {}
@@ -63,6 +63,10 @@ export class ReflectionController {
 
   @Get('reflection')
   overview(@CurrentUser() user: { id: string }) { return this.reflection.generate(user.id, false); }
+  @Get('reflection/recovery-cohorts')
+  recoveryCohorts(@Query('cohortKey') cohortKey?: string) {
+    return this.performance.getRecoveryCohortComparison(cohortKey);
+  }
   @Post('reflection/run')
   run(@CurrentUser() user: { id: string }) { return this.reflection.generate(user.id, true); }
   @Get('reflection/insights')

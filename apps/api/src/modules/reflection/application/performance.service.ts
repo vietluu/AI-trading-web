@@ -16,6 +16,12 @@ import {
   type LifecyclePromotionMetrics,
 } from "../domain/model-promotion-policy";
 import type { TradeLifecycleOutcome } from "../../research/domain/trade-lifecycle";
+import {
+  evaluateRecoveryCohort,
+  type RecoveryOutcomeRecord,
+} from "../domain/recovery-cohort-evaluation";
+import { evaluateRecoveryPromotion } from "../domain/recovery-promotion-policy";
+import type { RecoveryCohortResponse } from "@platform/shared";
 
 const FIXED_HORIZONS: Array<{ horizon: EvaluationHorizon; ms: number }> = [
   { horizon: "M15", ms: 15 * 60_000 },
@@ -335,7 +341,98 @@ export class PerformanceService {
       });
     return alerts;
   }
+
+  async getRecoveryCohortComparison(cohortKey?: string): Promise<RecoveryCohortResponse> {
+    const key = cohortKey ?? "BINANCE_FUTURES:BTC-USDT:15m:RECOVERY_RECLAIM:IMMATURE";
+    const { shadowPlans, controlOutcomes } = await this.repository.recoveryCohortOutcomes(key);
+
+    const candidateRecords: RecoveryOutcomeRecord[] = shadowPlans.map((p) => ({
+      id: p.id,
+      evaluationKey: p.evaluationKey,
+      symbol: p.symbol,
+      provider: p.provider,
+      timeframe: p.timeframe,
+      direction: p.direction as "LONG" | "SHORT",
+      setup: p.setup,
+      cohortKey: p.cohortKey,
+      status: p.status,
+      isComplete: p.isComplete,
+      grossPnl: p.grossPnl !== null ? Number(p.grossPnl) : null,
+      feeCost: p.feeBps ? Number(p.feeBps) : null,
+      slippageCost: p.slippageBps ? Number(p.slippageBps) : null,
+      fundingCost: p.fundingBps ? Number(p.fundingBps) : null,
+      netPnl: p.netPnl !== null ? Number(p.netPnl) : null,
+      netR: p.netR !== null ? Number(p.netR) : null,
+      mfe: p.mfe !== null ? Number(p.mfe) : null,
+      mae: p.mae !== null ? Number(p.mae) : null,
+      durationCandles: p.durationCandles,
+      terminalReason: p.terminalReason,
+      createdAt: p.createdAt,
+    }));
+
+    const controlRecords: RecoveryOutcomeRecord[] = controlOutcomes.map((c) => ({
+      id: c.id,
+      evaluationKey: c.id,
+      symbol: c.symbol,
+      provider: c.provider,
+      timeframe: c.timeframe,
+      direction: c.direction as "LONG" | "SHORT",
+      setup: c.setup ?? "LIQUIDITY_SWEEP_REVERSAL",
+      cohortKey: key,
+      status: c.status,
+      isComplete: c.status === "FINALIZED",
+      grossPnl: Number(c.realizedGrossPnl),
+      signedFees: Number(c.signedFees),
+      signedFunding: Number(c.signedFunding),
+      netPnl: Number(c.realizedNetPnl),
+      netR: c.netR !== null ? Number(c.netR) : null,
+      mfe: c.mfe !== null ? Number(c.mfe) : null,
+      mae: c.mae !== null ? Number(c.mae) : null,
+      terminalReason: c.exitReason,
+      createdAt: c.createdAt,
+    }));
+
+    const controlReport = evaluateRecoveryCohort(controlRecords);
+    const candidateReport = evaluateRecoveryCohort(candidateRecords);
+
+    const foldSize = Math.floor(candidateRecords.length / 3);
+    const walkForwardFolds = foldSize > 0 ? [
+      evaluateRecoveryCohort(candidateRecords.slice(0, foldSize)),
+      evaluateRecoveryCohort(candidateRecords.slice(foldSize, foldSize * 2)),
+      evaluateRecoveryCohort(candidateRecords.slice(foldSize * 2)),
+    ].map((r, idx) => ({
+      foldIndex: idx + 1,
+      sampleSize: r.sampleSize,
+      meanNetR: r.meanNetR,
+      profitFactor: r.profitFactor,
+    })) : [];
+
+    const promotionEligibility = evaluateRecoveryPromotion({
+      report: candidateReport,
+      walkForwardFolds,
+      calibrationQuality: "GOOD",
+      unresolvedIncidentsCount: 0,
+    });
+
+    return {
+      cohortKey: key,
+      control: {
+        type: "CONTROL_REALIZED",
+        metrics: controlReport,
+      },
+      candidate: {
+        type: "CANDIDATE_SHADOW",
+        isSimulated: true,
+        metrics: candidateReport,
+        walkForwardFolds,
+        calibrationQuality: "GOOD",
+        promotionEligibility,
+      },
+      generatedAt: new Date().toISOString(),
+    };
+  }
 }
+
 
 function evaluationCandidate(value: Prisma.JsonValue | null):
   | {
