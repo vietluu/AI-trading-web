@@ -55,6 +55,14 @@ export interface ExecutionEvidenceClassification {
   outOfSampleTrades?: number;
 }
 
+function normalizeRegime(regime: string, direction?: string): string {
+  const upper = regime.toUpperCase();
+  if (upper === 'BULL' || upper === 'BULLISH' || (upper === 'TRENDING' && direction === 'LONG')) return 'BULL';
+  if (upper === 'BEAR' || upper === 'BEARISH' || (upper === 'TRENDING' && direction === 'SHORT')) return 'BEAR';
+  if (upper === 'SIDEWAYS' || upper === 'RANGING') return 'RANGING';
+  return upper;
+}
+
 export function classifyExecutionEvidence(
   request: ExecutionCohortRequest,
   validation: ValidationEvidenceRecord | null | undefined,
@@ -87,7 +95,7 @@ export function classifyExecutionEvidence(
 
   const valSymbol = validation.symbol ?? cohort.symbol ?? request.symbol;
   const valStrategy = validation.strategyKey ?? cohort.strategyKey ?? 'ai-core';
-  const valInterval = validation.interval ?? cohort.timeframe ?? cohort.interval;
+  const valInterval = validation.interval ?? cohort.timeframe ?? cohort.interval ?? request.timeframe;
   const valDirection = cohort.direction as string | undefined;
   const valRegime = cohort.regime as string | undefined;
   const valPolicy = (cohort.executionPolicy ?? cohort.executionPolicyVersion ?? (cohort.direction && cohort.regime ? 'DEFAULT' : undefined)) as string | undefined;
@@ -111,12 +119,23 @@ export function classifyExecutionEvidence(
   }
 
   // Exact match check
+  const directionMatches =
+    valDirection.toUpperCase() === 'BOTH' ||
+    valDirection.toUpperCase() === 'ANY' ||
+    valDirection.toUpperCase() === request.direction.toUpperCase();
+
+  const regimeMatches =
+    valRegime.toUpperCase() === 'ANY' ||
+    valRegime.toUpperCase() === 'ALL' ||
+    normalizeRegime(valRegime, request.direction) ===
+      normalizeRegime(request.regime, request.direction);
+
   const isExactCohort =
     valSymbol === request.symbol &&
     valStrategy === reqStrategy &&
     valInterval === request.timeframe &&
-    valDirection === request.direction &&
-    valRegime === request.regime &&
+    directionMatches &&
+    regimeMatches &&
     valPolicy === reqPolicy &&
     valVersion === reqConfigVersion;
 
