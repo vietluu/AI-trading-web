@@ -35,4 +35,3 @@
 - Phase 3: recovery decisions reproduce from closed candles without future data.
 - Phase 4: shadow plans use execution-equivalent terms and never call exchange APIs.
 - Phase 5: control/candidate reports reconcile post-cost PnL and enforce promotion eligibility.
-
