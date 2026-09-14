@@ -1227,6 +1227,7 @@ export type TradeThesisState = z.infer<typeof TradeThesisStateSchema>;
 export const TradeThesisSetupSchema = z.enum([
   'RANGE_REVERSAL',
   'LIQUIDITY_SWEEP_REVERSAL',
+  'RECOVERY_RECLAIM',
   'SQUEEZE_PROBE',
   'BREAKOUT_RETEST',
   'TREND_PULLBACK',

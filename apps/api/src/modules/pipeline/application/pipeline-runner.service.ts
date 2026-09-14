@@ -1028,6 +1028,10 @@ export class PipelineRunnerService {
             if (canaryReserved) canaryCooldownKey = cooldownKey;
             else executionGateReason = "DISLOCATION_CANARY_COOLDOWN_ACTIVE";
           }
+          if (proactive?.thesis.setup === 'RECOVERY_RECLAIM' || output.reasoning === 'RECOVERY_RECLAIM') {
+            executionGateReason = "RECOVERY_SHADOW_ONLY";
+            pipelineOutcome = { outcome: "SKIPPED", reason: "RECOVERY_SHADOW_ONLY" };
+          }
           if (!executionGateReason) {
             const assess = async () => {
               riskStageReached = true;
