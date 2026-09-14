@@ -175,6 +175,12 @@ export class PipelineRunnerService {
     const startedAt = new Date();
     const symbol = String(job.symbol);
     const runId = String(job.runId);
+    let evaluatedGateRecords: GateDecisionRecord[] | undefined;
+    let evaluatedResult: Record<string, unknown> | undefined;
+    let riskStageReached = false;
+    let executionStageReached = false;
+    let riskAssessment: Awaited<ReturnType<LiveTradingService["assessPipelineDecision"]>> | undefined;
+    let liveExecution: Awaited<ReturnType<LiveTradingService["executePipeline"]>> | undefined;
     await this.repository.updateRun(runId, {
       status: "RUNNING",
       startedAt,
@@ -782,6 +788,35 @@ export class PipelineRunnerService {
           ...('advisory' in quant && quant.advisory && quant.reason ? [quant.reason] : []),
         ])],
       };
+      evaluatedGateRecords = [...candidateGates];
+      evaluatedResult = {
+        ...output,
+        candidateDecision,
+        selectedStrategyKey: strategyKey,
+        strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue,
+        actionable,
+        skippedReason: candidateBlockingGate?.reason,
+        gates: evaluatedGateRecords as unknown as Prisma.InputJsonValue,
+        ...(candidateBlockingGate
+          ? { blockingGate: candidateBlockingGate as unknown as Prisma.InputJsonValue }
+          : {}),
+        signalFilter: {
+          allowed: signalFilter.allowed,
+          preliminaryRegime: signalFilter.preliminaryRegime,
+        },
+        multiTimeframe: {
+          ...multiTimeframe,
+          decisionConfirmation: multiTimeframeFilter.confirmation,
+          allowed: multiTimeframeFilter.allowed,
+          reason: multiTimeframeFilter.reason,
+        },
+        judge: judge as unknown as Prisma.InputJsonValue,
+        quant: quant as unknown as Prisma.InputJsonValue,
+      };
+      await this.repository.updateRun(runId, {
+        skippedReason: candidateBlockingGate?.reason,
+        result: evaluatedResult as unknown as Prisma.InputJsonValue,
+      });
       await this.finishStep(runId, "decision", output, decisionCompletedAt);
       this.analytics.recordStageTelemetry({
         pipelineId: job.pipelineId,
@@ -820,8 +855,6 @@ export class PipelineRunnerService {
       const volumeRatio = Number.isFinite(Number(indicatorSnapshot?.values.volumeChangePercent))
         ? 1 + Number(indicatorSnapshot?.values.volumeChangePercent) / 100
         : undefined;
-      let riskAssessment: Awaited<ReturnType<LiveTradingService["assessPipelineDecision"]>> | undefined;
-      let liveExecution: Awaited<ReturnType<LiveTradingService["executePipeline"]>> | undefined;
       let submissionStartedAt: Date | undefined;
       let executionGateReason: string | undefined;
       let canaryCooldownKey: string | undefined;
@@ -959,6 +992,7 @@ export class PipelineRunnerService {
           }
           if (!executionGateReason) {
             const assess = async () => {
+              riskStageReached = true;
               riskAssessment = await this.liveTrading.assessPipelineDecision({
                 userId: job.userId,
                 pipelineRunId: runId,
@@ -1034,6 +1068,7 @@ export class PipelineRunnerService {
 
             const execute = async () => {
               if (riskAssessment?.outcome === "RISK_APPROVED") {
+                executionStageReached = true;
                 if (job.pipelineId === 'proactive-thesis' && proactiveMode !== 'DEMO') {
                   return { outcome: 'SKIPPED' as const, reason: 'SKIPPED_BY_PROACTIVE_MODE' };
                 }
@@ -1234,25 +1269,68 @@ export class PipelineRunnerService {
         error instanceof Error && error.message === "PIPELINE_TIMEOUT";
       const isNoConnection =
         error instanceof Error && error.message.includes("NO_ELIGIBLE_EXCHANGE_CONNECTION");
-      await this.repository.updateRun(runId, {
-        status: cancelled ? "CANCELLED" : executionLockBusy ? "QUEUED" : timedOut ? "TIMEOUT" : "FAILED",
-        completedAt: executionLockBusy ? null : completedAt,
-        durationMs: completedAt.getTime() - startedAt.getTime(),
-        errorCode: cancelled
-          ? "CANCELLED_BY_USER"
-          : executionLockBusy
-            ? "EXECUTION_LOCK_BUSY"
+      const errorCode = cancelled
+        ? "CANCELLED_BY_USER"
+        : executionLockBusy
+          ? "EXECUTION_LOCK_BUSY"
           : timedOut
             ? "PIPELINE_TIMEOUT"
             : isNoConnection
               ? "NO_ELIGIBLE_EXCHANGE_CONNECTION"
               : executionRetryable
                 ? "RETRYABLE_EXCHANGE_FAILURE"
-                : "PIPELINE_EXECUTION_FAILED",
+                : "PIPELINE_EXECUTION_FAILED";
+      const failureGates = evaluatedGateRecords
+        ? [...evaluatedGateRecords]
+        : undefined;
+      if (failureGates && riskStageReached) {
+        const risk = riskAssessment?.risk;
+        const riskApproved = Boolean(risk?.approved);
+        failureGates.push(gateRecord(
+          "RISK",
+          riskApproved ? "PASS" : "BLOCK",
+          [riskApproved
+            ? risk?.reason
+            : risk?.reason ?? riskAssessment?.outcome ?? errorCode],
+        ));
+      }
+      if (failureGates && executionStageReached) {
+        const orderSubmitted = liveExecution?.outcome === "ORDER_SUBMITTED";
+        failureGates.push(gateRecord(
+          "EXECUTION",
+          orderSubmitted ? "PASS" : "BLOCK",
+          [orderSubmitted
+            ? undefined
+            : liveExecution?.errorCode ?? liveExecution?.outcome ?? errorCode],
+        ));
+      }
+      const failureBlockingGate = failureGates
+        ? selectBlockingGate(failureGates)
+        : undefined;
+      await this.repository.updateRun(runId, {
+        status: cancelled ? "CANCELLED" : executionLockBusy ? "QUEUED" : timedOut ? "TIMEOUT" : "FAILED",
+        completedAt: executionLockBusy ? null : completedAt,
+        durationMs: completedAt.getTime() - startedAt.getTime(),
+        errorCode,
+        skippedReason: failureBlockingGate?.reason,
         safeErrorMessage:
           error instanceof Error
             ? error.message.slice(0, 300)
             : "Pipeline execution failed",
+        ...(evaluatedResult && failureGates
+          ? {
+              result: {
+                ...evaluatedResult,
+                skippedReason: failureBlockingGate?.reason,
+                gates: failureGates as unknown as Prisma.InputJsonValue,
+                ...(failureBlockingGate
+                  ? { blockingGate: failureBlockingGate as unknown as Prisma.InputJsonValue }
+                  : {}),
+                riskAssessment,
+                liveExecution,
+              },
+            }
+          : {}),
       });
       if (cancelled) return;
       if (!executionLockBusy && !executionRetryable) await this.alerts.repeatedFailure(runId, symbol);
