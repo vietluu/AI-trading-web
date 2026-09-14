@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-14
 
-**Status:** Approved direction; written specification pending final review
+**Status:** Approved on 2026-09-14
 
 **Related design:** `docs/superpowers/specs/2026-09-13-adaptive-professional-entry-design.md`
 
