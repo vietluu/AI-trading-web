@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service';
 import type { Prisma } from '@prisma/client';
+import { evaluateShadowPlan, type ShadowCandle } from '../domain/shadow-fill-engine';
 
 export interface CreateShadowPlanInput {
   evaluationKey: string;
@@ -124,6 +125,44 @@ export class ShadowPlanService {
     if (!where.id && !where.evaluationKey) return null;
     return await this.prisma.shadowExecutionPlan.findUnique({
       where: where.id ? { id: where.id } : { evaluationKey: where.evaluationKey! },
+    });
+  }
+
+  public async evaluateAndFinalizePlan(where: { id?: string; evaluationKey?: string }, candles: ShadowCandle[]) {
+    const plan = await this.getPlan(where);
+    if (!plan) {
+      throw new Error(`Shadow execution plan not found: ${JSON.stringify(where)}`);
+    }
+    const outcome = evaluateShadowPlan(
+      {
+        id: plan.id,
+        evaluationKey: plan.evaluationKey,
+        symbol: plan.symbol,
+        direction: plan.direction as 'LONG' | 'SHORT',
+        entryPrice: Number(plan.entryPrice),
+        stopLoss: Number(plan.stopLoss),
+        targets: plan.targets as any,
+        expiresAt: plan.expiresAt,
+        sourceDataCutoff: plan.sourceDataCutoff,
+        feeBps: Number(plan.feeBps),
+        slippageBps: Number(plan.slippageBps),
+        fundingBps: Number(plan.fundingBps),
+        quantity: plan.quantity ? Number(plan.quantity) : 1,
+        riskFraction: plan.riskFraction ? Number(plan.riskFraction) : undefined,
+      },
+      candles,
+    );
+    return await this.finalizePlan({
+      id: plan.id,
+      status: outcome.status,
+      grossPnl: outcome.grossPnl,
+      netPnl: outcome.netPnl,
+      netR: outcome.netR,
+      mfe: outcome.mfe,
+      mae: outcome.mae,
+      durationCandles: outcome.durationCandles,
+      terminalReason: outcome.terminalReason,
+      isComplete: outcome.isComplete,
     });
   }
 
