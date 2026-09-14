@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { DecisionOutput, FusionInput } from '@platform/shared';
 import { PrismaService } from '../../../database/prisma.service';
 import { PipelineConfigService } from './pipeline-config.service';
+import type { GateStage } from '../domain/gate-decision';
 
 @Injectable()
 export class PipelineAlertService {
@@ -40,7 +41,7 @@ export class PipelineAlertService {
     symbol: string;
     decision: string;
     confidence: number;
-    blockedReasons: string[];
+    blockingGate: { stage: GateStage; reason: string };
     analyses: FusionInput;
     multiTimeframeConfirmation: number;
     priceChangePercent?: number;
@@ -50,15 +51,14 @@ export class PipelineAlertService {
     const aligned = input.analyses.market.trend.direction === direction &&
       input.analyses.technical.trend.direction === direction &&
       input.multiTimeframeConfirmation >= 80;
-    const systematicExecutionBlock = input.blockedReasons.some((reason) =>
-      reason.startsWith('QUANT_') ||
-      reason.includes('CALIBRAT') ||
-      reason === 'PARTIAL_DATA_CONVICTION_TOO_LOW' ||
-      reason === 'CONFIDENCE_BELOW_THRESHOLD');
-    const hasNegativeExpectancy = input.blockedReasons.some((reason) =>
-      reason === 'EXPECTED_VALUE_NEGATIVE' ||
-      reason === 'EXPECTED_VALUE_TOO_LOW' ||
-      reason === 'PROFIT_FACTOR_TOO_LOW');
+    const blockingReason = input.blockingGate.reason;
+    const systematicExecutionBlock = blockingReason.startsWith('QUANT_') ||
+      blockingReason.includes('CALIBRAT') ||
+      blockingReason === 'PARTIAL_DATA_CONVICTION_TOO_LOW' ||
+      blockingReason === 'CONFIDENCE_BELOW_THRESHOLD';
+    const hasNegativeExpectancy = blockingReason === 'EXPECTED_VALUE_NEGATIVE' ||
+      blockingReason === 'EXPECTED_VALUE_TOO_LOW' ||
+      blockingReason === 'PROFIT_FACTOR_TOO_LOW';
     if (!aligned || !systematicExecutionBlock || hasNegativeExpectancy) return;
 
     const since = new Date(Date.now() - 60 * 60_000);
@@ -69,7 +69,7 @@ export class PipelineAlertService {
         symbol: input.symbol,
         decision: input.decision,
         confidence: input.confidence,
-        reasoningSummary: `Aligned directional signal blocked by ${input.blockedReasons.join(', ')}.`,
+        reasoningSummary: `Aligned directional signal blocked at ${input.blockingGate.stage} by ${blockingReason}.`,
         delivered: false,
       },
     });
@@ -93,14 +93,14 @@ export class PipelineAlertService {
         symbol: input.symbol,
         decision: input.decision,
         confidence: input.confidence,
-        reasoningSummary: `${blockedCount} aligned directional signals were blocked by execution gates during the last hour. Top current reasons: ${input.blockedReasons.join(', ')}.${observedMove !== undefined ? ` Observed market move: ${observedMove.toFixed(2)}%.` : ''}`,
+        reasoningSummary: `${blockedCount} aligned directional signals were blocked by execution gates during the last hour. Current blocker: ${input.blockingGate.stage}/${blockingReason}.${observedMove !== undefined ? ` Observed market move: ${observedMove.toFixed(2)}%.` : ''}`,
         delivered: true,
       },
     });
     this.logger.error({
       event: 'pipeline_missed_opportunity', userId: input.userId,
       symbol: input.symbol, blockedSignals: blockedCount,
-      blockedReasons: input.blockedReasons,
+      blockingGate: input.blockingGate,
       priceChangePercent: input.priceChangePercent,
       windowMinutes: 60,
     });

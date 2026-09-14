@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ROUTES } from "@/constants/routes";
 import { usePipelineRunDetail } from "@/hooks/ai/useAiFeature";
 import { apiRequest } from "@/lib/api-client";
+import { PipelineRunResultSchema } from "@platform/shared";
 
 export default function PipelineRunDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -14,6 +15,10 @@ export default function PipelineRunDetailPage() {
     await query.refetch();
   };
   const run = query.data;
+  const parsedResult = PipelineRunResultSchema.safeParse(run?.result);
+  const blockingGate = parsedResult.success
+    ? parsedResult.data.blockingGate
+    : undefined;
   const candidate = run?.result?.candidateDecision;
   const executionStatus = candidate?.actionable
     ? "ACTIONABLE"
@@ -77,15 +82,17 @@ export default function PipelineRunDetailPage() {
           </div>
         ))}
       </section>
-      {(run.result?.reasoning || run.skippedReason || run.errorCode) && (
+      {(run.result?.reasoning || blockingGate || run.skippedReason || run.errorCode) && (
         <section className="rounded-lg border bg-card p-5">
           <h2 className="font-semibold">Outcome</h2>
           {run.result?.reasoning && (
             <p className="mt-2 text-sm">{run.result.reasoning}</p>
           )}
-          {run.skippedReason && (
+          {(blockingGate || run.skippedReason) && (
             <p className="mt-2 text-sm text-amber-500">
-              Filter: {run.skippedReason}
+              {blockingGate
+                ? `Blocked at ${blockingGate.stage}: ${blockingGate.reason}`
+                : `Filter: ${run.skippedReason}`}
             </p>
           )}
           {!!candidate?.blockedReasons?.length && (

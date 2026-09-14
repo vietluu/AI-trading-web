@@ -256,6 +256,77 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     expect(repository.updateRun).toHaveBeenCalledWith('run-2', expect.objectContaining({
       status: 'COMPLETED', decision: 'LONG', skippedReason: undefined,
     }));
+    const approvedRunCalls = JSON.stringify(repository.updateRun.mock.calls);
+    expect(approvedRunCalls).toContain('"stage":"RISK","disposition":"PASS"');
+    expect(approvedRunCalls).toContain('"stage":"EXECUTION","disposition":"PASS"');
+
+    repository.updateRun.mockClear();
+    const provenanceService = new PipelineRunnerService(
+      fusion as never,
+      decision as never,
+      repository as never,
+      { isCancelled: vi.fn().mockResolvedValue(false) } as never,
+      riskPolicy,
+      signalFilter,
+      marketData as never,
+      alerts as never,
+      analytics as never,
+      liveTrading as never,
+      redis as never,
+      {
+        evaluate: vi.fn().mockReturnValue({
+          verdict: 'APPROVE',
+          severity: 'APPROVE',
+          approved: true,
+          reasons: ['VALID_EXACT_EVIDENCE'],
+        }),
+      },
+      undefined,
+      {
+        evaluate: vi.fn().mockResolvedValue({
+          severity: 'BLOCK',
+          allowed: false,
+          evaluated: false,
+          reason: 'QUANT_ASSUMPTION_MISMATCH',
+          reasons: ['ASSUMPTION_MISMATCH_LIVE'],
+        }),
+      } as never,
+    );
+
+    await provenanceService.run({
+      pipelineId: 'FULL_ANALYSIS_DECISION',
+      runId: 'run-quant-block',
+      userId: 'user-1',
+      provider: 'BINANCE_FUTURES',
+      symbol: 'ETH-USDT',
+      params: { interval: '1h', strategyIds: ['ai-core'] },
+      trigger: 'EVENT',
+    } as never);
+
+    const quantBlockedRun = (repository.updateRun.mock.calls as unknown as Array<[
+      string,
+      {
+        status?: string;
+        skippedReason?: string;
+        result?: {
+          blockingGate?: { stage: string; reason: string };
+          gates?: Array<{ stage: string; disposition: string }>;
+        };
+      },
+    ]>).find(([id, update]) => id === 'run-quant-block' && update.status === 'COMPLETED')?.[1];
+    expect(quantBlockedRun?.result?.blockingGate).toEqual({
+      stage: 'QUANT',
+      reason: 'QUANT_ASSUMPTION_MISMATCH',
+    });
+    expect(quantBlockedRun?.skippedReason).toBe('QUANT_ASSUMPTION_MISMATCH');
+    expect(quantBlockedRun?.result?.gates).toContainEqual(expect.objectContaining({
+      stage: 'JUDGE',
+      disposition: 'PASS',
+    }));
+    expect(analytics.recordStageTelemetry).toHaveBeenCalledWith(expect.objectContaining({
+      rejectReason: 'QUANT_ASSUMPTION_MISMATCH',
+      blockingStage: 'QUANT',
+    }));
 
     vi.clearAllMocks();
     const fallbackFusion: typeof fusionResult = {
@@ -1063,4 +1134,3 @@ describe("drift reassessment boundary", () => {
     expect(liveTrading.assessPipelineDecision).toHaveBeenCalled();
   });
 });
-

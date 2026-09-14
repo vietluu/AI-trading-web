@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { FusionRunInputSchema } from "../src/schemas/agents.js";
-import { PipelineScheduleInputSchema } from "../src/schemas/pipeline.js";
+import {
+  PipelineRunResultSchema,
+  PipelineScheduleInputSchema,
+} from "../src/schemas/pipeline.js";
 
 const schedule = {
   pipelineId: "FULL_ANALYSIS_DECISION",
@@ -40,5 +43,31 @@ describe("PipelineScheduleInputSchema", () => {
     });
     expect(result.intervalMs).toBe(300_000);
     expect(result.maxRunsPerHour).toBe(60);
+  });
+});
+
+describe("PipelineRunResultSchema", () => {
+  it("parses both legacy results and canonical gate provenance", () => {
+    expect(PipelineRunResultSchema.parse({ decision: "WAIT" })).toEqual({
+      decision: "WAIT",
+    });
+    expect(PipelineRunResultSchema.parse({
+      decision: "WAIT",
+      gates: [{
+        stage: "QUANT",
+        disposition: "BLOCK",
+        reasonCodes: ["QUANT_ASSUMPTION_MISMATCH"],
+        selectedBlockingReason: "QUANT_ASSUMPTION_MISMATCH",
+      }],
+      blockingGate: {
+        stage: "QUANT",
+        reason: "QUANT_ASSUMPTION_MISMATCH",
+      },
+    })).toMatchObject({
+      blockingGate: {
+        stage: "QUANT",
+        reason: "QUANT_ASSUMPTION_MISMATCH",
+      },
+    });
   });
 });

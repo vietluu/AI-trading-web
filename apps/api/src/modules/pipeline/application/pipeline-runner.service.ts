@@ -57,6 +57,12 @@ import type { TradePlanMarketContext } from "../../risk/domain/trade-plan-engine
 import { TradeResearcherService } from "../../agents/application/services/trade-researcher.service";
 import { ChainOfThoughtReflectionService } from "../../agents/application/services/chain-of-thought-reflection.service";
 import { AnticipatorySnapshotService } from "../../agents/application/services/anticipatory-snapshot.service";
+import {
+  selectBlockingGate,
+  type GateDecisionRecord,
+  type GateDisposition,
+  type GateStage,
+} from "../domain/gate-decision";
 
 class PipelineCancelledError extends Error {}
 class PipelineExecutionLockBusyError extends Error {}
@@ -97,6 +103,24 @@ function historicalGateReasonsAreAdvisory(reasons: string[]): boolean {
   return reasons.every((reason) =>
     DISLOCATION_CANARY_ADVISORY_REASONS.has(reason),
   );
+}
+
+function gateRecord(
+  stage: GateStage,
+  disposition: GateDisposition,
+  reasonCodes: Array<string | undefined>,
+): GateDecisionRecord {
+  const uniqueReasonCodes = [...new Set(reasonCodes.filter(
+    (reason): reason is string => typeof reason === "string" && reason.length > 0,
+  ))];
+  return {
+    stage,
+    disposition,
+    reasonCodes: uniqueReasonCodes,
+    ...(disposition === "BLOCK" && uniqueReasonCodes[0]
+      ? { selectedBlockingReason: uniqueReasonCodes[0] }
+      : {}),
+  };
 }
 
 @Injectable()
@@ -565,11 +589,11 @@ export class PipelineRunnerService {
         actionable: boolean;
         blockedReasons: string[];
         advisoryReasons: string[];
+        gates: GateDecisionRecord[];
       }> = [];
       let selectedGate: {
         strategyKey: string;
         output: Awaited<ReturnType<DecisionService["calibrateForExecution"]>>;
-        filter: ReturnType<DecisionRiskPolicyService["evaluate"]>;
         judge: ReturnType<DecisionJudgeService["evaluate"]>;
         multiTimeframeFilter: ReturnType<typeof evaluateMultiTimeframeDecision>;
         quant: Awaited<ReturnType<QuantExecutionPolicyService["evaluate"]>>;
@@ -577,6 +601,7 @@ export class PipelineRunnerService {
         dislocationCanary: boolean;
         blockedReasons: string[];
         advisoryReasons: string[];
+        gates: GateDecisionRecord[];
       } | undefined;
       for (const candidate of rankedCandidates) {
         const calibrated = await this.decision.calibrateForExecution(
@@ -649,23 +674,56 @@ export class PipelineRunnerService {
           judgeCanaryCompatible &&
           historicalGateReasonsAreAdvisory(candidateBlockedReasons);
         const candidateActionable = standardActionable || dislocationCanary;
-        const advisoryReasons = dislocationCanary
-          ? [...new Set([
-              ...candidateBlockedReasons,
-              ...(candidateQuant.reason ? [candidateQuant.reason] : []),
-            ])]
-          : [];
+        const candidateGates: GateDecisionRecord[] = [
+          gateRecord(
+            "SIGNAL_FILTER",
+            candidateFilter.actionable
+              ? "PASS"
+              : dislocationCanary ? "ADVISORY" : "BLOCK",
+            [candidateFilter.reason],
+          ),
+          gateRecord(
+            "JUDGE",
+            candidateJudge.approved
+              ? candidateJudge.severity === "REDUCE_SIZE" ? "REDUCE_SIZE" : "PASS"
+              : dislocationCanary ? "ADVISORY" : "BLOCK",
+            candidateJudge.reasons,
+          ),
+          gateRecord(
+            "QUANT",
+            !candidateQuant.allowed
+              ? "BLOCK"
+              : candidateQuant.severity === "REDUCE_SIZE"
+                ? "REDUCE_SIZE"
+                : candidateQuant.advisory ? "ADVISORY" : "PASS",
+            [
+              candidateQuant.reason,
+              ...("reasons" in candidateQuant ? candidateQuant.reasons ?? [] : []),
+            ],
+          ),
+          gateRecord(
+            "MULTI_TIMEFRAME",
+            candidateMultiTimeframe.allowed ? "PASS" : "BLOCK",
+            [candidateMultiTimeframe.reason],
+          ),
+        ];
+        const canonicalBlockedReasons = candidateGates
+          .filter((gate) => gate.disposition === "BLOCK")
+          .flatMap((gate) => gate.reasonCodes);
+        const advisoryReasons = candidateGates
+          .filter((gate) => gate.disposition === "ADVISORY" || gate.disposition === "REDUCE_SIZE")
+          .flatMap((gate) => gate.reasonCodes);
         const evaluated = {
           strategyKey: candidate.strategyKey,
           output: calibrated,
-          filter: candidateFilter,
           judge: candidateJudge,
           multiTimeframeFilter: candidateMultiTimeframe,
           quant: candidateQuant,
           actionable: candidateActionable,
           dislocationCanary,
-          blockedReasons: dislocationCanary ? [] : candidateBlockedReasons,
+          blockedReasons: canonicalBlockedReasons,
           advisoryReasons,
+          gates: candidateGates,
         };
         gateAttempts.push({
           strategyKey: candidate.strategyKey,
@@ -673,7 +731,8 @@ export class PipelineRunnerService {
           score: candidate.score,
           actionable: candidateActionable,
           blockedReasons: [...new Set(evaluated.blockedReasons)],
-          advisoryReasons,
+          advisoryReasons: [...new Set(advisoryReasons)],
+          gates: candidateGates,
         });
         selectedGate ??= evaluated;
         if (candidateActionable) {
@@ -685,7 +744,6 @@ export class PipelineRunnerService {
       const {
         strategyKey,
         output,
-        filter,
         judge,
         multiTimeframeFilter,
         quant,
@@ -693,6 +751,7 @@ export class PipelineRunnerService {
         dislocationCanary,
         blockedReasons: selectedBlockedReasons,
         advisoryReasons: selectedAdvisoryReasons,
+        gates: candidateGates,
       } = selectedGate;
       const executionStrategySelection = {
         ...strategySelection,
@@ -707,8 +766,7 @@ export class PipelineRunnerService {
       const sourceDataAgeMs = sourceTimestamp
         ? Math.max(0, decisionCompletedAt.getTime() - new Date(sourceTimestamp).getTime())
         : undefined;
-      const quantBlockReason = quant.allowed ? undefined : quant.reason;
-      const reason = filter.reason ?? judge.reasons[0] ?? quantBlockReason ?? multiTimeframeFilter.reason;
+      const candidateBlockingGate = selectBlockingGate(candidateGates);
       const candidateDecision = {
         decision: output.decision,
         confidence: output.confidence,
@@ -738,7 +796,8 @@ export class PipelineRunnerService {
         opportunityScore: output.opportunityScore,
         riskScore: output.riskScore,
         decision: output.decision,
-        rejectReason: reason,
+        rejectReason: candidateBlockingGate?.reason,
+        blockingStage: candidateBlockingGate?.stage,
         executionResult: actionable ? 'APPROVED' : 'REJECTED',
         durationMs: decisionCompletedAt.getTime() - startedAt.getTime(),
         tokenUsage: 0,
@@ -1050,13 +1109,31 @@ export class PipelineRunnerService {
             ])],
           }
         : candidateDecision;
-      const finalSkippedReason = executionGateReason ?? (!actionable
-        ? reason
-        : !riskApproved
-          ? risk?.reason ?? riskAssessment?.outcome ?? "RISK_NOT_APPROVED"
-          : !orderSubmitted
-            ? liveExecution?.errorCode ?? liveExecution?.outcome ?? "ORDER_NOT_SUBMITTED"
-            : undefined);
+      const gates = [...candidateGates];
+      if (executionGateReason) {
+        gates.push(gateRecord("EXECUTION", "BLOCK", [executionGateReason]));
+      } else if (riskAssessment) {
+        const riskReason = riskApproved
+          ? risk?.reason
+          : risk?.reason ?? riskAssessment.outcome ?? "RISK_NOT_APPROVED";
+        gates.push(gateRecord(
+          "RISK",
+          riskApproved ? "PASS" : "BLOCK",
+          [riskReason],
+        ));
+        if (riskApproved) {
+          const executionReason = orderSubmitted
+            ? undefined
+            : liveExecution?.errorCode ?? liveExecution?.outcome ?? "ORDER_NOT_SUBMITTED";
+          gates.push(gateRecord(
+            "EXECUTION",
+            orderSubmitted ? "PASS" : "BLOCK",
+            [executionReason],
+          ));
+        }
+      }
+      const blockingGate = selectBlockingGate(gates);
+      const finalSkippedReason = blockingGate?.reason;
       this.analytics.recordStageTelemetry({
         pipelineId: job.pipelineId,
         runId,
@@ -1070,7 +1147,8 @@ export class PipelineRunnerService {
         opportunityScore: output.opportunityScore,
         riskScore: risk?.riskScore ?? 0,
         decision: finalExecutionDecision.decision,
-        rejectReason: finalSkippedReason,
+        rejectReason: blockingGate?.reason,
+        blockingStage: blockingGate?.stage,
         executionResult: orderSubmitted ? 'EXECUTED' : riskApproved ? 'RISK_APPROVED' : 'REJECTED',
         durationMs: completedAt.getTime() - startedAt.getTime(),
         tokenUsage: 0,
@@ -1103,6 +1181,10 @@ export class PipelineRunnerService {
           strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue,
           actionable: finalActionable,
           skippedReason: finalSkippedReason,
+          gates: gates as unknown as Prisma.InputJsonValue,
+          ...(blockingGate
+            ? { blockingGate: blockingGate as unknown as Prisma.InputJsonValue }
+            : {}),
           signalFilter: {
             allowed: signalFilter.allowed,
             preliminaryRegime: signalFilter.preliminaryRegime,
@@ -1120,14 +1202,14 @@ export class PipelineRunnerService {
         },
       });
       await this.alerts.contextual(runId, symbol, analyses);
-      if (!finalActionable) {
+      if (!finalActionable && blockingGate) {
         await this.alerts.blockedOpportunity({
           runId,
           userId: job.userId,
           symbol,
           decision: finalCandidateDecision.decision,
           confidence: finalCandidateDecision.confidence,
-          blockedReasons: finalCandidateDecision.blockedReasons,
+          blockingGate,
           analyses,
           multiTimeframeConfirmation: multiTimeframeFilter.confirmation,
           priceChangePercent: Number.isFinite(Number(indicatorSnapshot?.values.priceChangePercent))
