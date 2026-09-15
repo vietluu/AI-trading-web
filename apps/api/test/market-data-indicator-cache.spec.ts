@@ -5,6 +5,39 @@ import type { IndicatorSnapshot } from "../src/market-data/domain/market-data.ty
 import { MarketDataService } from "../src/market-data/application/market-data.service";
 
 describe("MarketDataService indicator cache recovery", () => {
+  it('refreshes the previous closed bucket after a new candle has closed', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-15T14:51:00Z'));
+    try {
+      let snapshot: IndicatorSnapshot = {
+        provider: ExchangeProvider.OKX_FUTURES, symbol: 'ZRO-USDT', interval: ExchangeInterval.FIFTEEN_MINUTES,
+        candleOpenTime: new Date('2026-09-15T14:15:00Z'), candleCloseTime: new Date('2026-09-15T14:29:59.999Z'),
+        status: IndicatorStatus.CLOSED, values: { rsi14: '42.07' }, calculatedAt: new Date(), calculationVersion: 2,
+      };
+      const history = Array.from({ length: 250 }, (_, index) => ({
+        provider: snapshot.provider, symbol: snapshot.symbol, interval: snapshot.interval,
+        openTime: new Date(Date.parse('2026-09-15T14:30:00Z') - (249-index)*900000),
+        closeTime: new Date(Date.parse('2026-09-15T14:44:59.999Z') - (249-index)*900000),
+        open: String(2-index*0.002), high: String(2.01-index*0.002),
+        low: String(1.99-index*0.002), close: String(2-index*0.002), volume: '100', isClosed: true,
+      }));
+      const cache = { getIndicator: vi.fn(() => Promise.resolve(snapshot)),
+        setIndicator: vi.fn((_provider: unknown, _symbol: unknown, _interval: unknown, value: IndicatorSnapshot) => {
+          snapshot = value; return Promise.resolve();
+        }) };
+      const repository = { getLatestIndicatorSnapshot: vi.fn(() => Promise.resolve(snapshot)),
+        getCandles: vi.fn().mockResolvedValue(history.map(c => ({ ...c, closeTime: new Date(c.closeTime.getTime()-900000) }))),
+        getClosedCandles: vi.fn().mockResolvedValue(history), upsertCandleBatch: vi.fn(), upsertIndicatorSnapshot: vi.fn() };
+      const exchanges = { klines: vi.fn().mockResolvedValue(history) };
+      const service = new MarketDataService({} as never, {} as never, cache as never, repository as never, exchanges as never);
+      const result = await service.getIndicatorSnapshot(snapshot.provider, snapshot.symbol, snapshot.interval);
+      expect(result?.candleCloseTime).toEqual(new Date('2026-09-15T14:44:59.999Z'));
+      expect(exchanges.klines).toHaveBeenCalledTimes(1);
+      expect(repository.getClosedCandles).toHaveBeenCalledWith(expect.objectContaining({
+        beforeTime: new Date('2026-09-15T14:44:59.999Z'),
+      }));
+    } finally { vi.useRealTimers(); }
+  });
   it("restores an expired Redis indicator from PostgreSQL", async () => {
     const now = Date.now();
     const snapshot: IndicatorSnapshot = {
@@ -160,5 +193,4 @@ describe("MarketDataService indicator cache recovery", () => {
     expect(indicator!.calculatedAt).toBeInstanceOf(Date);
   });
 });
-
 

@@ -3,6 +3,7 @@ import type {
   TechnicalAgentOutput,
 } from "@platform/shared";
 import { mapMacdTrend, mapRsiState } from "./technical-indicator-mapper";
+import { calculateIndicatorSeries } from '../../../../market-data/domain/indicators/indicator-calculator';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -13,8 +14,35 @@ function record(value: unknown): UnknownRecord | undefined {
 }
 
 function finite(value: unknown): number | undefined {
+  if (value === null || value === undefined || value === '' || typeof value === 'boolean') return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function pairedDivergence(candles: UnknownRecord[], oscillator: Array<number | undefined>): 'BULLISH' | 'BEARISH' | 'NONE' {
+  if (candles.length < 10 || oscillator.length !== candles.length) return 'NONE';
+  const mid = Math.floor(candles.length / 2);
+  const pivot = (start: number, end: number, field: 'high' | 'low') => {
+    let index: number | undefined;
+    for (let i = start; i < end; i++) {
+      const price = finite(candles[i]?.[field]);
+      if (price === undefined) continue;
+      const previous = index === undefined ? undefined : finite(candles[index]?.[field]);
+      if (previous === undefined || (field === 'high' ? price >= previous : price <= previous)) index = i;
+    }
+    return index;
+  };
+  for (const field of ['high', 'low'] as const) {
+    const first = pivot(0, mid, field), second = pivot(mid, candles.length, field);
+    if (first === undefined || second === undefined) continue;
+    const firstPrice = finite(candles[first]?.[field]), secondPrice = finite(candles[second]?.[field]);
+    const before = oscillator[first], after = oscillator[second];
+    if (firstPrice === undefined || secondPrice === undefined || before === undefined || after === undefined) continue;
+    const minimumChange = Math.max(Math.abs(before) * 0.03, 0.000001);
+    if (field === 'high' && secondPrice > firstPrice * 1.005 && after < before - minimumChange) return 'BEARISH';
+    if (field === 'low' && secondPrice < firstPrice * 0.995 && after > before + minimumChange) return 'BULLISH';
+  }
+  return 'NONE';
 }
 
 function scalarText(value: unknown): string | undefined {
@@ -288,49 +316,17 @@ export function deterministicTechnicalAnalysis(
       : undefined;
   const bbSqueeze = bbBandwidth !== undefined ? bbBandwidth < 0.03 : false;
 
-  const rsiSeries = Array.isArray(indicators?.rsiSeries)
-    ? (indicators.rsiSeries as unknown[]).map(finite)
-    : undefined;
-
-  const rsiDivergence: "BULLISH" | "BEARISH" | "NONE" = (() => {
-    if (rsi === undefined || candles.length < 10) return "NONE";
-    const mid = Math.floor(candles.length / 2);
-    const first = candles.slice(0, mid);
-    const second = candles.slice(mid);
-    const firstHigh = Math.max(...first.map((c) => finite(c.high) ?? -Infinity));
-    const secondHigh = Math.max(...second.map((c) => finite(c.high) ?? -Infinity));
-    const firstLow = Math.min(...first.map((c) => finite(c.low) ?? Infinity));
-    const secondLow = Math.min(...second.map((c) => finite(c.low) ?? Infinity));
-
-    // If historical RSI series is available, compare exact pivot RSI; otherwise use calibrated oscillator state
-    let priorRsi = rsiSeries && rsiSeries.length >= 2 ? rsiSeries[Math.floor(rsiSeries.length / 2)] : undefined;
-    if (priorRsi === undefined) {
-      priorRsi =
-        rsi +
-        (macdHistogram !== undefined && macdHistogram < 0
-          ? 10
-          : macdHistogram !== undefined && macdHistogram > 0
-            ? -10
-            : 0);
-    }
-    if (secondHigh > firstHigh * 1.005 && rsi < priorRsi * 0.97) return "BEARISH";
-    if (secondLow < firstLow * 0.995 && rsi > priorRsi * 1.03) return "BULLISH";
-    return "NONE";
-  })();
-
-  const macdDivergence: "BULLISH" | "BEARISH" | "NONE" = (() => {
-    if (macdHistogram === undefined || candles.length < 10) return "NONE";
-    const mid = Math.floor(candles.length / 2);
-    const first = candles.slice(0, mid);
-    const second = candles.slice(mid);
-    const firstHigh = Math.max(...first.map((c) => finite(c.high) ?? -Infinity));
-    const secondHigh = Math.max(...second.map((c) => finite(c.high) ?? -Infinity));
-    const firstLow = Math.min(...first.map((c) => finite(c.low) ?? Infinity));
-    const secondLow = Math.min(...second.map((c) => finite(c.low) ?? Infinity));
-    if (secondHigh > firstHigh * 1.005 && macdHistogram < 0) return "BEARISH";
-    if (secondLow < firstLow * 0.995 && macdHistogram > 0) return "BULLISH";
-    return "NONE";
-  })();
+  const historicalSeries = calculateIndicatorSeries(candles.map(c => ({
+    open: String(c.open ?? c.close), high: String(c.high), low: String(c.low),
+    close: String(c.close), volume: String(finite(c.volume) ?? 0),
+  })));
+  const rsiSeries = Array.isArray(indicators.rsiSeries) && indicators.rsiSeries.length === candles.length
+    ? (indicators.rsiSeries as unknown[]).map(finite) : historicalSeries.rsi14;
+  const macdSeries = Array.isArray(indicators.macdHistogramSeries) && indicators.macdHistogramSeries.length === candles.length
+    ? (indicators.macdHistogramSeries as unknown[]).map(finite)
+    : historicalSeries.macd.map(value => finite(value?.histogram));
+  const rsiDivergence = pairedDivergence(candles, rsiSeries);
+  const macdDivergence = pairedDivergence(candles, macdSeries);
 
   return {
     summary: `Deterministic technical analysis identifies a ${trend.strength.toLowerCase()} ${trend.direction.toLowerCase()} trend from price, EMA, RSI and MACD evidence.`,

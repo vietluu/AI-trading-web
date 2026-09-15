@@ -168,6 +168,28 @@ describe("Macro and On-chain Analyst Agents", () => {
 });
 
 describe("FusionService", () => {
+  it('uses pinned technical evidence and market trend despite later tool changes', async () => {
+    const observed = analysisFixture();
+    const execution = { executeSync: vi.fn(({ agentType }: { agentType: AgentType }) => {
+      if (agentType === AgentType.TECHNICAL_ANALYST) return Promise.reject(new Error('technical must not refetch'));
+      const output = agentType === AgentType.MARKET_ANALYST ? observed.market : undefined;
+      return Promise.resolve({ output });
+    }) };
+    const service = new FusionService(execution as never);
+    const pinned = {
+      market: { ...observed.market, trend: { direction: 'DOWN' as const, strength: 'STRONG' as const } },
+      technical: { ...observed.technical, trend: { direction: 'DOWN' as const, strength: 'STRONG' as const },
+        momentum: { ...observed.technical.momentum, rsi: '31.80' } },
+      sourceCutoff: new Date('2026-09-15T14:44:59.999Z'),
+    };
+    const result = await service.runDetailed({
+      input: { symbol: 'ZRO-USDT', provider: 'OKX_FUTURES', interval: '15m', lookbackCandles: 250, lookbackHours: 24, maxItems: 50 },
+      invocationSource: AgentInvocationSource.SYSTEM_TEST, coreSnapshot: pinned,
+    });
+    expect(result.analyses.technical.momentum.rsi).toBe('31.80');
+    expect(result.analyses.market.trend.direction).toBe('DOWN');
+    expect(result.analyses.market.liquidity).toEqual(observed.market.liquidity);
+  });
   it("uses majority bias, agreement confidence, conflict logs, and quality", () => {
     const fusion = new FusionService({} as never);
     const output = fusion.fuse(analysisFixture());

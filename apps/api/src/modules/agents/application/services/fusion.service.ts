@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { AgentInvocationSource, AgentType } from "../../domain/enums";
 import { canonicalSymbol } from "../../../../exchange/infrastructure/exchange-symbol";
 import { AgentExecutionService } from "./agent-execution.service";
+import type { buildPinnedCoreAnalysis } from '../../../pipeline/domain/pinned-core-analysis';
 
 type AnalysisName = keyof FusionInput;
 type AnalysisBias = "BULLISH" | "BEARISH" | "NEUTRAL";
@@ -28,6 +29,7 @@ export interface RunFusionOptions {
   sessionId?: string;
   invocationSource: AgentInvocationSource;
   correlationId?: string;
+  coreSnapshot?: NonNullable<ReturnType<typeof buildPinnedCoreAnalysis>>;
 }
 
 export interface FusionAnalysisResult {
@@ -303,6 +305,9 @@ export class FusionService {
     // Execute Stage 1
     const stage1ResultsPromise = Promise.allSettled(
       stage1Requests.map(async (request) => {
+        if (request.name === 'technical' && options.coreSnapshot) {
+          return { name: request.name, data: TechnicalAgentOutputSchema.parse(options.coreSnapshot.technical) };
+        }
         const cacheKey = this.analysisCacheKey(
           request.name,
           input,
@@ -323,7 +328,7 @@ export class FusionService {
               throw new Error(`Invalid output from ${request.name}`);
             return parsed.data;
           },
-          bypassCache,
+          bypassCache || Boolean(options.coreSnapshot),
           (hit) => { cacheHits[request.name] = hit; },
         );
         const parsed = request.schema.safeParse(data);
@@ -416,6 +421,15 @@ export class FusionService {
       }
     }
 
+    if (options.coreSnapshot) {
+      const pinned = options.coreSnapshot;
+      analyses.technical = pinned.technical;
+      analyses.market = { ...MarketAgentOutputSchema.parse(analyses.market),
+        summary: pinned.market.summary, trend: pinned.market.trend,
+        volatility: pinned.market.volatility, dataQuality: pinned.market.dataQuality,
+        generatedAt: pinned.market.generatedAt,
+      };
+    }
     const parsedAnalyses = FusionInputSchema.parse(analyses);
     return {
       analyses: parsedAnalyses,

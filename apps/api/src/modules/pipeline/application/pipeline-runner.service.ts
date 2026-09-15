@@ -30,6 +30,7 @@ import {
   selectStrategyDecision,
 } from "../../portfolio/domain/strategy-decision";
 import { MarketDataService } from "../../../market-data/application/market-data.service";
+import { buildPinnedCoreAnalysis } from '../domain/pinned-core-analysis';
 import { RedisService } from "../../../redis/redis.service";
 import { DecisionJudgeService } from "./decision-judge.service";
 import { QuantExecutionPolicyService } from "./quant-execution-policy.service";
@@ -247,20 +248,19 @@ export class PipelineRunnerService {
       const timeframeMarketData = await Promise.all(
         timeframeSelection.selected.map(async (timeframe) => {
           try {
-            const [snapshot, candles] = await Promise.all([
-              this.marketData.getIndicatorSnapshot(
-                job.provider as unknown as ExchangeProvider,
-                symbol,
-                timeframe as ExchangeInterval,
-              ),
-              this.marketData.getHistoricalCandles({
+            // Refresh candles before reading indicators: parallel reads could
+            // capture the old cache while the candle read builds a new bucket.
+            const chronologicalCandles = await this.marketData.getHistoricalCandles({
                 provider: job.provider as unknown as ExchangeProvider,
                 symbol,
                 interval: timeframe as ExchangeInterval,
-                limit: 1,
-              }),
-            ]);
-            return { timeframe, snapshot, candles };
+                limit: 250,
+              });
+            const snapshot = await this.marketData.getIndicatorSnapshot(
+                job.provider as unknown as ExchangeProvider, symbol, timeframe as ExchangeInterval);
+            const referenceCandle = chronologicalCandles.filter(candle =>
+              candle.isClosed !== false && new Date(candle.closeTime).getTime() === new Date(snapshot?.candleCloseTime ?? 0).getTime()).at(-1);
+            return { timeframe, snapshot, candles: [...chronologicalCandles].reverse(), referenceCandle };
           } catch (error) {
             this.logger.warn({
               event: 'pipeline_timeframe_data_unavailable',
@@ -269,7 +269,7 @@ export class PipelineRunnerService {
               timeframe,
               message: error instanceof Error ? error.message : 'Unknown market-data error',
             });
-            return { timeframe, snapshot: undefined, candles: [] };
+            return { timeframe, snapshot: undefined, candles: [], referenceCandle: undefined };
           }
         }),
       );
@@ -295,8 +295,9 @@ export class PipelineRunnerService {
               : indicatorClose
                 ? new Date(indicatorClose).getTime()
                 : NaN;
-          const maxAgeMs = timeframeMilliseconds(item.timeframe) * 2;
+          const maxAgeMs = timeframeMilliseconds(item.timeframe) + 5_000;
           return (
+            !item.referenceCandle ||
             !Number.isFinite(candleTime) ||
             !Number.isFinite(indicatorTime) ||
             nowMs - Number(candleTime) > maxAgeMs ||
@@ -311,7 +312,7 @@ export class PipelineRunnerService {
           .filter((item) => !staleTimeframeSet.has(item.timeframe))
           .map((item) => ({
             timeframe: item.timeframe,
-            close: item.candles[0] ? Number(item.candles[0].close) : undefined,
+            close: item.referenceCandle ? Number(item.referenceCandle.close) : undefined,
             ema20: Number(item.snapshot?.values.ema20),
             ema50: Number(item.snapshot?.values.ema50),
             rsi: Number(item.snapshot?.values.rsi14),
@@ -459,6 +460,7 @@ export class PipelineRunnerService {
             userId: job.userId,
             invocationSource: this.source(job.trigger),
             correlationId: runId,
+            coreSnapshot: buildPinnedCoreAnalysis(indicatorSnapshot, recentCandles),
           }),
           definition.timeoutMs,
         );
@@ -774,8 +776,7 @@ export class PipelineRunnerService {
       const decisionCompletedAt = new Date();
       const sourceTimestamp = indicatorSnapshot?.candleCloseTime ??
         recentCandles[0]?.closeTime;
-      const sourceDataCutoff = recentCandles[0]?.closeTime ??
-        indicatorSnapshot?.candleCloseTime;
+      const sourceDataCutoff = indicatorSnapshot?.candleCloseTime ?? recentCandles[0]?.closeTime;
       const sourceDataAgeMs = sourceTimestamp
         ? Math.max(0, decisionCompletedAt.getTime() - new Date(sourceTimestamp).getTime())
         : undefined;
