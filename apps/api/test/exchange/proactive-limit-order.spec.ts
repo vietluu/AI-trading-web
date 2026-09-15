@@ -20,6 +20,15 @@ function fixture(provider: 'BINANCE' | 'OKX') {
 describe('proactive LIMIT execution adapters', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(now); });
   afterEach(() => vi.useRealTimers());
+  it.each(['BINANCE', 'OKX'] as const)('%s keeps a scheduled pullback limit resting until local expiry', async (provider) => {
+    const { adapter, signedPost } = fixture(provider);
+    await adapter.placeOrder(credentials, { ...command, timeInForce: 'GTC' } as never);
+    const orders = signedPost.mock.calls.filter(([path]) => path.endsWith('/order'));
+    expect(orders).toHaveLength(1);
+    expect(orders[0]?.[2]).toMatchObject(provider === 'BINANCE'
+      ? { type: 'LIMIT', price: '108200', timeInForce: 'GTC' }
+      : { ordType: 'limit', px: '108200' });
+  });
   it.each(['BINANCE', 'OKX'] as const)('%s submits the declared limit once without market fallback', async (provider) => {
     const { adapter, signedPost } = fixture(provider);
     await adapter.placeOrder(credentials, command);

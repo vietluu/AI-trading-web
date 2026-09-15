@@ -874,7 +874,9 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
     const makerFirst =
       !declaredLimit && !command.reduceOnly &&
       (this.config?.get<boolean>("OKX_MAKER_FIRST_ENABLED") ?? false);
-    let ordType = command.reduceOnly ? "market" : "ioc";
+    let ordType = declaredLimit
+      ? command.timeInForce === 'GTC' ? 'limit' : 'ioc'
+      : command.reduceOnly ? "market" : "ioc";
     if (!declaredLimit && !command.reduceOnly) {
       try {
         const ticker = await this.bestBidAsk(command.symbol);

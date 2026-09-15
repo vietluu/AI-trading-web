@@ -592,6 +592,7 @@ export class PipelineRunnerService {
       );
       const gateAttempts: Array<{
         strategyKey: string;
+        inputDecision: string;
         decision: string;
         score: number;
         actionable: boolean;
@@ -688,7 +689,8 @@ export class PipelineRunnerService {
             candidateFilter.actionable
               ? "PASS"
               : dislocationCanary ? "ADVISORY" : "BLOCK",
-            [candidateFilter.reason],
+            calibrated.calibrationBlockingReasons?.length
+              ? calibrated.calibrationBlockingReasons : [candidateFilter.reason],
           ),
           gateRecord(
             "JUDGE",
@@ -735,6 +737,7 @@ export class PipelineRunnerService {
         };
         gateAttempts.push({
           strategyKey: candidate.strategyKey,
+          inputDecision: candidate.decision.decision,
           decision: calibrated.decision,
           score: candidate.score,
           actionable: candidateActionable,

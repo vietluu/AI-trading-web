@@ -352,7 +352,10 @@ export function decisionForStrategy(
   // This keeps an uncalibrated rule-based candidate from reaching the exact
   // confidence boundary used by the automatic-execution Judge.
   if (base.dataQuality === "PARTIAL" && key !== "mean-reversion" && key !== "momentum-scalp") {
-    confidence = Math.min(confidence, base.confidence);
+    // A historical cap for the shared decision is not analyst conviction for
+    // this strategy. Its own cohort is calibrated after candidate selection.
+    const sharedSignalStrength = base.executionEvidence?.signalStrength ?? base.confidence;
+    confidence = Math.min(confidence, sharedSignalStrength);
   }
 
   if (
