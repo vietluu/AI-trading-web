@@ -628,6 +628,7 @@ export const DecisionOutputSchema = z
     decision: DecisionSchema,
     confidence: z.number().min(0).max(100),
     confidenceKind: z.literal('COMPOSITE_SCORE').optional(),
+    calibrationBlockingReasons: z.array(z.string()).optional(),
     executionEvidence: ExecutionEvidenceScoreSchema.optional(),
     confidenceCalibration: z.object({
       status: z.enum(['CALIBRATED', 'INSUFFICIENT_HISTORY']),

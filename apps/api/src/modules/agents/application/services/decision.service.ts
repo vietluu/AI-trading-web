@@ -219,8 +219,10 @@ export class DecisionService {
           0.1,
           10,
         );
+    const calibrationBlockingReasons: string[] = [];
     let finalConfidence = decision.confidence;
     if (empiricalProbability !== undefined && empiricalProbability < 0.35) {
+      calibrationBlockingReasons.push('CALIBRATED_PROBABILITY_TOO_LOW');
       finalConfidence = Math.min(finalConfidence, 40);
     }
 
@@ -228,10 +230,12 @@ export class DecisionService {
     const finalExpectedValue = Number(expectedValue.toFixed(3));
 
     if (empiricalProbability !== undefined && finalExpectedValue < 0.15 && finalDecisionAction !== "WAIT") {
+      calibrationBlockingReasons.push('EXPECTED_VALUE_BELOW_THRESHOLD');
       finalDecisionAction = "WAIT";
     }
 
-    if (finalConfidence <= 40 && finalDecisionAction !== "WAIT") {
+    if (finalConfidence <= 40 && decision.decision !== "WAIT") {
+      calibrationBlockingReasons.push('CONFIDENCE_BELOW_THRESHOLD');
       finalDecisionAction = "WAIT";
     }
 
@@ -246,6 +250,7 @@ export class DecisionService {
     const calibratedDecision: DecisionOutput = {
       ...decision,
       decision: finalDecisionAction,
+      calibrationBlockingReasons,
       confidence: finalConfidence,
       confidenceCalibration,
       executionEvidence,
@@ -379,8 +384,10 @@ export class DecisionService {
             )
           : (strongColdStart ? decision.expectedValue : 0);
           
+    const calibrationBlockingReasons: string[] = [];
     let finalConfidence = decision.confidence;
     if (empiricalProbability !== undefined && empiricalProbability < 0.35) {
+      calibrationBlockingReasons.push('CALIBRATED_PROBABILITY_TOO_LOW');
       finalConfidence = Math.min(finalConfidence, 40);
     }
 
@@ -388,10 +395,12 @@ export class DecisionService {
     const finalExpectedValue = Number(expectedValueRaw.toFixed(3));
 
     if (hasEmpiricalEdge && finalExpectedValue < 0.15 && finalDecisionAction !== "WAIT") {
+      calibrationBlockingReasons.push('EXPECTED_VALUE_BELOW_THRESHOLD');
       finalDecisionAction = "WAIT";
     }
 
-    if (finalConfidence <= 40 && finalDecisionAction !== "WAIT") {
+    if (finalConfidence <= 40 && decision.decision !== "WAIT") {
+      calibrationBlockingReasons.push('CONFIDENCE_BELOW_THRESHOLD');
       finalDecisionAction = "WAIT";
     }
 
@@ -406,6 +415,7 @@ export class DecisionService {
     return {
       ...decision,
       decision: finalDecisionAction,
+      calibrationBlockingReasons,
       confidence: finalConfidence,
       confidenceCalibration,
       executionEvidence,

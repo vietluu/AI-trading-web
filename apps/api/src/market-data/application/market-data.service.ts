@@ -125,7 +125,7 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
       limit: 250,
     });
     const calculated = await this.cache.getIndicator(provider, symbol, interval);
-    if (calculated) return calculated;
+    if (calculated && this.isFreshTimestamp(calculated.candleCloseTime, interval)) return calculated;
 
     // getHistoricalCandles returns early when PostgreSQL already contains the
     // requested amount. In that path no indicator calculation is triggered,
@@ -139,7 +139,8 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
         lastClosed,
       );
     }
-    return this.cache.getIndicator(provider, symbol, interval);
+    const rebuilt = await this.cache.getIndicator(provider, symbol, interval);
+    return rebuilt && this.isFreshTimestamp(rebuilt.candleCloseTime, interval) ? rebuilt : null;
   }
 
   private hasFreshClosedCandle(
@@ -167,7 +168,9 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
       timestamp instanceof Date ? timestamp.getTime() : new Date(timestamp).getTime();
     if (!Number.isFinite(timeMs)) return false;
     const ageMs = Date.now() - timeMs;
-    return ageMs >= -60_000 && ageMs <= this.intervalMilliseconds(interval) * 2;
+    // Once the next bucket closes, the previous snapshot must be refreshed.
+    // Allow only a short exchange confirmation window at the boundary.
+    return ageMs >= -60_000 && ageMs <= this.intervalMilliseconds(interval) + 5_000;
   }
 
   private intervalMilliseconds(interval: ExchangeInterval): number {
@@ -376,6 +379,7 @@ export class MarketDataService implements OnModuleInit, OnModuleDestroy {
         symbol,
         interval,
         limit: 250,
+        beforeTime: closedCandle.closeTime,
       });
 
       if (historicalCandles.length === 0) return;

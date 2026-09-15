@@ -117,7 +117,8 @@ describe('pipeline LIMIT execution integrity', () => {
       expect.objectContaining({
         orderType: 'LIMIT',
         limitPrice: '1.01826901',
-        timeInForce: 'IOC',
+        timeInForce: 'GTC',
+        expiresAt: '2026-09-09T12:30:00.000Z',
       }),
       expect.anything(),
     );

@@ -244,6 +244,27 @@ describe('DecisionService', () => {
     expect(output.profitFactorEstimate).toBe(1);
   });
 
+  it('explains an execution calibration downgrade instead of silently losing SHORT', async () => {
+    const service = new DecisionService({} as never);
+    const base: ReturnType<DecisionService['decide']> = { ...service.decide(decisionInput()), decision: 'SHORT',
+      confidence: 74, expectedReward: 2, expectedLoss: 1, executionCost: 0.1 };
+    const calibrationService = service as unknown as {
+      confidenceCalibration: (...args: unknown[]) => Promise<unknown>;
+    };
+    vi.spyOn(calibrationService, 'confidenceCalibration').mockResolvedValue({
+      status: 'CALIBRATED', rawScore: 74, scope: 'EXACT', hardGateEligible: true,
+      empiricalProbability: 0.3, sampleSize: 100, bucketSampleSize: 100,
+      brierScore: 0.4, fallbackUsed: false,
+    });
+    const output = await service.calibrateForExecution(base, 'user-1', {
+      symbol: 'SOL-USDT', strategyKey: 'breakout', provider: 'OKX_FUTURES', timeframe: '15m',
+    });
+    expect(output.decision).toBe('WAIT');
+    expect(output).toMatchObject({ calibrationBlockingReasons: [
+      'CALIBRATED_PROBABILITY_TOO_LOW', 'EXPECTED_VALUE_BELOW_THRESHOLD', 'CONFIDENCE_BELOW_THRESHOLD',
+    ] });
+  });
+
   it('preserves synthesized EV and profit factor during cold-start when conviction is high', async () => {
     const service = new DecisionService({} as never);
     const base = service.decide(decisionInput());

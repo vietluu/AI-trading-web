@@ -120,6 +120,16 @@ describe('Bollinger Position', () => {
 });
 
 describe('RSI Divergence', () => {
+  it('does not invent prior RSI from a positive MACD histogram during a breakdown', () => {
+    const result = deterministicTechnicalAnalysis({
+      'market.indicators.get': { ...baseIndicators, rsi: 31.8, macdHistogram: 0.0002 },
+      'market.candles.list': { candles: makeCandles(40, 1, -0.002).map(c => ({
+        ...c, high: c.close + 0.001, low: c.close - 0.001,
+      })) },
+    }, ['market.indicators.get', 'market.candles.list']);
+    expect(result?.divergence.rsiDivergence).toBe('NONE');
+    expect(result?.divergence.macdDivergence).toBe('NONE');
+  });
   it('should detect BEARISH RSI divergence when price makes higher high but RSI drops', () => {
     const candles = [
       ...makeCandles(10, 50000, 0),
@@ -130,6 +140,7 @@ describe('RSI Divergence', () => {
         'market.indicators.get': {
           ...baseIndicators,
           rsi: 40,
+          rsiSeries: [...Array<number>(10).fill(65), ...Array<number>(10).fill(40)],
           macdHistogram: -10,
         },
         'market.candles.list': { candles },
@@ -149,6 +160,7 @@ describe('RSI Divergence', () => {
         'market.indicators.get': {
           ...baseIndicators,
           rsi: 65,
+          rsiSeries: [...Array<number>(10).fill(40), ...Array<number>(10).fill(65)],
           macdHistogram: 10,
         },
         'market.candles.list': { candles },
@@ -181,6 +193,7 @@ describe('MACD Divergence', () => {
         'market.indicators.get': {
           ...baseIndicators,
           macdHistogram: -5,
+          macdHistogramSeries: [...Array<number>(10).fill(10), ...Array<number>(10).fill(-5)],
         },
         'market.candles.list': { candles },
       },
@@ -199,6 +212,7 @@ describe('MACD Divergence', () => {
         'market.indicators.get': {
           ...baseIndicators,
           macdHistogram: 5,
+          macdHistogramSeries: [...Array<number>(10).fill(-10), ...Array<number>(10).fill(5)],
         },
         'market.candles.list': { candles },
       },

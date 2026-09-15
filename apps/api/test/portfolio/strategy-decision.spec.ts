@@ -53,6 +53,21 @@ const analyses = {
 } as FusionInput;
 
 describe("independent strategy decisions", () => {
+  it('recalibrates a bearish breakout from original evidence instead of inheriting another cohort confidence cap', () => {
+    const bearish = {
+      ...analyses,
+      technical: { ...analyses.technical, trend: { direction: 'DOWN', strength: 'STRONG' },
+        momentum: { rsi: '33.53', rsiState: 'NEUTRAL' }, structure: { breakout: true } },
+    } as FusionInput;
+    const result = decisionForStrategy('breakout', {
+      ...base, decision: 'WAIT', confidence: 40, dataQuality: 'PARTIAL',
+      executionEvidence: { signalStrength: 75, calibrationQuality: 'UNRELIABLE' },
+      confidenceCalibration: { status: 'CALIBRATED', rawScore: 75, scope: 'EXACT',
+        empiricalProbability: 0.3, sampleSize: 100, bucketSampleSize: 100, brierScore: 0.4 },
+    }, bearish);
+    expect(result).toMatchObject({ decision: 'SHORT', confidence: 74 });
+    expect(result.confidenceCalibration).toBeUndefined();
+  });
   it("only forwards supported analyst fields to strict validation", () => {
     expect(
       analysisParams({

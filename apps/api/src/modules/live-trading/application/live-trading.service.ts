@@ -1,4 +1,5 @@
 import { assertDeclaredLimitOrder } from '../../../exchange/domain/declared-limit-order';
+import { isRestingEntryExpired } from '../domain/resting-limit-expiry';
 import type { AnticipatoryExecutionInput } from '../../agents/domain/analysis/anticipatory-snapshot-builder';
 import { proactiveOrderTerms, proactiveAuthorizationAllowed, ProactiveAuthorizationSchema, StoredProbeSchema, thesisTriggersSatisfied } from '../../risk/domain/thesis-execution';
 import { normalizeTerminalOrderStatus } from "../domain/closed-trade-cycle";
@@ -9,7 +10,7 @@ export function resolveExecutionOrderTerms(
 ): {
   orderType: 'LIMIT' | 'MARKET';
   limitPrice?: string;
-  timeInForce?: 'IOC';
+  timeInForce?: 'IOC' | 'GTC';
   expiresAt?: string;
 } {
   if (
@@ -24,6 +25,7 @@ export function resolveExecutionOrderTerms(
       limitTtlCandles?: number;
       timeframeMs?: number;
       expiresAt?: string;
+      timeInForce?: 'IOC' | 'GTC';
     };
     const limitPrice =
       p.limitEntryPrice !== undefined && p.limitEntryPrice !== null
@@ -37,7 +39,7 @@ export function resolveExecutionOrderTerms(
     return {
       orderType: 'LIMIT',
       limitPrice,
-      timeInForce: 'IOC',
+      timeInForce: p.timeInForce ?? 'GTC',
       expiresAt,
     };
   }
@@ -1318,6 +1320,10 @@ export class LiveTradingService {
             symbol: true,
             exchangeOrderId: true,
             clientOrderId: true,
+            type: true,
+            purpose: true,
+            reduceOnly: true,
+            tradePlan: true,
           },
           orderBy: { updatedAt: "asc" },
           take: ORDER_RECONCILIATION_LIMIT,
@@ -1370,6 +1376,19 @@ export class LiveTradingService {
     // order outside the exchange history page. Run sequentially to avoid a
     // burst against OKX private endpoints.
     for (const localOrder of localActiveOrders) {
+      if (localOrder.exchangeOrderId && isRestingEntryExpired(localOrder)) {
+        try {
+          reconciledOrders.push(await this.connections.cancelOrder(userId, connectionId, {
+            symbol: localOrder.symbol,
+            orderId: localOrder.exchangeOrderId,
+            clientOrderId: localOrder.clientOrderId,
+          }, context));
+          continue;
+        } catch (error) {
+          this.logger.warn({ event: 'resting_limit_expiry_cancel_failed', connectionId,
+            localOrderId: localOrder.id, error: this.safeError(error) });
+        }
+      }
       if (
         !localOrder.exchangeOrderId ||
         visibleOrderIds.has(localOrder.exchangeOrderId) ||
@@ -2076,7 +2095,11 @@ export class LiveTradingService {
         tradePlan:
           assessment?.tradePlan === null || assessment?.tradePlan === undefined
             ? Prisma.JsonNull
-            : (assessment.tradePlan as Prisma.InputJsonValue),
+            : ({ ...(assessment.tradePlan as Record<string, unknown>),
+                ...(command.orderType === 'LIMIT' ? {
+                  timeInForce: command.timeInForce, expiresAt: command.expiresAt,
+                } : {}),
+              } as Prisma.InputJsonValue),
         stagedEntry:
           assessment?.tradePlan && typeof assessment.tradePlan === 'object' && 'stagedEntry' in assessment.tradePlan && assessment.tradePlan.stagedEntry !== null
             ? (assessment.tradePlan.stagedEntry as Prisma.InputJsonValue)

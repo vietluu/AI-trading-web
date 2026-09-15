@@ -7,7 +7,7 @@ export function assertDeclaredLimitOrder(command: PlaceOrderCommand, provider: E
   if (!declared) return false;
   const expiresAt = Date.parse(command.expiresAt ?? '');
   if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw ExchangeError.invalidRequest(provider, 'THESIS_ORDER_EXPIRED');
-  if (command.orderType !== 'LIMIT' || command.timeInForce !== 'IOC' || !Number.isFinite(Number(command.limitPrice)) || Number(command.limitPrice) <= 0)
+  if (command.orderType !== 'LIMIT' || !['IOC', 'GTC'].includes(command.timeInForce ?? '') || !Number.isFinite(Number(command.limitPrice)) || Number(command.limitPrice) <= 0)
     throw ExchangeError.invalidRequest(provider, 'THESIS_LIMIT_ORDER_INVALID');
   return true;
 }
