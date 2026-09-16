@@ -71,6 +71,7 @@ import {
   ExchangeError,
   ExchangeErrorCode,
 } from "../../../exchange/domain/exchange.error";
+import { preflightOrderProtection } from "../../../exchange/domain/order-protection-preflight";
 import { LiveTradingConfigService } from "./live-trading-config.service";
 import type {
   CloseApprovedPositionDto,
@@ -2127,6 +2128,61 @@ export class LiveTradingService {
     }
     try {
       assertDeclaredLimitOrder(command, connection.provider);
+      if (
+        !command.reduceOnly &&
+        (command.stopLoss !== undefined ||
+          command.takeProfit !== undefined ||
+          assessment?.stopLoss !== undefined ||
+          assessment?.takeProfit !== undefined)
+      ) {
+        let ticker: { markPrice?: string; lastPrice?: string; bidPrice?: string; askPrice?: string } | undefined;
+        if (this.publicExchanges && typeof this.publicExchanges.ticker === "function") {
+          ticker = await this.publicExchanges.ticker(connection.provider, command.symbol).catch(() => undefined);
+        }
+        const connectionTickerSource = this.connections as unknown as {
+          ticker?: (u: string, c: string, s: string, ctx: RequestMetadata) => Promise<{ markPrice?: string; lastPrice?: string; bidPrice?: string; askPrice?: string }>;
+        };
+        if (!ticker && typeof connectionTickerSource.ticker === "function") {
+          ticker = await connectionTickerSource.ticker(userId, connection.id, command.symbol, context).catch(() => undefined);
+        }
+        const assessmentRefPrice = assessment && "referencePrice" in assessment ? (assessment as { referencePrice?: number }).referencePrice : undefined;
+        const currentPrice = Number(
+          ticker?.markPrice ??
+            ticker?.lastPrice ??
+            ticker?.bidPrice ??
+            assessmentRefPrice ??
+            command.referencePrice ??
+            command.limitPrice,
+        );
+        const instrument =
+          typeof this.connections.instrument === "function"
+            ? await this.connections.instrument(userId, connection.id, command.symbol, context).catch(() => undefined)
+            : undefined;
+        const tickSize = instrument ? Number(instrument.tickSize) : 0.0001;
+        const rawEntry = Number(command.limitPrice ?? assessmentRefPrice ?? command.referencePrice ?? currentPrice);
+        const rawStop = command.stopLoss !== undefined ? Number(command.stopLoss) : (assessment?.stopLoss !== undefined ? Number(assessment.stopLoss) : undefined);
+        const rawTp = command.takeProfit !== undefined ? Number(command.takeProfit) : (assessment?.takeProfit !== undefined ? Number(assessment.takeProfit) : undefined);
+        const preflight = preflightOrderProtection({
+          side: command.side,
+          entry: rawEntry,
+          stopLoss: rawStop,
+          takeProfit: rawTp,
+          currentPrice,
+          tickSize,
+          maxSlippagePct: this.config?.values?.maxEntryDriftBps ? this.config.values.maxEntryDriftBps / 10000 : undefined,
+          orderType: command.orderType,
+          timeInForce: command.timeInForce,
+        });
+        if (!preflight.approved) {
+          throw ExchangeError.protectionPreflight(connection.provider, preflight.reason);
+        }
+        command = {
+          ...command,
+          ...(command.limitPrice ? { limitPrice: String(preflight.entry) } : {}),
+          ...(preflight.stopLoss !== undefined ? { stopLoss: String(preflight.stopLoss) } : {}),
+          ...(preflight.takeProfit !== undefined ? { takeProfit: String(preflight.takeProfit) } : {}),
+        };
+      }
       const order = await this.connections.placeOrder(
         userId,
         connection.id,

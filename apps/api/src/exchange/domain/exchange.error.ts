@@ -16,6 +16,10 @@ export enum ExchangeErrorCode {
   RESOURCE_NOT_FOUND = "EXCHANGE_RESOURCE_NOT_FOUND",
   ACCOUNT_RESTRICTED = "EXCHANGE_ACCOUNT_RESTRICTED",
   INSUFFICIENT_BALANCE = "EXCHANGE_INSUFFICIENT_BALANCE",
+  ENTRY_PROTECTION_GEOMETRY_INVALID = "ENTRY_PROTECTION_GEOMETRY_INVALID",
+  STOP_ALREADY_BREACHED = "STOP_ALREADY_BREACHED",
+  TAKE_PROFIT_ALREADY_CROSSED = "TAKE_PROFIT_ALREADY_CROSSED",
+  MARKETABLE_LIMIT_SLIPPAGE_EXCEEDED = "MARKETABLE_LIMIT_SLIPPAGE_EXCEEDED",
   UNKNOWN = "EXCHANGE_UNKNOWN_ERROR",
 }
 
@@ -43,6 +47,19 @@ export class ExchangeError extends Error {
       false,
       HttpStatus.BAD_REQUEST,
       message,
+    );
+  }
+
+  static protectionPreflight(
+    provider: ExchangeProvider,
+    reason: string,
+  ): ExchangeError {
+    return new ExchangeError(
+      reason as ExchangeErrorCode,
+      provider,
+      false,
+      HttpStatus.BAD_REQUEST,
+      reason,
     );
   }
 }

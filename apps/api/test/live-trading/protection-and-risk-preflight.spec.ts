@@ -75,6 +75,16 @@ interface LiveTradingInternals {
       tradePlan?: { strategy: string };
     },
   ) => Promise<unknown>;
+  submit: (
+    userId: string,
+    connection: unknown,
+    command: unknown,
+    action: unknown,
+    assessment: unknown,
+    strategy: unknown,
+    pipelineContext: unknown,
+    accountContext: unknown,
+  ) => Promise<unknown>;
 }
 
 const internals = (service: LiveTradingService): LiveTradingInternals =>
@@ -90,11 +100,15 @@ function build() {
   };
   const connections = {
     configuration: vi.fn().mockResolvedValue({ positionMode: "ONE_WAY" }),
+    instrument: vi.fn().mockResolvedValue({ tickSize: "0.0001" }),
     placeOrder: vi.fn(),
     getProtectiveOrderStatus: vi.fn(),
     placeProtectiveOrder: vi.fn(),
   };
   const audit = { record: vi.fn() };
+  const publicExchanges = {
+    ticker: vi.fn(),
+  };
   const service = new LiveTradingService(
     prisma as never,
     connections as never,
@@ -103,9 +117,9 @@ function build() {
     { getUserLimits: vi.fn().mockResolvedValue(limits), values: limits } as never,
     {} as never,
     {} as never,
-    {} as never,
+    publicExchanges as never,
   );
-  return { service, prisma, connections, audit };
+  return { service, prisma, connections, audit, publicExchanges };
 }
 
 describe("live protection and exchange risk preflight", () => {
@@ -555,6 +569,71 @@ describe("assessPipelineDecision collateral mismatch alert", () => {
     // findFirst was called but create must NOT be called again
     expect(pipelineAlert.create).not.toHaveBeenCalled();
     void prisma; // used above
+  });
+
+  it("rejects an invalid ZRO long fixture before calling placeOrder on the exchange adapter", async () => {
+    const { service, prisma, connections, publicExchanges } = build();
+    const assessment = {
+      id: "risk-zro-1",
+      userId: "user-1",
+      symbol: "ZRO-USDT",
+      approved: true,
+      positionSize: 10,
+      leverage: 2,
+      decision: "LONG",
+      referencePrice: 0.9847,
+      stopLoss: 0.9602,
+      takeProfit: 1.0395,
+      createdAt: new Date(),
+    };
+    prisma.liveOrder.findFirst.mockResolvedValue(null);
+    prisma.liveOrder.findUnique.mockResolvedValue(null);
+    prisma.liveOrder.create.mockResolvedValue({ id: "order-zro-1" });
+    prisma.liveOrder.update.mockResolvedValue({ id: "order-zro-1" });
+    connections.instrument.mockResolvedValue({ tickSize: "0.0001" });
+    publicExchanges.ticker.mockResolvedValue({
+      symbol: "ZRO-USDT",
+      markPrice: "0.9515",
+      lastPrice: "0.9515",
+    });
+
+    const connection = { id: "conn-okx", provider: "OKX_FUTURES", environment: "DEMO", isEnabled: true, isVerified: true };
+    await expect(
+      internals(service).submit(
+        "user-1",
+        connection,
+        {
+          symbol: "ZRO-USDT",
+          side: "BUY",
+          quantity: "10",
+          leverage: 2,
+          clientOrderId: "client-zro-1",
+          orderType: "LIMIT",
+          limitPrice: "0.9847",
+          timeInForce: "GTC",
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          stopLoss: "0.9602",
+          takeProfit: "1.0395",
+        },
+        "OPEN",
+        assessment,
+        "strategy-1",
+        {},
+        {},
+      ),
+    ).rejects.toThrow("STOP_ALREADY_BREACHED");
+
+    expect(connections.placeOrder).not.toHaveBeenCalled();
+    const [updatePayload] = prisma.liveOrder.update.mock.calls[0] as [
+      { where: { id: string }; data: { status: string; errorCode: string } },
+    ];
+    expect(updatePayload).toMatchObject({
+      where: { id: "order-zro-1" },
+      data: {
+        status: "FAILED",
+        errorCode: "STOP_ALREADY_BREACHED",
+      },
+    });
   });
 });
 
