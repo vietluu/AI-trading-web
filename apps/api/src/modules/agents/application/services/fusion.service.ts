@@ -29,7 +29,7 @@ export interface RunFusionOptions {
   sessionId?: string;
   invocationSource: AgentInvocationSource;
   correlationId?: string;
-  coreSnapshot?: NonNullable<ReturnType<typeof buildPinnedCoreAnalysis>>;
+  coreSnapshot?: Pick<NonNullable<ReturnType<typeof buildPinnedCoreAnalysis>>, 'technical' | 'market' | 'sourceCutoff'>;
 }
 
 export interface FusionAnalysisResult {

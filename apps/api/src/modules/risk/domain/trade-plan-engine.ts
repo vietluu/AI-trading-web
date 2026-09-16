@@ -1,6 +1,7 @@
 import type { DecisionOutput, TradeThesis, AnticipatoryMarketSnapshot, StructuredTrigger } from "@platform/shared";
 import type { ExecutionContext, RiskTier } from "../../pipeline/domain/execution-context";
 import { adaptiveTradingPolicy } from "../../pipeline/domain/adaptive-trading-policy";
+import { selectEntryOrderPolicy } from "./entry-order-policy";
 
 export type TradePlanRegime =
   | "TREND_UP"
@@ -67,6 +68,7 @@ export interface TradePlanMarketContext {
     momentumDirection: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
     consecutiveSqueezeBars: number;
   };
+  tickSize?: number;
 }
 
 export interface TradePlan {
@@ -96,7 +98,7 @@ export interface TradePlan {
   limitPrice?: number;
   orderType?: "MARKET" | "LIMIT";
   limitTtlCandles?: number;
-  timeInForce?: 'IOC';
+  timeInForce?: 'IOC' | 'GTC';
   expiresAt?: string;
   sizeFactor?: number;
   targets?: TradeThesis['targets'];
@@ -768,15 +770,18 @@ export function buildAdaptiveTradePlan(input: Parameters<typeof _buildAdaptiveTr
     // Native protection currently implements one full-position TP. Preserve and reject unsupported fractions.
     if (thesis.targets.length !== 1 || thesis.targets[0]?.fraction !== 1) return reject('THESIS_MULTI_TARGET_EXECUTION_UNSUPPORTED');
     const timeframeMs = input.market.timeframeMs ?? 15 * 60_000;
-    const expiresAt = new Date(Math.min(Date.parse(thesis.expiresAt), Date.parse(snapshot.sourceDataCutoff) + timeframeMs)).toISOString();
+    const isGtc = thesis.setup === 'RANGE_REVERSAL';
+    const timeInForce = isGtc ? 'GTC' : 'IOC';
+    const limitTtlCandles = isGtc ? 2 : 1;
+    const expiresAt = new Date(Math.min(Date.parse(thesis.expiresAt), Date.parse(snapshot.sourceDataCutoff) + timeframeMs * limitTtlCandles)).toISOString();
     const probeSizePct = 0.25;
     return {
       approved: true, regime, strategy, stopLoss: thesis.stopLoss,
       takeProfit: thesis.targets[0].price, targets: thesis.targets,
       maxHoldingCandles: 8, breakEvenAtR: 1, atr: input.market.atr,
       timeframeMs: input.market.timeframeMs,
-      timeInForce: 'IOC', expiresAt,
-      orderType: 'LIMIT', limitEntryPrice: Math.min(entry.upper, Math.max(entry.lower, input.entryPrice)), limitTtlCandles: 1,
+      timeInForce, expiresAt,
+      orderType: 'LIMIT', limitEntryPrice: Math.min(entry.upper, Math.max(entry.lower, input.entryPrice)), limitTtlCandles,
       stagedEntry: { stage: thesis.state === 'CONFIRMED' ? 'CONFIRMED' : 'PROBE', thesisId: proactive.thesisId,
         setup: thesis.setup, trigger: thesis.trigger, sourceDataCutoff: proactive.snapshot.sourceDataCutoff,
         probeSizePct, confirmationSizePct: 1 - probeSizePct, combinedRiskLimitPct: 0.005 },
@@ -826,5 +831,25 @@ export function buildAdaptiveTradePlan(input: Parameters<typeof _buildAdaptiveTr
 
 
   plan.riskTier = input.executionContext?.riskTier ?? input.market?.executionContext?.riskTier ?? plan.riskTier;
+  if (plan.approved && plan.orderType === "LIMIT") {
+    const context = input.executionContext ?? input.market.executionContext ?? input.decision.executionContext;
+    const strategyKey =
+      (input.decision as { strategyKey?: string })?.strategyKey ??
+      (input.decision as { metadata?: { strategyKey?: string } })?.metadata?.strategyKey ??
+      (/\[momentum-scalp\]/i.test(input.decision.reasoning ?? "") ? "momentum-scalp" : undefined);
+    const policy = selectEntryOrderPolicy({
+      setup: context?.setup ?? plan.strategy,
+      strategyKey,
+      side: input.side === "LONG" ? "BUY" : "SELL",
+      bid: input.market.currentPrice ?? input.entryPrice,
+      ask: input.market.currentPrice ?? input.entryPrice,
+      structuralPrice: plan.limitEntryPrice,
+      tickSize: input.market.tickSize,
+    });
+    plan.timeInForce = policy.timeInForce;
+    plan.limitTtlCandles = policy.expiryCandles;
+    plan.limitEntryPrice = policy.limitPrice;
+    plan.limitPrice = policy.limitPrice;
+  }
   return plan;
 }

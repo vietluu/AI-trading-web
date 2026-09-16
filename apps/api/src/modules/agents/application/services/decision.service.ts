@@ -46,6 +46,7 @@ import {
   validateSetupLocation,
   type TradeDirection,
 } from "../../../pipeline/domain/execution-context";
+import { closedCandleGeometry, deriveClosedCandleExecutionContext, type ClosedCandleEvidence } from '../../../pipeline/domain/closed-candle-execution-context';
 
 
 export type { AnalystName, Bias, ConflictLevel, RunDecisionOptions, Weighting };
@@ -97,6 +98,7 @@ export class DecisionService {
       currentPrice?: number;
       anticipatorySnapshot?: AnticipatoryMarketSnapshot;
       executionContext?: ExecutionContext;
+      closedCandleEvidence?: ClosedCandleEvidence;
     } = {},
   ): Promise<DecisionOutput> {
     const config =
@@ -161,6 +163,7 @@ export class DecisionService {
         currentPrice: metadata.currentPrice,
         anticipatorySnapshot: metadata.anticipatorySnapshot,
         executionContext: metadata.executionContext,
+        closedCandleEvidence: metadata.closedCandleEvidence,
       }
     );
     const confidenceCalibration = await this.confidenceCalibration(
@@ -327,7 +330,20 @@ export class DecisionService {
     return calibratedDecision;
   }
 
-  /** Recalibrate the strategy selected by the portfolio layer. */
+  /** Strategy routing can change direction, so attach fresh facts before calibration. */
+  public withClosedCandleExecutionContext(
+    decision: DecisionOutput,
+    evidence: ClosedCandleEvidence,
+    strategyKey: string,
+  ): DecisionOutput {
+    const executionContext = deriveClosedCandleExecutionContext({ ...evidence, strategyKey,
+      direction: decision.decision, regime: this.canonicalRegimeFor(decision.regime) });
+    const playbook = this.selectPlaybook({ direction: decision.decision, executionContext,
+      closedCandleEvidence: evidence, risks: decision.risks, signals: decision.signals });
+    return { ...decision, ...playbook };
+  }
+
+  /** Calibration updates probability evidence without changing execution facts. */
   public async calibrateForExecution(
     decision: DecisionOutput,
     userId: string,
@@ -610,6 +626,7 @@ export class DecisionService {
       currentPrice?: number;
       anticipatorySnapshot?: AnticipatoryMarketSnapshot;
       executionContext?: ExecutionContext;
+      closedCandleEvidence?: ClosedCandleEvidence;
     },
   ): DecisionOutput {
     const input = DecisionInputSchema.parse(rawInput);
@@ -992,11 +1009,16 @@ export class DecisionService {
         ? "BEARISH"
         : undefined;
 
+    const derivedContext = customOptions?.closedCandleEvidence
+      ? deriveClosedCandleExecutionContext({ ...customOptions.closedCandleEvidence, strategyKey: 'ai-core',
+        direction: finalDecision, regime: this.canonicalRegimeFor(regime) })
+      : customOptions?.executionContext;
     const playbook = this.selectPlaybook({
       direction: finalDecision,
       input,
       snapshot: customOptions?.anticipatorySnapshot,
-      executionContext: customOptions?.executionContext,
+      executionContext: derivedContext,
+      closedCandleEvidence: customOptions?.closedCandleEvidence,
       referencePrice: customOptions?.currentPrice ?? customOptions?.referencePrice,
       risks,
       signals,
@@ -1084,29 +1106,32 @@ export class DecisionService {
 
   private selectPlaybook(params: {
     direction: DecisionOutput['decision'];
-    input: DecisionInput;
+    input?: DecisionInput;
     snapshot?: AnticipatoryMarketSnapshot;
     executionContext?: ExecutionContext;
+    closedCandleEvidence?: ClosedCandleEvidence;
     referencePrice?: number;
     risks: string[];
     signals: DecisionOutput['signals'];
   }): { executionContext: ExecutionContext; thesis: ExecutableThesis } {
+    if (!params.executionContext && !params.input) throw new Error('Execution context or decision input is required');
     const context = params.executionContext ?? this.waitingExecutionContext(
-      params.input,
+      params.input!,
       params.snapshot,
       params.referencePrice,
     );
-    const observedAt = params.snapshot?.execution.coverage === 'AVAILABLE'
+    const pinned = params.closedCandleEvidence ? closedCandleGeometry(params.closedCandleEvidence) : undefined;
+    const observedAt = pinned ? context.sourceDataCutoff : params.snapshot?.execution.coverage === 'AVAILABLE'
       ? params.snapshot.execution.sourceTimestamp
       : context.sourceDataCutoff;
     const direction = params.direction === 'WAIT' ? undefined : params.direction;
-    const snapshotPrice = params.snapshot?.execution.coverage === 'AVAILABLE'
+    const snapshotPrice = pinned ? pinned.price : params.snapshot?.execution.coverage === 'AVAILABLE'
       ? params.snapshot.execution.currentPrice
       : undefined;
-    const atr = params.snapshot?.volatility.coverage === 'AVAILABLE'
+    const atr = pinned ? pinned.atr : params.snapshot?.volatility.coverage === 'AVAILABLE'
       ? params.snapshot.volatility.atr
       : undefined;
-    const boundaries = params.snapshot?.structure.coverage === 'AVAILABLE'
+    const boundaries = pinned ? pinned.boundaries : params.snapshot?.structure.coverage === 'AVAILABLE'
       ? params.snapshot.structure.rangeBoundaries
       : undefined;
 
@@ -1143,7 +1168,7 @@ export class DecisionService {
       validationReasons.length === 0 &&
       (requiresRange ? boundaries !== undefined : true) &&
       (context.setup !== 'TRANSITION_PROBE' ||
-        (context.action === 'PROBE' && hasStructuralPressure && hasTransitionEvidence)) &&
+        (context.action === 'PROBE' && hasStructuralPressure && (pinned ? context.triggerConfirmed : hasTransitionEvidence))) &&
       (context.setup !== 'BREAKOUT_RETEST' || hasAcceptableBreakoutChase) &&
       (context.setup !== 'TREND_PULLBACK' || hasTrendPullback);
 

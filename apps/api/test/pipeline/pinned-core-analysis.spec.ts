@@ -26,4 +26,10 @@ describe('pinned closed-candle core analysis', () => {
   it('refuses a snapshot without its matching closed candle', () => {
     expect(buildPinnedCoreAnalysis(snapshot, [{ ...closed, closeTime: new Date('2026-09-15T14:29:59.999Z') }])).toBeUndefined();
   });
+  it('exposes the exact closed evidence and refuses provisional indicators', () => {
+    const result = buildPinnedCoreAnalysis(snapshot, [closed]);
+    expect(result?.executionEvidence.snapshot.candleCloseTime).toEqual(cutoff);
+    expect(result?.executionEvidence.candles).toEqual([closed]);
+    expect(buildPinnedCoreAnalysis({ ...snapshot, status: IndicatorStatus.PROVISIONAL }, [closed])).toBeUndefined();
+  });
 });

@@ -12,6 +12,8 @@ import { AgentInvocationSource, AgentType } from '../../src/modules/agents/domai
 import { PromptRegistry } from '../../src/modules/ai/infrastructure/prompt/prompt-registry';
 import { createBaseSnapshot } from '../helpers/thesis-fixture';
 import { buildExecutionContext } from '../../src/modules/pipeline/domain/execution-context';
+import { IndicatorStatus } from '../../src/market-data/domain/market-data.enums';
+import { ExchangeInterval, ExchangeProvider } from '../../src/exchange/domain/exchange.types';
 
 function fixture(): { analyses: FusionInput; fusionOutput: FusionOutput } {
   const generatedAt = new Date().toISOString();
@@ -136,6 +138,28 @@ function playbookFixture(options: {
 }
 
 describe('DecisionService', () => {
+  it('uses pinned evidence without an anticipatory snapshot and preserves execution facts during calibration', async () => {
+    const cutoff = new Date('2026-09-15T18:44:59.999Z');
+    const snapshot = { provider: ExchangeProvider.OKX_FUTURES, symbol: 'BTC-USDT', interval: ExchangeInterval.FIFTEEN_MINUTES,
+      candleOpenTime: new Date(cutoff.getTime() - 899999), candleCloseTime: cutoff, status: IndicatorStatus.CLOSED,
+      values: { atr14: '4', ema20: '110', ema50: '108' }, calculatedAt: cutoff, calculationVersion: 2 };
+    const candles = Array.from({ length: 22 }, (_, i) => ({ provider: snapshot.provider, symbol: snapshot.symbol, interval: snapshot.interval,
+      openTime: new Date(cutoff.getTime() - (21 - i) * 900000 - 899999), closeTime: new Date(cutoff.getTime() - (21 - i) * 900000),
+      open: '110.2', low: '109', high: '112', close: '111', volume: '100', isClosed: true }));
+    const service = new DecisionService({} as never);
+    const decision = await service.decideForUser(decisionInput(), undefined, { closedCandleEvidence: { snapshot, candles } });
+    expect(decision.decision).toBe('LONG');
+    expect(decision.executionContext).toMatchObject({ action: 'ENTER', triggerConfirmed: true,
+      usesClosedPrimaryCandle: true, setup: 'TREND_PULLBACK', sourceDataCutoff: cutoff.toISOString() });
+    expect(decision.thesis?.trigger.observedAt).toBe(cutoff.toISOString());
+    expect(decision.thesis?.entryZone).toEqual({ lower: 110, upper: 112 });
+    const calibrated = await service.calibrateForExecution(decision, 'user-1', { symbol: 'BTC-USDT', strategyKey: 'trend' });
+    expect(calibrated.executionContext).toEqual(decision.executionContext);
+    expect(calibrated.thesis).toEqual(decision.thesis);
+    const short = service.withClosedCandleExecutionContext({ ...decision, decision: 'SHORT' }, { snapshot, candles }, 'trend');
+    expect(short.executionContext).toMatchObject({ action: 'WAIT', triggerConfirmed: false });
+    expect(short.thesis?.action).toBe('WAIT');
+  });
   it('selects range reversal at a validated lower boundary', () => {
     const fixture = playbookFixture({
       direction: 'LONG', regime: 'RANGING', setup: 'RANGE_REVERSION',

@@ -79,6 +79,16 @@ const makeFusionResult = () => ({
     adaptiveThreshold: 50,
     calibrationAdjustment: 0,
     executionCost: 0,
+    executionContext: {
+      regime: "RANGING",
+      setup: "RANGE_REVERSION",
+      action: "ENTER",
+      riskTier: "NORMAL",
+      sourceDataCutoff: cutoff,
+      usesClosedPrimaryCandle: true,
+      triggerConfirmed: true,
+      priceLocation: { rangePercentile: 0.05 },
+    },
   },
   cacheHits: {},
 });

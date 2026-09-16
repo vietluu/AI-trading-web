@@ -638,6 +638,8 @@ describe("adaptive trade plan engine", () => {
     const plan = buildAdaptiveTradePlan(rangeShortAtResistance);
     expect(plan.regime).toBe("RANGING");
     expect(plan.strategy).toBe("RANGE_REVERSAL");
+    expect(plan.timeInForce).toBe("GTC");
+    expect(plan.limitTtlCandles).toBe(2);
   });
 
   it("selects trade plan directly from executionContext setup and does not reclassify", () => {
@@ -676,6 +678,47 @@ describe("adaptive trade plan engine", () => {
     expect(plan.regime).toBe("RANGING");
     expect(plan.strategy).toBe("RANGE_REVERSAL");
     expect(plan.reason).toBe("RANGE_ENTRY_NOT_AT_BOUNDARY");
+  });
+
+  it("assigns IOC and 1-candle TTL to momentum-scalp and breakout trade plans", () => {
+    const momentumLong = {
+      side: "LONG" as const,
+      entryPrice: 100,
+      decision: {
+        ...decision("LONG", "TRENDING"),
+        reasoning: "Confirmed [momentum-scalp] setup",
+      },
+      market: {
+        atr: 1.0,
+        support: 98,
+        resistance: 105,
+        ema20: 99.5,
+        ema50: 98.5,
+        adx: 30,
+        efficiencyRatio: 0.5,
+        timeframeMs: 900_000,
+        executionContext: buildExecutionContext({
+          regime: "TRENDING",
+          setup: "TREND_PULLBACK",
+          action: "ENTER",
+          price: 100,
+          support: 98,
+          resistance: 105,
+          atr: 1.0,
+          sourceDataCutoff: new Date().toISOString(),
+          primaryCandleClosed: true,
+          triggerConfirmed: true,
+        }),
+      },
+      configuredStopLossPct: 0.02,
+      configuredRiskRewardRatio: 2.0,
+    };
+
+    const plan = buildAdaptiveTradePlan(momentumLong);
+    expect(plan.approved).toBe(true);
+    expect(plan.orderType).toBe("LIMIT");
+    expect(plan.timeInForce).toBe("IOC");
+    expect(plan.limitTtlCandles).toBe(1);
   });
 });
 

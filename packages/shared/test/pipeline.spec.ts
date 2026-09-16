@@ -56,19 +56,19 @@ describe("PipelineRunResultSchema", () => {
     expect(PipelineRunResultSchema.parse({
       decision: "WAIT",
       gates: [{
-        stage: "QUANT",
+        stage: "EXECUTION_READINESS",
         disposition: "BLOCK",
-        reasonCodes: ["QUANT_ASSUMPTION_MISMATCH"],
-        selectedBlockingReason: "QUANT_ASSUMPTION_MISMATCH",
+        reasonCodes: ["ENTRY_ACTION_NOT_EXECUTABLE"],
+        selectedBlockingReason: "ENTRY_ACTION_NOT_EXECUTABLE",
       }],
       blockingGate: {
-        stage: "QUANT",
-        reason: "QUANT_ASSUMPTION_MISMATCH",
+        stage: "EXECUTION_READINESS",
+        reason: "ENTRY_ACTION_NOT_EXECUTABLE",
       },
     })).toMatchObject({
       blockingGate: {
-        stage: "QUANT",
-        reason: "QUANT_ASSUMPTION_MISMATCH",
+        stage: "EXECUTION_READINESS",
+        reason: "ENTRY_ACTION_NOT_EXECUTABLE",
       },
     });
   });

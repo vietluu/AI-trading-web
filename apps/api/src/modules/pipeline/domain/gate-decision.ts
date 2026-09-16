@@ -1,5 +1,6 @@
 export type GateStage =
   | 'SIGNAL_FILTER'
+  | 'EXECUTION_READINESS'
   | 'JUDGE'
   | 'QUANT'
   | 'MULTI_TIMEFRAME'
@@ -17,7 +18,7 @@ export interface GateDecisionRecord {
 
 export function selectBlockingGate(records: GateDecisionRecord[]) {
   const hit = records.find((record) => record.disposition === 'BLOCK');
-  return hit?.reasonCodes[0]
-    ? { stage: hit.stage, reason: hit.reasonCodes[0] }
-    : undefined;
+  if (!hit || !hit.reasonCodes[0]) return undefined;
+  hit.selectedBlockingReason = hit.reasonCodes[0];
+  return { stage: hit.stage, reason: hit.reasonCodes[0] };
 }

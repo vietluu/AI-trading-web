@@ -31,6 +31,7 @@ import {
 } from "../../portfolio/domain/strategy-decision";
 import { MarketDataService } from "../../../market-data/application/market-data.service";
 import { buildPinnedCoreAnalysis } from '../domain/pinned-core-analysis';
+import { IndicatorStatus } from '../../../market-data/domain/market-data.enums';
 import { RedisService } from "../../../redis/redis.service";
 import { DecisionJudgeService } from "./decision-judge.service";
 import { QuantExecutionPolicyService } from "./quant-execution-policy.service";
@@ -64,6 +65,7 @@ import {
   type GateDisposition,
   type GateStage,
 } from "../domain/gate-decision";
+import { evaluateExecutionReadiness } from "../domain/execution-readiness";
 import { buildEvaluationKey } from "../domain/evaluation-identity";
 
 class PipelineCancelledError extends Error {}
@@ -276,7 +278,8 @@ export class PipelineRunnerService {
       const primaryMarketData = timeframeMarketData.find((item) => item.timeframe === interval)!;
       const indicatorSnapshot = primaryMarketData.snapshot;
       const recentCandles = primaryMarketData.candles;
-      const lastPrice = recentCandles[0] ? Number(recentCandles[0].close) : undefined;
+      const pinnedCore = buildPinnedCoreAnalysis(indicatorSnapshot, recentCandles);
+      const lastPrice = primaryMarketData.referenceCandle ? Number(primaryMarketData.referenceCandle.close) : undefined;
       const nowMs = Date.now();
       const staleTimeframes = timeframeMarketData
         .filter((item) => {
@@ -309,15 +312,19 @@ export class PipelineRunnerService {
       const multiTimeframe = analyzeMultiTimeframe(
         interval,
         timeframeMarketData
-          .filter((item) => !staleTimeframeSet.has(item.timeframe))
+          .filter((item) => !staleTimeframeSet.has(item.timeframe) &&
+            item.referenceCandle?.isClosed === true && item.snapshot?.status === IndicatorStatus.CLOSED &&
+            new Date(item.referenceCandle.closeTime).getTime() <= new Date(indicatorSnapshot?.candleCloseTime ?? 0).getTime())
           .map((item) => ({
             timeframe: item.timeframe,
             close: item.referenceCandle ? Number(item.referenceCandle.close) : undefined,
             ema20: Number(item.snapshot?.values.ema20),
             ema50: Number(item.snapshot?.values.ema50),
             rsi: Number(item.snapshot?.values.rsi14),
+            isClosed: item.referenceCandle?.isClosed,
           })),
       );
+      const closedCandleEvidence = pinnedCore ? { ...pinnedCore.executionEvidence, multiTimeframe } : undefined;
 
       // Only reject if the primary execution timeframe itself is stale.
       // Secondary/optional timeframes are excluded above for graceful degradation.
@@ -428,7 +435,9 @@ export class PipelineRunnerService {
         analyses?: FusionInput;
         fusionOutput?: FusionOutput;
       } | null;
-      if (stored?.analyses && stored.fusionOutput) {
+      // Stored analyses have no technical cutoff provenance. Recompute fusion
+      // against the pinned bundle before allowing closed-candle execution.
+      if (!pinnedCore && stored?.analyses && stored.fusionOutput) {
         analyses = stored.analyses;
         fusionOutput = stored.fusionOutput;
         for (const step of definition.steps.filter(
@@ -460,7 +469,7 @@ export class PipelineRunnerService {
             userId: job.userId,
             invocationSource: this.source(job.trigger),
             correlationId: runId,
-            coreSnapshot: buildPinnedCoreAnalysis(indicatorSnapshot, recentCandles),
+            coreSnapshot: pinnedCore,
           }),
           definition.timeoutMs,
         );
@@ -505,6 +514,7 @@ export class PipelineRunnerService {
         const baseline = await this.decision.decideForUser({ symbol, fusionOutput, ...analyses }, job.userId, {
           pipelineRunId: runId, provider: job.provider, timeframe: String(interval), referencePrice: lastPrice,
           anticipatorySnapshot: snapshot,
+          closedCandleEvidence,
         });
         const review = ThesisReviewSchema.parse(await this.critic.reflect({ snapshot, thesis: research.preferred,
           scenarios: baseline.scenarios, cohortEvidence: baseline.confidenceCalibration }, job.userId));
@@ -549,6 +559,7 @@ export class PipelineRunnerService {
           provider: job.provider,
           timeframe: String(interval),
           referencePrice: lastPrice,
+          closedCandleEvidence,
         });
       }
       // Existing short-timeframe schedules that already opted into breakout
@@ -616,7 +627,9 @@ export class PipelineRunnerService {
       } | undefined;
       for (const candidate of rankedCandidates) {
         const calibrated = await this.decision.calibrateForExecution(
-          candidate.decision,
+          closedCandleEvidence
+            ? this.decision.withClosedCandleExecutionContext(candidate.decision, closedCandleEvidence, candidate.strategyKey)
+            : candidate.decision,
           job.userId,
           {
             symbol,
@@ -627,6 +640,7 @@ export class PipelineRunnerService {
         );
         const policyContext = { symbol, provider: job.provider, timeframe: String(interval), regime: calibrated.regime.type };
         const candidateFilter = this.riskPolicy.evaluate(calibrated, policyContext);
+        const candidateReadiness = evaluateExecutionReadiness(calibrated);
         const candidateJudge = this.judge?.evaluate(calibrated, analyses, {
           symbol,
           provider: job.provider,
@@ -646,6 +660,7 @@ export class PipelineRunnerService {
               strategyKey: candidate.strategyKey,
               mode: proactive ? proactive.mode === 'DEMO' ? 'DEMO' : 'SHADOW' : process.env.TRADING_MODE === 'LIVE' ? 'LIVE' : 'DEMO',
               decision: calibrated,
+              executionReady: candidateReadiness.allowed,
               multiTimeframeConfirmation: candidateMultiTimeframe.confirmation,
               primaryRsi,
               marketEventImpact: analyses.news.impact.level,
@@ -659,16 +674,17 @@ export class PipelineRunnerService {
                 strategyKey: candidate.strategyKey,
                 message: error instanceof Error ? error.message : "Unknown quant policy error",
               });
-              return { severity: 'BLOCK' as const, allowed: false as const, reason: "QUANT_POLICY_UNAVAILABLE" as const };
+              return { severity: 'BLOCK' as const, riskTier: 'BLOCKED' as const, executionPolicy: 'BLOCK' as const, allowed: false as const, advisory: false as const, reason: "QUANT_POLICY_UNAVAILABLE" as const };
             })
-          : { severity: 'BLOCK' as const, allowed: false as const, reason: "QUANT_VALIDATION_MISSING" as const };
+          : { severity: 'BLOCK' as const, riskTier: 'BLOCKED' as const, executionPolicy: 'BLOCK' as const, allowed: false as const, advisory: false as const, reason: "QUANT_VALIDATION_MISSING" as const };
         const candidateBlockedReasons = [
           candidateFilter.reason,
+          ...candidateReadiness.reasonCodes,
           ...candidateJudge.reasons,
           candidateQuant.allowed ? undefined : candidateQuant.reason,
           candidateMultiTimeframe.allowed ? undefined : candidateMultiTimeframe.reason,
         ].filter((item): item is string => Boolean(item));
-        const standardActionable = candidateFilter.actionable && candidateJudge.approved &&
+        const standardActionable = candidateFilter.actionable && candidateReadiness.allowed && candidateJudge.approved &&
           candidateQuant.allowed && candidateQuant.dislocationCanary !== true &&
           candidateMultiTimeframe.allowed;
         const filterCanaryCompatible = candidateFilter.actionable ||
@@ -678,6 +694,7 @@ export class PipelineRunnerService {
           (candidateJudge.reasons.length > 0 &&
             historicalGateReasonsAreAdvisory(candidateJudge.reasons));
         const dislocationCanary = !standardActionable &&
+          candidateReadiness.allowed &&
           candidateQuant.allowed &&
           candidateQuant.dislocationCanary === true &&
           candidateMultiTimeframe.allowed &&
@@ -695,6 +712,11 @@ export class PipelineRunnerService {
               ? calibrated.calibrationBlockingReasons : [candidateFilter.reason],
           ),
           gateRecord(
+            "EXECUTION_READINESS",
+            candidateReadiness.allowed ? "PASS" : "BLOCK",
+            candidateReadiness.reasonCodes,
+          ),
+          gateRecord(
             "JUDGE",
             candidateJudge.approved
               ? candidateJudge.severity === "REDUCE_SIZE" ? "REDUCE_SIZE" : "PASS"
@@ -704,7 +726,9 @@ export class PipelineRunnerService {
           gateRecord(
             "QUANT",
             !candidateQuant.allowed
-              ? "BLOCK"
+              ? candidateQuant.executionPolicy === "ADVISORY" || candidateQuant.advisory
+                ? "ADVISORY"
+                : "BLOCK"
               : candidateQuant.severity === "REDUCE_SIZE"
                 ? "REDUCE_SIZE"
                 : candidateQuant.advisory ? "ADVISORY" : "PASS",
