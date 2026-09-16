@@ -42,7 +42,7 @@ export interface RecentClosedTradeRecord {
 export interface ExecutionPlanInput {
   orderType: 'MARKET' | 'LIMIT';
   limitPrice?: number;
-  timeInForce?: 'IOC';
+  timeInForce?: 'IOC' | 'GTC';
   expiryCandles?: number;
 }
 
