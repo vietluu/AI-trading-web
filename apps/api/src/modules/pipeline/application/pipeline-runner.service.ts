@@ -64,6 +64,7 @@ import {
   type GateDisposition,
   type GateStage,
 } from "../domain/gate-decision";
+import { evaluateExecutionReadiness } from "../domain/execution-readiness";
 import { buildEvaluationKey } from "../domain/evaluation-identity";
 
 class PipelineCancelledError extends Error {}
@@ -627,6 +628,7 @@ export class PipelineRunnerService {
         );
         const policyContext = { symbol, provider: job.provider, timeframe: String(interval), regime: calibrated.regime.type };
         const candidateFilter = this.riskPolicy.evaluate(calibrated, policyContext);
+        const candidateReadiness = evaluateExecutionReadiness(calibrated);
         const candidateJudge = this.judge?.evaluate(calibrated, analyses, {
           symbol,
           provider: job.provider,
@@ -664,11 +666,12 @@ export class PipelineRunnerService {
           : { severity: 'BLOCK' as const, allowed: false as const, reason: "QUANT_VALIDATION_MISSING" as const };
         const candidateBlockedReasons = [
           candidateFilter.reason,
+          ...candidateReadiness.reasonCodes,
           ...candidateJudge.reasons,
           candidateQuant.allowed ? undefined : candidateQuant.reason,
           candidateMultiTimeframe.allowed ? undefined : candidateMultiTimeframe.reason,
         ].filter((item): item is string => Boolean(item));
-        const standardActionable = candidateFilter.actionable && candidateJudge.approved &&
+        const standardActionable = candidateFilter.actionable && candidateReadiness.allowed && candidateJudge.approved &&
           candidateQuant.allowed && candidateQuant.dislocationCanary !== true &&
           candidateMultiTimeframe.allowed;
         const filterCanaryCompatible = candidateFilter.actionable ||
@@ -678,6 +681,7 @@ export class PipelineRunnerService {
           (candidateJudge.reasons.length > 0 &&
             historicalGateReasonsAreAdvisory(candidateJudge.reasons));
         const dislocationCanary = !standardActionable &&
+          candidateReadiness.allowed &&
           candidateQuant.allowed &&
           candidateQuant.dislocationCanary === true &&
           candidateMultiTimeframe.allowed &&
@@ -693,6 +697,11 @@ export class PipelineRunnerService {
               : dislocationCanary ? "ADVISORY" : "BLOCK",
             calibrated.calibrationBlockingReasons?.length
               ? calibrated.calibrationBlockingReasons : [candidateFilter.reason],
+          ),
+          gateRecord(
+            "EXECUTION_READINESS",
+            candidateReadiness.allowed ? "PASS" : "BLOCK",
+            candidateReadiness.reasonCodes,
           ),
           gateRecord(
             "JUDGE",

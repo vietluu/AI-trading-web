@@ -101,6 +101,7 @@ export type PipelineRunRequest = z.infer<typeof PipelineRunRequestSchema>;
 
 export const PipelineGateStageSchema = z.enum([
   "SIGNAL_FILTER",
+  "EXECUTION_READINESS",
   "JUDGE",
   "QUANT",
   "MULTI_TIMEFRAME",

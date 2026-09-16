@@ -238,6 +238,66 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     expect(JSON.stringify(repository.updateRun.mock.calls)).toContain('"candidateDecision"');
 
     riskPolicy.evaluate.mockReturnValue({ actionable: true, decision: 'LONG' });
+    const waitingExecutionContext = {
+      regime: 'TRENDING' as const,
+      setup: 'TREND_PULLBACK' as const,
+      action: 'WAIT' as const,
+      riskTier: 'NONE' as const,
+      sourceDataCutoff: freshCloseTime.toISOString(),
+      usesClosedPrimaryCandle: true,
+      triggerConfirmed: true,
+      priceLocation: {},
+    };
+    decision.calibrateForExecution.mockImplementation((value: Record<string, unknown>) =>
+      Promise.resolve({ ...value, executionContext: waitingExecutionContext }),
+    );
+    const readinessBlockedService = new PipelineRunnerService(
+      fusion as never,
+      decision as never,
+      repository as never,
+      { isCancelled: vi.fn().mockResolvedValue(false) } as never,
+      riskPolicy,
+      signalFilter,
+      marketData as never,
+      alerts as never,
+      analytics as never,
+      liveTrading as never,
+      redis as never,
+      undefined,
+      undefined,
+      { evaluate: vi.fn().mockResolvedValue({ allowed: true, evaluated: true }) } as never,
+    );
+
+    await readinessBlockedService.run({
+      pipelineId: 'FULL_ANALYSIS_DECISION',
+      runId: 'run-readiness-blocked',
+      userId: 'user-1',
+      provider: 'BINANCE_FUTURES',
+      symbol: 'ETH-USDT',
+      params: { interval: '1h', strategyIds: ['ai-core', 'trend'] },
+      trigger: 'EVENT',
+    } as never);
+
+    expect(liveTrading.assessPipelineDecision).not.toHaveBeenCalled();
+    expect(liveTrading.executePipeline).not.toHaveBeenCalled();
+    expect(repository.updateRun).toHaveBeenCalledWith('run-readiness-blocked', expect.objectContaining({
+      status: 'COMPLETED', decision: 'WAIT', skippedReason: 'ENTRY_ACTION_NOT_EXECUTABLE',
+    }));
+    const readinessBlockedRun = persistedUpdate('run-readiness-blocked', 'COMPLETED');
+    expect(readinessBlockedRun?.result?.gates).toContainEqual(expect.objectContaining({
+      stage: 'EXECUTION_READINESS', disposition: 'BLOCK',
+    }));
+
+    decision.calibrateForExecution.mockImplementation((value: Record<string, unknown>) =>
+      Promise.resolve({
+        ...value,
+        executionContext: {
+          ...waitingExecutionContext,
+          action: 'ENTER' as const,
+          riskTier: 'NORMAL' as const,
+        },
+      }),
+    );
     liveTrading.executePipeline.mockResolvedValue({ outcome: 'ORDER_SUBMITTED' });
     const approvedService = new PipelineRunnerService(
       fusion as never,
@@ -275,6 +335,7 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     const approvedRun = persistedUpdate('run-2', 'COMPLETED');
     expect(approvedRun?.result?.gates).toEqual([
       expect.objectContaining({ stage: 'SIGNAL_FILTER', disposition: 'PASS' }),
+      expect.objectContaining({ stage: 'EXECUTION_READINESS', disposition: 'PASS' }),
       expect.objectContaining({ stage: 'JUDGE', disposition: 'PASS' }),
       expect.objectContaining({ stage: 'QUANT', disposition: 'PASS' }),
       expect.objectContaining({ stage: 'MULTI_TIMEFRAME', disposition: 'PASS' }),
@@ -288,6 +349,7 @@ describe('Phase 6.6 pipeline runtime policies', () => {
       const evaluatedRun = persistedUpdate('run-risk-failure');
       expect(evaluatedRun?.result?.gates).toEqual([
         expect.objectContaining({ stage: 'SIGNAL_FILTER', disposition: 'PASS' }),
+        expect.objectContaining({ stage: 'EXECUTION_READINESS', disposition: 'PASS' }),
         expect.objectContaining({ stage: 'JUDGE', disposition: 'PASS' }),
         expect.objectContaining({ stage: 'QUANT', disposition: 'PASS' }),
         expect.objectContaining({ stage: 'MULTI_TIMEFRAME', disposition: 'PASS' }),
@@ -308,6 +370,7 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     const failedAfterEvaluationRun = persistedUpdate('run-risk-failure', 'FAILED');
     expect(failedAfterEvaluationRun?.result?.gates).toEqual([
       expect.objectContaining({ stage: 'SIGNAL_FILTER', disposition: 'PASS' }),
+      expect.objectContaining({ stage: 'EXECUTION_READINESS', disposition: 'PASS' }),
       expect.objectContaining({ stage: 'JUDGE', disposition: 'PASS' }),
       expect.objectContaining({ stage: 'QUANT', disposition: 'PASS' }),
       expect.objectContaining({ stage: 'MULTI_TIMEFRAME', disposition: 'PASS' }),
@@ -592,6 +655,11 @@ describe('Phase 6.6 pipeline runtime policies', () => {
       expectedWinProbability: 0.3, expectedReward: 2.8, expectedLoss: 0.7,
       expectedValue: -0.1, profitFactorEstimate: 1, riskScore: 54,
       adaptiveThreshold: 60, calibrationAdjustment: 0, executionCost: 0.06,
+      executionContext: {
+        regime: 'TRENDING', setup: 'TREND_PULLBACK', action: 'ENTER', riskTier: 'NORMAL',
+        sourceDataCutoff: now.toISOString(), usesClosedPrimaryCandle: true,
+        triggerConfirmed: true, priceLocation: {},
+      },
       generatedAt: now.toISOString(),
     };
     const decision = {
@@ -1200,6 +1268,11 @@ describe("drift reassessment boundary", () => {
       overrides: [],
       calibrationAdjustment: 0,
       executionCost: 0.04,
+      executionContext: {
+        regime: 'TRENDING', setup: 'TREND_PULLBACK', action: 'ENTER', riskTier: 'NORMAL',
+        sourceDataCutoff: freshCloseTime.toISOString(), usesClosedPrimaryCandle: true,
+        triggerConfirmed: true, priceLocation: {},
+      },
       generatedAt: new Date().toISOString(),
     };
 

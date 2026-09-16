@@ -1,5 +1,6 @@
 export type GateStage =
   | 'SIGNAL_FILTER'
+  | 'EXECUTION_READINESS'
   | 'JUDGE'
   | 'QUANT'
   | 'MULTI_TIMEFRAME'
