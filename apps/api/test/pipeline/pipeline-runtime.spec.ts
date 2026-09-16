@@ -18,6 +18,36 @@ type PersistedRunUpdate = {
 };
 
 describe('Phase 6.6 pipeline runtime policies', () => {
+  it('requires fresh pinned fusion on stored-context replay and fails closed when refresh fails', async () => {
+    const cutoff = new Date();
+    const candle = { provider: 'OKX_FUTURES', symbol: 'BTC-USDT', interval: '15m',
+      openTime: new Date(cutoff.getTime() - 899999), closeTime: cutoff,
+      open: '100', high: '102', low: '99', close: '101', volume: '100', isClosed: true };
+    const repository = { updateRun: vi.fn().mockResolvedValue({}), updateStep: vi.fn().mockResolvedValue({}),
+      activeStrategyKeys: vi.fn().mockResolvedValue(['ai-core']),
+      findRun: vi.fn().mockResolvedValue({ storedContext: { analyses: {}, fusionOutput: {} } }) };
+    const fusion = { runDetailed: vi.fn().mockRejectedValue(new Error('Pinned fusion refresh unavailable')) };
+    const liveTrading = { assessPipelineDecision: vi.fn(), executePipeline: vi.fn() };
+    const service = new PipelineRunnerService(fusion as never,
+      { decideForUser: vi.fn().mockRejectedValue(new Error('Stale stored analysis reached decision')) } as never,
+      repository as never, { isCancelled: vi.fn().mockResolvedValue(false) } as never,
+      {} as never, { evaluate: vi.fn().mockReturnValue({ allowed: true }) },
+      { getHistoricalCandles: vi.fn().mockResolvedValue([candle]),
+        getIndicatorSnapshot: vi.fn().mockResolvedValue({ provider: candle.provider, symbol: candle.symbol, interval: candle.interval,
+          status: 'CLOSED', candleOpenTime: candle.openTime, candleCloseTime: cutoff,
+          values: { ema20: '100', ema50: '99', rsi14: '55', atr14: '2' } }) } as never,
+      { repeatedFailure: vi.fn().mockResolvedValue(undefined) } as never, {} as never,
+      liveTrading as never, {} as never);
+    await expect(service.run({ pipelineId: 'FULL_ANALYSIS_DECISION', runId: 'replay-pinned', userId: 'user-1',
+      provider: 'OKX_FUTURES', symbol: 'BTC-USDT', params: { interval: '15m' }, trigger: 'EVENT',
+      useStoredContext: true } as never)).rejects.toThrow('Pinned fusion refresh unavailable');
+    expect(fusion.runDetailed).toHaveBeenCalledWith(expect.objectContaining({
+      coreSnapshot: expect.objectContaining({ sourceCutoff: cutoff }) as unknown,
+    }));
+    expect(liveTrading.assessPipelineDecision).not.toHaveBeenCalled();
+    expect(liveTrading.executePipeline).not.toHaveBeenCalled();
+  });
+
   it('validates and matches five-field cron expressions in the requested timezone', () => {
     expect(() => validateCron('*/5 * * * *')).not.toThrow();
     expect(() => validateCron('* * *')).toThrow();
