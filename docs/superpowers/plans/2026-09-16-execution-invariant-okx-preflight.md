@@ -52,13 +52,13 @@ it('allows a directional decision only when its deterministic context is executa
 });
 ```
 
-- [ ] **Step 2: Run the test and verify RED**
+- [x] **Step 2: Run the test and verify RED**
 
 Run: `pnpm --filter @platform/api exec vitest run test/pipeline/execution-readiness.spec.ts`
 
 Expected: FAIL because `execution-readiness.ts` and `EXECUTION_READINESS` do not exist.
 
-- [ ] **Step 3: Implement the pure invariant**
+- [x] **Step 3: Implement the pure invariant**
 
 ```ts
 export function evaluateExecutionReadiness(decision: DecisionOutput): ExecutionReadinessResult {
@@ -74,13 +74,13 @@ export function evaluateExecutionReadiness(decision: DecisionOutput): ExecutionR
 
 Add the readiness gate before Judge/Quant and require it in `standardActionable` and dislocation-canary eligibility. Preserve directional forecasts in stored context, but set `candidateDecision.actionable` only from the complete gate result.
 
-- [ ] **Step 4: Run targeted tests and verify GREEN**
+- [x] **Step 4: Run targeted tests and verify GREEN**
 
 Run: `pnpm --filter @platform/api exec vitest run test/pipeline/execution-readiness.spec.ts test/pipeline/gate-decision.spec.ts test/pipeline/pipeline-runtime.spec.ts`
 
 Expected: PASS, including a runtime regression proving a `LONG/SHORT` candidate with `action: WAIT` creates no risk assessment or order.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/modules/pipeline/domain/execution-readiness.ts apps/api/src/modules/pipeline/domain/gate-decision.ts apps/api/src/modules/pipeline/application/pipeline-runner.service.ts apps/api/test/pipeline/execution-readiness.spec.ts apps/api/test/pipeline/pipeline-runtime.spec.ts
@@ -102,7 +102,7 @@ git commit -m "fix(pipeline): enforce execution readiness before actionable sele
 - Consumes: pinned snapshot, chronological closed candles, multi-timeframe confirmation, strategy key, and direction.
 - Produces: `deriveClosedCandleExecutionContext(input): ExecutionContext` with a cutoff identical to the snapshot candle.
 
-- [ ] **Step 1: Write failing closed-candle tests**
+- [x] **Step 1: Write failing closed-candle tests**
 
 ```ts
 it('confirms a range short only from a closed upper-bound rejection', () => {
@@ -118,25 +118,25 @@ it('does not confirm from the forming candle after the pinned cutoff', () => {
 });
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `pnpm --filter @platform/api exec vitest run test/pipeline/closed-candle-execution-context.spec.ts`
 
 Expected: FAIL because the derivation function is absent.
 
-- [ ] **Step 3: Implement deterministic context derivation**
+- [x] **Step 3: Implement deterministic context derivation**
 
 Use only candles at or before `snapshot.candleCloseTime`. Derive range boundaries from closed lookback highs/lows, trigger price from the setup boundary or breakout level, ATR distances from the pinned snapshot, and action/confirmation from explicit rejection, retest, pullback, or momentum conditions. Return a closed but waiting context when evidence is insufficient.
 
 Pass this context to `DecisionService.decideForUser` and preserve it through `calibrateForExecution`; remove the runner path that constructs a directional decision from `waitingExecutionContext` when pinned evidence exists.
 
-- [ ] **Step 4: Run targeted tests and verify GREEN**
+- [x] **Step 4: Run targeted tests and verify GREEN**
 
 Run: `pnpm --filter @platform/api exec vitest run test/pipeline/closed-candle-execution-context.spec.ts test/pipeline/pinned-core-analysis.spec.ts test/agents/decision.service.spec.ts`
 
 Expected: PASS and exact cutoff equality assertions hold.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/modules/pipeline/domain/closed-candle-execution-context.ts apps/api/src/modules/pipeline/domain/pinned-core-analysis.ts apps/api/src/modules/pipeline/application/pipeline-runner.service.ts apps/api/src/modules/agents/application/services/decision.service.ts apps/api/test/pipeline/closed-candle-execution-context.spec.ts apps/api/test/pipeline/pinned-core-analysis.spec.ts apps/api/test/agents/decision.service.spec.ts
@@ -158,7 +158,7 @@ git commit -m "fix(pipeline): derive entry context from pinned closed candles"
 - Produces: `selectEntryOrderPolicy({ setup, side, bid, ask, tickSize, maxSlippagePct }): { orderType: 'LIMIT'; timeInForce: 'IOC' | 'GTC'; limitPrice: number; expiryCandles: number }`.
 - GTC is used for `RANGE_REVERSION` and ordinary `TREND_PULLBACK`; IOC is used for confirmed `BREAKOUT_RETEST` and execution-ready `momentum-scalp` candidates.
 
-- [ ] **Step 1: Write failing table tests**
+- [x] **Step 1: Write failing table tests**
 
 ```ts
 it.each([
@@ -172,23 +172,23 @@ it.each([
 });
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `pnpm --filter @platform/api exec vitest run test/risk/entry-order-policy.spec.ts`
 
 Expected: FAIL because the policy does not exist.
 
-- [ ] **Step 3: Implement minimal setup-aware policy**
+- [x] **Step 3: Implement minimal setup-aware policy**
 
 Normalize the marketable IOC price to tick size and cap it at `ask * (1 + maxSlippagePct)` for BUY or `bid * (1 - maxSlippagePct)` for SELL. Keep GTC at the structural entry price already produced by the trade-plan engine. Extend `ExecutionPlanInput.timeInForce` to `'IOC' | 'GTC'` and prohibit adapter MARKET fallback.
 
-- [ ] **Step 4: Run targeted tests and verify GREEN**
+- [x] **Step 4: Run targeted tests and verify GREEN**
 
 Run: `pnpm --filter @platform/api exec vitest run test/risk/entry-order-policy.spec.ts test/risk/trade-plan-engine.spec.ts test/exchange/proactive-limit-order.spec.ts test/live-trading/resting-limit-expiry.spec.ts`
 
 Expected: PASS; the existing ZRO-style range short remains GTC and momentum entries are IOC.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/modules/risk/domain/entry-order-policy.ts apps/api/src/modules/risk/domain/risk-engine.types.ts apps/api/src/modules/risk/domain/trade-plan-engine.ts apps/api/src/modules/live-trading/application/live-trading.service.ts apps/api/test/risk/entry-order-policy.spec.ts apps/api/test/risk/trade-plan-engine.spec.ts apps/api/test/exchange/proactive-limit-order.spec.ts
@@ -209,7 +209,7 @@ git commit -m "fix(execution): choose limit behavior by trading setup"
 - Produces: `preflightOrderProtection(input): NormalizedOrderProtection | OrderProtectionRejection`.
 - Stable rejection reasons: `ENTRY_PROTECTION_GEOMETRY_INVALID`, `STOP_ALREADY_BREACHED`, `TAKE_PROFIT_ALREADY_CROSSED`, and `MARKETABLE_LIMIT_SLIPPAGE_EXCEEDED`.
 
-- [ ] **Step 1: Write failing ZRO regression tests**
+- [x] **Step 1: Write failing ZRO regression tests**
 
 ```ts
 it('rejects a long locally when the fresh market has already crossed its stop', () => {
@@ -227,23 +227,23 @@ it('normalizes valid short protection without changing its ordering', () => {
 });
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `pnpm --filter @platform/api exec vitest run test/exchange/order-protection-preflight.spec.ts`
 
 Expected: FAIL because preflight is absent.
 
-- [ ] **Step 3: Implement and integrate preflight**
+- [x] **Step 3: Implement and integrate preflight**
 
 Round to the instrument tick first, then validate directional ordering and current-price state. Fetch a fresh ticker immediately before submission and reject locally before `connections.placeOrder`. Persist the stable local error code and normalized values; do not replace it with a generic exchange error.
 
-- [ ] **Step 4: Run targeted tests and verify GREEN**
+- [x] **Step 4: Run targeted tests and verify GREEN**
 
 Run: `pnpm --filter @platform/api exec vitest run test/exchange/order-protection-preflight.spec.ts test/live-trading/protection-and-risk-preflight.spec.ts test/exchange/proactive-limit-order.spec.ts`
 
 Expected: PASS, and the external adapter spy receives no call for the invalid ZRO long fixture.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/exchange/domain/order-protection-preflight.ts apps/api/src/exchange/domain/exchange.error.ts apps/api/src/modules/live-trading/application/live-trading.service.ts apps/api/test/exchange/order-protection-preflight.spec.ts apps/api/test/live-trading/protection-and-risk-preflight.spec.ts apps/api/test/exchange/proactive-limit-order.spec.ts
@@ -263,7 +263,7 @@ git commit -m "fix(okx): validate protection against fresh market before submit"
 - Quant result distinguishes `BLOCK`, `PROBE`, and `ADVISORY` authorization.
 - Replay fixtures contain literal closed-candle/indicator inputs for SOL, BNB, ARB, ZEC, and ZRO and assert gate attribution rather than guaranteed entry.
 
-- [ ] **Step 1: Write failing quant and replay tests**
+- [x] **Step 1: Write failing quant and replay tests**
 
 ```ts
 it('permits only a reduced DEMO probe for a new cohort after readiness passes', async () => {
@@ -279,23 +279,23 @@ it('keeps reliable exact negative expectancy as a hard block', async () => {
 
 The five-symbol table verifies that no directional candidate is actionable with a waiting/unconfirmed context and that each rejection has exactly one selected owning gate.
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `pnpm --filter @platform/api exec vitest run test/pipeline/quant-execution-policy.spec.ts test/pipeline/registered-symbol-execution-replay.spec.ts`
 
 Expected: FAIL because missing cohorts are currently represented only as blocked/advisory without the execution-ready reduced probe contract.
 
-- [ ] **Step 3: Implement the quant authorization contract**
+- [x] **Step 3: Implement the quant authorization contract**
 
 Allow the reduced probe only in DEMO, only after execution readiness passes, and propagate the size factor into risk. Keep LIVE behavior blocked until governed promotion. Deduplicate gate reasons by owner and preserve all non-owning reasons as diagnostics rather than selected blockers.
 
-- [ ] **Step 4: Run all targeted regression tests**
+- [x] **Step 4: Run all targeted regression tests**
 
 Run: `pnpm --filter @platform/api exec vitest run test/pipeline/execution-readiness.spec.ts test/pipeline/closed-candle-execution-context.spec.ts test/pipeline/quant-execution-policy.spec.ts test/pipeline/registered-symbol-execution-replay.spec.ts test/exchange/order-protection-preflight.spec.ts test/live-trading/protection-and-risk-preflight.spec.ts test/risk/entry-order-policy.spec.ts`
 
 Expected: PASS with no provider- or symbol-specific production branches.
 
-- [ ] **Step 5: Run full verification**
+- [x] **Step 5: Run full verification**
 
 Run: `pnpm test`
 
@@ -309,7 +309,7 @@ Run: `git diff --check`
 
 Expected: every command exits 0; report exact test counts from fresh output.
 
-- [ ] **Step 6: Commit and push**
+- [x] **Step 6: Commit and push**
 
 ```bash
 git add apps/api/src/modules/pipeline/application/quant-execution-policy.service.ts apps/api/src/modules/pipeline/application/pipeline-runner.service.ts apps/api/src/modules/pipeline/domain/gate-decision.ts apps/api/test/pipeline/quant-execution-policy.spec.ts apps/api/test/pipeline/registered-symbol-execution-replay.spec.ts
