@@ -600,6 +600,64 @@ describe("QuantExecutionPolicyService", () => {
     const posResult = await posPolicy.evaluate(exactNegativeFixture());
     expect(posResult.riskTier).toBe("NORMAL");
   });
+
+  it("permits only a reduced DEMO probe for a new cohort after readiness passes", async () => {
+    const newCohortFixture = (overrides: Record<string, unknown> = {}) => ({
+      ...input,
+      setup: "TREND_PULLBACK",
+      regime: "TRENDING",
+      direction: "LONG",
+      executionPolicy: "STANDARD",
+      configurationVersion: "v1",
+      decision: strongDecision() as never,
+      multiTimeframeConfirmation: 100,
+      primaryRsi: 68.06,
+      ...overrides,
+    });
+    const evaluate = (fixture: Parameters<QuantExecutionPolicyService["evaluate"]>[0]) =>
+      service(null).policy.evaluate(fixture);
+
+    const result = await evaluate(newCohortFixture({ mode: "DEMO", executionReady: true }));
+    expect(result).toMatchObject({ allowed: true, severity: "REDUCE_SIZE", executionPolicy: "PROBE" });
+  });
+
+  it("keeps reliable exact negative expectancy as a hard block", async () => {
+    const exactNegativeFixture = (overrides: Record<string, unknown> = {}) => ({
+      ...input,
+      setup: "TREND_PULLBACK",
+      regime: "TRENDING",
+      direction: "LONG",
+      executionPolicy: "STANDARD",
+      configurationVersion: "v1",
+      decision: strongDecision() as never,
+      multiTimeframeConfirmation: 100,
+      primaryRsi: 68.06,
+      ...overrides,
+    });
+    const negativeValidation = valid({
+      probabilityOfProfit: 30,
+      probabilityOfRuin: 100,
+      outOfSampleSharpe: -1.36,
+      walkForwardStable: false,
+      metricsJson: {
+        sampleEvidence: { totalTrades: 80, outOfSampleTrades: 20 },
+        cohort: {
+          symbol: "ETH-USDT",
+          setup: "TREND_PULLBACK",
+          regime: "TRENDING",
+          direction: "LONG",
+          executionPolicy: "STANDARD",
+          configurationVersion: 1,
+        },
+        executionAssumptions: { leverage: 1, riskPerTrade: 0.02, riskRewardRatio: 1.5 },
+      },
+    });
+    const evaluate = (fixture: Parameters<QuantExecutionPolicyService["evaluate"]>[0]) =>
+      service(negativeValidation).policy.evaluate(fixture);
+
+    const result = await evaluate(exactNegativeFixture());
+    expect(result).toMatchObject({ allowed: false, severity: "BLOCK" });
+  });
 });
 
 

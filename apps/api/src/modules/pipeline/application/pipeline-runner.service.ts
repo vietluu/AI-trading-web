@@ -660,6 +660,7 @@ export class PipelineRunnerService {
               strategyKey: candidate.strategyKey,
               mode: proactive ? proactive.mode === 'DEMO' ? 'DEMO' : 'SHADOW' : process.env.TRADING_MODE === 'LIVE' ? 'LIVE' : 'DEMO',
               decision: calibrated,
+              executionReady: candidateReadiness.allowed,
               multiTimeframeConfirmation: candidateMultiTimeframe.confirmation,
               primaryRsi,
               marketEventImpact: analyses.news.impact.level,
@@ -673,9 +674,9 @@ export class PipelineRunnerService {
                 strategyKey: candidate.strategyKey,
                 message: error instanceof Error ? error.message : "Unknown quant policy error",
               });
-              return { severity: 'BLOCK' as const, allowed: false as const, reason: "QUANT_POLICY_UNAVAILABLE" as const };
+              return { severity: 'BLOCK' as const, riskTier: 'BLOCKED' as const, executionPolicy: 'BLOCK' as const, allowed: false as const, advisory: false as const, reason: "QUANT_POLICY_UNAVAILABLE" as const };
             })
-          : { severity: 'BLOCK' as const, allowed: false as const, reason: "QUANT_VALIDATION_MISSING" as const };
+          : { severity: 'BLOCK' as const, riskTier: 'BLOCKED' as const, executionPolicy: 'BLOCK' as const, allowed: false as const, advisory: false as const, reason: "QUANT_VALIDATION_MISSING" as const };
         const candidateBlockedReasons = [
           candidateFilter.reason,
           ...candidateReadiness.reasonCodes,
@@ -725,7 +726,9 @@ export class PipelineRunnerService {
           gateRecord(
             "QUANT",
             !candidateQuant.allowed
-              ? "BLOCK"
+              ? candidateQuant.executionPolicy === "ADVISORY" || candidateQuant.advisory
+                ? "ADVISORY"
+                : "BLOCK"
               : candidateQuant.severity === "REDUCE_SIZE"
                 ? "REDUCE_SIZE"
                 : candidateQuant.advisory ? "ADVISORY" : "PASS",
