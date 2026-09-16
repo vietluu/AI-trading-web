@@ -35,7 +35,7 @@ Build execution context from the same pinned indicator snapshot and closed candl
 - `RANGE_REVERSION`: price is at the correct range boundary and a closed-candle rejection exists.
 - `TREND_PULLBACK`: trend alignment holds and a closed candle rejects the relevant EMA/support/resistance zone.
 - `BREAKOUT_RETEST`: a closed breakout is followed by a valid retest within chase limits.
-- `MOMENTUM_CONTINUATION`: closed-candle impulse, volume, ADX, and multi-timeframe direction agree.
+- `momentum-scalp` strategy: its canonical `TREND_PULLBACK` or `BREAKOUT_RETEST` setup additionally requires closed-candle impulse, volume, ADX, and multi-timeframe direction agreement.
 - `TRANSITION_PROBE`: explicit dislocation canary conditions pass; size remains reduced.
 
 No LLM output can set these execution facts.
@@ -54,7 +54,7 @@ No LLM output can set these execution facts.
 ### 4. Setup-aware entry policy
 
 - Range reversal and ordinary trend pullback use resting GTC limits with a bounded candle TTL.
-- Confirmed breakout and momentum continuation use a marketable IOC limit derived from the fresh best bid/ask plus a maximum slippage allowance.
+- Confirmed breakout and an execution-ready `momentum-scalp` candidate use a marketable IOC limit derived from the fresh best bid/ask plus a maximum slippage allowance.
 - IOC orders never fall back to MARKET.
 - Expired GTC orders may be reassessed once using fresh data. Repricing requires the same execution invariant and acceptable reward-to-risk; otherwise the order is canceled.
 
