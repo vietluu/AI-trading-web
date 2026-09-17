@@ -1389,4 +1389,158 @@ describe("drift reassessment boundary", () => {
     );
     expect(liveTrading.assessPipelineDecision).toHaveBeenCalled();
   });
+
+  describe('Terminal step reconciliation', () => {
+    it('PipelineRepository.skipOpenSteps updates only PENDING and RUNNING steps and sets completedAt and canonical reason', async () => {
+      const { PipelineRepository } = await import('../../src/modules/pipeline/infrastructure/pipeline.repository');
+      const updateMany = vi.fn().mockResolvedValue({ count: 3 });
+      const prisma = {
+        pipelineStepRun: {
+          updateMany,
+        },
+      };
+      const repo = new PipelineRepository(prisma as never);
+      const completedAt = new Date('2026-09-17T12:00:00.000Z');
+
+      const result = await repo.skipOpenSteps('run-123', 'SIGNAL_FILTER_EXHAUSTED', completedAt);
+
+      expect(updateMany).toHaveBeenCalledWith({
+        where: {
+          runId: 'run-123',
+          status: { in: ['PENDING', 'RUNNING'] },
+        },
+        data: {
+          status: 'SKIPPED',
+          completedAt,
+          errorCode: 'SIGNAL_FILTER_EXHAUSTED',
+        },
+      });
+      expect(result).toEqual({ count: 3 });
+    });
+
+    it('reconciles open steps when runner exits early on NO_ACTIVE_STRATEGY', async () => {
+      const repository = {
+        updateRun: vi.fn().mockResolvedValue({}),
+        updateStep: vi.fn().mockResolvedValue({}),
+        skipOpenSteps: vi.fn().mockResolvedValue({ count: 4 }),
+        activeStrategyKeys: vi.fn().mockResolvedValue([]),
+        findRun: vi.fn().mockResolvedValue(null),
+      };
+      const service = new PipelineRunnerService(
+        {} as never,
+        {} as never,
+        repository as never,
+        { isCancelled: vi.fn().mockResolvedValue(false) } as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        { repeatedFailure: vi.fn() } as never,
+        {} as never,
+        {} as never,
+        {} as never,
+      );
+
+      await service.run({
+        pipelineId: 'FULL_ANALYSIS_DECISION',
+        runId: 'early-strategy-exit',
+        userId: 'user-1',
+        provider: 'OKX_FUTURES',
+        symbol: 'BTC-USDT',
+        params: { interval: '15m', strategyIds: ['non-existent'] },
+        trigger: 'EVENT',
+      } as never);
+
+      expect(repository.updateRun).toHaveBeenCalledWith(
+        'early-strategy-exit',
+        expect.objectContaining({
+          status: 'SKIPPED',
+          skippedReason: 'NO_ACTIVE_STRATEGY',
+        }),
+      );
+      expect(repository.skipOpenSteps).toHaveBeenCalledWith(
+        'early-strategy-exit',
+        'NO_ACTIVE_STRATEGY',
+        expect.any(Date),
+      );
+    });
+
+    it('reconciles open steps when runner exits early on signal filter skip', async () => {
+      const repository = {
+        updateRun: vi.fn().mockResolvedValue({}),
+        updateStep: vi.fn().mockResolvedValue({}),
+        skipOpenSteps: vi.fn().mockResolvedValue({ count: 2 }),
+        activeStrategyKeys: vi.fn().mockResolvedValue(['trend']),
+        findRun: vi.fn().mockResolvedValue(null),
+      };
+      const candle = {
+        provider: 'OKX_FUTURES',
+        symbol: 'BTC-USDT',
+        interval: '15m',
+        openTime: new Date(Date.now() - 900_000),
+        closeTime: new Date(),
+        open: '100',
+        high: '102',
+        low: '99',
+        close: '101',
+        volume: '100',
+        isClosed: true,
+      };
+      const marketData = {
+        getHistoricalCandles: vi.fn().mockResolvedValue([candle]),
+        getIndicatorSnapshot: vi.fn().mockResolvedValue({
+          provider: 'OKX_FUTURES',
+          symbol: 'BTC-USDT',
+          interval: '15m',
+          status: 'CLOSED',
+          candleOpenTime: candle.openTime,
+          candleCloseTime: candle.closeTime,
+          values: { ema20: '100', ema50: '99', rsi14: '55', atr14: '2' },
+        }),
+      };
+      const signalFilter = {
+        evaluate: vi.fn().mockReturnValue({ allowed: false, reason: 'RSI_OVERBOUGHT' }),
+      };
+      const analytics = {
+        recordStageTelemetry: vi.fn(),
+      };
+
+      const service = new PipelineRunnerService(
+        {} as never,
+        {} as never,
+        repository as never,
+        { isCancelled: vi.fn().mockResolvedValue(false) } as never,
+        {} as never,
+        signalFilter as never,
+        marketData as never,
+        { repeatedFailure: vi.fn() } as never,
+        analytics as never,
+        {} as never,
+        {} as never,
+      );
+
+      await service.run({
+        pipelineId: 'FULL_ANALYSIS_DECISION',
+        runId: 'early-filter-exit',
+        userId: 'user-1',
+        provider: 'OKX_FUTURES',
+        symbol: 'BTC-USDT',
+        params: { interval: '15m', strategyIds: ['trend'] },
+        trigger: 'EVENT',
+      } as never);
+
+      expect(repository.updateRun).toHaveBeenCalledWith(
+        'early-filter-exit',
+        expect.objectContaining({
+          status: 'COMPLETED',
+          decision: 'WAIT',
+          skippedReason: 'RSI_OVERBOUGHT',
+        }),
+      );
+      expect(repository.skipOpenSteps).toHaveBeenCalledWith(
+        'early-filter-exit',
+        'RSI_OVERBOUGHT',
+        expect.any(Date),
+      );
+    });
+  });
 });

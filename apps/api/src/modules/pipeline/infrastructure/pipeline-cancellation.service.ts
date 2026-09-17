@@ -16,7 +16,9 @@ export class PipelineCancellationService {
     const job = await this.queue.getJob(runId);
     if (job && (await job.getState()) === 'waiting') {
       await job.remove();
-      await this.repository.updateRun(runId, { status: 'CANCELLED', completedAt: new Date(), errorCode: 'CANCELLED_BY_USER' });
+      const completedAt = new Date();
+      await this.repository.updateRun(runId, { status: 'CANCELLED', completedAt, errorCode: 'CANCELLED_BY_USER' });
+      await this.repository.skipOpenSteps(runId, 'CANCELLED_BY_USER', completedAt);
     }
     return true;
   }

@@ -163,12 +163,17 @@ export class PipelineRunnerService {
     const proactiveMode = process.env.PROACTIVE_AI_MODE ?? "OBSERVE";
     if (job.pipelineId === "proactive-thesis") {
       if (!["OBSERVE", "SHADOW", "DEMO"].includes(proactiveMode)) {
-        await this.repository.updateRun(String(job.runId), {
-          status: "SKIPPED",
-          decision: "WAIT",
-          skippedReason: "PROACTIVE_AI_MODE_INVALID",
-          completedAt: new Date(),
-        });
+        const completedAt = new Date();
+        await this.finalizeEarlyTerminalRun(
+          String(job.runId),
+          {
+            status: "SKIPPED",
+            decision: "WAIT",
+            skippedReason: "PROACTIVE_AI_MODE_INVALID",
+          },
+          "PROACTIVE_AI_MODE_INVALID",
+          completedAt,
+        );
         return { outcome: "SKIPPED", reason: "PROACTIVE_AI_MODE_INVALID" };
       }
       if (proactiveMode === "DEMO") {
@@ -210,17 +215,22 @@ export class PipelineRunnerService {
         requestedStrategyKeys,
       );
       if (!eligibleStrategyKeys.length) {
-        await this.repository.updateRun(runId, {
-          status: "SKIPPED",
-          decision: "WAIT",
-          skippedReason: "NO_ACTIVE_STRATEGY",
-          completedAt: new Date(),
-          durationMs: Math.max(0, Date.now() - startedAt.getTime()),
-          result: {
-            requestedStrategyKeys,
-            symbol,
+        const completedAt = new Date();
+        await this.finalizeEarlyTerminalRun(
+          runId,
+          {
+            status: "SKIPPED",
+            decision: "WAIT",
+            skippedReason: "NO_ACTIVE_STRATEGY",
+            durationMs: Math.max(0, Date.now() - startedAt.getTime()),
+            result: {
+              requestedStrategyKeys,
+              symbol,
+            },
           },
-        });
+          "NO_ACTIVE_STRATEGY",
+          completedAt,
+        );
         this.logger.warn({
           event: "pipeline_no_active_strategy",
           runId,
@@ -338,23 +348,27 @@ export class PipelineRunnerService {
           interval,
           staleTimeframes,
         });
-        await this.repository.updateRun(runId, {
-          status: 'COMPLETED',
-          completedAt,
-          durationMs: completedAt.getTime() - startedAt.getTime(),
-          decision: 'WAIT',
-          confidence: 0,
-          dataQuality: 'INSUFFICIENT',
-          timeframe: String(interval),
-          skippedReason: reason,
-          result: {
+        await this.finalizeEarlyTerminalRun(
+          runId,
+          {
+            status: 'COMPLETED',
+            durationMs: completedAt.getTime() - startedAt.getTime(),
             decision: 'WAIT',
-            reason,
-            actionable: false,
-            staleTimeframes,
-            multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue,
+            confidence: 0,
+            dataQuality: 'INSUFFICIENT',
+            timeframe: String(interval),
+            skippedReason: reason,
+            result: {
+              decision: 'WAIT',
+              reason,
+              actionable: false,
+              staleTimeframes,
+              multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue,
+            },
           },
-        });
+          reason,
+          completedAt,
+        );
         return;
       }
       if (staleTimeframes.length > 0) {
@@ -409,23 +423,27 @@ export class PipelineRunnerService {
           apiCost: 0,
           createdAt: completedAt.toISOString(),
         });
-        await this.repository.updateRun(runId, {
-          status: "COMPLETED",
+        await this.finalizeEarlyTerminalRun(
+          runId,
+          {
+            status: "COMPLETED",
+            durationMs: completedAt.getTime() - startedAt.getTime(),
+            decision: "WAIT",
+            confidence: 0,
+            dataQuality: "INSUFFICIENT",
+            timeframe: String(interval),
+            skippedReason: signalFilter.reason,
+            result: {
+              decision: "WAIT",
+              reason: signalFilter.reason,
+              actionable: false,
+              signalFilter: { allowed: signalFilter.allowed, reason: signalFilter.reason },
+              multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue,
+            },
+          },
+          signalFilter.reason,
           completedAt,
-          durationMs: completedAt.getTime() - startedAt.getTime(),
-          decision: "WAIT",
-          confidence: 0,
-          dataQuality: "INSUFFICIENT",
-          timeframe: String(interval),
-          skippedReason: signalFilter.reason,
-        result: {
-          decision: "WAIT",
-          reason: signalFilter.reason,
-          actionable: false,
-          signalFilter: { allowed: signalFilter.allowed, reason: signalFilter.reason },
-          multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue,
-        },
-        });
+        );
         return;
       }
       const existing = job.useStoredContext
@@ -523,8 +541,14 @@ export class PipelineRunnerService {
         await this.tradeResearcher.persistReview({ context, research, review, appliedThesis: proactiveThesis, validation });
         if (!validation.valid || !['PROBE_READY', 'CONFIRMED'].includes(proactiveThesis.state) || proactiveThesis.direction === 'WAIT') {
           const reason = validation.reasonCodes[0] ?? 'THESIS_NOT_EXECUTABLE';
-          await this.finishStep(runId, 'decision', { thesis: proactiveThesis, review, validation }, new Date());
-          await this.repository.updateRun(runId, { status: 'SKIPPED', decision: 'WAIT', skippedReason: reason, completedAt: new Date() });
+          const completedAt = new Date();
+          await this.finishStep(runId, 'decision', { thesis: proactiveThesis, review, validation }, completedAt);
+          await this.finalizeEarlyTerminalRun(
+            runId,
+            { status: 'SKIPPED', decision: 'WAIT', skippedReason: reason },
+            reason,
+            completedAt,
+          );
           return { outcome: 'SKIPPED', reason };
         }
         if (!research.researchRunId) throw new Error('THESIS_AUDIT_PARENT_REQUIRED');
@@ -1315,6 +1339,9 @@ export class PipelineRunnerService {
           quant: quant as unknown as Prisma.InputJsonValue,
         },
       });
+      if (typeof this.repository.skipOpenSteps === 'function') {
+        await this.repository.skipOpenSteps(runId, finalSkippedReason ?? "COMPLETED", completedAt);
+      }
       await this.alerts.contextual(runId, symbol, analyses);
       if (!finalActionable && blockingGate) {
         await this.alerts.blockedOpportunity({
@@ -1386,31 +1413,63 @@ export class PipelineRunnerService {
       const failureBlockingGate = failureGates
         ? selectBlockingGate(failureGates)
         : undefined;
-      await this.repository.updateRun(runId, {
-        status: cancelled ? "CANCELLED" : executionLockBusy ? "QUEUED" : timedOut ? "TIMEOUT" : "FAILED",
-        completedAt: executionLockBusy ? null : completedAt,
-        durationMs: completedAt.getTime() - startedAt.getTime(),
-        errorCode,
-        skippedReason: failureBlockingGate?.reason ?? null,
-        safeErrorMessage:
-          error instanceof Error
-            ? error.message.slice(0, 300)
-            : "Pipeline execution failed",
-        ...(evaluatedResult && failureGates
-          ? {
-              result: {
-                ...evaluatedResult,
-                skippedReason: failureBlockingGate?.reason ?? null,
-                gates: failureGates as unknown as Prisma.InputJsonValue,
-                ...(failureBlockingGate
-                  ? { blockingGate: failureBlockingGate as unknown as Prisma.InputJsonValue }
-                  : {}),
-                riskAssessment,
-                liveExecution,
-              },
-            }
-          : {}),
-      });
+      if (!executionLockBusy) {
+        await this.finalizeEarlyTerminalRun(
+          runId,
+          {
+            status: cancelled ? "CANCELLED" : timedOut ? "TIMEOUT" : "FAILED",
+            durationMs: completedAt.getTime() - startedAt.getTime(),
+            errorCode,
+            skippedReason: failureBlockingGate?.reason ?? null,
+            safeErrorMessage:
+              error instanceof Error
+                ? error.message.slice(0, 300)
+                : "Pipeline execution failed",
+            ...(evaluatedResult && failureGates
+              ? {
+                  result: {
+                    ...evaluatedResult,
+                    skippedReason: failureBlockingGate?.reason ?? null,
+                    gates: failureGates as unknown as Prisma.InputJsonValue,
+                    ...(failureBlockingGate
+                      ? { blockingGate: failureBlockingGate as unknown as Prisma.InputJsonValue }
+                      : {}),
+                    riskAssessment,
+                    liveExecution,
+                  },
+                }
+              : {}),
+          },
+          cancelled ? "CANCELLED" : failureBlockingGate?.reason ?? errorCode ?? "PIPELINE_FAILED",
+          completedAt,
+        );
+      } else {
+        await this.repository.updateRun(runId, {
+          status: "QUEUED",
+          completedAt: null,
+          durationMs: completedAt.getTime() - startedAt.getTime(),
+          errorCode,
+          skippedReason: failureBlockingGate?.reason ?? null,
+          safeErrorMessage:
+            error instanceof Error
+              ? error.message.slice(0, 300)
+              : "Pipeline execution failed",
+          ...(evaluatedResult && failureGates
+            ? {
+                result: {
+                  ...evaluatedResult,
+                  skippedReason: failureBlockingGate?.reason ?? null,
+                  gates: failureGates as unknown as Prisma.InputJsonValue,
+                  ...(failureBlockingGate
+                    ? { blockingGate: failureBlockingGate as unknown as Prisma.InputJsonValue }
+                    : {}),
+                  riskAssessment,
+                  liveExecution,
+                },
+              }
+            : {}),
+        });
+      }
       if (cancelled) return;
       if (!executionLockBusy && !executionRetryable) await this.alerts.repeatedFailure(runId, symbol);
       throw error;
@@ -1429,6 +1488,20 @@ export class PipelineRunnerService {
   private async assertNotCancelled(runId: string) {
     if (await this.cancellation.isCancelled(runId))
       throw new PipelineCancelledError("Pipeline cancelled");
+  }
+  private async finalizeEarlyTerminalRun(
+    runId: string,
+    data: Prisma.PipelineRunUpdateInput,
+    reason: string,
+    completedAt: Date = new Date(),
+  ): Promise<void> {
+    await this.repository.updateRun(runId, {
+      ...data,
+      completedAt,
+    });
+    if (typeof this.repository.skipOpenSteps === 'function') {
+      await this.repository.skipOpenSteps(runId, reason, completedAt);
+    }
   }
   private startStep(runId: string, stepId: string) {
     return this.repository.updateStep(runId, stepId, {

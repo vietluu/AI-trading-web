@@ -172,6 +172,9 @@ export class PipelineService {
     await this.repository.createSteps(id, definition.steps);
     if (skippedReason) {
       await this.repository.updateRun(id, { status: 'SKIPPED', skippedReason, completedAt: now, durationMs: 0, decision: 'WAIT' });
+      if (typeof this.repository.skipOpenSteps === 'function') {
+        await this.repository.skipOpenSteps(id, skippedReason, now);
+      }
       return run;
     }
     await enqueue({ ...run, symbol });

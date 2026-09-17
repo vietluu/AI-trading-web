@@ -195,4 +195,44 @@ describe('PipelineService', () => {
       lastUpdateCall?.storedContext?.executionContext,
     );
   });
+
+  it('reconciles open steps to SKIPPED when trigger skips early due to cooldown', async () => {
+    const repository = {
+      createRun: vi.fn().mockResolvedValue({ id: 'run-cooldown' }),
+      createSteps: vi.fn().mockResolvedValue(undefined),
+      updateRun: vi.fn().mockResolvedValue(undefined),
+      skipOpenSteps: vi.fn().mockResolvedValue({ count: 4 }),
+      countRecent: vi.fn().mockResolvedValue(1),
+      latestForSymbol: vi.fn().mockResolvedValue({ createdAt: new Date() }),
+    };
+    const queue = { enqueue: vi.fn() };
+    const config = { enabled: true, maxRunsPerHour: 10, cooldownMs: 60_000 };
+    const runner = { run: vi.fn() };
+
+    const service = new PipelineService(repository as never, queue as never, config as never, runner as never);
+
+    await service.trigger(
+      'user-1',
+      {
+        pipelineId: 'FULL_ANALYSIS_DECISION',
+        symbol: 'BTC-USDT',
+        provider: 'OKX_FUTURES',
+        params: {},
+      },
+      'MANUAL',
+    );
+
+    expect(repository.updateRun).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        status: 'SKIPPED',
+        skippedReason: 'SYMBOL_COOLDOWN_ACTIVE',
+      }),
+    );
+    expect(repository.skipOpenSteps).toHaveBeenCalledWith(
+      expect.any(String),
+      'SYMBOL_COOLDOWN_ACTIVE',
+      expect.any(Date),
+    );
+  });
 });
