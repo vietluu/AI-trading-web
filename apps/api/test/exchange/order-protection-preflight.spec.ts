@@ -42,4 +42,29 @@ describe('order-protection-preflight', () => {
       approved: false, reason: 'MARKETABLE_LIMIT_SLIPPAGE_EXCEEDED',
     });
   });
+
+  it('rejects when tick rounding collapses entry and stop loss into invalid geometry', () => {
+    expect(preflightOrderProtection({
+      side: 'BUY',
+      entry: 100.04,
+      stopLoss: 100.01,
+      takeProfit: 110,
+      currentPrice: 100.04,
+      tickSize: 0.1,
+    })).toEqual({
+      approved: false,
+      reason: 'ENTRY_PROTECTION_GEOMETRY_INVALID',
+    });
+    expect(preflightOrderProtection({
+      side: 'SELL',
+      entry: 100.01,
+      stopLoss: 100.04,
+      takeProfit: 90,
+      currentPrice: 100.01,
+      tickSize: 0.1,
+    })).toEqual({
+      approved: false,
+      reason: 'ENTRY_PROTECTION_GEOMETRY_INVALID',
+    });
+  });
 });
