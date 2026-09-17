@@ -880,6 +880,7 @@ export class PipelineRunnerService {
       evaluatedGateRecords = [...candidateGates];
       evaluatedResult = {
         ...output,
+        decision: actionable ? output.decision : "WAIT",
         candidateDecision,
         selectedStrategyKey: strategyKey,
         strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue,
@@ -921,7 +922,9 @@ export class PipelineRunnerService {
         confidence: output.confidence,
         opportunityScore: output.opportunityScore,
         riskScore: output.riskScore,
-        decision: output.decision,
+        decision: actionable ? output.decision : 'WAIT',
+        candidateDecision: output.decision,
+        candidateConfidence: output.confidence,
         rejectReason: candidateBlockingGate?.reason,
         blockingStage: candidateBlockingGate?.stage,
         executionResult: actionable ? 'APPROVED' : 'REJECTED',
@@ -1284,6 +1287,8 @@ export class PipelineRunnerService {
         opportunityScore: output.opportunityScore,
         riskScore: risk?.riskScore ?? 0,
         decision: finalExecutionDecision.decision,
+        candidateDecision: finalCandidateDecision.decision,
+        candidateConfidence: finalCandidateDecision.confidence,
         rejectReason: blockingGate?.reason,
         blockingStage: blockingGate?.stage,
         executionResult: orderSubmitted ? 'EXECUTED' : riskApproved ? 'RISK_APPROVED' : 'REJECTED',
@@ -1314,6 +1319,7 @@ export class PipelineRunnerService {
         storedContext: { analyses, fusionOutput, candidateDecision: finalCandidateDecision, strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue, ...(output.executionContext ? { executionContext: output.executionContext as unknown as Prisma.InputJsonValue } : {}) },
         result: {
           ...output,
+          decision: finalExecutionDecision.decision,
           candidateDecision: finalCandidateDecision,
           selectedStrategyKey: strategyKey,
           strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue,

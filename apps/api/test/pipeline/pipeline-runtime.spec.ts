@@ -1542,5 +1542,166 @@ describe("drift reassessment boundary", () => {
         expect.any(Date),
       );
     });
+
+    it('preserves candidate direction SHORT/85 when execution context action is WAIT, asserting top-level WAIT and non-actionable result', async () => {
+      const freshCloseTime = new Date();
+      const waitingExecutionContext = {
+        regime: 'RANGING' as const,
+        setup: 'RANGE_REVERSION' as const,
+        action: 'WAIT' as const,
+        riskTier: 'NONE' as const,
+        sourceDataCutoff: freshCloseTime.toISOString(),
+        usesClosedPrimaryCandle: true,
+        primaryCandleClosed: true,
+        triggerConfirmed: false,
+        priceLocation: {},
+      };
+
+      const repository = {
+        updateRun: vi.fn().mockResolvedValue({}),
+        updateStep: vi.fn().mockResolvedValue({}),
+        skipOpenSteps: vi.fn().mockResolvedValue({ count: 2 }),
+        findRun: vi.fn().mockResolvedValue(null),
+        activeStrategyKeys: vi.fn().mockResolvedValue(['ai-core']),
+        persistEvaluationIdentity: vi.fn().mockResolvedValue({ sampleReused: false }),
+      };
+
+      const fusionResult = {
+        analyses: {
+          market: { summary: 'market', trend: { direction: 'DOWN', strength: 'STRONG' }, volatility: { atr: 1.5, level: 'MEDIUM' }, liquidity: {}, derivatives: {}, anomalies: [], dataQuality: 'GOOD', usedTools: [], generatedAt: new Date().toISOString() },
+          technical: { summary: 'tech', trend: { direction: 'DOWN', strength: 'STRONG' }, momentum: { rsi: '50', rsiState: 'NEUTRAL', macd: { trend: 'BEARISH' } }, movingAverages: { alignment: 'BEARISH', pricePosition: 'BELOW' }, volatility: { bollinger: { position: 'MIDDLE', squeeze: false } }, structure: { marketStructure: 'LH_LL' }, divergence: {}, signals: [], dataQuality: 'GOOD', usedTools: [], generatedAt: new Date().toISOString() },
+          news: { summary: 'news', impact: { level: 'LOW', direction: 'NEUTRAL' }, keyEvents: [], themes: [], riskSignals: [], dataQuality: 'GOOD', usedTools: [], generatedAt: new Date().toISOString() },
+          sentiment: { summary: 'sentiment', sentiment: { overall: 'BEARISH', intensity: 'MEDIUM' }, crowdBehavior: { fomo: false, panic: false, euphoria: false }, sources: {}, anomalies: [], dataQuality: 'GOOD', usedTools: [], generatedAt: new Date().toISOString() },
+          macro: { summary: 'macro', macroTrend: 'RISK_OFF', keyEvents: [], riskFactors: [], dataQuality: 'GOOD', generatedAt: new Date().toISOString() },
+          onchain: { summary: 'onchain', activity: 'HIGH', flows: { exchangeInflow: 'rising' }, signals: [], dataQuality: 'GOOD', generatedAt: new Date().toISOString() },
+        },
+        fusionOutput: {
+          confidence: 85,
+          divergenceDetected: false,
+          confluenceScore: 85,
+          recommendedAction: 'WAIT',
+          summary: 'fusion',
+          combinedAnalysis: { news: 'news', sentiment: 'sentiment', macro: 'macro', market: 'market', technical: 'technical', onchain: 'onchain' },
+          overallBias: 'BEARISH',
+          conflicts: [],
+          dataQuality: 'GOOD',
+          generatedAt: new Date().toISOString(),
+        },
+      };
+
+      const fusion = { runDetailed: vi.fn().mockResolvedValue(fusionResult) };
+      const decision = {
+        decideForUser: vi.fn().mockResolvedValue({
+          decision: 'SHORT',
+          confidence: 85,
+          opportunityScore: 80,
+          expectedValue: 1.2,
+          riskScore: 30,
+          regime: { type: 'RANGING' },
+          dataQuality: 'GOOD',
+          learningConfiguration: { stage: 'MATURE', version: 1 },
+          conflictLevel: 'LOW',
+          adaptiveThreshold: 60,
+          volatilityAdjustment: 0,
+          reasoning: 'reversion setup',
+          overrides: [],
+          signals: { bullishFactors: [], bearishFactors: [] },
+          risks: [],
+          weighting: { market: 20, technical: 25, news: 15, sentiment: 15, macro: 15, onchain: 10 },
+          executionContext: waitingExecutionContext,
+        }),
+        calibrateForExecution: vi.fn().mockImplementation((val: Record<string, unknown>) =>
+          Promise.resolve({ ...val, executionContext: waitingExecutionContext }),
+        ),
+      };
+
+      const riskPolicy = {
+        evaluate: vi.fn().mockReturnValue({ actionable: true, decision: 'SHORT' }),
+      };
+      const signalFilter = {
+        evaluate: vi.fn().mockReturnValue({ allowed: true, preliminaryRegime: 'RANGING' }),
+      };
+      const marketData = {
+        getIndicatorSnapshot: vi.fn().mockResolvedValue({
+          candleCloseTime: freshCloseTime,
+          values: { rsi14: 50, atr14: 1.5, volumeChangePercent: 0, ema20: 100, ema50: 100 },
+        }),
+        getHistoricalCandles: vi.fn().mockResolvedValue([{ close: '105', closeTime: freshCloseTime, isClosed: true }]),
+      };
+      const alerts = {
+        contextual: vi.fn().mockResolvedValue(undefined),
+        decision: vi.fn().mockResolvedValue(undefined),
+        repeatedFailure: vi.fn().mockResolvedValue(undefined),
+        blockedOpportunity: vi.fn().mockResolvedValue(undefined),
+      };
+      const analytics = { recordStageTelemetry: vi.fn() };
+      const liveTrading = {
+        assessPipelineDecision: vi.fn().mockResolvedValue({ outcome: 'RISK_APPROVED' }),
+        executePipeline: vi.fn().mockResolvedValue({ outcome: 'EXECUTED' }),
+      };
+      const redis = {
+        setNx: vi.fn().mockResolvedValue(true),
+        compareAndDelete: vi.fn().mockResolvedValue(true),
+      };
+      const quantPolicy = {
+        evaluate: vi.fn().mockResolvedValue({ allowed: true, severity: 'APPROVE', advisory: false }),
+      };
+
+      const service = new PipelineRunnerService(
+        fusion as never,
+        decision as never,
+        repository as never,
+        { isCancelled: vi.fn().mockResolvedValue(false) } as never,
+        riskPolicy,
+        signalFilter,
+        marketData as never,
+        alerts as never,
+        analytics as never,
+        liveTrading as never,
+        redis as never,
+        undefined,
+        undefined,
+        quantPolicy as never,
+      );
+
+      await service.run({
+        pipelineId: 'FULL_ANALYSIS_DECISION',
+        runId: 'run-candidate-wait',
+        userId: 'user-1',
+        provider: 'BINANCE_FUTURES',
+        symbol: 'ETH-USDT',
+        params: { interval: '1h', strategyIds: ['ai-core'] },
+        trigger: 'EVENT',
+      } as never);
+
+      expect(liveTrading.assessPipelineDecision).not.toHaveBeenCalled();
+      expect(liveTrading.executePipeline).not.toHaveBeenCalled();
+
+      const persistedCalls = repository.updateRun.mock.calls as unknown as Array<[string, PersistedRunUpdate]>;
+      const completedUpdate = persistedCalls.find(([id, u]) => id === 'run-candidate-wait' && u.status === 'COMPLETED')?.[1];
+
+      expect(completedUpdate).toBeDefined();
+      expect(completedUpdate?.decision).toBe('WAIT');
+      expect(completedUpdate?.confidence).toBe(85);
+      expect(completedUpdate?.result?.decision).toBe('WAIT');
+      expect(completedUpdate?.result?.actionable).toBe(false);
+      expect(completedUpdate?.result?.candidateDecision).toMatchObject({
+        decision: 'SHORT',
+        confidence: 85,
+        actionable: false,
+        blockedReasons: expect.arrayContaining(['ENTRY_ACTION_NOT_EXECUTABLE']),
+      });
+      expect(analytics.recordStageTelemetry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          stageName: 'execution',
+          decision: 'WAIT',
+          candidateDecision: 'SHORT',
+          candidateConfidence: 85,
+          executionResult: 'REJECTED',
+          rejectReason: 'ENTRY_ACTION_NOT_EXECUTABLE',
+        }),
+      );
+    });
   });
 });
+
