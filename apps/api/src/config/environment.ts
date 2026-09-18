@@ -418,6 +418,14 @@ const environmentSchema = z
       .min(5000)
       .max(300000)
       .default(60000),
+    AI_ANALYST_REASONING_ENABLED: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((v) => v === "true"),
+    USE_DETERMINISTIC_ANALYSTS: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((v) => v === "true"),
     AGENT_MAX_GLOBAL_CONCURRENCY: z.coerce
       .number()
       .int()

@@ -18,8 +18,8 @@ export type {
 export const EXECUTION_CONTEXT_POLICY = Object.freeze({
   maximumTriggerChaseDistanceAtr: 0.8,
   maximumMoveConsumedPct: 0.5,
-  maximumRangeLongPercentile: 0.3,
-  minimumRangeShortPercentile: 0.7,
+  maximumRangeLongPercentile: 0.35,
+  minimumRangeShortPercentile: 0.65,
 });
 
 export interface BuildExecutionContextInput {

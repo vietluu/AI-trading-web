@@ -44,11 +44,12 @@ export function evaluatePositionManagement(input: PositionManagementInput) {
 
   let candidate = input.currentStopLoss;
 
-  // 1. Breakeven Stop Loss (at 0.8R or 0.8% peak profit)
-  if (peakR >= input.plan.breakEvenAtR || peakProfitPct >= 0.008) {
-    // Keep a 25% safety margin over the round-trip fee/slippage estimate
+  // 1. Breakeven Stop Loss (Only when position has earned at least 1.5R and >= 1.5% profit)
+  const requiredBreakevenR = Math.max(1.5, input.plan.breakEvenAtR ?? 1.5);
+  if (peakR >= requiredBreakevenR && peakProfitPct >= 0.015) {
+    // Keep a reasonable breathing buffer over round-trip fee so normal noise doesn't stop it out
     const feeBuffer = input.entryPrice *
-      (input.plan.estimatedRoundTripCostPct ?? 0.001) * 1.25;
+      Math.max(0.003, (input.plan.estimatedRoundTripCostPct ?? 0.001) * 2.0);
     candidate = input.side === "LONG"
       ? Math.max(candidate, input.entryPrice + feeBuffer)
       : Math.min(candidate, input.entryPrice - feeBuffer);
