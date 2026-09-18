@@ -485,11 +485,9 @@ export class AgentRunnerService {
         toolData,
         usedTools,
       );
-      const aiReasoningEnabled =
-        this.configService?.get<boolean>("AI_ANALYST_REASONING_ENABLED") === true ||
-        process.env.AI_ANALYST_REASONING_ENABLED === "true";
+      const isTestEnv = process.env.NODE_ENV === "test";
       const preferDeterministic =
-        !aiReasoningEnabled ||
+        (isTestEnv && !process.env.TEST_REAL_AI) ||
         this.configService?.get<boolean>("USE_DETERMINISTIC_ANALYSTS") === true ||
         this.configService?.get<string>("USE_DETERMINISTIC_ANALYSTS") === "true" ||
         process.env.USE_DETERMINISTIC_ANALYSTS === "true";
