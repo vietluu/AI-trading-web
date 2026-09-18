@@ -38,7 +38,7 @@ export function selectEntryOrderPolicy(input: SelectEntryOrderPolicyInput): Entr
 
   let limitPrice: number;
   if (timeInForce === 'IOC') {
-    const slippage = input.maxSlippagePct ?? 0.001;
+    const slippage = input.maxSlippagePct ?? 0.004;
     const rawPrice = input.side === 'BUY'
       ? input.ask * (1 + slippage)
       : input.bid * (1 - slippage);

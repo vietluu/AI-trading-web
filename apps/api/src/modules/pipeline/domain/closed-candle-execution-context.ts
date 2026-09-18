@@ -108,14 +108,17 @@ export function deriveClosedCandleExecutionContext(input: DeriveClosedCandleExec
         triggerPrice = Math.abs(price - ema20) <= atr * EXECUTION_CONTEXT_POLICY.maximumTriggerChaseDistanceAtr ? ema20 : open;
         confirmed = aligned;
       } else if (trendContinuation && input.strategyKey !== 'trend') {
-        triggerPrice = open;
+        triggerPrice = price;
         confirmed = true;
       }
     }
     if (input.strategyKey === 'momentum-scalp') {
       const impulse = (price - open) / open * 100;
-      confirmed = confirmed && (long ? impulse >= 0.15 : impulse <= -0.15) && Math.abs(impulse) <= 2.5 &&
-        Number(values.volumeChangePercent) >= 0.35 && Number(values.adx14) >= 18 && timeframeAgreement(input);
+      confirmed = (long ? impulse >= 0.15 : impulse <= -0.15) && Math.abs(impulse) <= 6.0 &&
+        Number(values.volumeChangePercent) >= 0.20 && Number(values.adx14) >= 18 && timeframeAgreement(input);
+      if (confirmed) {
+        triggerPrice = price;
+      }
     }
     confirmed = confirmed && triggerPrice !== undefined &&
       Math.abs(price - triggerPrice) / atr <= EXECUTION_CONTEXT_POLICY.maximumTriggerChaseDistanceAtr;
@@ -134,6 +137,10 @@ function timeframeAgreement(input: DeriveClosedCandleExecutionContextInput): boo
   if (!analysis) return false;
   const frames = analysis.frames.filter(frame => frame.isClosed === true);
   const result = evaluateMultiTimeframeConfirmation({ direction: input.direction, primaryTimeframe: analysis.primaryTimeframe, frames });
-  return frames.some(frame => frame.timeframe === analysis.primaryTimeframe) && result.directionalFrames >= 2 &&
-    result.normalEntryConfirmed && result.confirmation >= 60;
+  const minDirectional = frames.length <= 2 ? 1 : 2;
+  const noOpposing = input.direction === 'LONG' ? result.bearishConfirmation === 0 : result.bullishConfirmation === 0;
+  return frames.some(frame => frame.timeframe === analysis.primaryTimeframe) &&
+    result.directionalFrames >= minDirectional &&
+    result.normalEntryConfirmed &&
+    (result.confirmation >= 60 || noOpposing);
 }

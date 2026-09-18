@@ -14,6 +14,7 @@ export interface StrategyMarketSnapshot {
   timeframe?: string;
   priceChangePercent?: number;
   volumeChangePercent?: number;
+  volumeRatio?: number;
   adx?: number;
   efficiencyRatio?: number;
   ema20?: number;
@@ -186,17 +187,23 @@ export function isMomentumExhausted(
     (market?.adx !== undefined && market.adx >= 25) ||
     (market?.volumeChangePercent !== undefined && market.volumeChangePercent >= 30);
 
+  const hasVolumeExpansion =
+    (market?.volumeChangePercent !== undefined && market.volumeChangePercent >= 35) ||
+    analyses.market?.liquidity?.volumeProfile === true ||
+    (market?.volumeRatio !== undefined && market.volumeRatio >= 1.35);
+
+  const upperLimit = hasVolumeExpansion ? 85 : (isStrongBreakoutOrTrend ? 75 : 68);
+  const lowerLimit = hasVolumeExpansion ? 15 : (isStrongBreakoutOrTrend ? 25 : 32);
+
   if (direction === "LONG") {
     const hasBearishDiv = analyses.technical?.divergence?.rsiDivergence === "BEARISH";
     if (hasBearishDiv && rsiValue >= 68) return true;
-    const upperLimit = isStrongBreakoutOrTrend ? 75 : 68;
     return rsiValue > upperLimit || (!isStrongBreakoutOrTrend && rsiState === "OVERBOUGHT");
   }
 
   if (direction === "SHORT") {
     const hasBullishDiv = analyses.technical?.divergence?.rsiDivergence === "BULLISH";
     if (hasBullishDiv && rsiValue <= 32) return true;
-    const lowerLimit = isStrongBreakoutOrTrend ? 25 : 32;
     return rsiValue < lowerLimit || (!isStrongBreakoutOrTrend && rsiState === "OVERSOLD");
   }
 
@@ -318,16 +325,18 @@ export function decisionForStrategy(
     const minImpulse = isRanging ? 0.35 : 0.15;
     const liquidImpulse = Number.isFinite(volumeChange) && (volumeChange ?? 0) >= 0.35;
     const efficientMove = (market?.adx ?? 0) >= 18 || (market?.efficiencyRatio ?? 0) >= 0.25;
+    const hasVolumeExpansion = (market?.volumeRatio !== undefined && market.volumeRatio >= 1.35) || (volumeChange ?? 0) >= 50;
+    const maxImpulse = timeframeMinutes <= 5 ? 2.5 : (hasVolumeExpansion ? 6.0 : 4.0);
     if (
       base.regime.type !== "HIGH_VOLATILITY" &&
       !rsiExhausted &&
       timeframeMinutes <= 15 &&
       direction &&
-      impulse >= minImpulse && impulse <= 2.5 &&
+      impulse >= minImpulse && impulse <= maxImpulse &&
       liquidImpulse && efficientMove && trendAligned
     ) {
       decision = direction;
-      confidence = 66 + Math.min(8, Math.floor(impulse * 4)) +
+      confidence = 66 + Math.min(8, Math.floor(impulse * 2)) +
         ((market?.adx ?? 0) >= 22 ? 3 : 0) +
         ((market?.efficiencyRatio ?? 0) >= 0.3 ? 3 : 0);
       explanation = `Short-horizon ${impulse.toFixed(2)}% price impulse with ${Number(volumeChange).toFixed(2)}% volume expansion and directional confirmation activated momentum scalp.`;

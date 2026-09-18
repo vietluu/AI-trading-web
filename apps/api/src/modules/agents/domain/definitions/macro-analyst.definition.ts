@@ -138,10 +138,26 @@ function deterministicMacro(
   const safeText = (v: unknown, fb: string) =>
     typeof v === "string" || typeof v === "number" ? String(v) : fb;
 
+  const isTier1MacroEvent = (name: string): boolean => {
+    const n = name.toLowerCase();
+    return (
+      n.includes("fomc") ||
+      n.includes("fed interest") ||
+      n.includes("cpi") ||
+      n.includes("consumer price") ||
+      n.includes("nonfarm") ||
+      (n.includes("payroll") && !n.includes("state")) ||
+      n.includes("gdp") ||
+      n.includes("interest rate decision")
+    );
+  };
+
   const nowMs = Date.now();
   const blackoutWindowMs = 30 * 60_000;
   const postReleaseGraceMs = 5 * 60_000;
   const pendingBlackoutEvents = highImpact.filter((e) => {
+    const name = typeof e.name === "string" ? e.name : "";
+    if (!isTier1MacroEvent(name)) return false;
     const actual = safe(e.actual);
     if (Number.isFinite(actual)) return false;
     const sched = typeof e.scheduledAt === "string" || e.scheduledAt instanceof Date

@@ -568,7 +568,8 @@ function _buildAdaptiveTradePlan(input: {
     const structuralStop = finitePositive(boundary)
       ? side === "LONG" ? boundary - atr * 0.5 : boundary + atr * 0.5
       : side === "LONG" ? entryPrice - atr * 1.2 : entryPrice + atr * 1.2;
-    const minimumRisk = atr * 1.0;
+    const minRiskPct = policy.liquidityClass === 'LONG_TAIL' ? 0.015 : policy.liquidityClass === 'LIQUID_ALT' ? 0.010 : 0.006;
+    const minimumRisk = Math.max(atr * 1.0, entryPrice * minRiskPct);
     const rawRisk = Math.abs(entryPrice - structuralStop);
     const risk = Math.max(minimumRisk, rawRisk);
     if (risk > atr * 2.5) {
@@ -578,7 +579,7 @@ function _buildAdaptiveTradePlan(input: {
         regime,
         strategy: "BREAKOUT_RETEST",
         maxHoldingCandles: 5,
-        breakEvenAtR: 0.8,
+        breakEvenAtR: 1.5,
       };
     }
     const stopLoss = side === "LONG" ? entryPrice - risk : entryPrice + risk;
@@ -600,7 +601,7 @@ function _buildAdaptiveTradePlan(input: {
       takeProfit: rounded(takeProfit),
       rewardToRisk: rounded(rr),
       maxHoldingCandles: 5,
-      breakEvenAtR: 0.8,
+      breakEvenAtR: 1.5,
       trailingAtrMultiple: Number((2.5 * policy.executionCostMultiplier).toFixed(2)),
       atr,
       timeframeMs: market.timeframeMs,
@@ -610,12 +611,15 @@ function _buildAdaptiveTradePlan(input: {
     };
   }
 
+  const isMomentumExpansion =
+    Boolean(market.breakout) ||
+    (finitePositive(market.volumeRatio) && market.volumeRatio >= 1.35) ||
+    market.marketStructure === "HH_HL" ||
+    regime === "BREAKOUT" ||
+    Boolean(decision.reasoning && /breakout|momentum/i.test(decision.reasoning));
+
   // Anti-chasing protection for trend pullbacks: prevent entering when price is overextended from EMA20
   if (finitePositive(market.ema20) && finitePositive(atr)) {
-    const isMomentumExpansion =
-      Boolean(market.breakout) ||
-      (finitePositive(market.volumeRatio) && market.volumeRatio >= 1.35) ||
-      market.marketStructure === "HH_HL";
     const extensionLimit = atr * (isMomentumExpansion ? 3.5 : 2.5);
     if (side === "LONG" && entryPrice > market.ema20 + extensionLimit) {
       return {
@@ -624,7 +628,7 @@ function _buildAdaptiveTradePlan(input: {
         regime,
         strategy: "TREND_PULLBACK",
         maxHoldingCandles: 20,
-        breakEvenAtR: 1,
+        breakEvenAtR: 1.5,
       };
     }
     if (side === "SHORT" && entryPrice < market.ema20 - extensionLimit) {
@@ -634,7 +638,7 @@ function _buildAdaptiveTradePlan(input: {
         regime,
         strategy: "TREND_PULLBACK",
         maxHoldingCandles: 20,
-        breakEvenAtR: 1,
+        breakEvenAtR: 1.5,
       };
     }
   }
@@ -663,12 +667,13 @@ function _buildAdaptiveTradePlan(input: {
       regime,
       strategy: regime === "HIGH_VOLATILITY" ? "VOLATILITY_CONTROL" : "TREND_PULLBACK",
       maxHoldingCandles: regime === "HIGH_VOLATILITY" ? 8 : 20,
-      breakEvenAtR: 1,
+      breakEvenAtR: 1.5,
       structuralRiskAtr: rounded(structuralRiskAtr),
     };
   }
   const minRiskAtr = policy.liquidityClass === 'LONG_TAIL' ? 1.6 : policy.liquidityClass === 'LIQUID_ALT' ? 1.2 : 1.0;
-  const risk = Math.max(atr * minRiskAtr, rawRisk);
+  const minRiskPct = policy.liquidityClass === 'LONG_TAIL' ? 0.015 : policy.liquidityClass === 'LIQUID_ALT' ? 0.010 : 0.006;
+  const risk = Math.max(Math.max(atr * minRiskAtr, entryPrice * minRiskPct), rawRisk);
   const stopLoss = side === "LONG" ? entryPrice - risk : entryPrice + risk;
   const targetMultiple = Math.max(1.8, input.configuredRiskRewardRatio);
   const cost = entryPrice * costPct;
@@ -680,13 +685,21 @@ function _buildAdaptiveTradePlan(input: {
     : entryPrice - targetDistance;
 
   // A nearby range boundary is a real obstacle unless a breakout has already
-  // been confirmed. Place the target before it and validate the resulting RR.
-  if (side === "LONG" && finitePositive(resistance)) {
-    const capped = resistance - atr * 0.2;
-    if (capped > entryPrice + atr * 0.5 && capped < takeProfit) takeProfit = capped;
-  } else if (side === "SHORT" && finitePositive(support)) {
-    const capped = support + atr * 0.2;
-    if (capped < entryPrice - atr * 0.5 && capped > takeProfit) takeProfit = capped;
+  // been confirmed or price has already penetrated the boundary.
+  const isBreakoutConfirmed =
+    regime === "BREAKOUT" ||
+    Boolean(market.breakout) ||
+    (side === "LONG" && finitePositive(resistance) && entryPrice >= resistance) ||
+    (side === "SHORT" && finitePositive(support) && entryPrice <= support);
+
+  if (!isBreakoutConfirmed) {
+    if (side === "LONG" && finitePositive(resistance)) {
+      const capped = resistance - atr * 0.2;
+      if (capped > entryPrice + atr * 0.5 && capped < takeProfit) takeProfit = capped;
+    } else if (side === "SHORT" && finitePositive(support)) {
+      const capped = support + atr * 0.2;
+      if (capped < entryPrice - atr * 0.5 && capped > takeProfit) takeProfit = capped;
+    }
   }
   const rr = rewardToRisk(side, entryPrice, stopLoss, takeProfit, costPct);
   const minRR = Math.min(input.configuredRiskRewardRatio, policy.minStructuralRiskReward);
@@ -698,7 +711,7 @@ function _buildAdaptiveTradePlan(input: {
       strategy: regime === "HIGH_VOLATILITY" ? "VOLATILITY_CONTROL" : "TREND_PULLBACK",
       rewardToRisk: rounded(rr),
       maxHoldingCandles: regime === "HIGH_VOLATILITY" ? 8 : 20,
-      breakEvenAtR: 1,
+      breakEvenAtR: 1.5,
       structuralRiskAtr: rounded(structuralRiskAtr),
     };
   }

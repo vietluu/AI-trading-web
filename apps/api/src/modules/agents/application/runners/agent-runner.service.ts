@@ -490,7 +490,9 @@ export class AgentRunnerService {
         process.env.AI_ANALYST_REASONING_ENABLED === "true";
       const preferDeterministic =
         !aiReasoningEnabled ||
-        this.configService?.get<string>("USE_DETERMINISTIC_ANALYSTS") === "true";
+        this.configService?.get<boolean>("USE_DETERMINISTIC_ANALYSTS") === true ||
+        this.configService?.get<string>("USE_DETERMINISTIC_ANALYSTS") === "true" ||
+        process.env.USE_DETERMINISTIC_ANALYSTS === "true";
 
       if (deterministicOutput !== undefined && preferDeterministic) {
         aiResponse = {

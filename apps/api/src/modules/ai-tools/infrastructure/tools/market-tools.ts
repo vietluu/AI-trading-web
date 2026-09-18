@@ -149,6 +149,9 @@ export class MarketIndicatorsGetTool implements ToolDefinition<{ symbol: string;
     ema50: z.string().optional(),
     macdHistogram: z.string().optional(),
     atr: z.string().optional(),
+    volumeChangePercent: z.string().optional(),
+    adx: z.string().optional(),
+    bollingerBands: z.record(z.unknown()).optional(),
   });
 
   public readonly executionMode = "SYNCHRONOUS" as const;
@@ -181,6 +184,9 @@ export class MarketIndicatorsGetTool implements ToolDefinition<{ symbol: string;
       atr: snapshot.values.atr14,
       sma20: snapshot.values.sma20,
       sma50: snapshot.values.sma50,
+      volumeChangePercent: snapshot.values.volumeChangePercent,
+      adx: snapshot.values.adx14,
+      bollingerBands: snapshot.values.bollingerBands as Record<string, unknown> | undefined,
       calculatedAt: snapshot.calculatedAt.toISOString(),
       invocationId: context.invocationId,
     };
@@ -256,6 +262,8 @@ export class MarketOpenInterestGetTool implements ToolDefinition<{ symbol: strin
     symbol: z.string(),
     openInterest: z.string(),
     openInterestUsd: z.string().optional(),
+    deltaOi: z.number().optional(),
+    deltaOiPercent: z.number().optional(),
     timestamp: z.string(),
   });
 
@@ -278,11 +286,22 @@ export class MarketOpenInterestGetTool implements ToolDefinition<{ symbol: strin
     const history = await this.dataService.openInterest(input.symbol, input.provider);
     const current = history[0];
     if (!current) throw new Error("Open-interest data is unavailable");
+    const prevOi = history.length >= 2 && history[1] ? Number(history[1].openInterest) : undefined;
+    const currOi = Number(current.openInterest);
+    const deltaOi = prevOi !== undefined && Number.isFinite(currOi) && Number.isFinite(prevOi)
+      ? currOi - prevOi
+      : undefined;
+    const deltaOiPercent = deltaOi !== undefined && prevOi !== undefined && prevOi > 0
+      ? Number(((deltaOi / prevOi) * 100).toFixed(2))
+      : undefined;
+
     return {
       symbol: input.symbol,
       provider: current.provider,
       openInterest: current.openInterest,
       openInterestUsd: current.openInterestValue,
+      deltaOi,
+      deltaOiPercent,
       timestamp: current.timestamp.toISOString(),
       history: history.map((item) => ({ value: item.openInterest, timestamp: item.timestamp.toISOString() })),
       invocationId: context.invocationId,
