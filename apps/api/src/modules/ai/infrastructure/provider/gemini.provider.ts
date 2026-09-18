@@ -29,7 +29,9 @@ export class GeminiProvider implements LLMProvider {
   private getApiKey(): string | undefined {
     return (
       this.configService.get<string>("GOOGLE_API_KEY") ||
-      this.configService.get<string>("GEMINI_API_KEY")
+      this.configService.get<string>("GEMINI_API_KEY") ||
+      process.env.GOOGLE_API_KEY ||
+      process.env.GEMINI_API_KEY
     );
   }
 
