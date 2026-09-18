@@ -90,4 +90,40 @@ describe("signal filter", () => {
     expect(result.allowed).toBe(false);
     expect(result.reason).toBe("INSUFFICIENT_INDICATORS");
   });
+
+  it("allows BREAKOUT regime with surging volume even when moving averages are still flat", () => {
+    const result = service.evaluate({
+      symbol: "ARB-USDT",
+      timeframe: "15m",
+      price: 1.25,
+      rsi: 78,
+      atr: 0.08,
+      volumeChangePercent: 6.5,
+      ema20: 1.0,
+      ema50: 1.0,
+      marketRegime: "BREAKOUT",
+    });
+
+    expect(result).toMatchObject({
+      allowed: true,
+      preliminaryRegime: "BREAKOUT",
+    });
+  });
+
+  it("allows surging volume momentum without rejecting as NO_TREND", () => {
+    const result = service.evaluate({
+      symbol: "ARB-USDT",
+      timeframe: "15m",
+      price: 1.25,
+      rsi: 74,
+      atr: 0.08,
+      volumeChangePercent: 8.0,
+      ema20: 1.0,
+      ema50: 1.0,
+    });
+
+    expect(result.allowed).toBe(true);
+    expect(result.reason).toBeUndefined();
+  });
 });
+
