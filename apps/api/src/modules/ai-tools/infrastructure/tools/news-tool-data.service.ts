@@ -64,7 +64,7 @@ export class NewsToolDataService {
         : {}),
     };
 
-    const [articles, announcements, marketWideArticles] = await Promise.all([
+    const [initialArticles, announcements, marketWideArticles] = await Promise.all([
       this.prisma.newsArticle.findMany({
         where,
         orderBy: [{ importanceScore: "desc" }, { publishedAt: "desc" }],
@@ -99,6 +99,24 @@ export class NewsToolDataService {
           })
         : Promise.resolve([]),
     ]);
+    let articles = initialArticles;
+
+    // If no recent articles for specific symbol within short lookback, expand to 72h
+    // so major institutional catalysts and network upgrades are not missed
+    if (symbol && articles.length === 0) {
+      const expandedPublishedAfter = new Date(
+        Date.now() - 72 * 60 * 60 * 1000,
+      );
+      articles = await this.prisma.newsArticle.findMany({
+        where: {
+          ...where,
+          publishedAt: { gte: expandedPublishedAfter },
+        },
+        orderBy: [{ importanceScore: "desc" }, { publishedAt: "desc" }],
+        take: Math.min(limit * 5, 250),
+        include: { symbols: true, topics: true, sourceReferences: true },
+      });
+    }
 
     const normalizedArticles = articles
       .filter((article) => {
@@ -123,6 +141,8 @@ export class NewsToolDataService {
           symbols: article.symbols.map((item) => item.symbol),
           topics: article.topics.map((item) => item.topic),
           duplicateCount: article.sourceReferences.length,
+          relevance: symbol ? "ASSET_SPECIFIC" : "MARKET_WIDE_CONTEXT",
+          isAssetSpecific: Boolean(symbol),
           corroboratingSourceIds: [
             ...new Set([
               article.sourceId,
@@ -221,14 +241,19 @@ export class NewsToolDataService {
       ).values(),
     ];
 
-    return combined
+    return (combined as Array<Record<string, unknown>>)
       .sort((left, right) => {
+        if (symbol) {
+          const leftSpecific = left.relevance === "ASSET_SPECIFIC" ? 1 : 0;
+          const rightSpecific = right.relevance === "ASSET_SPECIFIC" ? 1 : 0;
+          if (rightSpecific !== leftSpecific) return rightSpecific - leftSpecific;
+        }
         const importanceDiff =
-          Number(right.importance) - Number(left.importance);
+          Number(right.importance ?? 0) - Number(left.importance ?? 0);
         if (importanceDiff !== 0) return importanceDiff;
-        return String(right.publishedAt).localeCompare(
-          String(left.publishedAt),
-        );
+        const rightDate = typeof right.publishedAt === "string" ? right.publishedAt : "";
+        const leftDate = typeof left.publishedAt === "string" ? left.publishedAt : "";
+        return rightDate.localeCompare(leftDate);
       })
       .slice(0, limit);
   }
@@ -310,12 +335,17 @@ export class NewsToolDataService {
     });
   }
 
+  private readonly symbolAliases: Record<string, string[]> = {
+    ARB: ["Arbitrum"],
+  };
+
   private symbolVariants(raw?: string): string[] | undefined {
     if (!raw) return undefined;
     const normalized = raw.trim().toUpperCase().replace(/[_/]/g, "-");
     const base = normalized.split("-")[0];
     if (!base) return undefined;
-    return [...new Set([base, `${base}-USDT`, normalized])];
+    const aliases = this.symbolAliases[base] ?? [];
+    return [...new Set([base, `${base}-USDT`, ...aliases])];
   }
 
   private matchesDomain(rawUrl: string, baseDomain: string): boolean {

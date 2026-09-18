@@ -612,7 +612,11 @@ function _buildAdaptiveTradePlan(input: {
 
   // Anti-chasing protection for trend pullbacks: prevent entering when price is overextended from EMA20
   if (finitePositive(market.ema20) && finitePositive(atr)) {
-    const extensionLimit = atr * 2.5;
+    const isMomentumExpansion =
+      Boolean(market.breakout) ||
+      (finitePositive(market.volumeRatio) && market.volumeRatio >= 1.35) ||
+      market.marketStructure === "HH_HL";
+    const extensionLimit = atr * (isMomentumExpansion ? 3.5 : 2.5);
     if (side === "LONG" && entryPrice > market.ema20 + extensionLimit) {
       return {
         approved: false,
