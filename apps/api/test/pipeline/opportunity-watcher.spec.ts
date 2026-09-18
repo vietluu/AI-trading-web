@@ -352,7 +352,7 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
           opportunityId: 'opp-1',
           snapshotId: 'snapshot-1',
           sourceDataCutoff: cutoff.toISOString(),
-        }),
+        }) as unknown,
       }),
       'SCHEDULE',
       expect.objectContaining({
@@ -362,7 +362,7 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
           opportunityId: 'opp-1',
           snapshotId: 'snapshot-1',
           sourceDataCutoff: cutoff.toISOString(),
-        }),
+        }) as unknown,
       }),
     );
     expect(pipeline.trigger).toHaveBeenCalledWith(

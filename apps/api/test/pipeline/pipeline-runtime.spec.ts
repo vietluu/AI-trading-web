@@ -11,9 +11,14 @@ import { PIPELINE_DEAD_LETTER_QUEUE_NAME, PIPELINE_RETRY_QUEUE_NAME, PIPELINE_RU
 type PersistedRunUpdate = {
   status?: string;
   skippedReason?: string;
+  decision?: string;
+  confidence?: number;
   result?: {
     blockingGate?: { stage: string; reason: string };
     gates?: Array<{ stage: string; disposition: string }>;
+    decision?: string;
+    actionable?: boolean;
+    candidateDecision?: Record<string, unknown>;
   };
 };
 
@@ -1510,7 +1515,7 @@ describe("drift reassessment boundary", () => {
         repository as never,
         { isCancelled: vi.fn().mockResolvedValue(false) } as never,
         {} as never,
-        signalFilter as never,
+        signalFilter,
         marketData as never,
         { repeatedFailure: vi.fn() } as never,
         analytics as never,
@@ -1689,7 +1694,7 @@ describe("drift reassessment boundary", () => {
         decision: 'SHORT',
         confidence: 85,
         actionable: false,
-        blockedReasons: expect.arrayContaining(['ENTRY_ACTION_NOT_EXECUTABLE']),
+        blockedReasons: expect.arrayContaining(['ENTRY_ACTION_NOT_EXECUTABLE']) as unknown,
       });
       expect(analytics.recordStageTelemetry).toHaveBeenCalledWith(
         expect.objectContaining({

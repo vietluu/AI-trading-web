@@ -441,7 +441,7 @@ export class PipelineRunnerService {
               multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue,
             },
           },
-          signalFilter.reason,
+          signalFilter.reason ?? "SIGNAL_FILTER_BLOCKED",
           completedAt,
         );
         return;

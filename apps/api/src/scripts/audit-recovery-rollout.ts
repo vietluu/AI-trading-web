@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { PrismaClient } from "@prisma/client";
 
 export interface AuditCheckResult {
@@ -12,10 +13,27 @@ export interface RecoveryRolloutAuditReport {
   allPassed: boolean;
 }
 
+function extractString(
+  json: Prisma.JsonValue | null | undefined,
+  field: string,
+): string | undefined {
+  if (json && typeof json === "object" && !Array.isArray(json) && field in json) {
+    const val = (json as Record<string, unknown>)[field];
+    return typeof val === "string" ? val : undefined;
+  }
+  return undefined;
+}
+
 export async function runRecoveryRolloutAudit(
-  databaseUrl?: string,
+  databaseUrlOrPrisma?: string | PrismaClient,
 ): Promise<RecoveryRolloutAuditReport> {
-  const url = databaseUrl || process.env.DATABASE_URL;
+  const isPrismaInstance =
+    typeof databaseUrlOrPrisma === "object" && databaseUrlOrPrisma !== null;
+
+  const url = isPrismaInstance
+    ? undefined
+    : (typeof databaseUrlOrPrisma === "string" ? databaseUrlOrPrisma : undefined) ||
+      process.env.DATABASE_URL;
   const checks: AuditCheckResult[] = [];
 
   // Check 1: Disabled DEMO Probe Flag
@@ -30,7 +48,7 @@ export async function runRecoveryRolloutAudit(
     },
   });
 
-  if (!url) {
+  if (!url && !isPrismaInstance) {
     // If no DATABASE_URL is provided, run fixture-based and environment-based verification
     checks.push({
       name: "DATABASE_CONNECTION_AVAILABLE",
@@ -45,12 +63,21 @@ export async function runRecoveryRolloutAudit(
     };
   }
 
-  const prisma = new PrismaClient({ datasources: { db: { url } } });
+  const prisma: PrismaClient = isPrismaInstance
+    ? databaseUrlOrPrisma
+    : new PrismaClient({ datasources: { db: { url } } });
+
+  const runTx = async (callback: (tx: Prisma.TransactionClient) => Promise<void>) => {
+    if ("$transaction" in prisma && typeof prisma.$transaction === "function") {
+      return prisma.$transaction(callback, { timeout: 15000 });
+    }
+    return callback(prisma);
+  };
 
   try {
     // Execute strictly in a read-only transaction block
-    await prisma.$transaction(
-      async (tx) => {
+    await runTx(
+      async (tx: Prisma.TransactionClient) => {
         // Enforce transaction read-only mode in PostgreSQL
         try {
           await tx.$executeRawUnsafe("SET TRANSACTION READ ONLY;");
@@ -145,11 +172,191 @@ export async function runRecoveryRolloutAudit(
           passed: true,
           details: { inspectedBlockedRuns: blockedRuns.length },
         });
+
+        // Check 9: Proactive Lifecycle Evidence Reconciliation
+        const watchableTransitions = await tx.opportunityTransition.findMany({
+          where: { toState: "WATCHING" },
+          include: { opportunity: true },
+          take: 1000,
+          orderBy: { createdAt: "desc" },
+        });
+
+        const proactiveRuns = await tx.pipelineRun.findMany({
+          where: { pipelineId: "proactive-thesis" },
+          take: 1000,
+          orderBy: { createdAt: "desc" },
+        });
+
+        const theses = await tx.tradeThesis.findMany({
+          take: 1000,
+          orderBy: { createdAt: "desc" },
+        });
+
+        const reviews = await tx.thesisReview.findMany({
+          take: 1000,
+          orderBy: { createdAt: "desc" },
+        });
+
+        const plans = await tx.executionPlanVersion.findMany({
+          take: 1000,
+          orderBy: { createdAt: "desc" },
+        });
+
+        let explicitFailures: Array<{
+          id: string;
+          metadata: Prisma.JsonValue | null;
+        }> = [];
+        try {
+          explicitFailures = await tx.auditLog.findMany({
+            where: {
+              action: {
+                in: [
+                  "OPPORTUNITY_PROACTIVE_SCHEDULE_FAILED",
+                  "opportunity_proactive_schedule_failed",
+                ],
+              },
+            },
+            select: {
+              id: true,
+              metadata: true,
+            },
+            take: 1000,
+            orderBy: { createdAt: "desc" },
+          });
+        } catch {
+          explicitFailures = [];
+        }
+
+        const thesisIds = new Set(theses.map((t) => t.id));
+        const thesisOpportunityIds = new Set(
+          theses.map((t) => t.opportunityId).filter((id): id is string => Boolean(id)),
+        );
+        const thesisSnapshotIds = new Set(
+          theses.map((t) => t.snapshotId).filter((id): id is string => Boolean(id)),
+        );
+
+        const reviewThesisIds = new Set(reviews.map((r) => r.thesisId));
+        const planThesisIds = new Set(plans.map((p) => p.thesisId));
+
+        const proactiveOpportunityIds = new Set<string>();
+        const proactiveSnapshotIds = new Set<string>();
+        for (const run of proactiveRuns) {
+          const oppId =
+            extractString(run.storedContext, "opportunityId") ??
+            extractString(run.params, "opportunityId");
+          if (oppId) proactiveOpportunityIds.add(oppId);
+          const snapId =
+            extractString(run.storedContext, "snapshotId") ??
+            extractString(run.params, "snapshotId");
+          if (snapId) proactiveSnapshotIds.add(snapId);
+        }
+
+        const shadowPlanKeys = new Set<string>();
+        for (const p of shadowPlans) {
+          const cutoff = p.sourceDataCutoff ? new Date(p.sourceDataCutoff).getTime() : 0;
+          shadowPlanKeys.add(`${p.provider}:${p.symbol}:${p.timeframe}:${cutoff}`);
+        }
+
+        const failureOpportunityIds = new Set<string>();
+        const failureSnapshotIds = new Set<string>();
+        for (const failure of explicitFailures) {
+          const oppId = extractString(failure.metadata, "opportunityId");
+          if (oppId) failureOpportunityIds.add(oppId);
+          const snapId = extractString(failure.metadata, "snapshotId");
+          if (snapId) failureSnapshotIds.add(snapId);
+        }
+
+        let unmatchedWatchableTransitions = 0;
+        for (const transition of watchableTransitions) {
+          const hasDirectThesis =
+            Boolean(transition.thesisId && thesisIds.has(transition.thesisId)) ||
+            Boolean(
+              transition.opportunityId &&
+                thesisOpportunityIds.has(transition.opportunityId),
+            ) ||
+            Boolean(
+              transition.snapshotId &&
+                thesisSnapshotIds.has(transition.snapshotId),
+            );
+
+          const hasProactiveRun =
+            Boolean(
+              transition.opportunityId &&
+                proactiveOpportunityIds.has(transition.opportunityId),
+            ) ||
+            Boolean(
+              transition.snapshotId &&
+                proactiveSnapshotIds.has(transition.snapshotId),
+            );
+
+          const hasReviewOrPlan = Boolean(
+            transition.thesisId &&
+              (reviewThesisIds.has(transition.thesisId) ||
+                planThesisIds.has(transition.thesisId)),
+          );
+
+          const opp = (
+            transition as {
+              opportunity?: {
+                symbol?: string;
+                provider?: string;
+                timeframe?: string;
+              };
+            }
+          ).opportunity;
+          const cutoffMs = transition.sourceDataCutoff
+            ? new Date(transition.sourceDataCutoff).getTime()
+            : 0;
+          const hasShadowPlan = Boolean(
+            opp?.symbol &&
+              opp.provider &&
+              opp.timeframe &&
+              shadowPlanKeys.has(
+                `${opp.provider}:${opp.symbol}:${opp.timeframe}:${cutoffMs}`,
+              ),
+          );
+
+          const hasExplicitFailure =
+            Boolean(
+              transition.opportunityId &&
+                failureOpportunityIds.has(transition.opportunityId),
+            ) ||
+            Boolean(
+              transition.snapshotId &&
+                failureSnapshotIds.has(transition.snapshotId),
+            );
+
+          if (
+            !hasDirectThesis &&
+            !hasProactiveRun &&
+            !hasReviewOrPlan &&
+            !hasShadowPlan &&
+            !hasExplicitFailure
+          ) {
+            unmatchedWatchableTransitions++;
+          }
+        }
+
+        checks.push({
+          name: "PROACTIVE_LIFECYCLE_EVIDENCE",
+          passed: unmatchedWatchableTransitions === 0,
+          details: {
+            watchableTransitions: watchableTransitions.length,
+            proactiveRuns: proactiveRuns.length,
+            theses: theses.length,
+            reviews: reviews.length,
+            plans: plans.length,
+            shadowPlans: shadowPlans.length,
+            explicitSchedulingFailures: explicitFailures.length,
+            unmatchedWatchableTransitions,
+          },
+        });
       },
-      { timeout: 15000 },
     );
   } finally {
-    await prisma.$disconnect();
+    if (!isPrismaInstance && typeof prisma.$disconnect === "function") {
+      await prisma.$disconnect();
+    }
   }
 
   return {
@@ -160,19 +367,29 @@ export async function runRecoveryRolloutAudit(
 }
 
 // CLI Execution Entrypoint
-runRecoveryRolloutAudit()
-  .then((report) => {
-    process.stdout.write(JSON.stringify(report, null, 2) + "\n");
-    if (!report.allPassed) {
-      process.stderr.write("Recovery rollout audit failed one or more invariant checks.\n");
+const isDirectCliExecution =
+  typeof process !== "undefined" &&
+  Boolean(process.argv?.[1]?.includes("audit-recovery-rollout")) &&
+  !process.env.VITEST &&
+  process.env.NODE_ENV !== "test";
+
+if (isDirectCliExecution) {
+  runRecoveryRolloutAudit()
+    .then((report) => {
+      process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+      if (!report.allPassed) {
+        process.stderr.write(
+          "Recovery rollout audit failed one or more invariant checks.\n",
+        );
+        process.exitCode = 1;
+      }
+    })
+    .catch((error: unknown) => {
+      process.stderr.write(
+        `Audit failed with unexpected error: ${
+          error instanceof Error ? error.stack ?? error.message : String(error)
+        }\n`,
+      );
       process.exitCode = 1;
-    }
-  })
-  .catch((error: unknown) => {
-    process.stderr.write(
-      `Audit failed with unexpected error: ${
-        error instanceof Error ? error.stack ?? error.message : String(error)
-      }\n`,
-    );
-    process.exitCode = 1;
-  });
+    });
+}
