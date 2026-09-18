@@ -228,13 +228,55 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
                 }
                 if (anchor.sourceDataCutoff && this.opportunityWatcher) {
                   try {
-                    await this.opportunityWatcher.observe({
+                    const observation = await this.opportunityWatcher.observe({
                       userId: schedule.userId,
                       provider: schedule.provider as ExchangeProvider,
                       symbol,
                       timeframe: ExchangeInterval.FIFTEEN_MINUTES,
                       sourceDataCutoff: anchor.sourceDataCutoff,
                     });
+                    if (
+                      observation &&
+                      observation.state === "WATCHING" &&
+                      observation.duplicate === false
+                    ) {
+                      try {
+                        await this.pipeline.trigger(
+                          schedule.userId,
+                          {
+                            pipelineId: "proactive-thesis",
+                            symbol,
+                            provider: schedule.provider,
+                            params: {
+                              interval: "15m",
+                              opportunityId: observation.opportunityId,
+                              snapshotId: observation.snapshotId,
+                              sourceDataCutoff: anchor.sourceDataCutoff.toISOString(),
+                            },
+                          },
+                          "SCHEDULE",
+                          {
+                            scheduleId: schedule.id,
+                            bypassCooldown: true,
+                            storedContext: {
+                              opportunityId: observation.opportunityId,
+                              snapshotId: observation.snapshotId,
+                              sourceDataCutoff: anchor.sourceDataCutoff.toISOString(),
+                            },
+                          },
+                        );
+                      } catch (error) {
+                        this.logger.warn({
+                          event: "opportunity_proactive_schedule_failed",
+                          scheduleId: schedule.id,
+                          symbol,
+                          opportunityId: observation.opportunityId,
+                          snapshotId: observation.snapshotId,
+                          sourceDataCutoff: anchor.sourceDataCutoff.toISOString(),
+                          message: error instanceof Error ? error.message : String(error),
+                        });
+                      }
+                    }
                   } catch (error) {
                     this.logger.warn({
                       event: "opportunity_observation_failed",
