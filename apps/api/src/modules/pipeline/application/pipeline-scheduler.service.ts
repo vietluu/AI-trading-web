@@ -275,6 +275,27 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
                           sourceDataCutoff: anchor.sourceDataCutoff.toISOString(),
                           message: error instanceof Error ? error.message : String(error),
                         });
+                        await this.prisma.auditLog
+                          .create({
+                            data: {
+                              action: "OPPORTUNITY_PROACTIVE_SCHEDULE_FAILED",
+                              userId: schedule.userId,
+                              metadata: {
+                                scheduleId: schedule.id,
+                                symbol,
+                                opportunityId: observation.opportunityId,
+                                snapshotId: observation.snapshotId,
+                                sourceDataCutoff: anchor.sourceDataCutoff.toISOString(),
+                                error: error instanceof Error ? error.message : String(error),
+                              },
+                            },
+                          })
+                          .catch((logErr: unknown) => {
+                            this.logger.error({
+                              event: "opportunity_proactive_schedule_audit_persist_failed",
+                              error: logErr instanceof Error ? logErr.message : String(logErr),
+                            });
+                          });
                       }
                     }
                   } catch (error) {

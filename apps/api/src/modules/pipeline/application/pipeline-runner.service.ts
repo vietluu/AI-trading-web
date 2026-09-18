@@ -178,10 +178,36 @@ export class PipelineRunnerService {
       }
       if (proactiveMode === "DEMO") {
         const demoVerified = await this.liveTrading.hasVerifiedDemoConnection(job.userId);
-        if (!demoVerified) throw new Error("NO_ELIGIBLE_EXCHANGE_CONNECTION: DEMO requires verified demo connection.");
+        if (!demoVerified) {
+          const completedAt = new Date();
+          await this.finalizeEarlyTerminalRun(
+            String(job.runId),
+            {
+              status: "SKIPPED",
+              decision: "WAIT",
+              skippedReason: "NO_ELIGIBLE_EXCHANGE_CONNECTION",
+            },
+            "NO_ELIGIBLE_EXCHANGE_CONNECTION",
+            completedAt,
+          );
+          throw new Error("NO_ELIGIBLE_EXCHANGE_CONNECTION: DEMO requires verified demo connection.");
+        }
       }
     }
-    if (!definition?.enabled) throw new Error("PIPELINE_NOT_FOUND_OR_DISABLED");
+    if (!definition?.enabled) {
+      const completedAt = new Date();
+      await this.finalizeEarlyTerminalRun(
+        String(job.runId),
+        {
+          status: "FAILED",
+          decision: "WAIT",
+          skippedReason: "PIPELINE_NOT_FOUND_OR_DISABLED",
+        },
+        "PIPELINE_NOT_FOUND_OR_DISABLED",
+        completedAt,
+      );
+      throw new Error("PIPELINE_NOT_FOUND_OR_DISABLED");
+    }
     const startedAt = new Date();
     const symbol = String(job.symbol);
     const runId = String(job.runId);
@@ -198,8 +224,8 @@ export class PipelineRunnerService {
       errorCode: null,
       safeErrorMessage: null,
     });
-    await this.assertNotCancelled(runId);
     try {
+      await this.assertNotCancelled(runId);
       const requestedStrategyKeys = Array.isArray(job.params?.strategyIds)
         ? job.params.strategyIds.filter((item): item is string => typeof item === "string")
         : typeof job.params?.strategyId === "string"
