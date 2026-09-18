@@ -71,6 +71,15 @@ describe('closed-candle execution context', () => {
     expect(deriveClosedCandleExecutionContext({ ...evidence, strategyKey: 'trend', direction: 'LONG' }).action).toBe('WAIT');
   });
 
+  it('confirms trend continuation for ai-core when candle is floating above EMA20 with volume', () => {
+    const evidence = closedEvidenceFixture();
+    // low is 110.5, completely ABOVE ema20 (110), so low <= ema20 is false
+    evidence.candles[21] = { ...evidence.candles[21]!, open: '110.8', low: '110.5', high: '112.5', close: '112' };
+    evidence.snapshot.values.volumeChangePercent = '0.40';
+    const result = deriveClosedCandleExecutionContext({ ...evidence, strategyKey: 'ai-core', direction: 'LONG' });
+    expect(result).toMatchObject({ setup: 'TREND_PULLBACK', action: 'ENTER' });
+  });
+
   it('keeps momentum canonical and requires impulse, volume, ADX and closed timeframe agreement', () => {
     const evidence = closedEvidenceFixture();
     evidence.candles[21] = { ...evidence.candles[21]!, open: '110.2', low: '109', high: '112', close: '111' };

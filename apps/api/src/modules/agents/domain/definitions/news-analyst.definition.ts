@@ -85,6 +85,8 @@ function deterministicNews(
         ? item.symbols.filter((value): value is string => typeof value === "string")
         : [];
       const directlyRelevant = item.kind === "EXCHANGE_ANNOUNCEMENT" ||
+        item.relevance === "ASSET_SPECIFIC" ||
+        item.isAssetSpecific === true ||
         (item.relevance !== "MARKET_WIDE_CONTEXT" && symbols.length > 0);
       const corroboratedSystemic = item.relevance === "MARKET_WIDE_CONTEXT" &&
         Boolean(key) && independentSources >= 2;

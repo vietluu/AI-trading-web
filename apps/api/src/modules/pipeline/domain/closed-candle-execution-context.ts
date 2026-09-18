@@ -97,9 +97,20 @@ export function deriveClosedCandleExecutionContext(input: DeriveClosedCandleExec
       triggerPrice = breakoutLevel;
       confirmed = Boolean(retest);
     } else if (ema20 !== undefined && ema50 !== undefined) {
-      triggerPrice = ema20;
       if (long) support = ema20; else resistance = ema20;
-      confirmed = (long ? ema20 > ema50 : ema20 < ema50) && rejects(ema20);
+      const aligned = long ? ema20 > ema50 : ema20 < ema50;
+      const pullbackBounce = rejects(ema20);
+      const trendContinuation = aligned && (long
+        ? price > ema20 && price > open && (Number(values.volumeChangePercent) >= 0.20 || Number(values.adx14) >= 20) && price - ema20 <= 3.0 * atr
+        : price < ema20 && price < open && (Number(values.volumeChangePercent) >= 0.20 || Number(values.adx14) >= 20) && ema20 - price <= 3.0 * atr
+      );
+      if (pullbackBounce) {
+        triggerPrice = Math.abs(price - ema20) <= atr * EXECUTION_CONTEXT_POLICY.maximumTriggerChaseDistanceAtr ? ema20 : open;
+        confirmed = aligned;
+      } else if (trendContinuation && input.strategyKey !== 'trend') {
+        triggerPrice = open;
+        confirmed = true;
+      }
     }
     if (input.strategyKey === 'momentum-scalp') {
       const impulse = (price - open) / open * 100;
