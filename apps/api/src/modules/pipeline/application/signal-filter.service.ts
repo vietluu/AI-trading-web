@@ -16,7 +16,7 @@ export interface SignalFilterInput {
   spreadBps?: number;
   adx?: number;
   efficiencyRatio?: number;
-  marketRegime?: "TRENDING" | "RANGING" | "HIGH_VOLATILITY";
+  marketRegime?: "TRENDING" | "RANGING" | "HIGH_VOLATILITY" | "BREAKOUT";
 }
 
 export interface SignalFilterResult {
@@ -86,7 +86,8 @@ export class SignalFilterService {
     const quantitativelyTrending =
       Number.isFinite(adx) && adx >= 22 &&
       Number.isFinite(efficiencyRatio) && efficiencyRatio >= 0.3;
-    const preliminaryRegime = input.breakout
+    const isBreakout = input.breakout === true || input.marketRegime === "BREAKOUT";
+    const preliminaryRegime = isBreakout
       ? "BREAKOUT"
       : quantitativelyTrending
         ? "TRENDING"
@@ -120,13 +121,21 @@ export class SignalFilterService {
     // identify that regime, let the downstream range-entry and R:R guards decide.
     if (preliminaryRegime === "RANGING") return { allowed: true, preliminaryRegime };
 
+    if (preliminaryRegime === "BREAKOUT") {
+      if (lowVolume) {
+        return { allowed: false, reason: "NO_TRADE_ZONE", preliminaryRegime };
+      }
+      return { allowed: true, preliminaryRegime };
+    }
+
     const hasTrend =
       quantitativelyTrending ||
       (Number.isFinite(ema20) && Number.isFinite(ema50) &&
         Math.abs(ema20 - ema50) / Math.max(Math.abs(ema50), Number.EPSILON) >= 0.0005) ||
       (Number.isFinite(ema20) && Number.isFinite(ema200) &&
         Math.abs(ema20 - ema200) / Math.max(Math.abs(ema200), Number.EPSILON) >= 0.0005) ||
-      input.breakout === true;
+      isBreakout ||
+      (Number.isFinite(volumeChange) && volumeChange >= policy.minVolumeChangePercent * 2.5);
 
     if (!hasTrend) {
       return { allowed: false, reason: "NO_TREND", preliminaryRegime };
@@ -135,3 +144,4 @@ export class SignalFilterService {
     return { allowed: true, preliminaryRegime };
   }
 }
+

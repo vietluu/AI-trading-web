@@ -6,14 +6,29 @@ export interface AdaptivePolicyContext {
   symbol?: string;
   provider?: 'BINANCE_FUTURES' | 'OKX_FUTURES';
   timeframe?: string;
-  regime?: MarketRegime['type'];
+  regime?: MarketRegime['type'] | 'BREAKOUT';
   spreadBps?: number;
   riskRewardRatio?: number;
   directionalAgreement?: number;
 }
 
+
 const MAJORS = new Set(['BTC', 'ETH']);
-const LIQUID_ALTS = new Set(['SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'LINK']);
+const LIQUID_ALTS = new Set([
+  'SOL',
+  'BNB',
+  'XRP',
+  'DOGE',
+  'ADA',
+  'AVAX',
+  'LINK',
+  'ARB',
+  'OP',
+  'SUI',
+  'APT',
+  'NEAR',
+  'TIA',
+]);
 
 export function assetLiquidityClass(symbol?: string): AssetLiquidityClass {
   if (!symbol) return 'MAJOR';
@@ -59,10 +74,10 @@ export function preferredTradePlanAtr(indicatorAtr: unknown, agentAtr: unknown):
 
 export function adaptiveTradingPolicy(context: AdaptivePolicyContext) {
   const liquidityClass = assetLiquidityClass(context.symbol);
-  const regime = context.regime ?? 'RANGING';
+  const regime: MarketRegime['type'] | 'BREAKOUT' = context.regime ?? 'RANGING';
   const timeframeMs = timeframeMilliseconds(context.timeframe);
   const classRisk = liquidityClass === 'MAJOR' ? 0 : liquidityClass === 'LIQUID_ALT' ? 1 : 2;
-  const volatilityRisk = regime === 'HIGH_VOLATILITY' ? 2 : regime === 'RANGING' ? 1 : 0;
+  const volatilityRisk = regime === 'HIGH_VOLATILITY' ? 2 : regime === 'RANGING' ? 1 : regime === 'BREAKOUT' ? 1 : 0;
   const providerRisk = context.provider === 'OKX_FUTURES' ? 0.25 : 0;
   const spreadRisk = context.spreadBps === undefined ? 0.5 : Math.min(3, context.spreadBps / 10);
   const totalRisk = classRisk + volatilityRisk + providerRisk + spreadRisk;
@@ -77,8 +92,9 @@ export function adaptiveTradingPolicy(context: AdaptivePolicyContext) {
   const minColdStartOpportunity = liquidityClass === 'MAJOR' ? 58 : liquidityClass === 'LIQUID_ALT' ? 62 : 66;
   const minOpportunityScore = liquidityClass === 'MAJOR' ? 65 : liquidityClass === 'LIQUID_ALT' ? 72 : 78;
   const minStructuralRiskReward = liquidityClass === 'MAJOR' ? 1.5 : liquidityClass === 'LIQUID_ALT' ? 1.75 : 2.0;
-  const maxRsiLong = regime === 'TRENDING' ? 85 : regime === 'RANGING' ? 75 : 72;
-  const minRsiShort = regime === 'TRENDING' ? 15 : regime === 'RANGING' ? 25 : 28;
+  const maxRsiLong = (regime === 'TRENDING' || regime === 'BREAKOUT') ? 85 : regime === 'RANGING' ? 75 : 72;
+  const minRsiShort = (regime === 'TRENDING' || regime === 'BREAKOUT') ? 15 : regime === 'RANGING' ? 25 : 28;
+
 
   // Dynamic calibrated probability based on risk:reward and directional consensus
   const effectiveRr = context.riskRewardRatio && context.riskRewardRatio > 0.5

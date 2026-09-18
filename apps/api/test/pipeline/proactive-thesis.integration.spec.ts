@@ -333,6 +333,7 @@ describe("Proactive Thesis Pipeline Integration", () => {
       const result = await pipelineRunner.run(makeJob());
 
       expect(mockTradeResearcher.research).toHaveBeenCalledOnce();
+      expect(mockTradeResearcher.persistReview).toHaveBeenCalledOnce();
       expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
       expect(result).toEqual({
         outcome: "SKIPPED",

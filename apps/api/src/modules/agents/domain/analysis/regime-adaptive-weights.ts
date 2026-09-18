@@ -87,7 +87,7 @@ export function classifyDetailedRegime(params: {
 }): { detailed: DetailedRegimeType; playbook: string } {
   const { regimeType, trendDirection, trendStrength, volatilityLevel, isSfpWick, isSqueezing, squeezeDuration, atrPercentile } = params;
 
-  if (regimeType === 'HIGH_VOLATILITY' || volatilityLevel === 'HIGH' || isSfpWick) {
+  if (isSfpWick) {
     return {
       detailed: 'VOLATILE_LIQUIDITY_EXPANSION',
       playbook: REGIME_WEIGHT_PROFILES.VOLATILE_LIQUIDITY_EXPANSION.playbook,
@@ -120,6 +120,13 @@ export function classifyDetailedRegime(params: {
     return {
       detailed: 'TRENDING_BEAR',
       playbook: REGIME_WEIGHT_PROFILES.TRENDING_BEAR.playbook,
+    };
+  }
+
+  if (regimeType === 'HIGH_VOLATILITY' || volatilityLevel === 'HIGH') {
+    return {
+      detailed: 'VOLATILE_LIQUIDITY_EXPANSION',
+      playbook: REGIME_WEIGHT_PROFILES.VOLATILE_LIQUIDITY_EXPANSION.playbook,
     };
   }
 

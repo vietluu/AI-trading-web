@@ -287,4 +287,131 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
     expect(watcher.observe).not.toHaveBeenCalled();
     expect(pipeline.trigger).toHaveBeenCalledTimes(1);
   });
+
+  it('triggers proactive-thesis pipeline when an opportunity first enters WATCHING, while skipping duplicate or terminal observations', async () => {
+    const cutoff = new Date('2026-09-09T01:00:00.000Z');
+    const schedule = {
+      id: 'schedule-1',
+      userId: 'user-1',
+      pipelineId: 'FULL_ANALYSIS_DECISION',
+      symbols: ['BTC-USDT'],
+      strategyIds: ['trend'],
+      provider: 'BINANCE_FUTURES',
+      mode: 'INTERVAL',
+      intervalMs: 900_000,
+      lastTriggeredAt: undefined,
+      timezone: 'UTC',
+      maxRunsPerHour: 12,
+    };
+    const prisma = {
+      pipelineSchedule: {
+        findMany: vi.fn().mockResolvedValue([schedule]),
+        update: vi.fn().mockResolvedValue({}),
+      },
+    };
+    const pipeline = { trigger: vi.fn().mockResolvedValue({ id: 'run-1' }) };
+    const scanner = {
+      reserveAnchor: vi.fn().mockResolvedValue({
+        run: true,
+        fingerprint: 'closed-candle',
+        sourceDataCutoff: cutoff,
+      }),
+    };
+    const watcher = {
+      observe: vi.fn().mockResolvedValue({
+        state: 'WATCHING',
+        duplicate: false,
+        opportunityId: 'opp-1',
+        snapshotId: 'snapshot-1',
+        reasonCode: 'SQUEEZE_SETUP_FORMING',
+      }),
+    };
+    const scheduler = new PipelineSchedulerService(
+      prisma as never,
+      pipeline as never,
+      { enabled: true } as never,
+      undefined,
+      scanner as never,
+      undefined,
+      watcher as never,
+    );
+
+    // 1. First transition to WATCHING triggers both normal pipeline and proactive-thesis
+    await scheduler.tick(new Date('2026-09-09T01:00:01.000Z'));
+
+    expect(watcher.observe).toHaveBeenCalledTimes(1);
+    expect(pipeline.trigger).toHaveBeenCalledTimes(2);
+    expect(pipeline.trigger).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({
+        pipelineId: 'proactive-thesis',
+        symbol: 'BTC-USDT',
+        provider: 'BINANCE_FUTURES',
+        params: expect.objectContaining({
+          interval: '15m',
+          opportunityId: 'opp-1',
+          snapshotId: 'snapshot-1',
+          sourceDataCutoff: cutoff.toISOString(),
+        }) as unknown,
+      }),
+      'SCHEDULE',
+      expect.objectContaining({
+        scheduleId: 'schedule-1',
+        bypassCooldown: true,
+        storedContext: expect.objectContaining({
+          opportunityId: 'opp-1',
+          snapshotId: 'snapshot-1',
+          sourceDataCutoff: cutoff.toISOString(),
+        }) as unknown,
+      }),
+    );
+    expect(pipeline.trigger).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({
+        pipelineId: 'FULL_ANALYSIS_DECISION',
+        symbol: 'BTC-USDT',
+      }),
+      'SCHEDULE',
+      expect.objectContaining({
+        scheduleId: 'schedule-1',
+      }),
+    );
+
+    // 2. Duplicate observation does NOT trigger proactive-thesis
+    pipeline.trigger.mockClear();
+    watcher.observe.mockResolvedValueOnce({
+      state: 'WATCHING',
+      duplicate: true,
+      opportunityId: 'opp-1',
+      snapshotId: 'snapshot-1',
+      reasonCode: 'DUPLICATE_CANDLE_CUTOFF',
+    });
+    await scheduler.tick(new Date('2026-09-09T01:15:01.000Z'));
+    expect(pipeline.trigger).toHaveBeenCalledTimes(1);
+    expect(pipeline.trigger).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ pipelineId: 'proactive-thesis' }),
+      expect.anything(),
+      expect.anything(),
+    );
+
+    // 3. Terminal observation (e.g. EXPIRED) does NOT trigger proactive-thesis
+    pipeline.trigger.mockClear();
+    watcher.observe.mockResolvedValueOnce({
+      state: 'EXPIRED',
+      duplicate: false,
+      opportunityId: 'opp-1',
+      snapshotId: 'snapshot-1',
+      reasonCode: 'TIME_DECAY_EXCEEDED',
+    });
+    await scheduler.tick(new Date('2026-09-09T01:30:01.000Z'));
+    expect(pipeline.trigger).toHaveBeenCalledTimes(1);
+    expect(pipeline.trigger).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ pipelineId: 'proactive-thesis' }),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
 });
+

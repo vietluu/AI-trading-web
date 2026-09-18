@@ -246,14 +246,17 @@ export class MarketEventScannerService {
       bearishScore += 1;
       bearishReasons.push("NEGATIVE_MACD_HISTOGRAM");
     }
-    if (rsi !== undefined && rsi >= 55 && rsi < 80) {
+    const maxRsiThreshold = (bullishBreakout || (atrImpulse && move > 0)) ? 85 : 80;
+    const minRsiThreshold = (bearishBreakout || (atrImpulse && move < 0)) ? 15 : 20;
+    if (rsi !== undefined && rsi >= 55 && rsi <= maxRsiThreshold) {
       bullishScore += 1;
       bullishReasons.push("BULLISH_RSI_MOMENTUM");
     }
-    if (rsi !== undefined && rsi <= 45 && rsi > 20) {
+    if (rsi !== undefined && rsi <= 45 && rsi >= minRsiThreshold) {
       bearishScore += 1;
       bearishReasons.push("BEARISH_RSI_MOMENTUM");
     }
+
     if (bullishBreakout) {
       bullishScore += 2;
       bullishReasons.push("ROLLING_HIGH_BREAKOUT");

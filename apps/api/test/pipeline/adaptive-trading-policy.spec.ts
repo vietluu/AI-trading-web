@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   adaptiveTradingPolicy,
+  assetLiquidityClass,
   parseSpreadBps,
   preferredTradePlanAtr,
 } from '../../src/modules/pipeline/domain/adaptive-trading-policy';
@@ -78,4 +79,23 @@ describe('adaptive trading policy', () => {
     expect(btcTrending.minRsiShort).toBe(15);
     expect(altRanging.minRsiShort).toBe(25);
   });
+
+  it('classifies top ecosystem altcoins like ARB as LIQUID_ALT with breakout tolerance', () => {
+    expect(assetLiquidityClass('ARB-USDT')).toBe('LIQUID_ALT');
+    expect(assetLiquidityClass('OP-USDT')).toBe('LIQUID_ALT');
+    expect(assetLiquidityClass('SUI-USDT')).toBe('LIQUID_ALT');
+    expect(assetLiquidityClass('APT-USDT')).toBe('LIQUID_ALT');
+
+    const arbBreakout = adaptiveTradingPolicy({
+      symbol: 'ARB-USDT',
+      regime: 'BREAKOUT',
+    });
+
+    expect(arbBreakout.executionCostMultiplier).toBe(1.5);
+    expect(arbBreakout.minColdStartConfidence).toBe(66);
+    expect(arbBreakout.minOpportunityScore).toBe(72);
+    expect(arbBreakout.minStructuralRiskReward).toBe(1.75);
+    expect(arbBreakout.maxRsiLong).toBe(85); // Breakouts tolerate up to 85 RSI
+  });
 });
+

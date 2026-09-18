@@ -63,6 +63,19 @@ export class PipelineRepository {
   }
   createSteps(runId: string, steps: Array<{ id: string; type: 'AGENT' | 'FUSION' | 'DECISION' }>) { return this.prisma.pipelineStepRun.createMany({ data: steps.map((step) => ({ runId, stepId: step.id, type: step.type })) }); }
   updateStep(runId: string, stepId: string, data: Prisma.PipelineStepRunUpdateInput) { return this.prisma.pipelineStepRun.update({ where: { runId_stepId: { runId, stepId } }, data }); }
+  skipOpenSteps(runId: string, reason: string, completedAt: Date): Promise<Prisma.BatchPayload> {
+    return this.prisma.pipelineStepRun.updateMany({
+      where: {
+        runId,
+        status: { in: ['PENDING', 'RUNNING'] },
+      },
+      data: {
+        status: 'SKIPPED',
+        completedAt,
+        errorCode: reason,
+      },
+    });
+  }
   countRecent(userId: string, since: Date, extra: Prisma.PipelineRunWhereInput = {}) { return this.prisma.pipelineRun.count({ where: { userId, createdAt: { gte: since }, ...extra } }); }
   latestForSymbol(userId: string, symbol: string, provider: ExchangeProvider) { return this.prisma.pipelineRun.findFirst({ where: { userId, symbol, provider, status: { in: ['QUEUED', 'RUNNING', 'COMPLETED'] } }, orderBy: { createdAt: 'desc' } }); }
   async activeStrategyKeys(userId: string, requestedKeys: string[]): Promise<string[]> {

@@ -719,6 +719,11 @@ export class DecisionService {
           ? (currentPrice - refPrice) > 2.0 * atr
           : false;
 
+      const marketIsBearish = votes.get("market") === "BEARISH" && input.market?.trend.direction === "DOWN";
+      const techIsBearish = votes.get("technical") === "BEARISH" && input.technical?.trend.direction === "DOWN";
+      const strongBearishPriceAction =
+        marketIsBearish && techIsBearish && !isMacroRiskOn && rawDirectionalBias <= -40;
+
       if (isHighNewsPositive && (isExhaustion || priceRunUp)) {
         candidate = "WAIT";
         overrides.push(
@@ -730,6 +735,11 @@ export class DecisionService {
           isHighNewsPositive
             ? "High-impact positive news increased the bias toward LONG."
             : "Macro RISK_ON trend overrode candidate toward LONG.",
+        );
+      } else if (strongBearishPriceAction) {
+        candidate = "SHORT";
+        overrides.push(
+          "Strong bearish price action (Market + Technical) overrode positive news conflict toward SHORT (price-action override).",
         );
       } else {
         candidate = "WAIT";
@@ -752,6 +762,11 @@ export class DecisionService {
           ? (refPrice - currentPrice) > 2.0 * atr
           : false;
 
+      const marketIsBullish = votes.get("market") === "BULLISH" && input.market?.trend.direction === "UP";
+      const techIsBullish = votes.get("technical") === "BULLISH" && input.technical?.trend.direction === "UP";
+      const strongBullishPriceAction =
+        marketIsBullish && techIsBullish && !isMacroRiskOff && rawDirectionalBias >= 40;
+
       if (isHighNewsNegative && (isExhaustion || priceRunDown)) {
         candidate = "WAIT";
         overrides.push(
@@ -763,6 +778,11 @@ export class DecisionService {
           isHighNewsNegative
             ? "High-impact negative news overrode the normal weighted candidate toward SHORT."
             : "Macro RISK_OFF trend overrode candidate toward SHORT.",
+        );
+      } else if (strongBullishPriceAction) {
+        candidate = "LONG";
+        overrides.push(
+          "Strong bullish price action (Market + Technical) overrode negative news conflict toward LONG (price-action override).",
         );
       } else {
         candidate = "WAIT";
@@ -872,7 +892,7 @@ export class DecisionService {
     const convictionBonus =
       directionalAgreement >= 80 && evidenceCoverage >= 60 && baseScore >= 70
         ? 8
-        : directionalAgreement >= 70 && evidenceCoverage >= 60 && baseScore >= 60
+        : directionalAgreement >= 65 && evidenceCoverage >= 60 && baseScore >= 60
           ? 4
           : 0;
 
@@ -1416,12 +1436,17 @@ export class DecisionService {
 
     let eventModifiers = penalties;
     if ((hasHighImpactNews || hasHighImpactMacro) && !customWeights) {
+      const coreTrendAgree =
+        (input?.market?.trend.direction === "UP" && input?.technical?.trend.direction === "UP") ||
+        (input?.market?.trend.direction === "DOWN" && input?.technical?.trend.direction === "DOWN");
+      const techPenalty = coreTrendAgree ? 5 : 10;
+      const marketPenalty = coreTrendAgree ? 2 : 5;
       eventModifiers = {
         ...penalties,
-        technical: (penalties?.technical ?? 0) - 10, // reduce lagging technical weight
-        market: (penalties?.market ?? 0) - 5,
-        macro: (penalties?.macro ?? 0) + 10,        // boost macro catalyst
-        news: (penalties?.news ?? 0) + 5,           // boost news catalyst
+        technical: (penalties?.technical ?? 0) - techPenalty,
+        market: (penalties?.market ?? 0) - marketPenalty,
+        macro: hasHighImpactMacro ? (penalties?.macro ?? 0) + 10 : (penalties?.macro ?? 0),
+        news: hasHighImpactNews ? (penalties?.news ?? 0) + 5 : (penalties?.news ?? 0),
       };
     }
 
@@ -1480,7 +1505,10 @@ export class DecisionService {
     extreme: boolean;
   } {
     const isAltcoin = assetLiquidityClass(input.symbol) !== "MAJOR";
-    const strongBreakoutConsensus = isAltcoin && (directionalAgreement ?? 0) >= 80;
+    const coreTrendConfirmed =
+      (input.market?.trend.direction === "UP" && input.technical?.trend.direction === "UP") ||
+      (input.market?.trend.direction === "DOWN" && input.technical?.trend.direction === "DOWN");
+    const strongBreakoutConsensus = isAltcoin && ((directionalAgreement ?? 0) >= 80 || coreTrendConfirmed);
 
     const evidence = [
       input.market?.volatility.atr,
@@ -1717,20 +1745,20 @@ export class DecisionService {
     const isAltcoin = policy.liquidityClass !== "MAJOR";
     const isAltcoinBreakout =
       isAltcoin &&
-      regime.type === "HIGH_VOLATILITY" &&
-      opportunityScore >= 75;
+      (regime.type === "HIGH_VOLATILITY" || regime.type === "TRENDING") &&
+      opportunityScore >= 70;
 
     const tierAdjustment =
       policy.liquidityClass === "MAJOR" ? -2 : policy.liquidityClass === "LIQUID_ALT" ? 0 : 3;
     const base =
       (regime.type === "TRENDING"
-        ? 62
+        ? 60
         : regime.type === "HIGH_VOLATILITY"
-          ? (isAltcoinBreakout ? 70 : 78)
+          ? (isAltcoinBreakout ? 65 : 78)
           : 72) + tierAdjustment;
     const volatilityAdjustment =
       input.market?.volatility.level === "HIGH"
-        ? (isAltcoinBreakout ? 3 : 8)
+        ? (regime.type === "TRENDING" || isAltcoinBreakout ? 0 : 8)
         : input.market?.volatility.level === "LOW"
           ? -3
           : 0;

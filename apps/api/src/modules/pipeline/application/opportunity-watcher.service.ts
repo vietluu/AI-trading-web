@@ -65,6 +65,17 @@ function inferSetup(
 
   if (
     snapshot.structure.coverage === 'AVAILABLE' &&
+    snapshot.structure.rangeBoundaries &&
+    snapshot.execution.coverage === 'AVAILABLE' &&
+    snapshot.volatility.coverage === 'AVAILABLE' &&
+    (snapshot.volatility.expansionState === 'EXPANDING' ||
+      snapshot.volatility.expansionState === 'EXPANDED') &&
+    (snapshot.execution.currentPrice > snapshot.structure.rangeBoundaries.upper ||
+      snapshot.execution.currentPrice < snapshot.structure.rangeBoundaries.lower)
+  ) return 'BREAKOUT_RETEST';
+
+  if (
+    snapshot.structure.coverage === 'AVAILABLE' &&
     snapshot.structure.distanceToNearestBoundaryAtr <=
       OPPORTUNITY_WATCHER_POLICY.maximumWatchDistanceAtr
   ) return 'RANGE_REVERSAL';
@@ -75,6 +86,22 @@ function inferSetup(
 function inferDirection(
   snapshot: AnticipatoryMarketSnapshot,
 ): OpportunityDirection {
+  if (
+    snapshot.structure.coverage === 'AVAILABLE' &&
+    snapshot.structure.rangeBoundaries &&
+    snapshot.execution.coverage === 'AVAILABLE' &&
+    snapshot.volatility.coverage === 'AVAILABLE' &&
+    (snapshot.volatility.expansionState === 'EXPANDING' ||
+      snapshot.volatility.expansionState === 'EXPANDED')
+  ) {
+    if (snapshot.execution.currentPrice > snapshot.structure.rangeBoundaries.upper) {
+      return 'LONG';
+    }
+    if (snapshot.execution.currentPrice < snapshot.structure.rangeBoundaries.lower) {
+      return 'SHORT';
+    }
+  }
+
   if (
     snapshot.structure.coverage === 'AVAILABLE' &&
     snapshot.structure.liquiditySweep.coverage === 'AVAILABLE' &&
@@ -109,11 +136,19 @@ function inferDirection(
 function invalidationPrice(
   snapshot: AnticipatoryMarketSnapshot,
   direction: OpportunityDirection,
+  setup?: OpportunitySetup,
 ): number | null {
   if (
     direction === 'WAIT' ||
     snapshot.structure.coverage !== 'AVAILABLE'
   ) return null;
+
+  if (setup === 'BREAKOUT_RETEST' && snapshot.structure.rangeBoundaries) {
+    const atr = snapshot.volatility.coverage === 'AVAILABLE' ? snapshot.volatility.atr : 0;
+    return direction === 'LONG'
+      ? snapshot.structure.rangeBoundaries.upper - atr * 0.25
+      : snapshot.structure.rangeBoundaries.lower + atr * 0.25;
+  }
 
   const candidates = snapshot.structure.invalidationCandidates
     .filter((candidate) => candidate.direction === direction)
@@ -128,6 +163,7 @@ function invalidationPrice(
       Math.abs(right - execution.currentPrice),
   )[0]!;
 }
+
 
 function observationState(opportunity: Opportunity): OpportunityObservationState {
   return {
@@ -298,7 +334,7 @@ export class OpportunityWatcherService {
         thesisVersion,
         idempotencyKey: opportunityKey,
         state: 'OBSERVING',
-        invalidationPrice: invalidationPrice(snapshot, direction),
+        invalidationPrice: invalidationPrice(snapshot, direction, setup),
         expiresAt: new Date(
           cutoff.getTime() + OPPORTUNITY_WATCHER_POLICY.opportunityTtlMs,
         ),

@@ -50,4 +50,30 @@ describe('execution readiness', () => {
   it('allows a directional decision only when its deterministic context is executable', () => {
     expect(evaluateExecutionReadiness(validRangeShortFixture())).toEqual({ allowed: true, reasonCodes: [] });
   });
+
+  it('preserves candidate direction SHORT/85 when execution context action is WAIT while blocking execution readiness', () => {
+    const candidate = {
+      decision: 'SHORT',
+      confidence: 85,
+      executionContext: buildExecutionContext({
+        regime: 'RANGING',
+        setup: 'RANGE_REVERSION',
+        action: 'WAIT',
+        price: 100,
+        support: 95,
+        resistance: 105,
+        atr: 1.5,
+        sourceDataCutoff,
+        primaryCandleClosed: true,
+        triggerConfirmed: false,
+      }),
+    } as unknown as DecisionOutput;
+
+    const readiness = evaluateExecutionReadiness(candidate);
+    expect(readiness.allowed).toBe(false);
+    expect(readiness.reasonCodes).toContain('ENTRY_ACTION_NOT_EXECUTABLE');
+    expect(candidate.decision).toBe('SHORT');
+    expect(candidate.confidence).toBe(85);
+  });
 });
+

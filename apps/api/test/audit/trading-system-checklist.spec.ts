@@ -11,6 +11,7 @@ import {
 } from '../../src/modules/pipeline/domain/multi-timeframe-analysis';
 import { RiskConfigService } from '../../src/modules/risk/application/risk-config.service';
 import { evaluateRisk } from '../../src/modules/risk/domain/risk-engine';
+import { runRecoveryRolloutAudit } from '../../src/scripts/audit-recovery-rollout';
 
 const directionalDecision = (): DecisionOutput => ({
   decision: 'LONG', confidence: 80, reasoning: 'audit simulation',
@@ -116,5 +117,253 @@ describe('live trading checklist simulation', () => {
     );
     await service.decision('run-1', 'BTC-USDT', { ...directionalDecision(), decision: 'WAIT' });
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it('AUDIT: rejects a passing lifecycle check when recent WATCHING transitions have zero downstream evidence', async () => {
+    const mockPrisma = {
+      $transaction: vi.fn().mockImplementation((cb: (tx: unknown) => Promise<unknown>) => cb(mockPrisma)),
+      $executeRawUnsafe: vi.fn().mockResolvedValue(1),
+      liveOrder: { count: vi.fn().mockResolvedValue(0) },
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      shadowExecutionPlan: { findMany: vi.fn().mockResolvedValue([]) },
+      pipelineRun: { findMany: vi.fn().mockResolvedValue([]) },
+      opportunityTransition: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: 'trans-1',
+            opportunityId: 'opp-1',
+            snapshotId: 'snap-1',
+            toState: 'WATCHING',
+            sourceDataCutoff: new Date('2026-09-17T12:00:00.000Z'),
+            thesisId: null,
+            createdAt: new Date('2026-09-17T12:00:01.000Z'),
+          },
+        ]),
+      },
+      tradeThesis: { findMany: vi.fn().mockResolvedValue([]) },
+      thesisReview: { findMany: vi.fn().mockResolvedValue([]) },
+      executionPlanVersion: { findMany: vi.fn().mockResolvedValue([]) },
+      auditLog: { findMany: vi.fn().mockResolvedValue([]) },
+    };
+
+    const report = await runRecoveryRolloutAudit(mockPrisma as never);
+    const lifecycleCheck = report.checks.find((c) => c.name === 'PROACTIVE_LIFECYCLE_EVIDENCE');
+
+    expect(lifecycleCheck).toBeDefined();
+    expect(lifecycleCheck?.passed).toBe(false);
+    expect(report.allPassed).toBe(false);
+    expect(lifecycleCheck?.details).toMatchObject({
+      watchableTransitions: 1,
+      proactiveRuns: 0,
+      theses: 0,
+      reviews: 0,
+      plans: 0,
+      shadowPlans: 0,
+      explicitSchedulingFailures: 0,
+      unmatchedWatchableTransitions: 1,
+    });
+  });
+
+  it('AUDIT: passes lifecycle check when eligible WATCHING transition has downstream evidence or explicit failure', async () => {
+    const mockPrisma = {
+      $transaction: vi.fn().mockImplementation((cb: (tx: unknown) => Promise<unknown>) => cb(mockPrisma)),
+      $executeRawUnsafe: vi.fn().mockResolvedValue(1),
+      liveOrder: { count: vi.fn().mockResolvedValue(0) },
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      shadowExecutionPlan: { findMany: vi.fn().mockResolvedValue([]) },
+      pipelineRun: {
+        findMany: vi.fn().mockImplementation((args?: { where?: { pipelineId?: string } }) => {
+          if (args?.where?.pipelineId === 'proactive-thesis') {
+            return Promise.resolve([
+              {
+                id: 'run-proactive-1',
+                pipelineId: 'proactive-thesis',
+                storedContext: { opportunityId: 'opp-1' },
+                params: { opportunityId: 'opp-1' },
+              },
+            ]);
+          }
+          return Promise.resolve([]);
+        }),
+      },
+      opportunityTransition: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: 'trans-1',
+            opportunityId: 'opp-1',
+            snapshotId: 'snap-1',
+            toState: 'WATCHING',
+            sourceDataCutoff: new Date('2026-09-17T12:00:00.000Z'),
+            thesisId: null,
+            createdAt: new Date('2026-09-17T12:00:01.000Z'),
+          },
+        ]),
+      },
+      tradeThesis: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: 'thesis-1',
+            opportunityId: 'opp-1',
+            snapshotId: 'snap-1',
+            sourceDataCutoff: new Date('2026-09-17T12:00:00.000Z'),
+          },
+        ]),
+      },
+      thesisReview: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: 'rev-1',
+            thesisId: 'thesis-1',
+            action: 'APPROVE',
+          },
+        ]),
+      },
+      executionPlanVersion: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: 'plan-1',
+            thesisId: 'thesis-1',
+            status: 'ACTIVE',
+          },
+        ]),
+      },
+      auditLog: { findMany: vi.fn().mockResolvedValue([]) },
+    };
+
+    const report = await runRecoveryRolloutAudit(mockPrisma as never);
+    const lifecycleCheck = report.checks.find((c) => c.name === 'PROACTIVE_LIFECYCLE_EVIDENCE');
+
+    expect(lifecycleCheck).toBeDefined();
+    expect(lifecycleCheck?.passed).toBe(true);
+    expect(report.allPassed).toBe(true);
+    expect(lifecycleCheck?.details).toMatchObject({
+      watchableTransitions: 1,
+      proactiveRuns: 1,
+      theses: 1,
+      reviews: 1,
+      plans: 1,
+      shadowPlans: 0,
+      explicitSchedulingFailures: 0,
+      unmatchedWatchableTransitions: 0,
+    });
+  });
+
+  it('AUDIT: passes lifecycle check when transition is accounted for by an explicit scheduling failure', async () => {
+    const mockPrisma = {
+      $transaction: vi.fn().mockImplementation((cb: (tx: unknown) => Promise<unknown>) => cb(mockPrisma)),
+      $executeRawUnsafe: vi.fn().mockResolvedValue(1),
+      liveOrder: { count: vi.fn().mockResolvedValue(0) },
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      shadowExecutionPlan: { findMany: vi.fn().mockResolvedValue([]) },
+      pipelineRun: { findMany: vi.fn().mockResolvedValue([]) },
+      opportunityTransition: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: 'trans-1',
+            opportunityId: 'opp-1',
+            snapshotId: 'snap-1',
+            toState: 'WATCHING',
+            sourceDataCutoff: new Date('2026-09-17T12:00:00.000Z'),
+            thesisId: null,
+            createdAt: new Date('2026-09-17T12:00:01.000Z'),
+          },
+        ]),
+      },
+      tradeThesis: { findMany: vi.fn().mockResolvedValue([]) },
+      thesisReview: { findMany: vi.fn().mockResolvedValue([]) },
+      executionPlanVersion: { findMany: vi.fn().mockResolvedValue([]) },
+      auditLog: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: 'log-1',
+            action: 'OPPORTUNITY_PROACTIVE_SCHEDULE_FAILED',
+            metadata: { opportunityId: 'opp-1' },
+          },
+        ]),
+      },
+    };
+
+    const report = await runRecoveryRolloutAudit(mockPrisma as never);
+    const lifecycleCheck = report.checks.find((c) => c.name === 'PROACTIVE_LIFECYCLE_EVIDENCE');
+
+    expect(lifecycleCheck).toBeDefined();
+    expect(lifecycleCheck?.passed).toBe(true);
+    expect(report.allPassed).toBe(true);
+    expect(lifecycleCheck?.details).toMatchObject({
+      watchableTransitions: 1,
+      proactiveRuns: 0,
+      theses: 0,
+      reviews: 0,
+      plans: 0,
+      shadowPlans: 0,
+      explicitSchedulingFailures: 1,
+      unmatchedWatchableTransitions: 0,
+    });
+  });
+
+  it('AUDIT: rejects cross-symbol cutoff matching leak when another symbol shares the same cutoff', async () => {
+    const cutoff = new Date('2026-09-17T12:00:00.000Z');
+    const mockPrisma = {
+      $transaction: vi.fn().mockImplementation((cb: (tx: unknown) => Promise<unknown>) => cb(mockPrisma)),
+      $executeRawUnsafe: vi.fn().mockResolvedValue(1),
+      liveOrder: { count: vi.fn().mockResolvedValue(0) },
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      shadowExecutionPlan: { findMany: vi.fn().mockResolvedValue([]) },
+      pipelineRun: { findMany: vi.fn().mockResolvedValue([]) },
+      opportunityTransition: {
+        findMany: vi.fn().mockResolvedValue([
+          // Symbol A: Has a thesis
+          {
+            id: 'trans-btc',
+            opportunityId: 'opp-btc',
+            snapshotId: 'snap-btc',
+            toState: 'WATCHING',
+            sourceDataCutoff: cutoff,
+            thesisId: 'thesis-btc',
+            createdAt: new Date('2026-09-17T12:00:01.000Z'),
+          },
+          // Symbol B: Orphaned at the exact same cutoff, has NO thesis/evidence
+          {
+            id: 'trans-eth',
+            opportunityId: 'opp-eth',
+            snapshotId: 'snap-eth',
+            toState: 'WATCHING',
+            sourceDataCutoff: cutoff,
+            thesisId: null,
+            createdAt: new Date('2026-09-17T12:00:01.000Z'),
+          },
+        ]),
+      },
+      tradeThesis: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: 'thesis-btc',
+            opportunityId: 'opp-btc',
+            snapshotId: 'snap-btc',
+            sourceDataCutoff: cutoff,
+          },
+        ]),
+      },
+      thesisReview: { findMany: vi.fn().mockResolvedValue([]) },
+      executionPlanVersion: { findMany: vi.fn().mockResolvedValue([]) },
+      auditLog: { findMany: vi.fn().mockResolvedValue([]) },
+    };
+
+    const report = await runRecoveryRolloutAudit(mockPrisma as never);
+    const lifecycleCheck = report.checks.find((c) => c.name === 'PROACTIVE_LIFECYCLE_EVIDENCE');
+
+    expect(lifecycleCheck).toBeDefined();
+    expect(lifecycleCheck?.passed).toBe(false);
+    expect(report.allPassed).toBe(false);
+    expect(lifecycleCheck?.details).toMatchObject({
+      watchableTransitions: 2,
+      proactiveRuns: 0,
+      theses: 1,
+      reviews: 0,
+      plans: 0,
+      shadowPlans: 0,
+      explicitSchedulingFailures: 0,
+      unmatchedWatchableTransitions: 1,
+    });
   });
 });

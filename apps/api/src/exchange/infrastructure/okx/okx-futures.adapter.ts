@@ -1,4 +1,5 @@
 import { assertDeclaredLimitOrder } from '../../domain/declared-limit-order';
+import { preflightOrderProtection } from '../../domain/order-protection-preflight';
 import { Injectable, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { z } from "zod";
@@ -934,6 +935,36 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
         if (makerFirst) ordType = "market";
       }
     }
+    let effectiveStopLoss = command.stopLoss;
+    let effectiveTakeProfit = command.takeProfit;
+    const effectiveEntry = Number(marketPrice);
+    if (
+      !command.reduceOnly &&
+      Number.isFinite(effectiveEntry) &&
+      effectiveEntry > 0 &&
+      (command.stopLoss || command.takeProfit)
+    ) {
+      const protection = preflightOrderProtection({
+        side: command.side,
+        entry: effectiveEntry,
+        stopLoss: command.stopLoss ? Number(command.stopLoss) : undefined,
+        takeProfit: command.takeProfit ? Number(command.takeProfit) : undefined,
+        currentPrice: effectiveEntry,
+        tickSize: Number(instrument.tickSize),
+        orderType: "LIMIT",
+        timeInForce: ordType === "ioc" ? "IOC" : "GTC",
+      });
+      if (!protection.approved) {
+        throw ExchangeError.protectionPreflight(this.provider, protection.reason);
+      }
+      effectiveStopLoss = protection.stopLoss === undefined
+        ? undefined
+        : String(protection.stopLoss);
+      effectiveTakeProfit = protection.takeProfit === undefined
+        ? undefined
+        : String(protection.takeProfit);
+      marketPrice = String(protection.entry);
+    }
     const body: Record<string, unknown> = {
       instId,
       tdMode: "cross",
@@ -945,8 +976,8 @@ export class OkxFuturesAdapter implements ExchangeAdapter {
       ...(command.reduceOnly ? { reduceOnly: true } : {}),
       ...(sanitizedPosSide ? { posSide: sanitizedPosSide } : {}),
     };
-    const numericStopLoss = Number(command.stopLoss);
-    const numericTakeProfit = Number(command.takeProfit);
+    const numericStopLoss = Number(effectiveStopLoss);
+    const numericTakeProfit = Number(effectiveTakeProfit);
     const hasSl = Number.isFinite(numericStopLoss) && numericStopLoss > 0;
     const hasTp = Number.isFinite(numericTakeProfit) && numericTakeProfit > 0;
     const formattedSl = hasSl

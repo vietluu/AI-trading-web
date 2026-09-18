@@ -14,6 +14,8 @@ export interface StageTelemetryRecord {
   opportunityScore: number;
   riskScore: number;
   decision: string;
+  candidateDecision?: string;
+  candidateConfidence?: number;
   rejectReason?: string;
   blockingStage?: GateStage;
   executionResult: string;

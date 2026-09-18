@@ -33,6 +33,7 @@ export type OpportunityTransitionReasonCode =
   | 'SQUEEZE_SETUP_FORMING'
   | 'LIQUIDITY_SWEEP_SETUP_FORMING'
   | 'RANGE_BOUNDARY_SETUP_FORMING'
+  | 'BREAKOUT_SETUP_FORMING'
   | 'PROBE_ALIGNMENT_CONFIRMED'
   | 'CONDITIONS_UNCHANGED';
 
@@ -93,8 +94,18 @@ function formingReason(
   current: OpportunityObservationState,
   snapshot: AnticipatoryMarketSnapshot,
 ): OpportunityTransitionReasonCode | undefined {
+  if (snapshot.structure.coverage !== 'AVAILABLE') return undefined;
+
   if (
-    snapshot.structure.coverage !== 'AVAILABLE' ||
+    current.setup === 'BREAKOUT_RETEST' &&
+    snapshot.volatility.coverage === 'AVAILABLE' &&
+    (snapshot.volatility.expansionState === 'EXPANDING' ||
+      snapshot.volatility.expansionState === 'EXPANDED')
+  ) {
+    return 'BREAKOUT_SETUP_FORMING';
+  }
+
+  if (
     snapshot.structure.distanceToNearestBoundaryAtr >
       OPPORTUNITY_WATCHER_POLICY.maximumWatchDistanceAtr
   ) return undefined;
@@ -132,7 +143,11 @@ function probeIsReady(
     current.invalidationPrice === null ||
     snapshot.structure.coverage !== 'AVAILABLE' ||
     snapshot.volatility.coverage !== 'AVAILABLE' ||
-    snapshot.execution.coverage !== 'AVAILABLE' ||
+    snapshot.execution.coverage !== 'AVAILABLE'
+  ) return false;
+
+  if (
+    current.setup !== 'BREAKOUT_RETEST' &&
     snapshot.structure.distanceToNearestBoundaryAtr >
       OPPORTUNITY_WATCHER_POLICY.maximumProbeDistanceAtr
   ) return false;
@@ -142,26 +157,31 @@ function probeIsReady(
   ) / snapshot.volatility.atr;
   if (
     invalidationDistanceAtr >
-    OPPORTUNITY_WATCHER_POLICY.maximumInvalidationDistanceAtr
+    OPPORTUNITY_WATCHER_POLICY.maximumInvalidationDistanceAtr * 1.5
   ) return false;
 
   const evidenceGroups = [
-    snapshot.momentum.coverage === 'AVAILABLE' &&
+    snapshot.momentum?.coverage === 'AVAILABLE' &&
       snapshot.momentum.momentumState === 'ACCELERATING',
-    snapshot.participation.coverage === 'AVAILABLE' &&
+    snapshot.participation?.coverage === 'AVAILABLE' &&
       snapshot.participation.volumeState === 'EXPANDING',
-    snapshot.derivatives.coverage === 'AVAILABLE' &&
-      snapshot.derivatives.derivativesImbalance.coverage === 'AVAILABLE' &&
+    snapshot.derivatives?.coverage === 'AVAILABLE' &&
+      snapshot.derivatives.derivativesImbalance?.coverage === 'AVAILABLE' &&
       snapshot.derivatives.derivativesImbalance.squeezeDirection !== 'NONE' &&
       snapshot.derivatives.derivativesImbalance.squeezeProbability >=
         OPPORTUNITY_WATCHER_POLICY.minimumDerivativesSqueezeProbability,
-    snapshot.structure.liquiditySweep.coverage === 'AVAILABLE' &&
+    snapshot.structure?.liquiditySweep?.coverage === 'AVAILABLE' &&
       snapshot.structure.liquiditySweep.detected &&
       snapshot.structure.liquiditySweep.reclaimed,
+    current.setup === 'BREAKOUT_RETEST' &&
+      (snapshot.volatility?.expansionState === 'EXPANDING' ||
+        snapshot.volatility?.expansionState === 'EXPANDED'),
   ].filter(Boolean).length;
 
   return evidenceGroups >= OPPORTUNITY_WATCHER_POLICY.minimumProbeEvidenceGroups;
 }
+
+
 
 export function transitionOpportunity(
   current: OpportunityObservationState,
