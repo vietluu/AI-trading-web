@@ -222,9 +222,13 @@ export class DecisionService {
           0.1,
           10,
         );
+    const isHardGateEligible =
+      confidenceCalibration?.hardGateEligible === true &&
+      confidenceCalibration?.scope === "EXACT" &&
+      !confidenceCalibration?.fallbackUsed;
     const calibrationBlockingReasons: string[] = [];
     let finalConfidence = decision.confidence;
-    if (empiricalProbability !== undefined && empiricalProbability < 0.35) {
+    if (isHardGateEligible && empiricalProbability !== undefined && empiricalProbability < 0.35) {
       calibrationBlockingReasons.push('CALIBRATED_PROBABILITY_TOO_LOW');
       finalConfidence = Math.min(finalConfidence, 40);
     }
@@ -232,7 +236,7 @@ export class DecisionService {
     let finalDecisionAction = decision.decision;
     const finalExpectedValue = Number(expectedValue.toFixed(3));
 
-    if (empiricalProbability !== undefined && finalExpectedValue < 0.15 && finalDecisionAction !== "WAIT") {
+    if (isHardGateEligible && empiricalProbability !== undefined && finalExpectedValue < 0.15 && finalDecisionAction !== "WAIT") {
       calibrationBlockingReasons.push('EXPECTED_VALUE_BELOW_THRESHOLD');
       finalDecisionAction = "WAIT";
     }
@@ -400,9 +404,13 @@ export class DecisionService {
             )
           : (strongColdStart ? decision.expectedValue : 0);
           
+    const isHardGateEligible =
+      confidenceCalibration?.hardGateEligible === true &&
+      confidenceCalibration?.scope === "EXACT" &&
+      !confidenceCalibration?.fallbackUsed;
     const calibrationBlockingReasons: string[] = [];
     let finalConfidence = decision.confidence;
-    if (empiricalProbability !== undefined && empiricalProbability < 0.35) {
+    if (isHardGateEligible && empiricalProbability !== undefined && empiricalProbability < 0.35) {
       calibrationBlockingReasons.push('CALIBRATED_PROBABILITY_TOO_LOW');
       finalConfidence = Math.min(finalConfidence, 40);
     }
@@ -410,7 +418,7 @@ export class DecisionService {
     let finalDecisionAction = decision.decision;
     const finalExpectedValue = Number(expectedValueRaw.toFixed(3));
 
-    if (hasEmpiricalEdge && finalExpectedValue < 0.15 && finalDecisionAction !== "WAIT") {
+    if (isHardGateEligible && hasEmpiricalEdge && finalExpectedValue < 0.15 && finalDecisionAction !== "WAIT") {
       calibrationBlockingReasons.push('EXPECTED_VALUE_BELOW_THRESHOLD');
       finalDecisionAction = "WAIT";
     }
