@@ -10,25 +10,35 @@ import {
 export class PipelineRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  createRun(data: { id: string; userId: string; pipelineId: string; symbol: string; provider: ExchangeProvider; trigger: PipelineTrigger; params: Record<string, unknown>; traceId: string; correlationId: string; replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; proactiveThesisKey?: string; proactiveDeliveryState?: string }) {
+  createRun(data: { id: string; userId: string; pipelineId: string; symbol: string; provider: ExchangeProvider; trigger: PipelineTrigger; params: Record<string, unknown>; traceId: string; correlationId: string; replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; proactiveThesisKey?: string; proactiveDeliveryState?: string; proactiveDeliveryLeaseExpiresAt?: Date }) {
     return this.prisma.pipelineRun.create({ data: { ...data, params: data.params as Prisma.InputJsonValue, storedContext: data.storedContext as Prisma.InputJsonValue | undefined } });
   }
   findProactiveThesisRun(proactiveThesisKey: string) {
     return this.prisma.pipelineRun.findUnique({
       where: { proactiveThesisKey },
-      select: { id: true, proactiveDeliveryState: true },
+      select: { id: true, proactiveDeliveryState: true, proactiveDeliveryLeaseExpiresAt: true },
     });
   }
-  claimProactiveThesisDelivery(id: string) {
+  claimProactiveThesisDelivery(id: string, claimedAt: Date, leaseExpiresAt: Date) {
     return this.prisma.pipelineRun.updateMany({
       where: {
         id,
         OR: [
           { proactiveDeliveryState: 'FAILED' },
           { proactiveDeliveryState: null },
+          {
+            proactiveDeliveryState: 'DELIVERING',
+            OR: [
+              { proactiveDeliveryLeaseExpiresAt: null },
+              { proactiveDeliveryLeaseExpiresAt: { lte: claimedAt } },
+            ],
+          },
         ],
       },
-      data: { proactiveDeliveryState: 'DELIVERING' },
+      data: {
+        proactiveDeliveryState: 'DELIVERING',
+        proactiveDeliveryLeaseExpiresAt: leaseExpiresAt,
+      },
     });
   }
   findRun(id: string, userId?: string) { return this.prisma.pipelineRun.findFirst({ where: { id, ...(userId ? { userId } : {}) }, include: { steps: { orderBy: { createdAt: 'asc' } }, alerts: { orderBy: { createdAt: 'asc' } } } }); }

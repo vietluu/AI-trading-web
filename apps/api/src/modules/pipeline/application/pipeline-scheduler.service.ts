@@ -33,7 +33,7 @@ type ProactiveThesisScheduleInput = {
 };
 
 type ProactiveThesisScheduleResult = {
-  status: "SCHEDULED" | "DUPLICATE" | "FAILED";
+  status: "SCHEDULED" | "DUPLICATE" | "IN_FLIGHT" | "FAILED";
   runId?: string;
   reason?: string;
 };
@@ -312,7 +312,7 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
                           snapshotId: observation.snapshotId,
                           sourceDataCutoff: anchor.sourceDataCutoff,
                         });
-                        proactiveDeliveryFailed ||= delivery.status === "FAILED";
+                        proactiveDeliveryFailed ||= delivery.status === "FAILED" || delivery.status === "IN_FLIGHT";
                       } catch (error) {
                         proactiveDeliveryFailed = true;
                         this.logger.error({

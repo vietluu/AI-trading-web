@@ -300,6 +300,57 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
     expect(prisma.pipelineSchedule.update).toHaveBeenCalledTimes(1);
   });
 
+  it('does not stamp a duplicate anchor while proactive delivery is still in flight', async () => {
+    const cutoff = new Date('2026-09-09T01:00:00.000Z');
+    const schedule = {
+      id: 'schedule-lease-1', userId: 'user-1', pipelineId: 'FULL_ANALYSIS_DECISION',
+      symbols: ['BTC-USDT'], strategyIds: ['trend'], provider: 'BINANCE_FUTURES',
+      mode: 'INTERVAL', intervalMs: 900_000, lastTriggeredAt: undefined,
+      timezone: 'UTC', maxRunsPerHour: 12,
+    };
+    const prisma = {
+      pipelineSchedule: {
+        findMany: vi.fn().mockResolvedValue([schedule]),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      auditLog: { create: vi.fn().mockResolvedValue({}) },
+    };
+    const pipeline = {
+      trigger: vi.fn(),
+      scheduleProactiveThesis: vi.fn()
+        .mockResolvedValueOnce({ status: 'IN_FLIGHT', runId: 'proactive-run-lease-1' })
+        .mockResolvedValueOnce({ status: 'SCHEDULED', runId: 'proactive-run-lease-1' }),
+    };
+    const scanner = {
+      reserveAnchor: vi.fn().mockResolvedValue({
+        run: false,
+        fingerprint: 'closed-candle',
+        sourceDataCutoff: cutoff,
+      }),
+    };
+    const watcher = {
+      observe: vi.fn().mockResolvedValue({
+        state: 'WATCHING', duplicate: true, opportunityId: 'opp-lease-1', snapshotId: 'snapshot-lease-1',
+      }),
+    };
+    const scheduler = new PipelineSchedulerService(
+      prisma as never,
+      pipeline as never,
+      { enabled: true } as never,
+      undefined,
+      scanner as never,
+      undefined,
+      watcher as never,
+    );
+
+    await scheduler.tick(new Date('2026-09-09T01:00:01.000Z'));
+    await scheduler.tick(new Date('2026-09-09T01:00:06.000Z'));
+
+    expect(pipeline.scheduleProactiveThesis).toHaveBeenCalledTimes(2);
+    expect(pipeline.trigger).not.toHaveBeenCalled();
+    expect(prisma.pipelineSchedule.update).toHaveBeenCalledTimes(1);
+  });
+
   it('contains watcher failure and still dispatches the existing pipeline after a closed primary candle', async () => {
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     const cutoff = new Date('2026-09-09T01:00:00.000Z');

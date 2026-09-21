@@ -18,9 +18,11 @@ export type ProactiveThesisScheduleInput = {
 };
 
 export type ProactiveThesisScheduleResult = {
-  status: 'SCHEDULED' | 'DUPLICATE';
+  status: 'SCHEDULED' | 'DUPLICATE' | 'IN_FLIGHT';
   runId: string;
 };
+
+const PROACTIVE_DELIVERY_LEASE_MS = 60_000;
 
 @Injectable()
 export class PipelineService {
@@ -52,18 +54,7 @@ export class PipelineService {
       return { status: 'DUPLICATE', runId: result.runId };
     }
     const persistedRun = await this.repository.findProactiveThesisRun(idempotencyKey);
-    if (persistedRun) {
-      if (persistedRun.proactiveDeliveryState === 'DELIVERED') {
-        return { status: 'DUPLICATE', runId: persistedRun.id };
-      }
-      const claim = await this.repository.claimProactiveThesisDelivery(persistedRun.id);
-      if (claim.count === 0) return { status: 'DUPLICATE', runId: persistedRun.id };
-      return this.redeliverProactiveThesis(
-        persistedRun.id,
-        input.userId,
-        request,
-      );
-    }
+    if (persistedRun) return this.resumeProactiveThesisDelivery(persistedRun, input.userId, request);
 
     const delivery = this.trigger(
       input.userId,
@@ -80,6 +71,7 @@ export class PipelineService {
         },
         proactiveThesisKey: idempotencyKey,
         proactiveDeliveryState: 'DELIVERING',
+        proactiveDeliveryLeaseExpiresAt: this.proactiveDeliveryLeaseExpiresAt(),
       },
     ).then((run) => {
       if (!run || Array.isArray(run) || typeof run.id !== 'string') {
@@ -95,13 +87,13 @@ export class PipelineService {
       this.proactiveThesisDeliveries.delete(idempotencyKey);
       if (isPrismaUniqueConflict(error)) {
         const existingRun = await this.repository.findProactiveThesisRun(idempotencyKey);
-        if (existingRun) return { status: 'DUPLICATE', runId: existingRun.id };
+        if (existingRun) return this.resumeProactiveThesisDelivery(existingRun, input.userId, request);
       }
       throw error;
     }
   }
 
-  async trigger(userId: string, raw: unknown, trigger: PipelineTrigger = 'MANUAL', options: { replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; useStoredContext?: boolean; maxRunsPerHour?: number; bypassCooldown?: boolean; proactiveThesisKey?: string; proactiveDeliveryState?: string } = {}) {
+  async trigger(userId: string, raw: unknown, trigger: PipelineTrigger = 'MANUAL', options: { replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; useStoredContext?: boolean; maxRunsPerHour?: number; bypassCooldown?: boolean; proactiveThesisKey?: string; proactiveDeliveryState?: string; proactiveDeliveryLeaseExpiresAt?: Date } = {}) {
     if (!this.config.enabled) throw new ConflictException('Pipeline automation is disabled');
     const input = PipelineRunRequestSchema.parse(raw);
     const definition = resolvePipelineDefinition(input.pipelineId);
@@ -232,10 +224,16 @@ export class PipelineService {
         trigger: 'SCHEDULE',
         createdAt: new Date().toISOString(),
       }, 'SCHEDULE');
-      await this.repository.updateRun(runId, { proactiveDeliveryState: 'DELIVERED' });
+      await this.repository.updateRun(runId, {
+        proactiveDeliveryState: 'DELIVERED',
+        proactiveDeliveryLeaseExpiresAt: null,
+      });
       return { status: 'SCHEDULED', runId };
     } catch (error) {
-      await this.repository.updateRun(runId, { proactiveDeliveryState: 'FAILED' });
+      await this.repository.updateRun(runId, {
+        proactiveDeliveryState: 'FAILED',
+        proactiveDeliveryLeaseExpiresAt: null,
+      });
       throw error;
     }
   }
@@ -254,7 +252,7 @@ export class PipelineService {
     definition: NonNullable<ReturnType<typeof resolvePipelineDefinition>>,
     symbol: PipelineSymbol,
     trigger: PipelineTrigger,
-    options: { replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; useStoredContext?: boolean; maxRunsPerHour?: number; bypassCooldown?: boolean; proactiveThesisKey?: string; proactiveDeliveryState?: string },
+    options: { replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; useStoredContext?: boolean; maxRunsPerHour?: number; bypassCooldown?: boolean; proactiveThesisKey?: string; proactiveDeliveryState?: string; proactiveDeliveryLeaseExpiresAt?: Date },
     provider: ExchangeProvider,
     enqueue: (run: Awaited<ReturnType<PipelineRepository['createRun']>> & { symbol: PipelineSymbol }) => Promise<unknown>,
   ) {
@@ -283,7 +281,7 @@ export class PipelineService {
       ]);
       skippedReason = pipelineSkipReason({ hourlyCount, hourlyLimit, latestCreatedAt: options.bypassCooldown ? undefined : latest?.createdAt, now, cooldownMs: this.config.cooldownMs, isScheduled: trigger === 'SCHEDULE', replay: trigger === 'REPLAY' });
     }
-    const run = await this.repository.createRun({ id, userId, pipelineId: input.pipelineId, symbol, provider, trigger, params: input.params, traceId, correlationId, replayOfRunId: options.replayOfRunId, scheduleId: options.scheduleId, storedContext: options.storedContext, proactiveThesisKey: options.proactiveThesisKey, proactiveDeliveryState: options.proactiveDeliveryState });
+    const run = await this.repository.createRun({ id, userId, pipelineId: input.pipelineId, symbol, provider, trigger, params: input.params, traceId, correlationId, replayOfRunId: options.replayOfRunId, scheduleId: options.scheduleId, storedContext: options.storedContext, proactiveThesisKey: options.proactiveThesisKey, proactiveDeliveryState: options.proactiveDeliveryState, proactiveDeliveryLeaseExpiresAt: options.proactiveDeliveryLeaseExpiresAt });
     try {
       await this.repository.createSteps(id, definition.steps);
       if (skippedReason) {
@@ -295,15 +293,44 @@ export class PipelineService {
       }
       await enqueue({ ...run, symbol });
       if (options.proactiveThesisKey) {
-        await this.repository.updateRun(id, { proactiveDeliveryState: 'DELIVERED' });
+        await this.repository.updateRun(id, {
+          proactiveDeliveryState: 'DELIVERED',
+          proactiveDeliveryLeaseExpiresAt: null,
+        });
       }
       return run;
     } catch (error) {
       if (options.proactiveThesisKey) {
-        await this.repository.updateRun(id, { proactiveDeliveryState: 'FAILED' });
+        await this.repository.updateRun(id, {
+          proactiveDeliveryState: 'FAILED',
+          proactiveDeliveryLeaseExpiresAt: null,
+        });
       }
       throw error;
     }
+  }
+
+  private proactiveDeliveryLeaseExpiresAt(now = new Date()) {
+    return new Date(now.getTime() + PROACTIVE_DELIVERY_LEASE_MS);
+  }
+
+  private async resumeProactiveThesisDelivery(
+    persistedRun: Awaited<ReturnType<PipelineRepository['findProactiveThesisRun']>>,
+    userId: string,
+    request: PipelineRunRequest,
+  ): Promise<ProactiveThesisScheduleResult> {
+    if (!persistedRun) throw new Error('PROACTIVE_THESIS_RUN_ID_UNAVAILABLE');
+    if (persistedRun.proactiveDeliveryState === 'DELIVERED') {
+      return { status: 'DUPLICATE', runId: persistedRun.id };
+    }
+    const claimedAt = new Date();
+    const claim = await this.repository.claimProactiveThesisDelivery(
+      persistedRun.id,
+      claimedAt,
+      this.proactiveDeliveryLeaseExpiresAt(claimedAt),
+    );
+    if (claim.count === 0) return { status: 'IN_FLIGHT', runId: persistedRun.id };
+    return this.redeliverProactiveThesis(persistedRun.id, userId, request);
   }
 
   async replay(userId: string, id: string, mode: 'REPLAY_WITH_STORED_CONTEXT' | 'REPLAY_WITH_LIVE_DATA') {

@@ -129,7 +129,10 @@ describe('PipelineService', () => {
       findProactiveThesisRun: vi.fn()
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce({ id: 'proactive-run-1' }),
+        .mockResolvedValueOnce({
+          id: 'proactive-run-1',
+          proactiveDeliveryState: 'DELIVERED',
+        }),
     };
     const queue = { enqueue: vi.fn().mockResolvedValue(undefined) };
     const config = { enabled: true, maxRunsPerHour: 120, cooldownMs: 60_000 };
@@ -202,12 +205,110 @@ describe('PipelineService', () => {
     });
 
     expect(repository.createRun).toHaveBeenCalledTimes(1);
-    expect(repository.claimProactiveThesisDelivery).toHaveBeenCalledWith('proactive-run-1');
+    expect(repository.claimProactiveThesisDelivery).toHaveBeenCalledWith(
+      'proactive-run-1',
+      expect.any(Date),
+      expect.any(Date),
+    );
     expect(queue.enqueue).toHaveBeenCalledTimes(2);
     expect(repository.updateRun).toHaveBeenCalledWith(
       'proactive-run-1',
       expect.objectContaining({ proactiveDeliveryState: 'DELIVERED' }),
     );
+  });
+
+  it('reclaims an initial delivery interrupted with an expired proactive lease', async () => {
+    const now = new Date('2026-09-09T01:05:00.000Z');
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const repository = {
+      createRun: vi.fn(),
+      createSteps: vi.fn().mockResolvedValue(undefined),
+      updateRun: vi.fn().mockResolvedValue(undefined),
+      countRecent: vi.fn().mockResolvedValue(0),
+      latestForSymbol: vi.fn().mockResolvedValue(null),
+      findProactiveThesisRun: vi.fn().mockResolvedValue({
+        id: 'proactive-run-initial-crash',
+        proactiveDeliveryState: 'DELIVERING',
+        proactiveDeliveryLeaseExpiresAt: new Date('2026-09-09T01:04:59.999Z'),
+      }),
+      claimProactiveThesisDelivery: vi.fn().mockImplementation(
+        (_id: string, claimedAt?: Date, leaseExpiresAt?: Date) => Promise.resolve(
+          claimedAt instanceof Date && leaseExpiresAt instanceof Date ? { count: 1 } : { count: 0 },
+        ),
+      ),
+    };
+    const queue = { enqueue: vi.fn().mockResolvedValue(undefined) };
+    const config = { enabled: true, maxRunsPerHour: 120, cooldownMs: 60_000 };
+    const service = new PipelineService(repository as never, queue as never, config as never);
+
+    await expect(service.scheduleProactiveThesis({
+      userId: 'user-1',
+      request: {
+        pipelineId: 'proactive-thesis', symbol: 'BTC-USDT', provider: 'BINANCE_FUTURES',
+        params: {
+          interval: '15m', opportunityId: 'opp-lease-1', snapshotId: 'snapshot-lease-1',
+          sourceDataCutoff: '2026-09-09T01:00:00.000Z',
+        },
+      },
+      scheduleId: 'schedule-1',
+    })).resolves.toEqual({ status: 'SCHEDULED', runId: 'proactive-run-initial-crash' });
+
+    expect(repository.createRun).not.toHaveBeenCalled();
+    expect(repository.claimProactiveThesisDelivery).toHaveBeenCalledWith(
+      'proactive-run-initial-crash',
+      now,
+      new Date('2026-09-09T01:06:00.000Z'),
+    );
+    expect(queue.enqueue).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it('reclaims a reclaim delivery interrupted with an expired proactive lease', async () => {
+    const now = new Date('2026-09-09T01:10:00.000Z');
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const repository = {
+      createRun: vi.fn(),
+      createSteps: vi.fn().mockResolvedValue(undefined),
+      updateRun: vi.fn().mockResolvedValue(undefined),
+      countRecent: vi.fn().mockResolvedValue(0),
+      latestForSymbol: vi.fn().mockResolvedValue(null),
+      findProactiveThesisRun: vi.fn().mockResolvedValue({
+        id: 'proactive-run-reclaim-crash',
+        proactiveDeliveryState: 'DELIVERING',
+        proactiveDeliveryLeaseExpiresAt: new Date('2026-09-09T01:09:59.999Z'),
+      }),
+      claimProactiveThesisDelivery: vi.fn().mockImplementation(
+        (_id: string, claimedAt?: Date, leaseExpiresAt?: Date) => Promise.resolve(
+          claimedAt instanceof Date && leaseExpiresAt instanceof Date ? { count: 1 } : { count: 0 },
+        ),
+      ),
+    };
+    const queue = { enqueue: vi.fn().mockResolvedValue(undefined) };
+    const config = { enabled: true, maxRunsPerHour: 120, cooldownMs: 60_000 };
+    const service = new PipelineService(repository as never, queue as never, config as never);
+
+    await expect(service.scheduleProactiveThesis({
+      userId: 'user-1',
+      request: {
+        pipelineId: 'proactive-thesis', symbol: 'BTC-USDT', provider: 'BINANCE_FUTURES',
+        params: {
+          interval: '15m', opportunityId: 'opp-lease-2', snapshotId: 'snapshot-lease-2',
+          sourceDataCutoff: '2026-09-09T01:00:00.000Z',
+        },
+      },
+      scheduleId: 'schedule-1',
+    })).resolves.toEqual({ status: 'SCHEDULED', runId: 'proactive-run-reclaim-crash' });
+
+    expect(repository.createRun).not.toHaveBeenCalled();
+    expect(repository.claimProactiveThesisDelivery).toHaveBeenCalledWith(
+      'proactive-run-reclaim-crash',
+      now,
+      new Date('2026-09-09T01:11:00.000Z'),
+    );
+    expect(queue.enqueue).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
   });
 
   it('propagates canonical executionContext with deep equality to storedContext and assessPipelineDecision', async () => {
