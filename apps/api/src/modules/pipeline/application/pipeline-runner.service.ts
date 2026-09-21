@@ -157,6 +157,10 @@ export class PipelineRunnerService {
   async run(
     job: PipelineJob,
   ): Promise<{ outcome: string; reason?: string } | undefined> {
+    if (job.pipelineId === 'proactive-thesis') {
+      const claim = await this.repository.claimProactiveThesisExecution(String(job.runId), new Date());
+      if (claim.count === 0) return { outcome: 'DUPLICATE' };
+    }
     const definition = resolvePipelineDefinition(job.pipelineId);
     
     // Only the declared release modes can enter the proactive pipeline.
@@ -1088,9 +1092,8 @@ export class PipelineRunnerService {
         const acquired = await this.redis.setNx(lockKey, runId, lockTtl);
 
         if (!acquired) {
-          // Preserve the approved candidate and let BullMQ retry after its
-          // configured backoff. Completing the run here would silently discard
-          // a valid signal merely because another symbol acquired the mutex first.
+          // Ordinary pipelines can retry after backoff. Proactive executions
+          // have a permanent claim and report a terminal failure for replay.
           this.logger.warn({
             event: 'pipeline_execution_lock_busy',
             userId: job.userId,
@@ -1445,7 +1448,7 @@ export class PipelineRunnerService {
       const failureBlockingGate = failureGates
         ? selectBlockingGate(failureGates)
         : undefined;
-      if (!executionLockBusy) {
+      if (!executionLockBusy || job.pipelineId === 'proactive-thesis') {
         await this.finalizeEarlyTerminalRun(
           runId,
           {

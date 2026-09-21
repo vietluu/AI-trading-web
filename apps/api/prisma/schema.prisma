@@ -566,6 +566,8 @@ model PipelineRun {
   proactiveThesisKey      String?             @unique
   proactiveDeliveryState  String?
   proactiveDeliveryLeaseExpiresAt DateTime?
+  proactiveDeliveryToken  String?             @db.Uuid
+  proactiveExecutionClaimedAt DateTime?
   learningStage           String?
   timeframe               String?
   skippedReason           String?

@@ -10,19 +10,20 @@ import {
 export class PipelineRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  createRun(data: { id: string; userId: string; pipelineId: string; symbol: string; provider: ExchangeProvider; trigger: PipelineTrigger; params: Record<string, unknown>; traceId: string; correlationId: string; replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; proactiveThesisKey?: string; proactiveDeliveryState?: string; proactiveDeliveryLeaseExpiresAt?: Date }) {
+  createRun(data: { id: string; userId: string; pipelineId: string; symbol: string; provider: ExchangeProvider; trigger: PipelineTrigger; params: Record<string, unknown>; traceId: string; correlationId: string; replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; proactiveThesisKey?: string; proactiveDeliveryState?: string; proactiveDeliveryLeaseExpiresAt?: Date; proactiveDeliveryToken?: string }) {
     return this.prisma.pipelineRun.create({ data: { ...data, params: data.params as Prisma.InputJsonValue, storedContext: data.storedContext as Prisma.InputJsonValue | undefined } });
   }
   findProactiveThesisRun(proactiveThesisKey: string) {
     return this.prisma.pipelineRun.findUnique({
       where: { proactiveThesisKey },
-      select: { id: true, proactiveDeliveryState: true, proactiveDeliveryLeaseExpiresAt: true },
+      select: { id: true, proactiveDeliveryState: true, proactiveDeliveryLeaseExpiresAt: true, proactiveExecutionClaimedAt: true },
     });
   }
-  claimProactiveThesisDelivery(id: string, claimedAt: Date, leaseExpiresAt: Date) {
+  claimProactiveThesisDelivery(id: string, claimedAt: Date, leaseExpiresAt: Date, token: string) {
     return this.prisma.pipelineRun.updateMany({
       where: {
         id,
+        proactiveExecutionClaimedAt: null,
         OR: [
           { proactiveDeliveryState: 'FAILED' },
           { proactiveDeliveryState: null },
@@ -38,7 +39,38 @@ export class PipelineRepository {
       data: {
         proactiveDeliveryState: 'DELIVERING',
         proactiveDeliveryLeaseExpiresAt: leaseExpiresAt,
+        proactiveDeliveryToken: token,
       },
+    });
+  }
+  renewProactiveThesisDelivery(id: string, token: string, now: Date, leaseExpiresAt: Date) {
+    return this.prisma.pipelineRun.updateMany({
+      where: {
+        id, proactiveDeliveryToken: token, proactiveDeliveryState: 'DELIVERING',
+        proactiveDeliveryLeaseExpiresAt: { gt: now },
+      },
+      data: { proactiveDeliveryLeaseExpiresAt: leaseExpiresAt },
+    });
+  }
+  finalizeProactiveThesisDelivery(id: string, token: string, state: 'DELIVERED' | 'FAILED', now: Date) {
+    return this.prisma.pipelineRun.updateMany({
+      where: {
+        id, proactiveDeliveryToken: token, proactiveDeliveryState: 'DELIVERING',
+        proactiveDeliveryLeaseExpiresAt: { gt: now },
+      },
+      data: {
+        proactiveDeliveryState: state,
+        proactiveDeliveryLeaseExpiresAt: null,
+        proactiveDeliveryToken: null,
+      },
+    });
+  }
+  claimProactiveThesisExecution(id: string, startedAt: Date) {
+    // This claim never expires: retrying a partially executed trading pipeline
+    // could repeat external side effects. Recovery uses an explicit new replay.
+    return this.prisma.pipelineRun.updateMany({
+      where: { id, pipelineId: 'proactive-thesis', status: 'QUEUED', proactiveExecutionClaimedAt: null },
+      data: { status: 'RUNNING', startedAt, proactiveExecutionClaimedAt: startedAt },
     });
   }
   findRun(id: string, userId?: string) { return this.prisma.pipelineRun.findFirst({ where: { id, ...(userId ? { userId } : {}) }, include: { steps: { orderBy: { createdAt: 'asc' } }, alerts: { orderBy: { createdAt: 'asc' } } } }); }

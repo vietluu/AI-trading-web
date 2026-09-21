@@ -119,6 +119,8 @@ describe("Proactive Thesis Pipeline Integration", () => {
   let mockSnapshotService: Partial<AnticipatorySnapshotService>;
   let mockQuantPolicy: Partial<QuantExecutionPolicyService>;
   let mockCollector: { addSignal: ReturnType<typeof vi.fn> };
+  let mockRunUpdates: ReturnType<typeof vi.fn>;
+  let mockExecutionLock: ReturnType<typeof vi.fn>;
 
   afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
 
@@ -154,6 +156,8 @@ describe("Proactive Thesis Pipeline Integration", () => {
 
     const fusionResult = makeFusionResult();
     mockCollector = { addSignal: vi.fn().mockResolvedValue({ ready: true }) };
+    mockRunUpdates = vi.fn().mockResolvedValue(undefined);
+    mockExecutionLock = vi.fn().mockResolvedValue(true);
 
     pipelineRunner = new PipelineRunnerService(
       // fusion
@@ -165,8 +169,9 @@ describe("Proactive Thesis Pipeline Integration", () => {
       } as unknown as DecisionService,
       // repository
       {
+        claimProactiveThesisExecution: vi.fn().mockResolvedValue({ count: 1 }),
         updateStep: vi.fn().mockResolvedValue(undefined),
-        updateRun: vi.fn().mockResolvedValue(undefined),
+        updateRun: mockRunUpdates,
         updateJob: vi.fn().mockResolvedValue(undefined),
         markJobFailed: vi.fn().mockResolvedValue(undefined),
         markJobCompleted: vi.fn().mockResolvedValue(undefined),
@@ -210,7 +215,7 @@ describe("Proactive Thesis Pipeline Integration", () => {
       { recordStageTelemetry: vi.fn() } as unknown as PipelineAnalyticsService,                       // analytics
       mockLiveTrading as unknown as LiveTradingService,
       // redis
-      { setNx: vi.fn().mockResolvedValue(true), compareAndDelete: vi.fn().mockResolvedValue(undefined) } as unknown as RedisService,
+      { setNx: mockExecutionLock, compareAndDelete: vi.fn().mockResolvedValue(undefined) } as unknown as RedisService,
       // judge
       { evaluate: vi.fn().mockReturnValue({ verdict: "APPROVE", severity: "APPROVE", approved: true, reasons: [] }) },
       // settings
@@ -228,6 +233,15 @@ describe("Proactive Thesis Pipeline Integration", () => {
   });
 
   // ── Scenario 1: Squeeze probe — full happy path ────────────────────────────
+
+  it('marks a claimed proactive execution terminal when the execution lock is busy', async () => {
+    mockExecutionLock.mockResolvedValue(false);
+    await expect(pipelineRunner.run(makeJob())).rejects.toThrow('EXECUTION_LOCK_BUSY');
+    expect(mockRunUpdates).toHaveBeenCalledWith('run-1', expect.objectContaining({
+      status: 'FAILED', errorCode: 'EXECUTION_LOCK_BUSY', completedAt: expect.any(Date),
+    }));
+    expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
+  });
 
   it("squeeze probe: thesis flows through researcher -> critic -> risk -> submission", async () => {
     vi.stubEnv("PROACTIVE_AI_MODE", "DEMO");

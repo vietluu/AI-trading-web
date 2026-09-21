@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PipelineService } from '../../src/modules/pipeline/application/pipeline.service';
 
+function deliveryLeaseMethods() {
+  return {
+    renewProactiveThesisDelivery: vi.fn().mockResolvedValue({ count: 1 }),
+    finalizeProactiveThesisDelivery: vi.fn().mockResolvedValue({ count: 1 }),
+  };
+}
+
 describe('PipelineService', () => {
   it('queues manual runs so HTTP requests respect worker backpressure', async () => {
     const repository = {
@@ -50,6 +57,7 @@ describe('PipelineService', () => {
 
   it('schedules a proactive thesis once for the same opportunity and snapshot', async () => {
     const repository = {
+      ...deliveryLeaseMethods(),
       createRun: vi.fn().mockResolvedValue({ id: 'proactive-run-1' }),
       createSteps: vi.fn().mockResolvedValue(undefined),
       updateRun: vi.fn().mockResolvedValue(undefined),
@@ -119,6 +127,7 @@ describe('PipelineService', () => {
   it('atomically reuses one proactive thesis run across concurrent schedulers', async () => {
     const duplicateError = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
     const repository = {
+      ...deliveryLeaseMethods(),
       createRun: vi.fn()
         .mockResolvedValueOnce({ id: 'proactive-run-1' })
         .mockRejectedValueOnce(duplicateError),
@@ -170,6 +179,7 @@ describe('PipelineService', () => {
 
   it('reclaims a persisted proactive run when queue delivery fails after insertion', async () => {
     const repository = {
+      ...deliveryLeaseMethods(),
       createRun: vi.fn().mockResolvedValue({ id: 'proactive-run-1' }),
       createSteps: vi.fn().mockResolvedValue(undefined),
       updateRun: vi.fn().mockResolvedValue(undefined),
@@ -209,11 +219,14 @@ describe('PipelineService', () => {
       'proactive-run-1',
       expect.any(Date),
       expect.any(Date),
+      expect.any(String),
     );
     expect(queue.enqueue).toHaveBeenCalledTimes(2);
-    expect(repository.updateRun).toHaveBeenCalledWith(
+    expect(repository.finalizeProactiveThesisDelivery).toHaveBeenCalledWith(
       'proactive-run-1',
-      expect.objectContaining({ proactiveDeliveryState: 'DELIVERED' }),
+      expect.any(String),
+      'DELIVERED',
+      expect.any(Date),
     );
   });
 
@@ -222,6 +235,7 @@ describe('PipelineService', () => {
     vi.useFakeTimers();
     vi.setSystemTime(now);
     const repository = {
+      ...deliveryLeaseMethods(),
       createRun: vi.fn(),
       createSteps: vi.fn().mockResolvedValue(undefined),
       updateRun: vi.fn().mockResolvedValue(undefined),
@@ -259,6 +273,7 @@ describe('PipelineService', () => {
       'proactive-run-initial-crash',
       now,
       new Date('2026-09-09T01:06:00.000Z'),
+      expect.any(String),
     );
     expect(queue.enqueue).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
@@ -269,6 +284,7 @@ describe('PipelineService', () => {
     vi.useFakeTimers();
     vi.setSystemTime(now);
     const repository = {
+      ...deliveryLeaseMethods(),
       createRun: vi.fn(),
       createSteps: vi.fn().mockResolvedValue(undefined),
       updateRun: vi.fn().mockResolvedValue(undefined),
@@ -306,6 +322,7 @@ describe('PipelineService', () => {
       'proactive-run-reclaim-crash',
       now,
       new Date('2026-09-09T01:11:00.000Z'),
+      expect.any(String),
     );
     expect(queue.enqueue).toHaveBeenCalledTimes(1);
     vi.useRealTimers();

@@ -59,8 +59,10 @@ export class PipelineQueueService {
         type: "exponential",
         delay: FULL_ANALYSIS_DECISION.retryPolicy.backoffMs,
       },
-      removeOnComplete: 500,
-      removeOnFail: 1000,
+      // Retain proactive identities across a lost DB delivery acknowledgement.
+      // The database execution claim also protects against manual Redis pruning.
+      removeOnComplete: job.pipelineId === 'proactive-thesis' ? false : 500,
+      removeOnFail: job.pipelineId === 'proactive-thesis' ? false : 1000,
     });
   }
   async depth(): Promise<number> {
