@@ -291,10 +291,6 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
                     symbol,
                     fingerprint: anchor.fingerprint,
                   });
-                  // Count this as a healthy scheduler cycle so a duplicate
-                  // candle is not reconsidered every five seconds.
-                  triggerPromises.push(Promise.resolve(true));
-                  continue;
                 }
                 if (anchor.sourceDataCutoff && this.opportunityWatcher) {
                   try {
@@ -336,6 +332,13 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
                       message: error instanceof Error ? error.message : String(error),
                     });
                   }
+                }
+                if (!anchor.run) {
+                  // The normal pipeline was already dispatched for this
+                  // candle, but a WATCHING opportunity may need to retry its
+                  // own delivery after a recorded scheduling failure.
+                  triggerPromises.push(Promise.resolve(!proactiveDeliveryFailed));
+                  continue;
                 }
               } catch (error) {
                 // Fingerprinting is an optimization. The pipeline freshness

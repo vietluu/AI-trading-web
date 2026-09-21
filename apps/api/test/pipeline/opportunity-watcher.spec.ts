@@ -237,7 +237,7 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
     }));
   });
 
-  it('does not mark a scheduler cycle healthy when proactive delivery fails', async () => {
+  it('retries failed proactive delivery when the next tick sees the same anchor', async () => {
     const cutoff = new Date('2026-09-09T01:00:00.000Z');
     const schedule = {
       id: 'schedule-1', userId: 'user-1', pipelineId: 'FULL_ANALYSIS_DECISION',
@@ -254,19 +254,31 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
     };
     const pipeline = {
       trigger: vi.fn().mockResolvedValue({ id: 'normal-run-1' }),
-      scheduleProactiveThesis: vi.fn().mockRejectedValue(new Error('queue unavailable')),
+      scheduleProactiveThesis: vi.fn()
+        .mockRejectedValueOnce(new Error('queue unavailable'))
+        .mockResolvedValueOnce({ status: 'SCHEDULED', runId: 'proactive-run-1' }),
     };
     const scanner = {
-      reserveAnchor: vi.fn().mockResolvedValue({
-        run: true,
-        fingerprint: 'closed-candle',
-        sourceDataCutoff: cutoff,
-      }),
+      reserveAnchor: vi.fn()
+        .mockResolvedValueOnce({
+          run: true,
+          fingerprint: 'closed-candle',
+          sourceDataCutoff: cutoff,
+        })
+        .mockResolvedValueOnce({
+          run: false,
+          fingerprint: 'closed-candle',
+          sourceDataCutoff: cutoff,
+        }),
     };
     const watcher = {
-      observe: vi.fn().mockResolvedValue({
-        state: 'WATCHING', duplicate: false, opportunityId: 'opp-1', snapshotId: 'snapshot-1',
-      }),
+      observe: vi.fn()
+        .mockResolvedValueOnce({
+          state: 'WATCHING', duplicate: false, opportunityId: 'opp-1', snapshotId: 'snapshot-1',
+        })
+        .mockResolvedValueOnce({
+          state: 'WATCHING', duplicate: true, opportunityId: 'opp-1', snapshotId: 'snapshot-1',
+        }),
     };
     const scheduler = new PipelineSchedulerService(
       prisma as never,
@@ -279,10 +291,13 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
     );
 
     await scheduler.tick(new Date('2026-09-09T01:00:01.000Z'));
+    await scheduler.tick(new Date('2026-09-09T01:00:06.000Z'));
 
     expect(pipeline.trigger).toHaveBeenCalledTimes(1);
+    expect(pipeline.scheduleProactiveThesis).toHaveBeenCalledTimes(2);
+    expect(watcher.observe).toHaveBeenCalledTimes(2);
     expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
-    expect(prisma.pipelineSchedule.update).not.toHaveBeenCalled();
+    expect(prisma.pipelineSchedule.update).toHaveBeenCalledTimes(1);
   });
 
   it('contains watcher failure and still dispatches the existing pipeline after a closed primary candle', async () => {

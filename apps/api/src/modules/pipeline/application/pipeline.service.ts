@@ -10,7 +10,6 @@ import { pipelineSkipReason } from '../domain/rate-limit';
 import { PipelineRunnerService } from './pipeline-runner.service';
 import { RedisService } from '../../../redis/redis.service';
 import { ConfluenceCollectorService } from '../infrastructure/confluence-collector.service';
-import { PrismaService } from '../../../database/prisma.service';
 
 export type ProactiveThesisScheduleInput = {
   userId: string;
@@ -37,7 +36,6 @@ export class PipelineService {
     @Optional() @Inject(PipelineRunnerService) private readonly runner?: PipelineRunnerService,
     @Optional() private readonly redis?: RedisService,
     @Optional() private readonly confluenceCollector?: ConfluenceCollectorService,
-    @Optional() private readonly prisma?: PrismaService,
   ) {}
 
   async scheduleProactiveThesis(
@@ -53,17 +51,7 @@ export class PipelineService {
       const result = await existing;
       return { status: 'DUPLICATE', runId: result.runId };
     }
-    const persistedRun = await this.prisma?.pipelineRun.findFirst({
-      where: {
-        userId: input.userId,
-        pipelineId: 'proactive-thesis',
-        storedContext: {
-          path: ['proactiveThesisIdempotencyKey'],
-          equals: idempotencyKey,
-        },
-      },
-      select: { id: true },
-    });
+    const persistedRun = await this.repository.findProactiveThesisRun(idempotencyKey);
     if (persistedRun) return { status: 'DUPLICATE', runId: persistedRun.id };
 
     const delivery = this.trigger(
@@ -79,6 +67,7 @@ export class PipelineService {
           sourceDataCutoff,
           proactiveThesisIdempotencyKey: idempotencyKey,
         },
+        proactiveThesisKey: idempotencyKey,
       },
     ).then((run) => {
       if (!run || Array.isArray(run) || typeof run.id !== 'string') {
@@ -92,11 +81,15 @@ export class PipelineService {
       return await delivery;
     } catch (error) {
       this.proactiveThesisDeliveries.delete(idempotencyKey);
+      if (isPrismaUniqueConflict(error)) {
+        const existingRun = await this.repository.findProactiveThesisRun(idempotencyKey);
+        if (existingRun) return { status: 'DUPLICATE', runId: existingRun.id };
+      }
       throw error;
     }
   }
 
-  async trigger(userId: string, raw: unknown, trigger: PipelineTrigger = 'MANUAL', options: { replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; useStoredContext?: boolean; maxRunsPerHour?: number; bypassCooldown?: boolean } = {}) {
+  async trigger(userId: string, raw: unknown, trigger: PipelineTrigger = 'MANUAL', options: { replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; useStoredContext?: boolean; maxRunsPerHour?: number; bypassCooldown?: boolean; proactiveThesisKey?: string } = {}) {
     if (!this.config.enabled) throw new ConflictException('Pipeline automation is disabled');
     const input = PipelineRunRequestSchema.parse(raw);
     const definition = resolvePipelineDefinition(input.pipelineId);
@@ -221,7 +214,7 @@ export class PipelineService {
     definition: NonNullable<ReturnType<typeof resolvePipelineDefinition>>,
     symbol: PipelineSymbol,
     trigger: PipelineTrigger,
-    options: { replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; useStoredContext?: boolean; maxRunsPerHour?: number; bypassCooldown?: boolean },
+    options: { replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; useStoredContext?: boolean; maxRunsPerHour?: number; bypassCooldown?: boolean; proactiveThesisKey?: string },
     provider: ExchangeProvider,
     enqueue: (run: Awaited<ReturnType<PipelineRepository['createRun']>> & { symbol: PipelineSymbol }) => Promise<unknown>,
   ) {
@@ -250,7 +243,7 @@ export class PipelineService {
       ]);
       skippedReason = pipelineSkipReason({ hourlyCount, hourlyLimit, latestCreatedAt: options.bypassCooldown ? undefined : latest?.createdAt, now, cooldownMs: this.config.cooldownMs, isScheduled: trigger === 'SCHEDULE', replay: trigger === 'REPLAY' });
     }
-    const run = await this.repository.createRun({ id, userId, pipelineId: input.pipelineId, symbol, provider, trigger, params: input.params, traceId, correlationId, replayOfRunId: options.replayOfRunId, scheduleId: options.scheduleId, storedContext: options.storedContext });
+    const run = await this.repository.createRun({ id, userId, pipelineId: input.pipelineId, symbol, provider, trigger, params: input.params, traceId, correlationId, replayOfRunId: options.replayOfRunId, scheduleId: options.scheduleId, storedContext: options.storedContext, proactiveThesisKey: options.proactiveThesisKey });
     await this.repository.createSteps(id, definition.steps);
     if (skippedReason) {
       await this.repository.updateRun(id, { status: 'SKIPPED', skippedReason, completedAt: now, durationMs: 0, decision: 'WAIT' });
@@ -269,4 +262,9 @@ export class PipelineService {
     if (mode === 'REPLAY_WITH_STORED_CONTEXT' && !original.storedContext) throw new BadRequestException('Stored context is unavailable for this run');
     return this.trigger(userId, { pipelineId: original.pipelineId, symbol: original.symbol, provider: original.provider, params: original.params ?? {} }, 'REPLAY', { replayOfRunId: original.id, storedContext: mode === 'REPLAY_WITH_STORED_CONTEXT' ? original.storedContext : undefined, useStoredContext: mode === 'REPLAY_WITH_STORED_CONTEXT' });
   }
+}
+
+function isPrismaUniqueConflict(error: unknown): error is { code: 'P2002' } {
+  return typeof error === 'object' && error !== null &&
+    'code' in error && (error as { code?: string }).code === 'P2002';
 }

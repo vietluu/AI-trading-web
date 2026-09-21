@@ -10,8 +10,14 @@ import {
 export class PipelineRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  createRun(data: { id: string; userId: string; pipelineId: string; symbol: string; provider: ExchangeProvider; trigger: PipelineTrigger; params: Record<string, unknown>; traceId: string; correlationId: string; replayOfRunId?: string; scheduleId?: string; storedContext?: unknown }) {
+  createRun(data: { id: string; userId: string; pipelineId: string; symbol: string; provider: ExchangeProvider; trigger: PipelineTrigger; params: Record<string, unknown>; traceId: string; correlationId: string; replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; proactiveThesisKey?: string }) {
     return this.prisma.pipelineRun.create({ data: { ...data, params: data.params as Prisma.InputJsonValue, storedContext: data.storedContext as Prisma.InputJsonValue | undefined } });
+  }
+  findProactiveThesisRun(proactiveThesisKey: string) {
+    return this.prisma.pipelineRun.findUnique({
+      where: { proactiveThesisKey },
+      select: { id: true },
+    });
   }
   findRun(id: string, userId?: string) { return this.prisma.pipelineRun.findFirst({ where: { id, ...(userId ? { userId } : {}) }, include: { steps: { orderBy: { createdAt: 'asc' } }, alerts: { orderBy: { createdAt: 'asc' } } } }); }
   listRuns(userId: string, filters: { status?: PipelineRunStatus; page: number; limit: number }) {

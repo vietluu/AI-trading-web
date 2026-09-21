@@ -9,6 +9,7 @@ describe('PipelineService', () => {
       updateRun: vi.fn().mockResolvedValue(undefined),
       countRecent: vi.fn().mockResolvedValue(0),
       latestForSymbol: vi.fn().mockResolvedValue(null),
+      findProactiveThesisRun: vi.fn().mockResolvedValue(null),
     };
     const queue = {
       enqueue: vi.fn().mockResolvedValue(undefined),
@@ -54,6 +55,7 @@ describe('PipelineService', () => {
       updateRun: vi.fn().mockResolvedValue(undefined),
       countRecent: vi.fn().mockResolvedValue(0),
       latestForSymbol: vi.fn().mockResolvedValue(null),
+      findProactiveThesisRun: vi.fn().mockResolvedValue(null),
     };
     const queue = { enqueue: vi.fn().mockResolvedValue(undefined) };
     const config = { enabled: true, maxRunsPerHour: 120, cooldownMs: 60_000 };
@@ -81,6 +83,7 @@ describe('PipelineService', () => {
     expect(duplicate).toMatchObject({ status: 'DUPLICATE', runId: 'proactive-run-1' });
     expect(repository.createRun).toHaveBeenCalledTimes(1);
     expect(repository.createRun).toHaveBeenCalledWith(expect.objectContaining({
+      proactiveThesisKey: 'proactive-thesis:opp-1:snapshot-1',
       storedContext: expect.objectContaining({
         proactiveThesisIdempotencyKey: 'proactive-thesis:opp-1:snapshot-1',
       }),
@@ -92,20 +95,12 @@ describe('PipelineService', () => {
       updateRun: vi.fn(),
       countRecent: vi.fn(),
       latestForSymbol: vi.fn(),
-    };
-    const prisma = {
-      pipelineRun: {
-        findFirst: vi.fn().mockResolvedValue({ id: 'proactive-run-1' }),
-      },
+      findProactiveThesisRun: vi.fn().mockResolvedValue({ id: 'proactive-run-1' }),
     };
     const resumedService = new PipelineService(
       resumedRepository as never,
       queue as never,
       config as never,
-      undefined,
-      undefined,
-      undefined,
-      prisma as never,
     );
 
     await expect(resumedService.scheduleProactiveThesis(input)).resolves.toMatchObject({
@@ -113,13 +108,58 @@ describe('PipelineService', () => {
       runId: 'proactive-run-1',
     });
     expect(resumedRepository.createRun).not.toHaveBeenCalled();
-    expect(prisma.pipelineRun.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({
-        storedContext: expect.objectContaining({
-          equals: 'proactive-thesis:opp-1:snapshot-1',
-        }),
-      }),
-    }));
+    expect(resumedRepository.findProactiveThesisRun).toHaveBeenCalledWith(
+      'proactive-thesis:opp-1:snapshot-1',
+    );
+  });
+
+  it('atomically reuses one proactive thesis run across concurrent schedulers', async () => {
+    const duplicateError = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+    const repository = {
+      createRun: vi.fn()
+        .mockResolvedValueOnce({ id: 'proactive-run-1' })
+        .mockRejectedValueOnce(duplicateError),
+      createSteps: vi.fn().mockResolvedValue(undefined),
+      updateRun: vi.fn().mockResolvedValue(undefined),
+      countRecent: vi.fn().mockResolvedValue(0),
+      latestForSymbol: vi.fn().mockResolvedValue(null),
+      findProactiveThesisRun: vi.fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 'proactive-run-1' }),
+    };
+    const queue = { enqueue: vi.fn().mockResolvedValue(undefined) };
+    const config = { enabled: true, maxRunsPerHour: 120, cooldownMs: 60_000 };
+    const input = {
+      userId: 'user-1',
+      request: {
+        pipelineId: 'proactive-thesis',
+        symbol: 'BTC-USDT',
+        provider: 'BINANCE_FUTURES',
+        params: {
+          interval: '15m',
+          opportunityId: 'opp-1',
+          snapshotId: 'snapshot-1',
+          sourceDataCutoff: '2026-09-09T01:00:00.000Z',
+        },
+      },
+      scheduleId: 'schedule-1',
+    };
+    const firstScheduler = new PipelineService(repository as never, queue as never, config as never);
+    const secondScheduler = new PipelineService(repository as never, queue as never, config as never);
+
+    const results = await Promise.all([
+      firstScheduler.scheduleProactiveThesis(input),
+      secondScheduler.scheduleProactiveThesis(input),
+    ]);
+
+    expect(results).toEqual(expect.arrayContaining([
+      { status: 'SCHEDULED', runId: 'proactive-run-1' },
+      { status: 'DUPLICATE', runId: 'proactive-run-1' },
+    ]));
+    expect(repository.createRun).toHaveBeenCalledTimes(2);
+    expect(repository.createSteps).toHaveBeenCalledTimes(1);
+    expect(queue.enqueue).toHaveBeenCalledTimes(1);
   });
 
   it('propagates canonical executionContext with deep equality to storedContext and assessPipelineDecision', async () => {
