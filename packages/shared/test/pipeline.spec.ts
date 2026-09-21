@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { FusionRunInputSchema } from "../src/schemas/agents.js";
 import {
   ExecutionContextSchema,
+  PipelineRunRequestSchema,
   PipelineRunResultSchema,
   PipelineScheduleInputSchema,
   StoredPipelineContextSchema,
@@ -45,6 +46,24 @@ describe("PipelineScheduleInputSchema", () => {
     });
     expect(result.intervalMs).toBe(300_000);
     expect(result.maxRunsPerHour).toBe(60);
+  });
+});
+
+describe("PipelineRunRequestSchema", () => {
+  it("accepts the registered proactive pipeline and rejects unknown pipelines", () => {
+    expect(PipelineRunRequestSchema.parse({
+      pipelineId: "proactive-thesis",
+      symbol: "SOL-USDT",
+      provider: "OKX_FUTURES",
+      params: {},
+    })).toMatchObject({ pipelineId: "proactive-thesis" });
+
+    expect(PipelineRunRequestSchema.safeParse({
+      pipelineId: "unregistered-pipeline",
+      symbol: "SOL-USDT",
+      provider: "OKX_FUTURES",
+      params: {},
+    }).success).toBe(false);
   });
 });
 

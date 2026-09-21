@@ -348,7 +348,7 @@ export function evaluateRisk(
     context?.setup === "TRANSITION_PROBE"
   ) {
     plan.riskTier = "PROBE";
-    plan.sizeFactor = Math.min(plan.sizeFactor ?? 1, 0.2);
+    plan.sizeFactor = Math.min(plan.sizeFactor ?? 1, 0.15);
   }
 
   if (input.executionPlan) {
@@ -512,10 +512,10 @@ export function evaluateRisk(
     context?.setup === "TRANSITION_PROBE"
   ) {
     positionSize = rounded(
-      positionSize * 0.2,
+      positionSize * 0.15,
       RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
     );
-    plan.sizeFactor = Math.min(plan.sizeFactor ?? 1, 0.2);
+    plan.sizeFactor = Math.min(plan.sizeFactor ?? 1, 0.15);
   }
   if (!finitePositive(positionSize))
     return reject("MAX_PORTFOLIO_EXPOSURE_EXCEEDED");

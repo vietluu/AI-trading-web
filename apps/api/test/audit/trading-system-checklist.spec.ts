@@ -248,7 +248,7 @@ describe('live trading checklist simulation', () => {
     });
   });
 
-  it('AUDIT: passes lifecycle check when transition is accounted for by an explicit scheduling failure', async () => {
+  it('AUDIT: fails lifecycle rollout when the only downstream evidence is an explicit scheduling failure', async () => {
     const mockPrisma = {
       $transaction: vi.fn().mockImplementation((cb: (tx: unknown) => Promise<unknown>) => cb(mockPrisma)),
       $executeRawUnsafe: vi.fn().mockResolvedValue(1),
@@ -287,8 +287,8 @@ describe('live trading checklist simulation', () => {
     const lifecycleCheck = report.checks.find((c) => c.name === 'PROACTIVE_LIFECYCLE_EVIDENCE');
 
     expect(lifecycleCheck).toBeDefined();
-    expect(lifecycleCheck?.passed).toBe(true);
-    expect(report.allPassed).toBe(true);
+    expect(lifecycleCheck?.passed).toBe(false);
+    expect(report.allPassed).toBe(false);
     expect(lifecycleCheck?.details).toMatchObject({
       watchableTransitions: 1,
       proactiveRuns: 0,

@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-export const PipelineIdSchema = z.literal("FULL_ANALYSIS_DECISION");
+export const PipelineIdSchema = z.enum([
+  "FULL_ANALYSIS_DECISION",
+  "proactive-thesis",
+]);
 export const PipelineProviderSchema = z.enum([
   "BINANCE_FUTURES",
   "OKX_FUTURES",

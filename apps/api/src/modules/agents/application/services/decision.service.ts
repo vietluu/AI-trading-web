@@ -40,6 +40,7 @@ import {
 import { createHash } from "node:crypto";
 import { adaptiveTradingPolicy, assetLiquidityClass, parseSpreadBps } from "../../../pipeline/domain/adaptive-trading-policy";
 import { classifyDetailedRegime, computeRegimeAdaptiveWeights } from "../../domain/analysis/regime-adaptive-weights";
+import { resolveCalibrationAuthority } from "../../domain/calibration-authority";
 import { buildScenarioBlueprint } from "../../domain/analysis/scenario-planning-engine";
 import {
   buildExecutionContext,
@@ -174,39 +175,19 @@ export class DecisionService {
       metadata.timeframe,
       decision.regime.type,
     );
-    const empiricalProbability = this.exactEmpiricalProbability(
+    const calibrationAuthority = resolveCalibrationAuthority(
       confidenceCalibration,
+      decision,
     );
+    const empiricalProbability = calibrationAuthority.empiricalProbability;
     const expectedWinProbability = this.clamp(empiricalProbability ?? 0.5, 0, 1);
-    // A neutral prior is not empirical edge. Keep EV/PF neutral until an exact
-    // or governed blended calibration has enough evidence; downstream Judge
-    // and Risk gates will therefore reject cold-start automatic execution,
-    // UNLESS this is an uncalibrated / cold-start symbol with strong conviction
-    // and without negative fallback evidence.
-    const isColdStart =
-      confidenceCalibration?.status === "INSUFFICIENT_HISTORY" ||
-      confidenceCalibration?.hardGateEligible === false;
-    const spreadBps = this.spreadBasisPoints(
-      rawInput.market?.liquidity?.bidAskSpread ?? rawInput.market?.liquidity?.spread,
-    );
-    const coldStartPolicy = adaptiveTradingPolicy({
-      symbol: rawInput.symbol,
-      provider: metadata.provider,
-      timeframe: metadata.timeframe,
-      regime: decision.regime.type,
-      spreadBps,
-    });
-    const hasNegativeFallbackEvidence =
-      confidenceCalibration?.status === "CALIBRATED" &&
-      confidenceCalibration.empiricalProbability !== null &&
-      confidenceCalibration.empiricalProbability !== undefined &&
-      confidenceCalibration.empiricalProbability < 0.42;
-    const strongColdStart = isColdStart &&
-      !hasNegativeFallbackEvidence &&
-      decision.confidence >= coldStartPolicy.minColdStartConfidence &&
-      decision.opportunityScore >= coldStartPolicy.minColdStartOpportunity;
+    // Only exact, non-fallback calibration owns execution probability. A
+    // strong fallback cohort may preserve the synthesized economics, but only
+    // with reduced PROBE authority downstream.
+    const preserveSynthesizedEconomics =
+      calibrationAuthority.preserveSynthesizedEconomics;
     const expectedValue = empiricalProbability === undefined
-      ? (strongColdStart ? decision.expectedValue : 0)
+      ? (preserveSynthesizedEconomics ? decision.expectedValue : 0)
       : this.clamp(
           expectedWinProbability * decision.expectedReward -
             (1 - expectedWinProbability) * decision.expectedLoss -
@@ -215,17 +196,14 @@ export class DecisionService {
           3,
         );
     const profitFactorEstimate = empiricalProbability === undefined
-      ? (strongColdStart ? decision.profitFactorEstimate : 1)
+      ? (preserveSynthesizedEconomics ? decision.profitFactorEstimate : 1)
       : this.clamp(
           (expectedWinProbability * decision.expectedReward) /
             Math.max((1 - expectedWinProbability) * decision.expectedLoss, 0.05),
           0.1,
           10,
         );
-    const isHardGateEligible =
-      confidenceCalibration?.hardGateEligible === true &&
-      confidenceCalibration?.scope === "EXACT" &&
-      !confidenceCalibration?.fallbackUsed;
+    const isHardGateEligible = calibrationAuthority.authority === 'EXACT_BLOCK';
     const calibrationBlockingReasons: string[] = [];
     let finalConfidence = decision.confidence;
     if (isHardGateEligible && empiricalProbability !== undefined && empiricalProbability < 0.35) {
@@ -248,11 +226,19 @@ export class DecisionService {
 
     const executionEvidence = buildExecutionEvidenceScore({
       signalStrength: decision.confidence,
-      confidenceCalibration,
+      confidenceCalibration: isHardGateEligible ? confidenceCalibration : null,
       expectedReward: decision.expectedReward,
       expectedLoss: decision.expectedLoss,
       executionCost: decision.executionCost,
     });
+    const governedExecutionContext: ExecutionContext | undefined = calibrationAuthority.forceProbe &&
+      decision.executionContext && decision.executionContext.action !== 'WAIT'
+        ? { ...decision.executionContext, action: 'PROBE' as const, riskTier: 'PROBE' as const }
+        : decision.executionContext;
+    const governedThesis: ExecutableThesis | undefined = calibrationAuthority.forceProbe &&
+      decision.thesis && decision.thesis.action !== 'WAIT'
+      ? { ...decision.thesis, action: 'PROBE' as const }
+      : decision.thesis;
 
     const calibratedDecision: DecisionOutput = {
       ...decision,
@@ -264,6 +250,8 @@ export class DecisionService {
       expectedWinProbability: Number(expectedWinProbability.toFixed(3)),
       expectedValue: finalExpectedValue,
       profitFactorEstimate: Number(profitFactorEstimate.toFixed(3)),
+      executionContext: governedExecutionContext,
+      thesis: governedThesis,
       ...(config
         ? {
             learningConfiguration: {
@@ -367,32 +355,18 @@ export class DecisionService {
       decision.regime.type,
       metadata.strategyKey,
     );
-    const empiricalProbability = this.exactEmpiricalProbability(
+    const calibrationAuthority = resolveCalibrationAuthority(
       confidenceCalibration,
+      decision,
     );
+    const empiricalProbability = calibrationAuthority.empiricalProbability;
     const expectedWinProbability = this.clamp(
       empiricalProbability ?? 0.5,
       0,
       1,
     );
-    const isColdStart =
-      confidenceCalibration?.status === "INSUFFICIENT_HISTORY" ||
-      confidenceCalibration?.hardGateEligible === false;
-    const coldStartPolicy = adaptiveTradingPolicy({
-      symbol: metadata.symbol,
-      provider: metadata.provider,
-      timeframe: metadata.timeframe,
-      regime: decision.regime.type,
-    });
-    const hasNegativeFallbackEvidence =
-      confidenceCalibration?.status === "CALIBRATED" &&
-      confidenceCalibration.empiricalProbability !== null &&
-      confidenceCalibration.empiricalProbability !== undefined &&
-      confidenceCalibration.empiricalProbability < 0.42;
-    const strongColdStart = isColdStart &&
-      !hasNegativeFallbackEvidence &&
-      decision.confidence >= coldStartPolicy.minColdStartConfidence &&
-      decision.opportunityScore >= coldStartPolicy.minColdStartOpportunity;
+    const preserveSynthesizedEconomics =
+      calibrationAuthority.preserveSynthesizedEconomics;
     const hasEmpiricalEdge = empiricalProbability !== undefined;
     const expectedValueRaw = hasEmpiricalEdge
           ? this.clamp(
@@ -402,12 +376,9 @@ export class DecisionService {
               -3,
               3,
             )
-          : (strongColdStart ? decision.expectedValue : 0);
+          : (preserveSynthesizedEconomics ? decision.expectedValue : 0);
           
-    const isHardGateEligible =
-      confidenceCalibration?.hardGateEligible === true &&
-      confidenceCalibration?.scope === "EXACT" &&
-      !confidenceCalibration?.fallbackUsed;
+    const isHardGateEligible = calibrationAuthority.authority === 'EXACT_BLOCK';
     const calibrationBlockingReasons: string[] = [];
     let finalConfidence = decision.confidence;
     if (isHardGateEligible && empiricalProbability !== undefined && empiricalProbability < 0.35) {
@@ -430,11 +401,20 @@ export class DecisionService {
 
     const executionEvidence = buildExecutionEvidenceScore({
       signalStrength: decision.confidence,
-      confidenceCalibration,
+      confidenceCalibration: isHardGateEligible ? confidenceCalibration : null,
       expectedReward: decision.expectedReward,
       expectedLoss: decision.expectedLoss,
       executionCost: decision.executionCost,
     });
+
+    const executionContext: ExecutionContext | undefined = calibrationAuthority.forceProbe &&
+      decision.executionContext && decision.executionContext.action !== 'WAIT'
+        ? { ...decision.executionContext, action: 'PROBE' as const, riskTier: 'PROBE' as const }
+        : decision.executionContext;
+    const thesis: ExecutableThesis | undefined = calibrationAuthority.forceProbe &&
+      decision.thesis && decision.thesis.action !== 'WAIT'
+      ? { ...decision.thesis, action: 'PROBE' as const }
+      : decision.thesis;
 
     return {
       ...decision,
@@ -456,9 +436,11 @@ export class DecisionService {
               0.1,
               10,
             )
-          : (strongColdStart ? decision.profitFactorEstimate : 1)
+          : (preserveSynthesizedEconomics ? decision.profitFactorEstimate : 1)
         ).toFixed(3),
       ),
+      executionContext,
+      thesis,
     };
   }
 
@@ -567,16 +549,6 @@ export class DecisionService {
       value,
     });
     return value;
-  }
-
-  private exactEmpiricalProbability(
-    calibration: Awaited<ReturnType<DecisionService["confidenceCalibration"]>>,
-  ): number | undefined {
-    return calibration.status === "CALIBRATED" &&
-      (calibration.scope === "EXACT" || calibration.scope === "BLENDED") &&
-      calibration.hardGateEligible !== false
-      ? (calibration.empiricalProbability ?? undefined)
-      : undefined;
   }
 
   private calibrationHorizon(strategyKey?: string, timeframe?: string) {

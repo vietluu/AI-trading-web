@@ -108,6 +108,30 @@ describe("risk engine", () => {
     expect(result.plannedEquityRiskPct).toBeCloseTo(0.02, 8);
   });
 
+  it("caps a governed probe at fifteen percent of normal size", () => {
+    const executionContext = buildExecutionContext({
+      regime: "PRE_BREAKOUT",
+      setup: "TRANSITION_PROBE",
+      action: "PROBE",
+      price: 50_000,
+      support: 49_000,
+      resistance: 50_500,
+      atr: 500,
+      sourceDataCutoff: new Date("2026-08-02T00:10:00Z"),
+      primaryCandleClosed: true,
+      triggerConfirmed: true,
+    });
+
+    const result = evaluateRisk(input({ executionContext }), {
+      ...limits,
+      maxExposure: 1,
+    });
+
+    expect(result.approved).toBe(true);
+    expect(result.tradePlan).toMatchObject({ riskTier: "PROBE", sizeFactor: 0.15 });
+    expect(result.positionSize).toBeCloseTo((200 / 1040) * 0.15, 8);
+  });
+
   it("rejects a setup when round-trip cost consumes too much stop distance", () => {
     const result = evaluateRisk(input(), {
       ...limits,
@@ -727,4 +751,3 @@ describe("DecisionRiskPolicyService executionEvidence EV gate", () => {
     expect(result.evEvaluationPath).toBeUndefined();
   });
 });
-

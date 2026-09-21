@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ToolDefinition } from "../../domain/contracts/tool-definition.contract";
 import type { ToolExecutionContext } from "../../domain/contracts/tool-context.contract";
 import { MarketToolDataService } from "./market-tool-data.service";
+import { calculateMarketCausality } from "../../domain/market-causality";
 
 @Injectable()
 export class MarketTickerGetTool implements ToolDefinition<{ symbol: string; provider?: string }, Record<string, unknown>> {
@@ -304,6 +305,75 @@ export class MarketOpenInterestGetTool implements ToolDefinition<{ symbol: strin
       deltaOiPercent,
       timestamp: current.timestamp.toISOString(),
       history: history.map((item) => ({ value: item.openInterest, timestamp: item.timestamp.toISOString() })),
+      invocationId: context.invocationId,
+    };
+  }
+}
+
+@Injectable()
+export class MarketCausalityGetTool implements ToolDefinition<{
+  symbol: string;
+  provider?: string;
+  interval?: string;
+}, Record<string, unknown>> {
+  constructor(@Optional() private readonly dataService?: MarketToolDataService) {}
+  public readonly name = "market.causality.get";
+  public readonly version = 1;
+  public readonly displayName = "Get Market Causality";
+  public readonly description = "Explain price expansion using relative volume, open-interest change, and funding without inventing missing evidence";
+  public readonly category = "MARKET_DATA" as const;
+
+  public readonly inputSchema = z.object({
+    symbol: z.string().describe("Symbol name e.g. BTC-USDT"),
+    provider: z.enum(["BINANCE_FUTURES", "OKX_FUTURES"]).optional(),
+    interval: z.string().optional().default("15m"),
+  });
+
+  public readonly outputSchema = z.object({
+    symbol: z.string(),
+    provider: z.string().optional(),
+    interval: z.string(),
+    volumeRatio: z.number().optional(),
+    priceChangePercent: z.number().optional(),
+    deltaOi: z.number().optional(),
+    deltaOiPercent: z.number().optional(),
+    fundingRate: z.number().optional(),
+    squeezeIndicator: z.enum(["SHORT_SQUEEZE", "LONG_BUILDUP", "DISTRIBUTION", "DELEVERAGING", "NONE"]),
+    causality: z.string(),
+    missingEvidence: z.array(z.string()),
+  });
+
+  public readonly executionMode = "SYNCHRONOUS" as const;
+  public readonly sensitivity = "PUBLIC" as const;
+  public readonly sideEffect = "READ_ONLY" as const;
+  public readonly cachePolicy = { type: "SHORT_TTL" as const, ttlSeconds: 15 };
+  public readonly retryPolicy = { maxAttempts: 2, baseDelayMs: 200, maxDelayMs: 1000, retryableErrors: [] };
+  public readonly timeoutMs = 5000;
+  public readonly requiresAuthentication = false;
+  public readonly userScoped = false;
+  public readonly allowedAgentTypes = ["*"];
+  public readonly requiredCapabilities = ["READ_MARKET_DATA" as const];
+  public readonly status = "ACTIVE" as const;
+  public readonly schemaHash = "hash-market-causality-get-v1";
+
+  public async execute(
+    input: { symbol: string; provider?: string; interval?: string },
+    context: ToolExecutionContext,
+  ): Promise<Record<string, unknown>> {
+    if (!this.dataService) throw new Error("Phase 4 market data service is unavailable");
+    const interval = input.interval ?? "15m";
+    const [candles, openInterest, funding] = await Promise.all([
+      this.dataService.candles(input.symbol, input.provider, interval, 21),
+      this.dataService.openInterest(input.symbol, input.provider).catch(() => []),
+      this.dataService.funding(input.symbol, input.provider).catch(() => []),
+    ]);
+    if (candles.length < 2) throw new Error("Candle history is insufficient for causality analysis");
+
+    return {
+      symbol: input.symbol,
+      provider: input.provider,
+      interval,
+      ...calculateMarketCausality({ candles, openInterest, funding }),
       invocationId: context.invocationId,
     };
   }

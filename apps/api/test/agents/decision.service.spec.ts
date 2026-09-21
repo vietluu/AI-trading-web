@@ -239,7 +239,11 @@ describe('DecisionService', () => {
 
   it('keeps fallback calibration as telemetry without changing execution economics', async () => {
     const service = new DecisionService({} as never);
-    const base = service.decide(decisionInput());
+    const base = {
+      ...service.decide(decisionInput()),
+      confidence: 74,
+      directionalAgreement: 70,
+    };
     const calibrationService = service as unknown as {
       confidenceCalibration: (...args: unknown[]) => Promise<{
         status: 'CALIBRATED' | 'INSUFFICIENT_HISTORY';
@@ -255,7 +259,7 @@ describe('DecisionService', () => {
     vi.spyOn(calibrationService, 'confidenceCalibration').mockResolvedValue({
       status: 'CALIBRATED', rawScore: base.confidence,
       empiricalProbability: 0.2, sampleSize: 500, bucketSampleSize: 100,
-      brierScore: 0.4, scope: 'USER_GLOBAL', fallbackUsed: true,
+      brierScore: 0.2, scope: 'USER_GLOBAL', fallbackUsed: true,
     } as never);
 
     const output = await service.calibrateForExecution(base, 'user-1', {
@@ -266,6 +270,53 @@ describe('DecisionService', () => {
     expect(output.expectedWinProbability).toBe(0.5);
     expect(output.expectedValue).toBe(0);
     expect(output.profitFactorEstimate).toBe(1);
+  });
+
+  it('preserves a strong directional fallback candidate as a bounded probe', async () => {
+    const service = new DecisionService({} as never);
+    const base = {
+      ...service.decide(decisionInput()),
+      decision: 'LONG' as const,
+      confidence: 85,
+      directionalAgreement: 90,
+      opportunityScore: 82,
+      expectedValue: 0.8,
+      profitFactorEstimate: 1.8,
+      executionContext: buildExecutionContext({
+        regime: 'TRENDING',
+        setup: 'TREND_PULLBACK',
+        action: 'ENTER',
+        price: 110,
+        support: 105,
+        resistance: 120,
+        atr: 4,
+        sourceDataCutoff: new Date('2026-09-20T10:00:00Z'),
+        primaryCandleClosed: true,
+        triggerConfirmed: true,
+      }),
+    };
+    const calibrationService = service as unknown as {
+      confidenceCalibration: (...args: unknown[]) => Promise<unknown>;
+    };
+    vi.spyOn(calibrationService, 'confidenceCalibration').mockResolvedValue({
+      status: 'CALIBRATED', rawScore: 85,
+      empiricalProbability: 0.3125, sampleSize: 38, bucketSampleSize: 38,
+      brierScore: 0.4, scope: 'USER_GLOBAL', fallbackUsed: true,
+      hardGateEligible: false,
+    });
+
+    const output = await service.calibrateForExecution(base, 'user-1', {
+      symbol: 'SOL-USDT', strategyKey: 'breakout', provider: 'OKX_FUTURES', timeframe: '15m',
+    });
+
+    expect(output.decision).toBe('LONG');
+    expect(output.calibrationBlockingReasons).toEqual([]);
+    expect(output.expectedValue).toBe(0.8);
+    expect(output.profitFactorEstimate).toBe(1.8);
+    expect(output.executionContext).toMatchObject({ action: 'PROBE', riskTier: 'PROBE' });
+    expect(output.executionEvidence).toMatchObject({ calibrationQuality: 'INSUFFICIENT' });
+    expect(output.executionEvidence?.estimatedWinProbability).toBeUndefined();
+    expect(output.executionEvidence?.expectedNetR).toBeUndefined();
   });
 
   it('explains an execution calibration downgrade instead of silently losing SHORT', async () => {

@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PipelineRunRequestSchema } from '@platform/shared';
 
 import { PipelineSchedulerService } from '../../src/modules/pipeline/application/pipeline-scheduler.service';
 import { OpportunityWatcherService } from '../../src/modules/pipeline/application/opportunity-watcher.service';
@@ -223,8 +224,16 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
         findMany: vi.fn().mockResolvedValue([schedule]),
         update: vi.fn().mockResolvedValue({}),
       },
+      auditLog: {
+        create: vi.fn().mockResolvedValue({}),
+      },
     };
-    const pipeline = { trigger: vi.fn().mockResolvedValue({ id: 'run-1' }) };
+    const pipeline = {
+      trigger: vi.fn().mockImplementation((_userId: string, request: unknown) => {
+        PipelineRunRequestSchema.parse(request);
+        return Promise.resolve({ id: 'run-1' });
+      }),
+    };
     const scanner = {
       reserveAnchor: vi.fn().mockResolvedValue({
         run: true,
@@ -308,8 +317,16 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
         findMany: vi.fn().mockResolvedValue([schedule]),
         update: vi.fn().mockResolvedValue({}),
       },
+      auditLog: {
+        create: vi.fn().mockResolvedValue({}),
+      },
     };
-    const pipeline = { trigger: vi.fn().mockResolvedValue({ id: 'run-1' }) };
+    const pipeline = {
+      trigger: vi.fn().mockImplementation((_userId: string, request: unknown) => {
+        PipelineRunRequestSchema.parse(request);
+        return Promise.resolve({ id: 'run-1' });
+      }),
+    };
     const scanner = {
       reserveAnchor: vi.fn().mockResolvedValue({
         run: true,
@@ -341,6 +358,7 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
 
     expect(watcher.observe).toHaveBeenCalledTimes(1);
     expect(pipeline.trigger).toHaveBeenCalledTimes(2);
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
     expect(pipeline.trigger).toHaveBeenCalledWith(
       'user-1',
       expect.objectContaining({
@@ -414,4 +432,3 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
     );
   });
 });
-

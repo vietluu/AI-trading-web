@@ -339,7 +339,9 @@ export async function runRecoveryRolloutAudit(
 
         checks.push({
           name: "PROACTIVE_LIFECYCLE_EVIDENCE",
-          passed: unmatchedWatchableTransitions === 0,
+          passed:
+            unmatchedWatchableTransitions === 0 &&
+            explicitFailures.length === 0,
           details: {
             watchableTransitions: watchableTransitions.length,
             proactiveRuns: proactiveRuns.length,
