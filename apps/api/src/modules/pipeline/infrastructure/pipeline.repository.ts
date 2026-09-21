@@ -10,13 +10,25 @@ import {
 export class PipelineRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  createRun(data: { id: string; userId: string; pipelineId: string; symbol: string; provider: ExchangeProvider; trigger: PipelineTrigger; params: Record<string, unknown>; traceId: string; correlationId: string; replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; proactiveThesisKey?: string }) {
+  createRun(data: { id: string; userId: string; pipelineId: string; symbol: string; provider: ExchangeProvider; trigger: PipelineTrigger; params: Record<string, unknown>; traceId: string; correlationId: string; replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; proactiveThesisKey?: string; proactiveDeliveryState?: string }) {
     return this.prisma.pipelineRun.create({ data: { ...data, params: data.params as Prisma.InputJsonValue, storedContext: data.storedContext as Prisma.InputJsonValue | undefined } });
   }
   findProactiveThesisRun(proactiveThesisKey: string) {
     return this.prisma.pipelineRun.findUnique({
       where: { proactiveThesisKey },
-      select: { id: true },
+      select: { id: true, proactiveDeliveryState: true },
+    });
+  }
+  claimProactiveThesisDelivery(id: string) {
+    return this.prisma.pipelineRun.updateMany({
+      where: {
+        id,
+        OR: [
+          { proactiveDeliveryState: 'FAILED' },
+          { proactiveDeliveryState: null },
+        ],
+      },
+      data: { proactiveDeliveryState: 'DELIVERING' },
     });
   }
   findRun(id: string, userId?: string) { return this.prisma.pipelineRun.findFirst({ where: { id, ...(userId ? { userId } : {}) }, include: { steps: { orderBy: { createdAt: 'asc' } }, alerts: { orderBy: { createdAt: 'asc' } } } }); }
@@ -67,7 +79,7 @@ export class PipelineRepository {
       return { run, paperSignal, sampleReused: true };
     }
   }
-  createSteps(runId: string, steps: Array<{ id: string; type: 'AGENT' | 'FUSION' | 'DECISION' }>) { return this.prisma.pipelineStepRun.createMany({ data: steps.map((step) => ({ runId, stepId: step.id, type: step.type })) }); }
+  createSteps(runId: string, steps: Array<{ id: string; type: 'AGENT' | 'FUSION' | 'DECISION' }>) { return this.prisma.pipelineStepRun.createMany({ data: steps.map((step) => ({ runId, stepId: step.id, type: step.type })), skipDuplicates: true }); }
   updateStep(runId: string, stepId: string, data: Prisma.PipelineStepRunUpdateInput) { return this.prisma.pipelineStepRun.update({ where: { runId_stepId: { runId, stepId } }, data }); }
   skipOpenSteps(runId: string, reason: string, completedAt: Date): Promise<Prisma.BatchPayload> {
     return this.prisma.pipelineStepRun.updateMany({

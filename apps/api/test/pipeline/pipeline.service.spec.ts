@@ -95,7 +95,10 @@ describe('PipelineService', () => {
       updateRun: vi.fn(),
       countRecent: vi.fn(),
       latestForSymbol: vi.fn(),
-      findProactiveThesisRun: vi.fn().mockResolvedValue({ id: 'proactive-run-1' }),
+      findProactiveThesisRun: vi.fn().mockResolvedValue({
+        id: 'proactive-run-1',
+        proactiveDeliveryState: 'DELIVERED',
+      }),
     };
     const resumedService = new PipelineService(
       resumedRepository as never,
@@ -160,6 +163,51 @@ describe('PipelineService', () => {
     expect(repository.createRun).toHaveBeenCalledTimes(2);
     expect(repository.createSteps).toHaveBeenCalledTimes(1);
     expect(queue.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('reclaims a persisted proactive run when queue delivery fails after insertion', async () => {
+    const repository = {
+      createRun: vi.fn().mockResolvedValue({ id: 'proactive-run-1' }),
+      createSteps: vi.fn().mockResolvedValue(undefined),
+      updateRun: vi.fn().mockResolvedValue(undefined),
+      countRecent: vi.fn().mockResolvedValue(0),
+      latestForSymbol: vi.fn().mockResolvedValue(null),
+      findProactiveThesisRun: vi.fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 'proactive-run-1', proactiveDeliveryState: 'FAILED' }),
+      claimProactiveThesisDelivery: vi.fn().mockResolvedValue({ count: 1 }),
+    };
+    const queue = {
+      enqueue: vi.fn()
+        .mockRejectedValueOnce(new Error('queue unavailable'))
+        .mockResolvedValueOnce(undefined),
+    };
+    const config = { enabled: true, maxRunsPerHour: 120, cooldownMs: 60_000 };
+    const service = new PipelineService(repository as never, queue as never, config as never);
+    const input = {
+      userId: 'user-1',
+      request: {
+        pipelineId: 'proactive-thesis', symbol: 'BTC-USDT', provider: 'BINANCE_FUTURES',
+        params: {
+          interval: '15m', opportunityId: 'opp-1', snapshotId: 'snapshot-1',
+          sourceDataCutoff: '2026-09-09T01:00:00.000Z',
+        },
+      },
+      scheduleId: 'schedule-1',
+    };
+
+    await expect(service.scheduleProactiveThesis(input)).rejects.toThrow('queue unavailable');
+    await expect(service.scheduleProactiveThesis(input)).resolves.toEqual({
+      status: 'SCHEDULED', runId: 'proactive-run-1',
+    });
+
+    expect(repository.createRun).toHaveBeenCalledTimes(1);
+    expect(repository.claimProactiveThesisDelivery).toHaveBeenCalledWith('proactive-run-1');
+    expect(queue.enqueue).toHaveBeenCalledTimes(2);
+    expect(repository.updateRun).toHaveBeenCalledWith(
+      'proactive-run-1',
+      expect.objectContaining({ proactiveDeliveryState: 'DELIVERED' }),
+    );
   });
 
   it('propagates canonical executionContext with deep equality to storedContext and assessPipelineDecision', async () => {

@@ -564,6 +564,7 @@ model PipelineRun {
   configurationVersion    Int?
   evaluationKey           String?
   proactiveThesisKey      String?             @unique
+  proactiveDeliveryState  String?
   learningStage           String?
   timeframe               String?
   skippedReason           String?
