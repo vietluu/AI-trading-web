@@ -10,9 +10,26 @@ import { pipelineSkipReason } from '../domain/rate-limit';
 import { PipelineRunnerService } from './pipeline-runner.service';
 import { RedisService } from '../../../redis/redis.service';
 import { ConfluenceCollectorService } from '../infrastructure/confluence-collector.service';
+import { PrismaService } from '../../../database/prisma.service';
+
+export type ProactiveThesisScheduleInput = {
+  userId: string;
+  request: unknown;
+  scheduleId?: string;
+};
+
+export type ProactiveThesisScheduleResult = {
+  status: 'SCHEDULED' | 'DUPLICATE';
+  runId: string;
+};
 
 @Injectable()
 export class PipelineService {
+  private readonly proactiveThesisDeliveries = new Map<
+    string,
+    Promise<ProactiveThesisScheduleResult>
+  >();
+
   constructor(
     private readonly repository: PipelineRepository,
     private readonly queue: PipelineQueueService,
@@ -20,7 +37,64 @@ export class PipelineService {
     @Optional() @Inject(PipelineRunnerService) private readonly runner?: PipelineRunnerService,
     @Optional() private readonly redis?: RedisService,
     @Optional() private readonly confluenceCollector?: ConfluenceCollectorService,
+    @Optional() private readonly prisma?: PrismaService,
   ) {}
+
+  async scheduleProactiveThesis(
+    input: ProactiveThesisScheduleInput,
+  ): Promise<ProactiveThesisScheduleResult> {
+    const request = PipelineRunRequestSchema.parse(input.request);
+    const opportunityId = this.proactiveIdentifier(request.params, 'opportunityId');
+    const snapshotId = this.proactiveIdentifier(request.params, 'snapshotId');
+    const sourceDataCutoff = this.proactiveIdentifier(request.params, 'sourceDataCutoff');
+    const idempotencyKey = `proactive-thesis:${opportunityId}:${snapshotId}`;
+    const existing = this.proactiveThesisDeliveries.get(idempotencyKey);
+    if (existing) {
+      const result = await existing;
+      return { status: 'DUPLICATE', runId: result.runId };
+    }
+    const persistedRun = await this.prisma?.pipelineRun.findFirst({
+      where: {
+        userId: input.userId,
+        pipelineId: 'proactive-thesis',
+        storedContext: {
+          path: ['proactiveThesisIdempotencyKey'],
+          equals: idempotencyKey,
+        },
+      },
+      select: { id: true },
+    });
+    if (persistedRun) return { status: 'DUPLICATE', runId: persistedRun.id };
+
+    const delivery = this.trigger(
+      input.userId,
+      request,
+      'SCHEDULE',
+      {
+        scheduleId: input.scheduleId,
+        bypassCooldown: true,
+        storedContext: {
+          opportunityId,
+          snapshotId,
+          sourceDataCutoff,
+          proactiveThesisIdempotencyKey: idempotencyKey,
+        },
+      },
+    ).then((run) => {
+      if (!run || Array.isArray(run) || typeof run.id !== 'string') {
+        throw new Error('PROACTIVE_THESIS_RUN_ID_UNAVAILABLE');
+      }
+      return { status: 'SCHEDULED' as const, runId: run.id };
+    });
+    this.proactiveThesisDeliveries.set(idempotencyKey, delivery);
+
+    try {
+      return await delivery;
+    } catch (error) {
+      this.proactiveThesisDeliveries.delete(idempotencyKey);
+      throw error;
+    }
+  }
 
   async trigger(userId: string, raw: unknown, trigger: PipelineTrigger = 'MANUAL', options: { replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; useStoredContext?: boolean; maxRunsPerHour?: number; bypassCooldown?: boolean } = {}) {
     if (!this.config.enabled) throw new ConflictException('Pipeline automation is disabled');
@@ -123,6 +197,14 @@ export class PipelineService {
       return parsed.success ? [parsed.data] : [];
     });
     return parsedSymbols.length > 0 ? parsedSymbols : [fallbackSymbol];
+  }
+
+  private proactiveIdentifier(params: Record<string, unknown>, field: string): string {
+    const value = params[field];
+    if (typeof value !== 'string' || value.length === 0) {
+      throw new BadRequestException(`Missing proactive thesis ${field}`);
+    }
+    return value;
   }
 
   private async dispatchRun(payload: Parameters<PipelineQueueService['enqueue']>[0], trigger: PipelineTrigger) {

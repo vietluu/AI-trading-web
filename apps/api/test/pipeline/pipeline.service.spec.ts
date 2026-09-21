@@ -47,6 +47,81 @@ describe('PipelineService', () => {
     expect(result).toMatchObject({ id: 'run-1' });
   });
 
+  it('schedules a proactive thesis once for the same opportunity and snapshot', async () => {
+    const repository = {
+      createRun: vi.fn().mockResolvedValue({ id: 'proactive-run-1' }),
+      createSteps: vi.fn().mockResolvedValue(undefined),
+      updateRun: vi.fn().mockResolvedValue(undefined),
+      countRecent: vi.fn().mockResolvedValue(0),
+      latestForSymbol: vi.fn().mockResolvedValue(null),
+    };
+    const queue = { enqueue: vi.fn().mockResolvedValue(undefined) };
+    const config = { enabled: true, maxRunsPerHour: 120, cooldownMs: 60_000 };
+    const service = new PipelineService(repository as never, queue as never, config as never);
+    const input = {
+      userId: 'user-1',
+      request: {
+        pipelineId: 'proactive-thesis',
+        symbol: 'BTC-USDT',
+        provider: 'BINANCE_FUTURES',
+        params: {
+          interval: '15m',
+          opportunityId: 'opp-1',
+          snapshotId: 'snapshot-1',
+          sourceDataCutoff: '2026-09-09T01:00:00.000Z',
+        },
+      },
+      scheduleId: 'schedule-1',
+    };
+
+    const first = await service.scheduleProactiveThesis(input);
+    const duplicate = await service.scheduleProactiveThesis(input);
+
+    expect(first).toMatchObject({ status: 'SCHEDULED', runId: 'proactive-run-1' });
+    expect(duplicate).toMatchObject({ status: 'DUPLICATE', runId: 'proactive-run-1' });
+    expect(repository.createRun).toHaveBeenCalledTimes(1);
+    expect(repository.createRun).toHaveBeenCalledWith(expect.objectContaining({
+      storedContext: expect.objectContaining({
+        proactiveThesisIdempotencyKey: 'proactive-thesis:opp-1:snapshot-1',
+      }),
+    }));
+
+    const resumedRepository = {
+      createRun: vi.fn(),
+      createSteps: vi.fn(),
+      updateRun: vi.fn(),
+      countRecent: vi.fn(),
+      latestForSymbol: vi.fn(),
+    };
+    const prisma = {
+      pipelineRun: {
+        findFirst: vi.fn().mockResolvedValue({ id: 'proactive-run-1' }),
+      },
+    };
+    const resumedService = new PipelineService(
+      resumedRepository as never,
+      queue as never,
+      config as never,
+      undefined,
+      undefined,
+      undefined,
+      prisma as never,
+    );
+
+    await expect(resumedService.scheduleProactiveThesis(input)).resolves.toMatchObject({
+      status: 'DUPLICATE',
+      runId: 'proactive-run-1',
+    });
+    expect(resumedRepository.createRun).not.toHaveBeenCalled();
+    expect(prisma.pipelineRun.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        storedContext: expect.objectContaining({
+          equals: 'proactive-thesis:opp-1:snapshot-1',
+        }),
+      }),
+    }));
+  });
+
   it('propagates canonical executionContext with deep equality to storedContext and assessPipelineDecision', async () => {
     const { PipelineRunnerService } = await import('../../src/modules/pipeline/application/pipeline-runner.service');
     const { DecisionRiskPolicyService } = await import('../../src/modules/risk/application/decision-risk-policy.service');
