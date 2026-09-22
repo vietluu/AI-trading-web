@@ -168,7 +168,7 @@ describe('Phase 6.6 pipeline runtime policies', () => {
         analyses: {
           market: { summary: 'market', trend: { direction: 'UP', strength: 'STRONG' }, volatility: { level: 'MEDIUM' }, liquidity: {}, derivatives: {}, anomalies: [], dataQuality: 'GOOD', usedTools: [], generatedAt: new Date().toISOString() },
           technical: { summary: 'tech', trend: { direction: 'UP', strength: 'STRONG' }, momentum: { rsi: '58', rsiState: 'NEUTRAL', macd: { trend: 'BULLISH' } }, movingAverages: { alignment: 'BULLISH', pricePosition: 'ABOVE' }, volatility: { bollinger: { position: 'MIDDLE', squeeze: false } }, structure: { marketStructure: 'HH_HL' }, divergence: {}, signals: [], dataQuality: 'GOOD', usedTools: [], generatedAt: new Date().toISOString() },
-          news: { summary: 'news', impact: { level: 'LOW', direction: 'NEUTRAL' }, keyEvents: [], themes: [], riskSignals: [], dataQuality: 'GOOD', usedTools: [], generatedAt: new Date().toISOString() },
+          news: { summary: 'news', impact: { level: 'LOW', direction: 'NEUTRAL' }, keyEvents: [], latestPublishedAt: null, themes: [], riskSignals: [], dataQuality: 'GOOD', usedTools: [], generatedAt: new Date().toISOString() },
           sentiment: { summary: 'sentiment', sentiment: { overall: 'BULLISH', intensity: 'MEDIUM' }, crowdBehavior: { fomo: false, panic: false, euphoria: false }, sources: {}, anomalies: [], dataQuality: 'GOOD', usedTools: [], generatedAt: new Date().toISOString() },
           macro: { summary: 'macro', macroTrend: 'RISK_ON', keyEvents: [], riskFactors: [], dataQuality: 'GOOD', generatedAt: new Date().toISOString() },
           onchain: { summary: 'onchain', activity: 'HIGH', flows: { exchangeInflow: 'rising' }, signals: [], dataQuality: 'GOOD', generatedAt: new Date().toISOString() },
@@ -665,7 +665,7 @@ describe('Phase 6.6 pipeline runtime policies', () => {
     const analyses = {
       market: { summary: 'market', trend: { direction: 'UP', strength: 'STRONG' }, volatility: { level: 'MEDIUM', atr: '0.8' }, liquidity: {}, derivatives: {}, anomalies: [], dataQuality: 'GOOD', usedTools: [], generatedAt: now.toISOString() },
       technical: { summary: 'tech', trend: { direction: 'UP', strength: 'STRONG' }, momentum: { rsi: '58', rsiState: 'NEUTRAL', macd: { trend: 'BULLISH' } }, movingAverages: { alignment: 'BULLISH', pricePosition: 'ABOVE' }, volatility: { bollinger: { position: 'MIDDLE', squeeze: false } }, structure: { marketStructure: 'HH_HL', breakout: true }, divergence: {}, signals: [], dataQuality: 'GOOD', usedTools: [], generatedAt: now.toISOString() },
-      news: { summary: 'news', impact: { level: 'LOW', direction: 'NEUTRAL' }, keyEvents: [], themes: [], riskSignals: [], dataQuality: 'GOOD', usedTools: [], generatedAt: now.toISOString() },
+      news: { summary: 'news', impact: { level: 'LOW', direction: 'NEUTRAL' }, keyEvents: [], latestPublishedAt: null, themes: [], riskSignals: [], dataQuality: 'GOOD', usedTools: [], generatedAt: now.toISOString() },
       sentiment: { summary: 'sentiment', sentiment: { overall: 'BULLISH', intensity: 'MEDIUM' }, crowdBehavior: { fomo: false, panic: false, euphoria: false }, sources: {}, anomalies: [], dataQuality: 'GOOD', usedTools: [], generatedAt: now.toISOString() },
       macro: { summary: 'macro', macroTrend: 'RISK_ON', keyEvents: [], riskFactors: [], dataQuality: 'GOOD', generatedAt: now.toISOString() },
       onchain: { summary: 'onchain', activity: 'HIGH', flows: { exchangeInflow: 'falling' }, signals: [], dataQuality: 'GOOD', generatedAt: now.toISOString() },
@@ -1575,7 +1575,7 @@ describe("drift reassessment boundary", () => {
         analyses: {
           market: { summary: 'market', trend: { direction: 'DOWN', strength: 'STRONG' }, volatility: { atr: 1.5, level: 'MEDIUM' }, liquidity: {}, derivatives: {}, anomalies: [], dataQuality: 'GOOD', usedTools: [], generatedAt: new Date().toISOString() },
           technical: { summary: 'tech', trend: { direction: 'DOWN', strength: 'STRONG' }, momentum: { rsi: '50', rsiState: 'NEUTRAL', macd: { trend: 'BEARISH' } }, movingAverages: { alignment: 'BEARISH', pricePosition: 'BELOW' }, volatility: { bollinger: { position: 'MIDDLE', squeeze: false } }, structure: { marketStructure: 'LH_LL' }, divergence: {}, signals: [], dataQuality: 'GOOD', usedTools: [], generatedAt: new Date().toISOString() },
-          news: { summary: 'news', impact: { level: 'LOW', direction: 'NEUTRAL' }, keyEvents: [], themes: [], riskSignals: [], dataQuality: 'GOOD', usedTools: [], generatedAt: new Date().toISOString() },
+          news: { summary: 'news', impact: { level: 'LOW', direction: 'NEUTRAL' }, keyEvents: [], latestPublishedAt: null, themes: [], riskSignals: [], dataQuality: 'GOOD', usedTools: [], generatedAt: new Date().toISOString() },
           sentiment: { summary: 'sentiment', sentiment: { overall: 'BEARISH', intensity: 'MEDIUM' }, crowdBehavior: { fomo: false, panic: false, euphoria: false }, sources: {}, anomalies: [], dataQuality: 'GOOD', usedTools: [], generatedAt: new Date().toISOString() },
           macro: { summary: 'macro', macroTrend: 'RISK_OFF', keyEvents: [], riskFactors: [], dataQuality: 'GOOD', generatedAt: new Date().toISOString() },
           onchain: { summary: 'onchain', activity: 'HIGH', flows: { exchangeInflow: 'rising' }, signals: [], dataQuality: 'GOOD', generatedAt: new Date().toISOString() },
@@ -1709,4 +1709,3 @@ describe("drift reassessment boundary", () => {
     });
   });
 });
-

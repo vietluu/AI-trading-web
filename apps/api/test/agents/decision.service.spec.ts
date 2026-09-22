@@ -37,6 +37,7 @@ function fixture(): { analyses: FusionInput; fusionOutput: FusionOutput } {
     news: {
       summary: 'News flow is constructive.',
       impact: { level: 'MEDIUM', direction: 'POSITIVE' }, keyEvents: [], themes: [],
+      latestPublishedAt: null,
       riskSignals: [], dataQuality: 'GOOD', usedTools: ['news.articles.list'], generatedAt,
     },
     sentiment: {

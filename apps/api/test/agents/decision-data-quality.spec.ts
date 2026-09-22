@@ -60,6 +60,7 @@ describe("Data-Quality Driven Decision Weighting", () => {
         summary: "Neutral news",
         impact: { level: "LOW" as const, direction: "NEUTRAL" as const },
         keyEvents: [],
+        latestPublishedAt: null,
         themes: [],
         riskSignals: [],
         dataQuality: "PARTIAL" as const, // PARTIAL news should be down-weighted

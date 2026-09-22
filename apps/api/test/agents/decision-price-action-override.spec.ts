@@ -30,6 +30,7 @@ function baseAnalyses(): { analyses: FusionInput; fusionOutput: FusionOutput } {
       summary: 'Generic negative news about Fed balance sheet concerns.',
       impact: { level: 'HIGH', direction: 'NEGATIVE' },
       keyEvents: [{ title: 'Why the Fed balance sheet is lying to you', impact: 'NEGATIVE', importance: 80 }],
+      latestPublishedAt: null,
       themes: ['macro-uncertainty'],
       riskSignals: ['A major news event may cause abrupt market repricing.'],
       dataQuality: 'GOOD', usedTools: ['news.articles.list'], generatedAt,

@@ -23,7 +23,8 @@ function input(): DecisionInput {
   const news = {
     summary: 'Fresh confirmed positive event.', impact: { level: 'HIGH' as const, direction: 'POSITIVE' as const },
     keyEvents: [{ title: 'Approval', impact: 'POSITIVE' as const, importance: 90 }], themes: [], riskSignals: [],
-    dataQuality: 'GOOD' as const, usedTools: ['news.articles.list' as const], generatedAt,
+    dataQuality: 'GOOD' as const, usedTools: ['news.articles.list' as const],
+    latestPublishedAt: generatedAt, generatedAt,
   };
   const fusionOutput = {
     summary: 'News-led positive setup.', combinedAnalysis: { market: market.summary, technical: technical.summary, news: news.summary, sentiment: '', macro: '', onchain: '' },
@@ -70,6 +71,14 @@ describe('news probe production chain', () => {
     });
 
     expect(decision).toMatchObject({ decision: 'LONG', executionContext: { action: 'PROBE', riskTier: 'PROBE' }, thesis: { action: 'PROBE' } });
+    expect(decision.confidenceCalibration).toMatchObject({
+      status: 'INSUFFICIENT_HISTORY',
+      // No exact cohort owns this decision, so news authority is bounded to a
+      // probe even though the market corroboration is genuine.
+      fallbackUsed: false,
+      scope: 'NONE',
+      hardGateEligible: false,
+    });
     const risk = evaluateRisk({
       symbol: 'BTC-USDT', decision, account: { balance: 10_000, equity: 10_000, peakEquity: 10_000 }, currentPositions: [],
       marketData: { price: 108_200, volatility: 0.02 }, now: new Date(),

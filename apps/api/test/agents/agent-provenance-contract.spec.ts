@@ -97,6 +97,7 @@ describe("AgentProvenanceSchema and specialist output provenance contracts", () 
       summary: "Macro events quiet",
       impact: { level: "LOW", direction: "NEUTRAL" },
       keyEvents: [],
+      latestPublishedAt: null,
       themes: [],
       riskSignals: [],
       dataQuality: "GOOD",

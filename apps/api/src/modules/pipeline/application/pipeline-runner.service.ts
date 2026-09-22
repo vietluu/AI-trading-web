@@ -95,10 +95,12 @@ function newsProbeAuthorityFromPipelineEvidence(input: {
 }): NewsProbeAuthorityInput | undefined {
   const news = input.analyses.news;
   if (!news || news.impact.direction === 'NEUTRAL') return undefined;
-  const sourceTimestamp = news.provenance?.sourceTimestamp;
-  // generatedAt is the analysis run time, not the article/source publication
-  // time. Without an actual source timestamp, news freshness is unknowable.
-  if (!sourceTimestamp) return undefined;
+  // This field is populated only from a real article `publishedAt` record by
+  // the deterministic News Analyst. Generic provenance and `generatedAt` are
+  // analysis metadata, not publication evidence, so they cannot establish
+  // freshness for a news-accelerated probe.
+  const publishedAt = news.latestPublishedAt;
+  if (!publishedAt) return undefined;
   const importance = Math.max(
     news.impact.level === 'HIGH' ? 80 : 0,
     ...(news.keyEvents ?? []).map((event) => event.importance),
@@ -124,7 +126,7 @@ function newsProbeAuthorityFromPipelineEvidence(input: {
       // News analyst output intentionally does not expose article IDs. Do not
       // convert titles, tools, or provider names into fabricated source IDs.
       sourceIds: [],
-      publishedAt: sourceTimestamp,
+      publishedAt,
     },
     causality: {
       priceChangePercent: finiteNumber(input.indicatorSnapshot?.values?.priceChangePercent),

@@ -76,6 +76,7 @@ describe("News and Sentiment Analyst Agents", () => {
       riskSignals: [],
       dataQuality: "GOOD",
       usedTools: [...NEWS_ANALYST_ALLOWED_TOOLS].slice(0, 2),
+      latestPublishedAt: "2026-09-22T10:00:00.000Z",
       generatedAt,
     } as const;
     const sentiment = {
@@ -164,6 +165,7 @@ describe("News and Sentiment Analyst Agents", () => {
               symbols: ["BTC"],
               sourceId: "source-1",
               corroboratingSourceIds: ["source-1", "source-2", "source-3"],
+              publishedAt: "2026-09-22T10:00:00.000Z",
             },
           ],
         },
@@ -174,6 +176,60 @@ describe("News and Sentiment Analyst Agents", () => {
     expect(NewsAgentOutputSchema.safeParse(output).success).toBe(true);
     expect(output?.impact).toEqual({ level: "HIGH", direction: "POSITIVE" });
     expect(output?.dataQuality).toBe("GOOD");
+    expect(output?.latestPublishedAt).toBe("2026-09-22T10:00:00.000Z");
+  });
+
+  it("fails closed on article freshness when trusted records lack publication timestamps", () => {
+    const output = NEWS_ANALYST_DEFINITION.buildDeterministicOutput?.(
+      {
+        "news.articles.list": {
+          articles: [{
+            id: "n1",
+            title: "ETF approval drives institutional inflow",
+            importance: 90,
+            kind: "NEWS_ARTICLE",
+            symbols: ["BTC"],
+            sourceId: "source-1",
+          }],
+        },
+      },
+      ["news.articles.list"],
+    );
+
+    expect(output?.latestPublishedAt).toBeNull();
+  });
+
+  it("uses publication time from directional evidence, not a newer neutral article", () => {
+    const output = NEWS_ANALYST_DEFINITION.buildDeterministicOutput?.(
+      {
+        "news.articles.list": {
+          articles: [
+            {
+              id: "directional",
+              title: "ETF approval drives institutional inflow",
+              importance: 90,
+              kind: "NEWS_ARTICLE",
+              symbols: ["BTC"],
+              sourceId: "source-1",
+              publishedAt: "2026-09-22T09:45:00.000Z",
+            },
+            {
+              id: "neutral",
+              title: "Protocol schedules routine maintenance window",
+              importance: 80,
+              kind: "NEWS_ARTICLE",
+              symbols: ["BTC"],
+              sourceId: "source-2",
+              publishedAt: "2026-09-22T10:00:00.000Z",
+            },
+          ],
+        },
+      },
+      ["news.articles.list"],
+    );
+
+    expect(output?.impact.direction).toBe("POSITIVE");
+    expect(output?.latestPublishedAt).toBe("2026-09-22T09:45:00.000Z");
   });
 
   it("raises a corroborated systemic policy cluster to high impact", () => {

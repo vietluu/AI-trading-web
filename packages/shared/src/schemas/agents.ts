@@ -355,6 +355,10 @@ export const NewsAgentOutputSchema = z
         })
         .strict(),
     ),
+    // This is article publication time from the news source, never the time
+    // the analyst fetched or generated an analysis. Null means freshness is
+    // unknowable and must not authorize a news-accelerated trade.
+    latestPublishedAt: z.string().datetime().nullable().default(null),
     themes: z.array(z.string()),
     riskSignals: z.array(z.string()),
     dataQuality: AgentDataQualitySchema,

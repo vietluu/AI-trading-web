@@ -29,6 +29,7 @@ function baseAnalyses(): { analyses: FusionInput; fusionOutput: FusionOutput } {
     news: {
       summary: 'No breaking news.',
       impact: { level: 'LOW', direction: 'NEUTRAL' }, keyEvents: [], themes: [],
+      latestPublishedAt: null,
       riskSignals: [], dataQuality: 'GOOD', usedTools: ['news.articles.list'], generatedAt,
     },
     sentiment: {

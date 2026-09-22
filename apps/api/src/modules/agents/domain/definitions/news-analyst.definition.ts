@@ -36,6 +36,13 @@ function deterministicNews(
     typeof value === "string" || typeof value === "number"
       ? String(value)
       : fallback;
+  const sourcePublishedAt = (item: Record<string, unknown>): string | null => {
+    // `publishedAt` is the article source field returned by the news tools.
+    // Do not treat ingestion, fetch, or analysis timestamps as publication.
+    if (typeof item.publishedAt !== "string") return null;
+    const parsed = Date.parse(item.publishedAt);
+    return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+  };
   const unique = [
     ...new Map(
       records.map((item) => [
@@ -116,6 +123,7 @@ function deterministicNews(
       riskSignals: ["News coverage is currently sparse."],
       dataQuality: "INSUFFICIENT",
       usedTools: usedTools as NewsAgentOutput["usedTools"],
+      latestPublishedAt: null,
       generatedAt: new Date().toISOString(),
     };
   }
@@ -129,6 +137,16 @@ function deterministicNews(
         ? ("POSITIVE" as const)
         : ("NEGATIVE" as const);
   const maximumImportance = Math.max(...top.map((item) => item.importance));
+  // Freshness must belong to an article supporting the output direction. A
+  // recent neutral/unrelated article cannot make an older directional event
+  // eligible for a news-accelerated probe.
+  const directionSupportingArticles = directional.filter(
+    (item) => item.direction === direction,
+  );
+  const latestPublishedAt = directionSupportingArticles
+    .map(({ item }) => sourcePublishedAt(item))
+    .filter((publishedAt): publishedAt is string => publishedAt !== null)
+    .sort((left, right) => Date.parse(right) - Date.parse(left))[0] ?? null;
   const trustedSourceCount = new Set(unique.flatMap(sourceIds)).size;
   return {
     summary: `${unique.length} trusted recent article(s) from ${trustedSourceCount} independent source(s) were evaluated deterministically; verified market impact is ${direction.toLowerCase()}.`,
@@ -160,6 +178,7 @@ function deterministicNews(
       .map(({ item }) => safeText(item.title, "Negative market event")),
     dataQuality: trustedSourceCount >= 3 ? "GOOD" : "PARTIAL",
     usedTools: usedTools as NewsAgentOutput["usedTools"],
+    latestPublishedAt,
     generatedAt: new Date().toISOString(),
   };
 }
@@ -253,6 +272,7 @@ export const NEWS_ANALYST_DEFINITION: AgentDefinition<
           tool as (typeof NEWS_ANALYST_ALLOWED_TOOLS)[number],
         ),
     ),
+    latestPublishedAt: null,
     generatedAt: new Date().toISOString(),
   }),
 };

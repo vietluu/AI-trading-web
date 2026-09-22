@@ -25,7 +25,7 @@ import type { PipelineJob } from "../../src/modules/pipeline/infrastructure/pipe
 import type { MarketDataService } from "../../src/market-data/application/market-data.service";
 import type { SettingsService } from "../../src/settings/settings.service";
 import type { RedisService } from "../../src/redis/redis.service";
-import type { DecisionOutput } from "@platform/shared";
+import type { DecisionOutput, FusionInput } from "@platform/shared";
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -291,15 +291,18 @@ describe("Proactive Thesis Pipeline Integration", () => {
 
   it('passes fresh high-news quality and snapshot market causality into the production decision path', async () => {
     const fusionResult = makeFusionResult();
-    fusionResult.analyses.news = {
+    const freshNews: FusionInput['news'] = {
       summary: 'Fresh positive protocol announcement.',
       impact: { level: 'HIGH', direction: 'POSITIVE' },
       keyEvents: [{ title: 'Protocol approval', impact: 'POSITIVE', importance: 90 }],
       themes: [], riskSignals: [], dataQuality: 'GOOD', usedTools: ['news.articles.list'],
-      provenance: { provider: 'news-feed', sourceTimestamp: cutoff, coverage: 'FULL', unavailableFields: [] },
+      latestPublishedAt: cutoff,
       generatedAt: cutoff,
-    } as never;
-    mockFusion.runDetailed.mockResolvedValue(fusionResult);
+    };
+    mockFusion.runDetailed.mockResolvedValue({
+      ...fusionResult,
+      analyses: { ...fusionResult.analyses, news: freshNews },
+    });
     mockSnapshotService.build = vi.fn().mockResolvedValue({
       ...makeSnapshot(),
       participation: { ...makeSnapshot().participation, volumeRatio: 1.6, volumeState: 'EXPANDING' },
@@ -321,14 +324,21 @@ describe("Proactive Thesis Pipeline Integration", () => {
 
   it('fails closed when high-impact news lacks a source publication timestamp', async () => {
     const fusionResult = makeFusionResult();
-    fusionResult.analyses.news = {
+    const newsWithoutPublicationTime: FusionInput['news'] = {
       summary: 'Reprocessed old positive protocol announcement.',
       impact: { level: 'HIGH', direction: 'POSITIVE' },
       keyEvents: [{ title: 'Old protocol approval', impact: 'POSITIVE', importance: 90 }],
       themes: [], riskSignals: [], dataQuality: 'GOOD', usedTools: ['news.articles.list'],
+      latestPublishedAt: null,
+      // This generic analysis metadata is deliberately not article publication
+      // time and must never authorize a fresh news probe.
+      provenance: { provider: 'news-feed', sourceTimestamp: cutoff, coverage: 'FULL', unavailableFields: [] },
       generatedAt: cutoff,
-    } as never;
-    mockFusion.runDetailed.mockResolvedValue(fusionResult);
+    };
+    mockFusion.runDetailed.mockResolvedValue({
+      ...fusionResult,
+      analyses: { ...fusionResult.analyses, news: newsWithoutPublicationTime },
+    });
 
     await pipelineRunner.run(makeJob());
 
