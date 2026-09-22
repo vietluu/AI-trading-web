@@ -22,6 +22,7 @@ const approve: ThesisReview = { action: 'APPROVE', reasonCodes: [], evidenceRefs
 
 function fixture() {
   let assessment: RiskAssessment | null = null;
+  let latestSnapshot: unknown = null;
   const orders: Array<Record<string, unknown>> = [];
   const contexts = new Set<string>();
   const audits: Array<Prisma.AgentRunUncheckedCreateInput> = [];
@@ -38,6 +39,7 @@ function fixture() {
         return Promise.resolve(assessment);
       },
     },
+    anticipatoryMarketSnapshot: { findFirst: () => Promise.resolve(latestSnapshot) },
     livePosition: { findFirst: () => Promise.resolve(null), findMany: () => Promise.resolve([]) },
     liveAccountSnapshot: { findFirst: () => Promise.resolve({ totalEquity: 10000, availableBalance: 10000 }), aggregate: () => Promise.resolve({ _max: { totalEquity: 10000 } }) },
     liveOrder: {
@@ -58,12 +60,17 @@ function fixture() {
     account: () => Promise.reject(new Error('Fixture exchange unavailable after submission')),
     positions: () => Promise.resolve([]), openOrders: () => Promise.resolve([]),
   };
+  let currentPrice = 108_300;
+  const liveQuote = vi.fn(() => Promise.resolve({
+    provider: 'OKX_FUTURES', symbol: 'BTC-USDT', markPrice: String(currentPrice), lastPrice: String(currentPrice),
+  }));
   const live = new LiveTradingService(db as never, exchange as never,
     { values: { mode: 'DEMO', runtimeEnabled: true, approvalTtlMs: 60000, cooldownMs: 0, maxEntryDriftBps: 10 }, assertExecutionAllowed: () => undefined } as never,
-    { record: () => Promise.resolve() } as never, config as never, risk, {} as never, {} as never);
+    { record: () => Promise.resolve() } as never, config as never, risk, {} as never, { ticker: liveQuote } as never);
   const thesis = createValidLongThesis(); thesis.targets = [{ price: 112000, fraction: 1 }]; thesis.setup = 'TREND_PULLBACK';
   const snapshot = createBaseSnapshot();
-  const provider = { execute: () => Promise.resolve({ json: { preferred: thesis, alternatives: [] }, provider: 'OPENAI', model: 'fixture', usage: { promptTokens: 1, completionTokens: 1 } }) };
+  const fullAnalysisTrigger = vi.fn(() => Promise.resolve({ json: { preferred: thesis, alternatives: [] }, provider: 'OPENAI', model: 'fixture', usage: { promptTokens: 1, completionTokens: 1 } }));
+  const provider = { execute: fullAnalysisTrigger };
   const researcher = new TradeResearcherService(provider as never, new DecisionService({} as never), db as never);
   const critic = new ChainOfThoughtReflectionService({ execute: () => Promise.resolve({ json: approve }) } as never);
   const context = { userId: 'user-1', parentSnapshotId: 'pipeline-1', configHash: 'fixture-config-hash', promptVersion: 1 };
@@ -73,7 +80,7 @@ function fixture() {
     account: { balance: new Prisma.Decimal(10000), equity: new Prisma.Decimal(10000), peakEquity: new Prisma.Decimal(10000) }, positions, price: 108200, volatility: 0.01,
     tradePlanContext: { timeframeMs: 900000, proactive: { thesisId: 'audit-1', thesis: applied, snapshot, mode, sizeFactor: 1 } },
   });
-  return { db, live, submitted, orders, audits, researcher, critic, context, thesis, snapshot, assess, assessment: () => assessment };
+  return { db, live, submitted, orders, audits, researcher, critic, context, thesis, snapshot, assess, fullAnalysisTrigger, liveQuote, setCurrentPrice: (price: number) => { currentPrice = price; }, setLatestSnapshot: (value: unknown) => { latestSnapshot = value; }, assessment: () => assessment };
 }
 
 describe('joined proactive execution with external IO fixtures', () => {
@@ -89,10 +96,40 @@ describe('joined proactive execution with external IO fixtures', () => {
     expect(await f.assess(applied)).toMatchObject({ approved: true, stopLoss: 107400 });
     expect(f.audits[1]).toMatchObject({ parentRunId: 'audit-1', contextSnapshotId: 'context-1', output: { appliedThesis: { decisionSource: 'AI' } } });
     expect(f.assessment()?.executionAuthorization).toMatchObject({ mode: 'DEMO', connectionId });
+    f.fullAnalysisTrigger.mockClear();
     expect(await f.live.executePipeline('user-1', 'pipeline-1')).toMatchObject({ outcome: 'ORDER_SUBMITTED' });
+    expect(f.fullAnalysisTrigger).not.toHaveBeenCalled();
     expect(f.submitted).toHaveLength(1);
     expect(f.submitted[0]).toMatchObject({ orderType: 'LIMIT', limitPrice: '108200', timeInForce: 'IOC', expiresAt: '2026-09-09T12:15:00.000Z', takeProfit: '112000' });
     expect(f.orders[0]).toMatchObject({ type: 'LIMIT', tradePlan: { targets: [{ price: 112000, fraction: 1 }] } });
+  });
+  it('does not submit a DEMO order after the persisted chase limit is exceeded', async () => {
+    const f = fixture();
+    expect(await f.assess(f.thesis)).toMatchObject({ approved: true });
+    f.setCurrentPrice(108_621);
+
+    expect(await f.live.executePipeline('user-1', 'pipeline-1')).toMatchObject({
+      outcome: 'EXECUTION_FAILED',
+      errorMessage: 'PERSISTED_THESIS_ENTRY_CHASE_DISTANCE_EXCEEDED',
+    });
+    expect(f.submitted).toEqual([]);
+  });
+  it('uses the latest persisted snapshot ATR without rerunning the researcher', async () => {
+    const f = fixture();
+    expect(await f.assess(f.thesis)).toMatchObject({ approved: true });
+    const latest = structuredClone(f.snapshot);
+    if (latest.volatility.coverage !== 'AVAILABLE') throw new Error('fixture volatility must be available');
+    latest.volatility.atr = 250;
+    f.setLatestSnapshot({ snapshotJson: latest });
+    f.setCurrentPrice(108_621);
+    f.fullAnalysisTrigger.mockClear();
+
+    expect(await f.live.executePipeline('user-1', 'pipeline-1')).toMatchObject({
+      outcome: 'EXECUTION_FAILED',
+      errorMessage: 'PERSISTED_THESIS_ENTRY_PULLBACK_PENDING',
+    });
+    expect(f.fullAnalysisTrigger).not.toHaveBeenCalled();
+    expect(f.submitted).toEqual([]);
   });
   it('REQUIRE_TRIGGER remains no-order after real Risk persistence', async () => {
     const f = fixture(); const thesis = applyThesisReview(f.thesis, { ...approve, action: 'REQUIRE_TRIGGER' });

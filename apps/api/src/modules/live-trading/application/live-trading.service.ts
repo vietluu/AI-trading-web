@@ -1,7 +1,7 @@
 import { assertDeclaredLimitOrder } from '../../../exchange/domain/declared-limit-order';
 import { isRestingEntryExpired } from '../domain/resting-limit-expiry';
 import type { AnticipatoryExecutionInput } from '../../agents/domain/analysis/anticipatory-snapshot-builder';
-import { proactiveOrderTerms, proactiveAuthorizationAllowed, ProactiveAuthorizationSchema, StoredProbeSchema, thesisTriggersSatisfied } from '../../risk/domain/thesis-execution';
+import { evaluatePersistedThesisEntry, proactiveOrderTerms, proactiveAuthorizationAllowed, ProactiveAuthorizationSchema, StoredProbeSchema, thesisTriggersSatisfied } from '../../risk/domain/thesis-execution';
 import { normalizeTerminalOrderStatus } from "../domain/closed-trade-cycle";
 
 export function resolveExecutionOrderTerms(
@@ -54,7 +54,7 @@ import {
   Optional,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import type { DecisionOutput, RiskOutput } from "@platform/shared";
+import { AnticipatoryMarketSnapshotSchema, type DecisionOutput, type RiskOutput } from "@platform/shared";
 import { AuditService } from "../../../audit/audit.service";
 import type { RequestMetadata } from "../../../common/request-context";
 import { PrismaService } from "../../../database/prisma.service";
@@ -1069,6 +1069,13 @@ export class LiveTradingService {
       referencePrice: sizing.referencePrice,
     });
     const approvedTerms = resolveExecutionOrderTerms(assessment.tradePlan, new Date());
+    if (assessment.executionAuthorization) {
+      await this.assertPersistedThesisEntryAllowed(
+        assessment.executionAuthorization,
+        connection.provider,
+        assessment.symbol,
+      );
+    }
     const result = await this.submit(
       userId,
       connection,
@@ -3030,6 +3037,45 @@ export class LiveTradingService {
           error: this.safeError(error),
         });
       }
+    }
+  }
+
+  private async assertPersistedThesisEntryAllowed(
+    authorization: unknown,
+    provider: ExchangeProvider,
+    symbol: string,
+  ): Promise<void> {
+    const parsed = ProactiveAuthorizationSchema.parse(authorization);
+    const ticker = await this.publicExchanges.ticker(provider, symbol);
+    const currentPrice = Number(ticker.markPrice ?? ticker.lastPrice);
+    const snapshots = this.prisma as unknown as {
+      anticipatoryMarketSnapshot?: {
+        findFirst: (args: unknown) => Promise<{ snapshotJson: unknown } | null>;
+      };
+    };
+    const latestRow = snapshots.anticipatoryMarketSnapshot
+      ? await snapshots.anticipatoryMarketSnapshot.findFirst({
+        where: {
+          provider: parsed.snapshot.provider,
+          symbol,
+          timeframe: parsed.snapshot.timeframe,
+          sourceDataCutoff: { lte: new Date() },
+        },
+        orderBy: { sourceDataCutoff: 'desc' },
+      })
+      : null;
+    const latestSnapshot = AnticipatoryMarketSnapshotSchema.safeParse(latestRow?.snapshotJson);
+    const snapshot = latestSnapshot.success ? latestSnapshot.data : parsed.snapshot;
+    const decision = evaluatePersistedThesisEntry({
+      thesis: parsed.thesis,
+      snapshot,
+      currentPrice,
+      atr: snapshot.volatility.coverage === 'AVAILABLE'
+        ? snapshot.volatility.atr
+        : Number.NaN,
+    });
+    if (decision.action !== 'ENTER') {
+      throw new ForbiddenException(`PERSISTED_THESIS_ENTRY_${decision.reasonCode}`);
     }
   }
 
