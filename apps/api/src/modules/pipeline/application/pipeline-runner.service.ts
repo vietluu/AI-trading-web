@@ -11,6 +11,7 @@ import {
   FusionRunInputSchema,
   type FusionInput,
   type FusionOutput,
+  type AnticipatoryMarketSnapshot,
 } from "@platform/shared";
 import { AgentInvocationSource } from "../../agents/domain/enums";
 import { FusionService } from "../../agents/application/services/fusion.service";
@@ -67,6 +68,7 @@ import {
 } from "../domain/gate-decision";
 import { evaluateExecutionReadiness } from "../domain/execution-readiness";
 import { buildEvaluationKey } from "../domain/evaluation-identity";
+import type { NewsProbeAuthorityInput } from '../../agents/domain/news-probe-authority';
 
 class PipelineCancelledError extends Error {}
 class PipelineExecutionLockBusyError extends Error {}
@@ -80,6 +82,56 @@ const DISLOCATION_CANARY_ADVISORY_REASONS = new Set([
   "CALIBRATION_UNRELIABLE",
 ]);
 const BUILT_IN_CONFIGURATION_VERSION = 0;
+
+function finiteNumber(value: unknown): number | undefined {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function newsProbeAuthorityFromPipelineEvidence(input: {
+  analyses: FusionInput;
+  indicatorSnapshot?: { values?: Record<string, unknown> } | null;
+  anticipatorySnapshot?: AnticipatoryMarketSnapshot;
+}): NewsProbeAuthorityInput | undefined {
+  const news = input.analyses.news;
+  if (!news || news.impact.direction === 'NEUTRAL') return undefined;
+  const importance = Math.max(
+    news.impact.level === 'HIGH' ? 80 : 0,
+    ...(news.keyEvents ?? []).map((event) => event.importance),
+  );
+  const confidence = news.dataQuality === 'GOOD' ? 90 : news.dataQuality === 'PARTIAL' ? 70 : 0;
+  const snapshot = input.anticipatorySnapshot;
+  const derivatives = snapshot?.derivatives.coverage === 'AVAILABLE'
+    ? snapshot.derivatives
+    : undefined;
+  const participation = snapshot?.participation.coverage === 'AVAILABLE'
+    ? snapshot.participation
+    : undefined;
+  const volumeChangePercent = finiteNumber(input.indicatorSnapshot?.values?.volumeChangePercent);
+  const volumeRatio = participation?.volumeRatio ??
+    (volumeChangePercent === undefined ? undefined : 1 + volumeChangePercent / 100);
+  const liquidation = derivatives?.liquidationContext;
+
+  return {
+    news: {
+      importance,
+      confidence,
+      direction: news.impact.direction,
+      // News analyst output intentionally does not expose article IDs. Do not
+      // convert titles, tools, or provider names into fabricated source IDs.
+      sourceIds: [],
+      publishedAt: news.provenance?.sourceTimestamp ?? news.generatedAt,
+    },
+    causality: {
+      priceChangePercent: finiteNumber(input.indicatorSnapshot?.values?.priceChangePercent),
+      volumeRatio,
+      deltaOiPercent: derivatives?.openInterestChangePct,
+      fundingRate: derivatives?.fundingRate ?? finiteNumber(input.analyses.market?.derivatives?.fundingRate),
+      liquidationEvidence: liquidation?.coverage === 'AVAILABLE' &&
+        liquidation.longLiquidations + liquidation.shortLiquidations > 0,
+    },
+  };
+}
 
 function marketDislocationFromParams(value: unknown): {
   direction: "BULLISH" | "BEARISH";
@@ -563,7 +615,24 @@ export class PipelineRunnerService {
           pipelineRunId: runId, provider: job.provider, timeframe: String(interval), referencePrice: lastPrice,
           anticipatorySnapshot: snapshot,
           closedCandleEvidence,
+          newsProbeAuthority: newsProbeAuthorityFromPipelineEvidence({
+            analyses,
+            indicatorSnapshot,
+            anticipatorySnapshot: snapshot,
+          }),
         });
+        if (baseline.decision === 'WAIT') {
+          const reason = baseline.overrides.find((override) => override.startsWith('NEWS_')) ?? 'BASELINE_DECISION_WAIT';
+          const completedAt = new Date();
+          await this.finishStep(runId, 'decision', { baseline, reason }, completedAt);
+          await this.finalizeEarlyTerminalRun(
+            runId,
+            { status: 'SKIPPED', decision: 'WAIT', skippedReason: reason },
+            reason,
+            completedAt,
+          );
+          return { outcome: 'SKIPPED', reason };
+        }
         const review = ThesisReviewSchema.parse(await this.critic.reflect({ snapshot, thesis: research.preferred,
           scenarios: baseline.scenarios, cohortEvidence: baseline.confidenceCalibration }, job.userId));
         proactiveThesis = applyThesisReview(research.preferred, review);
@@ -614,6 +683,10 @@ export class PipelineRunnerService {
           timeframe: String(interval),
           referencePrice: lastPrice,
           closedCandleEvidence,
+          newsProbeAuthority: newsProbeAuthorityFromPipelineEvidence({
+            analyses,
+            indicatorSnapshot,
+          }),
         });
       }
       // Existing short-timeframe schedules that already opted into breakout
