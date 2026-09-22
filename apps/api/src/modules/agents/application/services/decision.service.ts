@@ -41,6 +41,10 @@ import { createHash } from "node:crypto";
 import { adaptiveTradingPolicy, assetLiquidityClass, parseSpreadBps } from "../../../pipeline/domain/adaptive-trading-policy";
 import { classifyDetailedRegime, computeRegimeAdaptiveWeights } from "../../domain/analysis/regime-adaptive-weights";
 import { resolveCalibrationAuthority } from "../../domain/calibration-authority";
+import {
+  evaluateNewsProbeAuthority,
+  type NewsProbeAuthorityInput,
+} from "../../domain/news-probe-authority";
 import { buildScenarioBlueprint } from "../../domain/analysis/scenario-planning-engine";
 import {
   buildExecutionContext,
@@ -100,6 +104,7 @@ export class DecisionService {
       anticipatorySnapshot?: AnticipatoryMarketSnapshot;
       executionContext?: ExecutionContext;
       closedCandleEvidence?: ClosedCandleEvidence;
+      newsProbeAuthority?: NewsProbeAuthorityInput;
     } = {},
   ): Promise<DecisionOutput> {
     const config =
@@ -165,6 +170,7 @@ export class DecisionService {
         anticipatorySnapshot: metadata.anticipatorySnapshot,
         executionContext: metadata.executionContext,
         closedCandleEvidence: metadata.closedCandleEvidence,
+        newsProbeAuthority: metadata.newsProbeAuthority,
       }
     );
     const confidenceCalibration = await this.confidenceCalibration(
@@ -231,11 +237,15 @@ export class DecisionService {
       expectedLoss: decision.expectedLoss,
       executionCost: decision.executionCost,
     });
-    const governedExecutionContext: ExecutionContext | undefined = calibrationAuthority.forceProbe &&
+    const forceBoundedProbe = calibrationAuthority.forceProbe || (
+      decision.overrides.includes('NEWS_PROBE_AUTHORIZED') &&
+      calibrationAuthority.authority !== 'EXACT_BLOCK'
+    );
+    const governedExecutionContext: ExecutionContext | undefined = forceBoundedProbe &&
       decision.executionContext && decision.executionContext.action !== 'WAIT'
         ? { ...decision.executionContext, action: 'PROBE' as const, riskTier: 'PROBE' as const }
         : decision.executionContext;
-    const governedThesis: ExecutableThesis | undefined = calibrationAuthority.forceProbe &&
+    const governedThesis: ExecutableThesis | undefined = forceBoundedProbe &&
       decision.thesis && decision.thesis.action !== 'WAIT'
       ? { ...decision.thesis, action: 'PROBE' as const }
       : decision.thesis;
@@ -407,11 +417,15 @@ export class DecisionService {
       executionCost: decision.executionCost,
     });
 
-    const executionContext: ExecutionContext | undefined = calibrationAuthority.forceProbe &&
+    const forceBoundedProbe = calibrationAuthority.forceProbe || (
+      decision.overrides.includes('NEWS_PROBE_AUTHORIZED') &&
+      calibrationAuthority.authority !== 'EXACT_BLOCK'
+    );
+    const executionContext: ExecutionContext | undefined = forceBoundedProbe &&
       decision.executionContext && decision.executionContext.action !== 'WAIT'
         ? { ...decision.executionContext, action: 'PROBE' as const, riskTier: 'PROBE' as const }
         : decision.executionContext;
-    const thesis: ExecutableThesis | undefined = calibrationAuthority.forceProbe &&
+    const thesis: ExecutableThesis | undefined = forceBoundedProbe &&
       decision.thesis && decision.thesis.action !== 'WAIT'
       ? { ...decision.thesis, action: 'PROBE' as const }
       : decision.thesis;
@@ -607,6 +621,7 @@ export class DecisionService {
       anticipatorySnapshot?: AnticipatoryMarketSnapshot;
       executionContext?: ExecutionContext;
       closedCandleEvidence?: ClosedCandleEvidence;
+      newsProbeAuthority?: NewsProbeAuthorityInput;
     },
   ): DecisionOutput {
     const input = DecisionInputSchema.parse(rawInput);
@@ -681,6 +696,15 @@ export class DecisionService {
     const isHighNewsNegative =
       input.news?.impact.level === "HIGH" &&
       input.news.impact.direction === "NEGATIVE";
+    const coreSupportsNewsDirection =
+      (isHighNewsPositive && votes.get('market') === 'BULLISH' && votes.get('technical') === 'BULLISH') ||
+      (isHighNewsNegative && votes.get('market') === 'BEARISH' && votes.get('technical') === 'BEARISH');
+    // Macro remains independently authoritative. This boundary applies only
+    // where high-impact news accelerates a direction not already confirmed by
+    // the market and technical core.
+    const newsAcceleratesCandidate =
+      ((isHighNewsPositive && !isMacroRiskOn) || (isHighNewsNegative && !isMacroRiskOff)) &&
+      !coreSupportsNewsDirection;
 
     // News & Macro Dominance: High-impact macro or news overrides candidate symmetrically
     // without requiring lagging indicators (e.g. 15m EMAs) to already have flipped.
@@ -769,6 +793,24 @@ export class DecisionService {
         overrides.push(
           "High-impact negative news conflicted with bullish evidence and forced WAIT.",
         );
+      }
+    }
+
+    const candidateFollowsNews =
+      (isHighNewsPositive && candidate === 'LONG') ||
+      (isHighNewsNegative && candidate === 'SHORT');
+    if (newsAcceleratesCandidate && candidateFollowsNews) {
+      const authority = customOptions?.newsProbeAuthority
+        ? evaluateNewsProbeAuthority(customOptions.newsProbeAuthority)
+        : { allowed: false, reason: 'NEWS_CORROBORATION_INSUFFICIENT', corroborationCount: 0 };
+      if (!authority.allowed) {
+        candidate = 'WAIT';
+        overrides.push(authority.reason);
+      } else if (candidate !== 'WAIT') {
+        // Governed after confidence calibration: only exact cohorts may retain
+        // normal entry authority; all other successful news accelerations are
+        // bounded to a PROBE.
+        overrides.push('NEWS_PROBE_AUTHORIZED');
       }
     }
 
