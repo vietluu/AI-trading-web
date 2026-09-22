@@ -296,6 +296,7 @@ describe("Proactive Thesis Pipeline Integration", () => {
       impact: { level: 'HIGH', direction: 'POSITIVE' },
       keyEvents: [{ title: 'Protocol approval', impact: 'POSITIVE', importance: 90 }],
       themes: [], riskSignals: [], dataQuality: 'GOOD', usedTools: ['news.articles.list'],
+      provenance: { provider: 'news-feed', sourceTimestamp: cutoff, coverage: 'FULL', unavailableFields: [] },
       generatedAt: cutoff,
     } as never;
     mockFusion.runDetailed.mockResolvedValue(fusionResult);
@@ -316,6 +317,23 @@ describe("Proactive Thesis Pipeline Integration", () => {
         }),
       }),
     );
+  });
+
+  it('fails closed when high-impact news lacks a source publication timestamp', async () => {
+    const fusionResult = makeFusionResult();
+    fusionResult.analyses.news = {
+      summary: 'Reprocessed old positive protocol announcement.',
+      impact: { level: 'HIGH', direction: 'POSITIVE' },
+      keyEvents: [{ title: 'Old protocol approval', impact: 'POSITIVE', importance: 90 }],
+      themes: [], riskSignals: [], dataQuality: 'GOOD', usedTools: ['news.articles.list'],
+      generatedAt: cutoff,
+    } as never;
+    mockFusion.runDetailed.mockResolvedValue(fusionResult);
+
+    await pipelineRunner.run(makeJob());
+
+    const metadata = mockDecision.decideForUser.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(metadata.newsProbeAuthority).toBeUndefined();
   });
 
   it('propagates a corroborated non-exact news decision as a probe to risk sizing', async () => {

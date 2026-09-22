@@ -95,6 +95,10 @@ function newsProbeAuthorityFromPipelineEvidence(input: {
 }): NewsProbeAuthorityInput | undefined {
   const news = input.analyses.news;
   if (!news || news.impact.direction === 'NEUTRAL') return undefined;
+  const sourceTimestamp = news.provenance?.sourceTimestamp;
+  // generatedAt is the analysis run time, not the article/source publication
+  // time. Without an actual source timestamp, news freshness is unknowable.
+  if (!sourceTimestamp) return undefined;
   const importance = Math.max(
     news.impact.level === 'HIGH' ? 80 : 0,
     ...(news.keyEvents ?? []).map((event) => event.importance),
@@ -120,7 +124,7 @@ function newsProbeAuthorityFromPipelineEvidence(input: {
       // News analyst output intentionally does not expose article IDs. Do not
       // convert titles, tools, or provider names into fabricated source IDs.
       sourceIds: [],
-      publishedAt: news.provenance?.sourceTimestamp ?? news.generatedAt,
+      publishedAt: sourceTimestamp,
     },
     causality: {
       priceChangePercent: finiteNumber(input.indicatorSnapshot?.values?.priceChangePercent),
