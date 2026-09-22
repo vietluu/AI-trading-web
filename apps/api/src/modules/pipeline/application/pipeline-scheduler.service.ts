@@ -33,7 +33,7 @@ type ProactiveThesisScheduleInput = {
 };
 
 type ProactiveThesisScheduleResult = {
-  status: "SCHEDULED" | "DUPLICATE" | "IN_FLIGHT" | "FAILED";
+  status: "SCHEDULED" | "DUPLICATE" | "FAILED";
   runId?: string;
   reason?: string;
 };
@@ -173,40 +173,63 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
     });
 
     try {
-      return await this.pipeline.scheduleProactiveThesis({
+      const delivery = await this.pipeline.scheduleProactiveThesis({
         userId: input.userId,
         request,
         scheduleId: input.scheduleId,
       });
+      if (delivery.status === "FAILED") {
+        await this.recordProactiveSchedulingFailure(
+          input,
+          sourceDataCutoff,
+          delivery.reason ?? "PROACTIVE_THESIS_TRIGGER_FAILED",
+        );
+      }
+      return delivery;
     } catch (error) {
       const reason = "PROACTIVE_THESIS_TRIGGER_FAILED";
-      this.logger.warn({
-        event: "opportunity_proactive_schedule_failed",
-        scheduleId: input.scheduleId,
-        symbol: input.symbol,
-        opportunityId: input.opportunityId,
-        snapshotId: input.snapshotId,
+      await this.recordProactiveSchedulingFailure(
+        input,
         sourceDataCutoff,
         reason,
-        message: error instanceof Error ? error.message : String(error),
-      });
-      await this.prisma.auditLog.create({
-        data: {
-          action: "OPPORTUNITY_PROACTIVE_SCHEDULE_FAILED",
-          userId: input.userId,
-          metadata: {
-            scheduleId: input.scheduleId,
-            symbol: input.symbol,
-            opportunityId: input.opportunityId,
-            snapshotId: input.snapshotId,
-            sourceDataCutoff,
-            reason,
-            error: error instanceof Error ? error.message : String(error),
-          },
-        },
-      });
+        error,
+      );
       return { status: "FAILED", reason };
     }
+  }
+
+  private async recordProactiveSchedulingFailure(
+    input: ProactiveThesisScheduleInput,
+    sourceDataCutoff: string,
+    reason: string,
+    error?: unknown,
+  ) {
+    const message = error instanceof Error ? error.message : error == null ? undefined : String(error);
+    this.logger.warn({
+      event: "opportunity_proactive_schedule_failed",
+      scheduleId: input.scheduleId,
+      symbol: input.symbol,
+      opportunityId: input.opportunityId,
+      snapshotId: input.snapshotId,
+      sourceDataCutoff,
+      reason,
+      ...(message ? { message } : {}),
+    });
+    await this.prisma.auditLog.create({
+      data: {
+        action: "OPPORTUNITY_PROACTIVE_SCHEDULE_FAILED",
+        userId: input.userId,
+        metadata: {
+          scheduleId: input.scheduleId,
+          symbol: input.symbol,
+          opportunityId: input.opportunityId,
+          snapshotId: input.snapshotId,
+          sourceDataCutoff,
+          reason,
+          ...(message ? { error: message } : {}),
+        },
+      },
+    });
   }
 
   private readonly activeSchedules = new Set<string>();
@@ -312,7 +335,7 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
                           snapshotId: observation.snapshotId,
                           sourceDataCutoff: anchor.sourceDataCutoff,
                         });
-                        proactiveDeliveryFailed ||= delivery.status === "FAILED" || delivery.status === "IN_FLIGHT";
+                        proactiveDeliveryFailed ||= delivery.status === "FAILED";
                       } catch (error) {
                         proactiveDeliveryFailed = true;
                         this.logger.error({

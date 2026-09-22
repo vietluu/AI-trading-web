@@ -129,7 +129,9 @@ describe('durable proactive delivery ownership', () => {
     const second = await f.service().scheduleProactiveThesis(input);
     gate.resolve();
     await first;
-    expect(second.status).toBe('IN_FLIGHT');
+    expect(second).toEqual({
+      status: 'FAILED', runId: [...f.rows.keys()][0], reason: 'PROACTIVE_THESIS_DELIVERY_IN_PROGRESS',
+    });
     expect(f.rows.size).toBe(1);
     expect(f.queue.enqueue).toHaveBeenCalledTimes(1);
   });
@@ -165,12 +167,12 @@ describe('durable proactive delivery ownership', () => {
     expect(f.rows.get('run-1')!.proactiveDeliveryState).toBe('DELIVERING');
   });
 
-  it('keeps proactive queue identities after completion and failure', async () => {
+  it('bounds proactive queue retention after completion and failure', async () => {
     const queue = { add: vi.fn(async () => undefined) };
     const adapter = new PipelineQueueService(queue as never);
     await adapter.enqueue({ ...input.request, runId: 'run-1', userId: input.userId, trigger: 'SCHEDULE', createdAt: new Date().toISOString() } as PipelineJob);
     expect(queue.add).toHaveBeenCalledWith('execute', expect.anything(), expect.objectContaining({
-      jobId: 'run-1', removeOnComplete: false, removeOnFail: false,
+      jobId: 'run-1', removeOnComplete: 500, removeOnFail: 1000,
     }));
   });
 

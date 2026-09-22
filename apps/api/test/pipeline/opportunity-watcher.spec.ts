@@ -300,6 +300,37 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
     expect(prisma.pipelineSchedule.update).toHaveBeenCalledTimes(1);
   });
 
+  it('persists the active-delivery failure audit before exposing FAILED', async () => {
+    const failure = { status: 'FAILED', runId: 'run-active-1', reason: 'PROACTIVE_THESIS_DELIVERY_IN_PROGRESS' };
+    let completeAudit!: () => void;
+    const audit = new Promise<void>((resolve) => { completeAudit = resolve; });
+    const auditLog = { create: vi.fn().mockReturnValue(audit) };
+    const scheduler = new PipelineSchedulerService(
+      { auditLog } as never,
+      { scheduleProactiveThesis: vi.fn().mockResolvedValue(failure) } as never,
+      { enabled: true } as never,
+    );
+    let settled = false;
+    const result = scheduler.scheduleProactiveThesis({
+      userId: 'user-1', scheduleId: 'schedule-1', symbol: 'BTC-USDT', provider: 'BINANCE_FUTURES',
+      opportunityId: 'opp-1', snapshotId: 'snapshot-1', sourceDataCutoff: new Date('2026-09-09T01:00:00.000Z'),
+    }).then((value) => { settled = true; return value; });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        action: 'OPPORTUNITY_PROACTIVE_SCHEDULE_FAILED',
+        metadata: expect.objectContaining({
+          opportunityId: 'opp-1', snapshotId: 'snapshot-1', sourceDataCutoff: '2026-09-09T01:00:00.000Z',
+          reason: 'PROACTIVE_THESIS_DELIVERY_IN_PROGRESS',
+        }),
+      }),
+    }));
+    expect(settled).toBe(false);
+    completeAudit();
+    await expect(result).resolves.toEqual(failure);
+  });
+
   it('does not stamp a duplicate anchor while proactive delivery is still in flight', async () => {
     const cutoff = new Date('2026-09-09T01:00:00.000Z');
     const schedule = {
@@ -318,7 +349,7 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
     const pipeline = {
       trigger: vi.fn(),
       scheduleProactiveThesis: vi.fn()
-        .mockResolvedValueOnce({ status: 'IN_FLIGHT', runId: 'proactive-run-lease-1' })
+        .mockResolvedValueOnce({ status: 'FAILED', runId: 'proactive-run-lease-1', reason: 'PROACTIVE_THESIS_DELIVERY_IN_PROGRESS' })
         .mockResolvedValueOnce({ status: 'SCHEDULED', runId: 'proactive-run-lease-1' }),
     };
     const scanner = {
@@ -344,6 +375,13 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
     );
 
     await scheduler.tick(new Date('2026-09-09T01:00:01.000Z'));
+    expect(prisma.pipelineSchedule.update).not.toHaveBeenCalled();
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        action: 'OPPORTUNITY_PROACTIVE_SCHEDULE_FAILED',
+        metadata: expect.objectContaining({ reason: 'PROACTIVE_THESIS_DELIVERY_IN_PROGRESS' }),
+      }),
+    }));
     await scheduler.tick(new Date('2026-09-09T01:00:06.000Z'));
 
     expect(pipeline.scheduleProactiveThesis).toHaveBeenCalledTimes(2);

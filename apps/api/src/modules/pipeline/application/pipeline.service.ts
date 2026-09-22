@@ -18,8 +18,9 @@ export type ProactiveThesisScheduleInput = {
 };
 
 export type ProactiveThesisScheduleResult = {
-  status: 'SCHEDULED' | 'DUPLICATE' | 'IN_FLIGHT';
-  runId: string;
+  status: 'SCHEDULED' | 'DUPLICATE' | 'FAILED';
+  runId?: string;
+  reason?: string;
 };
 
 const PROACTIVE_DELIVERY_LEASE_MS = 60_000;
@@ -361,7 +362,16 @@ export class PipelineService {
       this.proactiveDeliveryLeaseExpiresAt(claimedAt),
       token,
     );
-    if (claim.count === 0) return { status: 'IN_FLIGHT', runId: persistedRun.id };
+    // Delivery ownership is an internal lease state. Do not expose it as a
+    // fourth public result: callers must treat an active owner as a retryable
+    // failed delivery and must not stamp the scheduler cycle healthy.
+    if (claim.count === 0) {
+      return {
+        status: 'FAILED',
+        runId: persistedRun.id,
+        reason: 'PROACTIVE_THESIS_DELIVERY_IN_PROGRESS',
+      };
+    }
     return this.redeliverProactiveThesis(persistedRun.id, token, userId, request);
   }
 
