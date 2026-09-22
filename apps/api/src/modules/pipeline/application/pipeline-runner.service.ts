@@ -95,16 +95,10 @@ function newsProbeAuthorityFromPipelineEvidence(input: {
 }): NewsProbeAuthorityInput | undefined {
   const news = input.analyses.news;
   if (!news || news.impact.direction === 'NEUTRAL') return undefined;
-  // This field is populated only from a real article `publishedAt` record by
-  // the deterministic News Analyst. Generic provenance and `generatedAt` are
-  // analysis metadata, not publication evidence, so they cannot establish
-  // freshness for a news-accelerated probe.
-  const publishedAt = news.latestPublishedAt;
-  if (!publishedAt) return undefined;
-  const importance = Math.max(
-    news.impact.level === 'HIGH' ? 80 : 0,
-    ...(news.keyEvents ?? []).map((event) => event.importance),
-  );
+  // The runner overwrites this item from a single qualifying tool article in
+  // every mode. Model/legacy timestamps and aggregate scores have no authority.
+  const evidence = news.probeEvidence;
+  if (!evidence || evidence.direction !== news.impact.direction) return undefined;
   const confidence = news.dataQuality === 'GOOD' ? 90 : news.dataQuality === 'PARTIAL' ? 70 : 0;
   const snapshot = input.anticipatorySnapshot;
   const derivatives = snapshot?.derivatives.coverage === 'AVAILABLE'
@@ -120,13 +114,13 @@ function newsProbeAuthorityFromPipelineEvidence(input: {
 
   return {
     news: {
-      importance,
+      importance: evidence.importance,
       confidence,
-      direction: news.impact.direction,
+      direction: evidence.direction,
       // News analyst output intentionally does not expose article IDs. Do not
       // convert titles, tools, or provider names into fabricated source IDs.
       sourceIds: [],
-      publishedAt,
+      publishedAt: evidence.publishedAt,
     },
     causality: {
       priceChangePercent: finiteNumber(input.indicatorSnapshot?.values?.priceChangePercent),

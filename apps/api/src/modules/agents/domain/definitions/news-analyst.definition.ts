@@ -124,6 +124,7 @@ function deterministicNews(
       dataQuality: "INSUFFICIENT",
       usedTools: usedTools as NewsAgentOutput["usedTools"],
       latestPublishedAt: null,
+      probeEvidence: null,
       generatedAt: new Date().toISOString(),
     };
   }
@@ -137,16 +138,22 @@ function deterministicNews(
         ? ("POSITIVE" as const)
         : ("NEGATIVE" as const);
   const maximumImportance = Math.max(...top.map((item) => item.importance));
-  // Freshness must belong to an article supporting the output direction. A
-  // recent neutral/unrelated article cannot make an older directional event
-  // eligible for a news-accelerated probe.
+  // Bind source importance and publication time to one directional article.
+  // Aggregate scores, corroboration bonuses and newer low-importance records
+  // cannot turn a stale high-importance event into fresh probe authority.
   const directionSupportingArticles = directional.filter(
     (item) => item.direction === direction,
   );
-  const latestPublishedAt = directionSupportingArticles
-    .map(({ item }) => sourcePublishedAt(item))
-    .filter((publishedAt): publishedAt is string => publishedAt !== null)
-    .sort((left, right) => Date.parse(right) - Date.parse(left))[0] ?? null;
+  const probeEvidence = directionSupportingArticles
+    .flatMap(({ item, direction: articleDirection }) => {
+      const importance = Number(item.importance);
+      const publishedAt = sourcePublishedAt(item);
+      return articleDirection !== "NEUTRAL" && publishedAt &&
+        Number.isFinite(importance) && importance >= 80 && importance <= 100
+        ? [{ direction: articleDirection, importance, publishedAt }]
+        : [];
+    })
+    .sort((left, right) => Date.parse(right.publishedAt) - Date.parse(left.publishedAt))[0] ?? null;
   const trustedSourceCount = new Set(unique.flatMap(sourceIds)).size;
   return {
     summary: `${unique.length} trusted recent article(s) from ${trustedSourceCount} independent source(s) were evaluated deterministically; verified market impact is ${direction.toLowerCase()}.`,
@@ -178,7 +185,8 @@ function deterministicNews(
       .map(({ item }) => safeText(item.title, "Negative market event")),
     dataQuality: trustedSourceCount >= 3 ? "GOOD" : "PARTIAL",
     usedTools: usedTools as NewsAgentOutput["usedTools"],
-    latestPublishedAt,
+    latestPublishedAt: probeEvidence?.publishedAt ?? null,
+    probeEvidence,
     generatedAt: new Date().toISOString(),
   };
 }
@@ -259,6 +267,15 @@ export const NEWS_ANALYST_DEFINITION: AgentDefinition<
     },
   ],
   buildDeterministicOutput: deterministicNews,
+  finalizeOutput: (output, toolData, usedTools) => {
+    const evidence = deterministicNews(toolData, usedTools).probeEvidence;
+    const probeEvidence = evidence?.direction === output.impact.direction ? evidence : null;
+    return {
+      ...output,
+      latestPublishedAt: probeEvidence?.publishedAt ?? null,
+      probeEvidence,
+    };
+  },
   buildInsufficientOutput: (usedTools, reason) => ({
     summary: `News analysis could not be completed reliably: ${reason}`,
     impact: { level: "LOW", direction: "NEUTRAL" },
@@ -273,6 +290,7 @@ export const NEWS_ANALYST_DEFINITION: AgentDefinition<
         ),
     ),
     latestPublishedAt: null,
+    probeEvidence: null,
     generatedAt: new Date().toISOString(),
   }),
 };

@@ -83,5 +83,11 @@ export interface AgentDefinition<TInput = unknown, TOutput = unknown> {
     toolData: Readonly<Record<string, unknown>>,
     usedTools: string[],
   ): TOutput | undefined;
+  /** Overwrite authority-bearing fields using captured tools in every runtime mode. */
+  finalizeOutput?(
+    output: TOutput,
+    toolData: Readonly<Record<string, unknown>>,
+    usedTools: string[],
+  ): TOutput;
   buildInsufficientOutput?(usedTools: string[], reason: string): TOutput;
 }

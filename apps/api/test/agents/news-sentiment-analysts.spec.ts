@@ -232,6 +232,36 @@ describe("News and Sentiment Analyst Agents", () => {
     expect(output?.latestPublishedAt).toBe("2026-09-22T09:45:00.000Z");
   });
 
+  it("keeps importance and publication time on the same qualifying directional article", () => {
+    const output = NEWS_ANALYST_DEFINITION.buildDeterministicOutput?.(
+      {
+        "news.articles.list": {
+          articles: [
+            {
+              id: "stale-high", title: "Protocol upgrade drives adoption",
+              importance: 95, symbols: ["BTC"], sourceId: "source-1",
+              publishedAt: "2026-09-22T09:00:00.000Z",
+            },
+            {
+              id: "fresh-low", title: "Small partnership supports adoption",
+              importance: 40, symbols: ["BTC"], sourceId: "source-2",
+              publishedAt: "2026-09-22T10:00:00.000Z",
+            },
+          ],
+        },
+      },
+      ["news.articles.list"],
+    );
+
+    expect(output?.latestPublishedAt).toBe("2026-09-22T09:00:00.000Z");
+    expect(output).toMatchObject({
+      probeEvidence: {
+        direction: "POSITIVE", importance: 95,
+        publishedAt: "2026-09-22T09:00:00.000Z",
+      },
+    });
+  });
+
   it("raises a corroborated systemic policy cluster to high impact", () => {
     const articles = [
       ["n1", "Trump pushes Congress to pass CLARITY Act", 70],

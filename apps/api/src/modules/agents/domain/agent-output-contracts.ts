@@ -11,7 +11,7 @@ const CONTRACTS: Partial<Record<AgentType, string>> = {
   ].join(' '),
   [AgentType.NEWS_ANALYST]: [
     'Return exactly this JSON shape:',
-    '{"summary":string,"impact":{"level":"LOW|MEDIUM|HIGH","direction":"POSITIVE|NEGATIVE|NEUTRAL"},"keyEvents":[{"title":string,"impact":"POSITIVE|NEGATIVE|NEUTRAL","importance":number-0-to-100}],"latestPublishedAt":ISO-8601-string|null,"themes":string[],"riskSignals":string[],"dataQuality":"GOOD|PARTIAL|INSUFFICIENT","usedTools":string[],"generatedAt":ISO-8601-string}. `latestPublishedAt` must be the freshest qualifying article publication time supplied by a news tool, or null when no valid article publication time exists; never use fetch or analysis time.',
+    '{"summary":string,"impact":{"level":"LOW|MEDIUM|HIGH","direction":"POSITIVE|NEGATIVE|NEUTRAL"},"keyEvents":[{"title":string,"impact":"POSITIVE|NEGATIVE|NEUTRAL","importance":number-0-to-100}],"latestPublishedAt":null,"themes":string[],"riskSignals":string[],"dataQuality":"GOOD|PARTIAL|INSUFFICIENT","usedTools":string[],"generatedAt":ISO-8601-string}. Set `latestPublishedAt` to null and omit `probeEvidence`: the runner derives and overwrites these authority fields from one qualifying news tool article after model output validation.',
   ].join(' '),
   [AgentType.SENTIMENT_ANALYST]: [
     'Return exactly this JSON shape:',

@@ -297,6 +297,7 @@ describe("Proactive Thesis Pipeline Integration", () => {
       keyEvents: [{ title: 'Protocol approval', impact: 'POSITIVE', importance: 90 }],
       themes: [], riskSignals: [], dataQuality: 'GOOD', usedTools: ['news.articles.list'],
       latestPublishedAt: cutoff,
+      probeEvidence: { direction: 'POSITIVE', importance: 85, publishedAt: cutoff },
       generatedAt: cutoff,
     };
     mockFusion.runDetailed.mockResolvedValue({
@@ -315,21 +316,21 @@ describe("Proactive Thesis Pipeline Integration", () => {
       'user-1',
       expect.objectContaining({
         newsProbeAuthority: expect.objectContaining({
-          news: expect.objectContaining({ importance: 90, confidence: 90, direction: 'POSITIVE' }),
+          news: expect.objectContaining({ importance: 85, confidence: 90, direction: 'POSITIVE', publishedAt: cutoff }),
           causality: expect.objectContaining({ priceChangePercent: 2, volumeRatio: 1.6, deltaOiPercent: 1.2 }),
         }),
       }),
     );
   });
 
-  it('fails closed when high-impact news lacks a source publication timestamp', async () => {
+  it.each([null, cutoff])('fails closed when high-impact news has only a legacy publication timestamp of %s', async (latestPublishedAt) => {
     const fusionResult = makeFusionResult();
     const newsWithoutPublicationTime: FusionInput['news'] = {
       summary: 'Reprocessed old positive protocol announcement.',
       impact: { level: 'HIGH', direction: 'POSITIVE' },
       keyEvents: [{ title: 'Old protocol approval', impact: 'POSITIVE', importance: 90 }],
       themes: [], riskSignals: [], dataQuality: 'GOOD', usedTools: ['news.articles.list'],
-      latestPublishedAt: null,
+      latestPublishedAt,
       // This generic analysis metadata is deliberately not article publication
       // time and must never authorize a fresh news probe.
       provenance: { provider: 'news-feed', sourceTimestamp: cutoff, coverage: 'FULL', unavailableFields: [] },
