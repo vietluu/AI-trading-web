@@ -1032,6 +1032,7 @@ export class LiveTradingService {
       userId,
       dto.connectionId,
       assessment,
+      connection.environment,
     );
     const desiredSide = assessment.decision as "LONG" | "SHORT";
     const same = positions.find((position) => position.side === desiredSide);
@@ -3193,6 +3194,7 @@ export class LiveTradingService {
       tradePlan?: Prisma.JsonValue | null;
       executionAuthorization?: Prisma.JsonValue | null;
     },
+    connectionEnvironment: string,
   ): Promise<{
     positionSize: number;
     leverage: number;
@@ -3243,6 +3245,21 @@ export class LiveTradingService {
       throw new ForbiddenException(
         "Exchange preflight failed: maximum drawdown exceeded",
       );
+    }
+    if (drawdownPolicy.tier === "DIAGNOSTIC_PROBE") {
+      const authorization = ProactiveAuthorizationSchema.safeParse(
+        assessment.executionAuthorization,
+      );
+      if (
+        !authorization.success ||
+        authorization.data.mode !== "DEMO" ||
+        authorization.data.requiredEnvironment !== "DEMO" ||
+        authorization.data.connectionId !== connectionId ||
+        connectionEnvironment !== "DEMO" ||
+        authorization.data.thesis.state !== "PROBE_READY"
+      ) {
+        throw new ForbiddenException("DRAWDOWN_DIAGNOSTIC_PROBE_REQUIRED");
+      }
     }
     if (assessment.leverage > limits.maxLeverage) {
       throw new ForbiddenException(

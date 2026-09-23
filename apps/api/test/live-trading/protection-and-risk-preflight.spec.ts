@@ -5,6 +5,7 @@ import {
   LiveTradingService,
   processInBatches,
 } from "../../src/modules/live-trading/application/live-trading.service";
+import { createBaseSnapshot, createValidLongThesis } from "../helpers/thesis-fixture";
 
 const limits = {
   riskPerTrade: 0.02,
@@ -73,7 +74,9 @@ interface LiveTradingInternals {
       referencePrice: number;
       stopLoss: number;
       tradePlan?: { strategy: string };
+      executionAuthorization?: unknown;
     },
+    connectionEnvironment?: string,
   ) => Promise<unknown>;
   submit: (
     userId: string,
@@ -120,6 +123,19 @@ function build(riskLimits = limits) {
     publicExchanges as never,
   );
   return { service, prisma, connections, audit, publicExchanges };
+}
+
+function diagnosticProbeAuthorization() {
+  return {
+    kind: "PROACTIVE",
+    mode: "DEMO",
+    requiredEnvironment: "DEMO",
+    connectionId: "conn-1",
+    thesisId: "thesis-1",
+    opportunityId: "opportunity-1",
+    thesis: createValidLongThesis(),
+    snapshot: createBaseSnapshot(),
+  };
 }
 
 describe("live protection and exchange risk preflight", () => {
@@ -446,7 +462,7 @@ describe("live protection and exchange risk preflight", () => {
     })).resolves.toMatchObject({ positionSize: 4.166666666666 });
   });
 
-  it("caps a stale full-size approval to the diagnostic 0.10R risk budget at thirteen-percent drawdown", async () => {
+  it("rejects a stale ordinary approval at diagnostic drawdown instead of relabeling it as a probe", async () => {
     const { service, prisma } = build({ ...limits, maxDrawdown: 0.1, maxExposure: 1 });
     prisma.liveAccountSnapshot.findFirst.mockResolvedValue({
       totalEquity: 8_700, availableBalance: 8_700,
@@ -457,7 +473,37 @@ describe("live protection and exchange risk preflight", () => {
     await expect(internals(service).assertExchangePortfolioRisk("user-1", "conn-1", {
       symbol: "ETH-USDT", positionSize: 8, leverage: 2,
       referencePrice: 2_000, stopLoss: 1_980,
-    })).resolves.toMatchObject({ positionSize: 0.805555555555 });
+    })).rejects.toThrow("DRAWDOWN_DIAGNOSTIC_PROBE_REQUIRED");
+  });
+
+  it("rejects a diagnostic probe authorization on a live connection", async () => {
+    const { service, prisma } = build({ ...limits, maxDrawdown: 0.1, maxExposure: 1 });
+    prisma.liveAccountSnapshot.findFirst.mockResolvedValue({
+      totalEquity: 8_700, availableBalance: 8_700,
+    });
+    prisma.liveAccountSnapshot.aggregate.mockResolvedValue({ _max: { totalEquity: 10_000 } });
+    prisma.livePosition.findMany.mockResolvedValue([]);
+
+    await expect(internals(service).assertExchangePortfolioRisk("user-1", "conn-1", {
+      symbol: "ETH-USDT", positionSize: 8, leverage: 2,
+      referencePrice: 2_000, stopLoss: 1_980,
+      executionAuthorization: diagnosticProbeAuthorization(),
+    }, "PRODUCTION")).rejects.toThrow("DRAWDOWN_DIAGNOSTIC_PROBE_REQUIRED");
+  });
+
+  it("caps an authorized DEMO PROBE_READY entry to the diagnostic 0.10R risk budget", async () => {
+    const { service, prisma } = build({ ...limits, maxDrawdown: 0.1, maxExposure: 1 });
+    prisma.liveAccountSnapshot.findFirst.mockResolvedValue({
+      totalEquity: 8_700, availableBalance: 8_700,
+    });
+    prisma.liveAccountSnapshot.aggregate.mockResolvedValue({ _max: { totalEquity: 10_000 } });
+    prisma.livePosition.findMany.mockResolvedValue([]);
+
+    await expect(internals(service).assertExchangePortfolioRisk("user-1", "conn-1", {
+      symbol: "ETH-USDT", positionSize: 8, leverage: 2,
+      referencePrice: 2_000, stopLoss: 1_980,
+      executionAuthorization: diagnosticProbeAuthorization(),
+    }, "DEMO")).resolves.toMatchObject({ positionSize: 0.805555555555 });
   });
 
   it("blocks leverage whose planned stop loss exceeds the margin ROE ceiling", async () => {
