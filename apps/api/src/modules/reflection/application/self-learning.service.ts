@@ -1483,8 +1483,11 @@ export class SelfLearningService {
       where: {
         status: 'FINALIZED',
         netR: { not: null },
-        ...(params.setup ? { setup: params.setup } : {}),
+        ...(params.symbol ? { symbol: params.symbol } : {}),
         ...(params.timeframe ? { timeframe: params.timeframe } : {}),
+        ...(params.regime ? { regime: params.regime } : {}),
+        ...(params.direction ? { direction: params.direction } : {}),
+        ...(params.setup ? { setup: params.setup } : {}),
         ...(params.configurationHash ? { configurationHash: params.configurationHash } : {}),
         ...(options?.asOf ? { closedAt: { lte: options.asOf } } : {}),
       },

@@ -60,6 +60,58 @@ describe('SelfLearningService.evaluateShadowSignals promotion state machine inte
     });
   });
 
+  it('queries the complete exact cohort before a broad history cap can hide older losses', async () => {
+    const baseTime = Date.parse('2026-09-01T00:00:00.000Z');
+    const exactLosses = Array.from({ length: 20 }, (_, index) => ({
+      ...lifecycleRow(`exact-loss-${index}`, -1, 0),
+      openedAt: new Date(baseTime + index * 1_000),
+      closedAt: new Date(baseTime + index * 1_000 + 500),
+    }));
+    const newerBroadRows = Array.from({ length: 1_001 }, (_, index) => ({
+      ...lifecycleRow(`broad-${index}`, 1, 0),
+      symbol: 'ETH-USDT',
+      openedAt: new Date(baseTime + (index + 100) * 1_000),
+      closedAt: new Date(baseTime + (index + 100) * 1_000 + 500),
+    }));
+    const rows = [...exactLosses, ...newerBroadRows];
+    const findMany = vi.fn().mockImplementation(({ where, take }: {
+      where: Record<string, unknown>;
+      take?: number;
+    }) => {
+      const matches = rows.filter((row) => Object.entries(where).every(([key, value]) => {
+        if (key === 'netR') return row.netR !== null;
+        if (key === 'closedAt' && value && typeof value === 'object' && 'lte' in value) {
+          return row.closedAt <= (value as { lte: Date }).lte;
+        }
+        return row[key as keyof typeof row] === value;
+      }));
+      return Promise.resolve(
+        matches
+          .sort((left, right) => right.closedAt.getTime() - left.closedAt.getTime())
+          .slice(0, take),
+      );
+    });
+    const service = new SelfLearningService({
+      tradeLifecycleOutcome: { findMany },
+    } as never, {} as never);
+
+    const authority = await service.evaluateProfitAuthorityForThesis(
+      'BTC-USDT|15m|TRENDING_UP|LONG|BREAKOUT|v1',
+    );
+
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      where: expect.objectContaining({
+        symbol: 'BTC-USDT',
+        timeframe: '15m',
+        regime: 'TRENDING_UP',
+        direction: 'LONG',
+        setup: 'BREAKOUT',
+      }),
+    }));
+    expect(authority).toMatchObject({ action: 'SUPPRESSED', sampleSize: 20 });
+  });
+
   it('promotes SHADOW candidate to DEMO_CANARY when promotion transition is allowed', async () => {
     let storedConfig: Record<string, unknown> = {
       userId,
