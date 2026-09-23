@@ -73,25 +73,17 @@ export function calculateDrawdown(equity: number, peakEquity: number): number {
 
 function drawdownThresholds(limits?: Pick<
   RiskLimits,
-  "maxDrawdown" | "drawdownReducedPct" | "drawdownDiagnosticProbePct" | "drawdownHaltPct"
+  "drawdownReducedPct" | "drawdownDiagnosticProbePct" | "drawdownHaltPct"
 >) {
   const reduced = finitePositive(limits?.drawdownReducedPct ?? Number.NaN)
     ? limits!.drawdownReducedPct!
     : DEFAULT_DRAWDOWN_REDUCED_PCT;
-  const diagnostic = Math.max(
-    reduced,
-    finitePositive(limits?.drawdownDiagnosticProbePct ?? Number.NaN)
-      ? limits!.drawdownDiagnosticProbePct!
-      : DEFAULT_DRAWDOWN_DIAGNOSTIC_PROBE_PCT,
-  );
-  const halt = Math.max(
-    diagnostic,
-    finitePositive(limits?.drawdownHaltPct ?? Number.NaN)
-      ? limits!.drawdownHaltPct!
-      : finitePositive(limits?.maxDrawdown ?? Number.NaN)
-        ? limits!.maxDrawdown
-        : DEFAULT_DRAWDOWN_HALT_PCT,
-  );
+  const diagnostic = finitePositive(limits?.drawdownDiagnosticProbePct ?? Number.NaN)
+    ? limits!.drawdownDiagnosticProbePct!
+    : DEFAULT_DRAWDOWN_DIAGNOSTIC_PROBE_PCT;
+  const halt = finitePositive(limits?.drawdownHaltPct ?? Number.NaN)
+    ? limits!.drawdownHaltPct!
+    : DEFAULT_DRAWDOWN_HALT_PCT;
   return { reduced, diagnostic, halt };
 }
 

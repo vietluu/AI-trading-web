@@ -97,6 +97,8 @@ describe("risk engine", () => {
       tier: "NORMAL",
       maxSizeFactor: 1,
     });
+    expect(resolveDrawdownRiskPolicy(0.1, "ENTER", { maxDrawdown: 0.1 }))
+      .toEqual({ tier: "REDUCED", maxSizeFactor: 0.5 });
   });
 
   it("calculates capital-at-risk sizing and 1:2 protective prices", () => {
