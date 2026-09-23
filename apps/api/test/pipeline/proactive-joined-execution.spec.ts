@@ -24,6 +24,8 @@ function fixture() {
   let assessment: RiskAssessment | null = null;
   let latestSnapshot: unknown = null;
   let positions: Array<Record<string, unknown>> = [];
+  let account = { totalEquity: 10_000, availableBalance: 10_000, peakEquity: 10_000 };
+  let activeLimits = { ...limits };
   const opportunity = {
     id: 'opportunity-1', userId: 'user-1', provider: 'BINANCE_FUTURES', symbol: 'BTC-USDT', timeframe: '15m',
     setup: 'TREND_PULLBACK', direction: 'LONG', state: 'PROBE_READY', invalidationPrice: 107_500,
@@ -69,7 +71,10 @@ function fixture() {
       },
     },
     livePosition: { findFirst: () => Promise.resolve(positions[0] ?? null), findMany: () => Promise.resolve(positions) },
-    liveAccountSnapshot: { findFirst: () => Promise.resolve({ totalEquity: 10000, availableBalance: 10000 }), aggregate: () => Promise.resolve({ _max: { totalEquity: 10000 } }) },
+    liveAccountSnapshot: {
+      findFirst: () => Promise.resolve({ totalEquity: account.totalEquity, availableBalance: account.availableBalance }),
+      aggregate: () => Promise.resolve({ _max: { totalEquity: account.peakEquity } }),
+    },
     liveOrder: {
       findUnique: () => Promise.resolve(null), findFirst: () => Promise.resolve(null), findMany: () => Promise.resolve([]),
       create: ({ data }: { data: Record<string, unknown> }) => { const row = { ...data, id: 'order-1', createdAt: new Date(), updatedAt: new Date() }; orders.push(row); return Promise.resolve(row); },
@@ -77,7 +82,7 @@ function fixture() {
     },
     $transaction: (callback: (tx: unknown) => unknown) => callback(db),
   };
-  const config = { getUserLimits: () => Promise.resolve(limits) };
+  const config = { getUserLimits: () => Promise.resolve(activeLimits) };
   const risk = new RiskManagementService(db as never, config as never);
   const submitted: Array<Record<string, unknown>> = [];
   const connection = { id: connectionId, environment: 'DEMO', provider: 'OKX_FUTURES', isEnabled: true, isVerified: true };
@@ -109,7 +114,14 @@ function fixture() {
     account: { balance: new Prisma.Decimal(10000), equity: new Prisma.Decimal(10000), peakEquity: new Prisma.Decimal(10000) }, positions, price: 108200, volatility: 0.01,
     tradePlanContext: { timeframeMs: 900000, proactive: { thesisId: 'audit-1', opportunityId: opportunity.id, thesis: applied, snapshot, mode, sizeFactor: 1 } },
   });
-  return { db, live, submitted, orders, audits, researcher, critic, context, thesis, snapshot, assess, fullAnalysisTrigger, liveQuote, transitions, opportunity, unrelatedOpportunity, setMultipleOpportunities: () => { includeUnrelatedOpportunity = true; }, setPositions: (value: Array<Record<string, unknown>>) => { positions = value; }, setCurrentPrice: (price: number) => { currentPrice = price; }, setLatestSnapshot: (value: unknown) => { latestSnapshot = value; }, assessment: () => assessment };
+  return { db, live, submitted, orders, audits, researcher, critic, context, thesis, snapshot, assess, fullAnalysisTrigger, liveQuote, transitions, opportunity, unrelatedOpportunity, setMultipleOpportunities: () => { includeUnrelatedOpportunity = true; }, setPositions: (value: Array<Record<string, unknown>>) => { positions = value; }, setCurrentPrice: (price: number) => { currentPrice = price; }, setLatestSnapshot: (value: unknown) => { latestSnapshot = value; }, assessment: () => assessment,
+    configureDiagnosticPreflight: () => {
+      account = { totalEquity: 8_700, availableBalance: 8_700, peakEquity: 10_000 };
+      activeLimits = { ...activeLimits, riskPerTrade: 0.02, maxExposure: 1 };
+      if (!assessment) throw new Error('assessment must exist before configuring diagnostic preflight');
+      assessment.positionSize = new Prisma.Decimal(8);
+    },
+  };
 }
 
 describe('joined proactive execution with external IO fixtures', () => {
@@ -131,6 +143,32 @@ describe('joined proactive execution with external IO fixtures', () => {
     expect(f.submitted).toHaveLength(1);
     expect(f.submitted[0]).toMatchObject({ orderType: 'LIMIT', limitPrice: '108200', timeInForce: 'IOC', expiresAt: '2026-09-09T12:15:00.000Z', takeProfit: '112000' });
     expect(f.orders[0]).toMatchObject({ type: 'LIMIT', tradePlan: { targets: [{ price: 112000, fraction: 1 }] } });
+  });
+  it('public execute rejects an ordinary stale approval at diagnostic drawdown without submitting', async () => {
+    const f = fixture();
+    expect(await f.assess(f.thesis)).toMatchObject({ approved: true });
+    f.configureDiagnosticPreflight();
+    f.assessment()!.executionAuthorization = null;
+
+    await expect(f.live.execute('user-1', {
+      connectionId, riskAssessmentId: 'assessment-1', clientOrderId: 'diagnostic-ordinary',
+    }, {}, { skipPreExecutionSync: true })).rejects.toThrow('DRAWDOWN_DIAGNOSTIC_PROBE_REQUIRED');
+
+    expect(f.submitted).toEqual([]);
+  });
+  it('public execute submits an authorized DEMO PROBE_READY limit order at the diagnostic cap', async () => {
+    const f = fixture();
+    expect(await f.assess(f.thesis)).toMatchObject({ approved: true });
+    f.configureDiagnosticPreflight();
+
+    await expect(f.live.execute('user-1', {
+      connectionId, riskAssessmentId: 'assessment-1', clientOrderId: 'diagnostic-probe',
+    }, {}, { skipPreExecutionSync: true })).resolves.toMatchObject({ id: 'order-1' });
+
+    expect(f.submitted).toHaveLength(1);
+    expect(f.submitted[0]).toMatchObject({
+      quantity: '0.0191587756', orderType: 'LIMIT', limitPrice: '108200', timeInForce: 'IOC',
+    });
   });
   it('does not submit a DEMO order after the persisted chase limit is exceeded', async () => {
     const f = fixture();
