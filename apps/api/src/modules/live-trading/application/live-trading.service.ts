@@ -82,6 +82,7 @@ import { RiskConfigService } from "../../risk/application/risk-config.service";
 import {
   estimatedLiquidationLeverageLimit,
   maxStopLossRoeForStrategy,
+  resolveDrawdownRiskPolicy,
 } from "../../risk/domain/risk-engine";
 import { RISK_ENGINE_CONSTANTS } from "../../risk/domain/risk-engine.constants";
 import { RiskManagementService } from "../../risk/application/risk-management.service";
@@ -3233,7 +3234,12 @@ export class LiveTradingService {
       requestedPositionSize * Number(assessment.referencePrice);
     const drawdown =
       peakEquity > 0 ? Math.max(0, (peakEquity - equity) / peakEquity) : 1;
-    if (drawdown >= limits.maxDrawdown) {
+    const drawdownPolicy = resolveDrawdownRiskPolicy(
+      drawdown,
+      "ENTER",
+      limits,
+    );
+    if (drawdownPolicy.tier === "HALTED") {
       throw new ForbiddenException(
         "Exchange preflight failed: maximum drawdown exceeded",
       );

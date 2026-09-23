@@ -90,7 +90,7 @@ interface LiveTradingInternals {
 const internals = (service: LiveTradingService): LiveTradingInternals =>
   service as unknown as LiveTradingInternals;
 
-function build() {
+function build(riskLimits = limits) {
   const prisma = {
     liveOrder: {
       findFirst: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn(),
@@ -114,7 +114,7 @@ function build() {
     connections as never,
     { assertExecutionAllowed: vi.fn(), values: {} } as never,
     audit as never,
-    { getUserLimits: vi.fn().mockResolvedValue(limits), values: limits } as never,
+    { getUserLimits: vi.fn().mockResolvedValue(riskLimits), values: riskLimits } as never,
     {} as never,
     {} as never,
     publicExchanges as never,
@@ -418,6 +418,20 @@ describe("live protection and exchange risk preflight", () => {
       })).rejects.toThrow("risk per trade exceeded");
   });
 
+  it("allows a ten-percent drawdown entry when legacy maxDrawdown is below the canonical halt tier", async () => {
+    const { service, prisma } = build({ ...limits, maxDrawdown: 0.1 });
+    prisma.liveAccountSnapshot.findFirst.mockResolvedValue({
+      totalEquity: 9_000, availableBalance: 9_000,
+    });
+    prisma.liveAccountSnapshot.aggregate.mockResolvedValue({ _max: { totalEquity: 10_000 } });
+    prisma.livePosition.findMany.mockResolvedValue([]);
+
+    await expect(internals(service).assertExchangePortfolioRisk("user-1", "conn-1", {
+      symbol: "ETH-USDT", positionSize: 0.1, leverage: 2,
+      referencePrice: 2_000, stopLoss: 1_980,
+    })).resolves.toMatchObject({ positionSize: 0.1 });
+  });
+
   it("blocks leverage whose planned stop loss exceeds the margin ROE ceiling", async () => {
     const { service, prisma } = build();
     prisma.liveAccountSnapshot.findFirst.mockResolvedValue({
@@ -636,4 +650,3 @@ describe("assessPipelineDecision collateral mismatch alert", () => {
     });
   });
 });
-
