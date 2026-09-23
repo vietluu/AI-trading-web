@@ -36,8 +36,12 @@ describe('SelfLearningService.evaluateShadowSignals promotion state machine inte
   const userId = 'user-test-uuid';
 
   it('returns exact lifecycle profitability authority instead of broad-cohort approval', async () => {
-    const rows = Array.from({ length: 30 }, (_, index) =>
-      lifecycleRow(`thesis-${index}`, index % 3 === 0 ? -1 : 1, index),
+    const netRs = [
+      1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, 1, -1, 1, -1,
+      1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1,
+    ];
+    const rows = netRs.map((netR, index) =>
+      lifecycleRow(`thesis-${index}`, netR, index),
     );
     const prisma = {
       tradeLifecycleOutcome: { findMany: vi.fn().mockResolvedValue(rows) },

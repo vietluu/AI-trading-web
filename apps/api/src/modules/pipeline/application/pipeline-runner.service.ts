@@ -60,6 +60,8 @@ import type { TradePlanMarketContext } from "../../risk/domain/trade-plan-engine
 import { TradeResearcherService } from "../../agents/application/services/trade-researcher.service";
 import { ChainOfThoughtReflectionService } from "../../agents/application/services/chain-of-thought-reflection.service";
 import { AnticipatorySnapshotService } from "../../agents/application/services/anticipatory-snapshot.service";
+import { SelfLearningService } from '../../reflection/application/self-learning.service';
+import type { ProfitAuthorityResult } from '../../reflection/domain/thesis-cohort';
 import {
   selectBlockingGate,
   type GateDecisionRecord,
@@ -204,6 +206,7 @@ export class PipelineRunnerService {
     @Optional() @Inject(TradeResearcherService) private readonly tradeResearcher?: TradeResearcherService,
     @Optional() @Inject(ChainOfThoughtReflectionService) private readonly critic?: ChainOfThoughtReflectionService,
     @Optional() @Inject(AnticipatorySnapshotService) private readonly anticipatorySnapshot?: AnticipatorySnapshotService,
+    @Optional() private readonly selfLearning?: SelfLearningService,
   ) {}
 
   async run(
@@ -593,6 +596,7 @@ export class PipelineRunnerService {
       let synthesizedOutput: DecisionOutput;
       let proactiveThesis: TradeThesis | undefined;
       let proactive: ProactiveExecutionContext | undefined;
+      let lifecycleAuthority: Pick<ProfitAuthorityResult, 'action' | 'sizeFactor' | 'reason'> | undefined;
       let criticSizeFactor = 1;
       
       if (job.pipelineId === 'proactive-thesis' && this.tradeResearcher && this.critic && this.anticipatorySnapshot) {
@@ -665,8 +669,25 @@ export class PipelineRunnerService {
         }
         if (!research.researchRunId) throw new Error('THESIS_AUDIT_PARENT_REQUIRED');
         criticSizeFactor = review.action === 'REDUCE_SIZE' ? (review.sizeFactor ?? 0) : 1;
+        lifecycleAuthority = this.selfLearning
+          ? await this.selfLearning.evaluateProfitAuthorityForThesis(
+              {
+                symbol,
+                timeframe: String(interval),
+                regime: proactiveThesis.regime,
+                direction: proactiveThesis.direction as 'LONG' | 'SHORT',
+                setup: proactiveThesis.setup,
+                executionPolicyVersion: `v${snapshot.calculationVersion}`,
+              },
+              { asOf: new Date(snapshot.sourceDataCutoff) },
+            )
+          : {
+              action: 'PROBE_ONLY',
+              sizeFactor: 0.15,
+              reason: 'LIFECYCLE_AUTHORITY_UNAVAILABLE',
+            };
         proactive = { thesisId: research.researchRunId, opportunityId, thesis: proactiveThesis, snapshot,
-          mode: proactiveMode as ProactiveExecutionContext['mode'], sizeFactor: 1 };
+          mode: proactiveMode as ProactiveExecutionContext['mode'], sizeFactor: lifecycleAuthority.sizeFactor };
         const netR = calculateThesisNetR(proactiveThesis, snapshot) ?? 0;
         const probability = baseline.expectedWinProbability;
         const type = proactiveThesis.regime.includes('RANGING') ? 'RANGING' as const
@@ -1051,8 +1072,19 @@ export class PipelineRunnerService {
         sourceDataAgeMs,
         createdAt: decisionCompletedAt.toISOString(),
       });
+      const lifecycleAuthorityGate = lifecycleAuthority
+        ? {
+            severity: lifecycleAuthority.action === 'SUPPRESSED'
+              ? 'BLOCK' as const
+              : lifecycleAuthority.action === 'PROBE_ONLY'
+                ? 'REDUCE_SIZE' as const
+                : 'APPROVE' as const,
+            sizeFactor: lifecycleAuthority.sizeFactor,
+            reasons: [lifecycleAuthority.reason],
+          }
+        : { severity: 'APPROVE' as const, sizeFactor: 1, reasons: [] };
       const composedSize = composeEvidenceSize([judge, { severity: quant.severity, sizeFactor: quant.sizeFactor, reasons: quant.reasons ?? [] },
-        { severity: criticSizeFactor < 1 ? 'REDUCE_SIZE' : 'APPROVE', sizeFactor: criticSizeFactor, reasons: [] }]);
+        { severity: criticSizeFactor < 1 ? 'REDUCE_SIZE' : 'APPROVE', sizeFactor: criticSizeFactor, reasons: [] }, lifecycleAuthorityGate]);
       if (proactive) proactive.sizeFactor = composedSize.sizeFactor ?? 1;
       const executionDecision = actionable && composedSize.severity !== 'BLOCK'
         ? output
@@ -1066,7 +1098,9 @@ export class PipelineRunnerService {
         ? 1 + Number(indicatorSnapshot?.values.volumeChangePercent) / 100
         : undefined;
       let submissionStartedAt: Date | undefined;
-      let executionGateReason: string | undefined;
+      let executionGateReason: string | undefined = lifecycleAuthority?.action === 'SUPPRESSED'
+        ? 'EXACT_LIFECYCLE_SUPPRESSED'
+        : undefined;
       let canaryCooldownKey: string | undefined;
       let retainCanaryCooldown = false;
       let pipelineOutcome: { outcome: string; reason?: string } | undefined;
@@ -1167,7 +1201,7 @@ export class PipelineRunnerService {
         if (report.ready) {
           await this.executeConfluenceBatch(job.confluenceBatchId, job.userId);
         }
-      } else if (actionable) {
+      } else if (actionable && !executionGateReason) {
         // ─── Distributed Execution Lock ───────────────────────────────────────
         // Prevent race condition: multiple concurrent pipelines for the same user
         // could all read the same balance snapshot and collectively over-leverage.

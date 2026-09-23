@@ -53,12 +53,19 @@ describe('Thesis Cohort Calibration & AI Lift Domain', () => {
     configurationHash: 'v1',
   });
 
+  // Twenty distributed winners and ten losses: both sequential windows stay
+  // positive and each peak-to-trough loss is below fifteen percent.
+  const stableNetRs = [
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, 1, -1, 1, -1,
+    1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1,
+  ];
+
   it('governs exact lifecycle sizing with mature, stable, distributed profitability', () => {
     const immature = Array.from({ length: 29 }, (_, index) =>
       profitOutcome(`immature-${index}`, index % 3 === 0 ? -1 : 1, index),
     );
-    const stablePositive = Array.from({ length: 30 }, (_, index) =>
-      profitOutcome(`stable-${index}`, index % 3 === 0 ? -1 : 1, index),
+    const stablePositive = stableNetRs.map((netR, index) =>
+      profitOutcome(`stable-${index}`, netR, index),
     );
     const matureNegative = Array.from({ length: 20 }, (_, index) =>
       profitOutcome(`negative-${index}`, index % 4 === 0 ? 0.5 : -1, index),
@@ -93,16 +100,35 @@ describe('Thesis Cohort Calibration & AI Lift Domain', () => {
   });
 
   it('deduplicates a thesis before calculating profitability authority', () => {
-    const outcomes = Array.from({ length: 29 }, (_, index) =>
-      profitOutcome(`unique-${index}`, index % 3 === 0 ? -1 : 1, index),
+    const outcomes = stableNetRs.slice(0, 29).map((netR, index) =>
+      profitOutcome(`unique-${index}`, netR, index),
     );
     outcomes.push(profitOutcome('revised-thesis', -5, 29));
-    outcomes.push(profitOutcome('revised-thesis', 1, 30));
+    outcomes.push(profitOutcome('revised-thesis', -1, 30));
 
     const authority = evaluateProfitAuthority(outcomes);
 
     expect(authority).toMatchObject({ action: 'FULL_SIZE', sampleSize: 30 });
     expect(authority.netExpectancy).toBeCloseTo(0.3333, 4);
+  });
+
+  it('keeps an otherwise stable exact cohort probe-only after a fifteen-percent lifecycle drawdown', () => {
+    const outcomes = [
+      ...Array.from({ length: 10 }, (_, index) => profitOutcome(`rise-${index}`, 1, index)),
+      profitOutcome('drawdown-1', -1, 10),
+      profitOutcome('drawdown-2', -1, 11),
+      ...Array.from({ length: 3 }, (_, index) => profitOutcome(`recover-${index}`, 1, index + 12)),
+      ...Array.from({ length: 10 }, (_, index) => profitOutcome(`later-rise-${index}`, 1, index + 15)),
+      ...Array.from({ length: 5 }, (_, index) => profitOutcome(`later-loss-${index}`, -1, index + 25)),
+    ];
+
+    const authority = evaluateProfitAuthority(outcomes);
+
+    expect(authority).toMatchObject({
+      action: 'PROBE_ONLY',
+      sampleSize: 30,
+    });
+    expect(authority.maxDrawdown).toBeGreaterThanOrEqual(0.15);
   });
 
   it('excludes lifecycle outcomes with missing exact cohort dimensions from full-size authority', () => {

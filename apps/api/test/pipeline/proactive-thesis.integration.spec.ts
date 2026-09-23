@@ -12,6 +12,7 @@ import type { TradeResearcherService } from "../../src/modules/agents/applicatio
 import type { ChainOfThoughtReflectionService } from "../../src/modules/agents/application/services/chain-of-thought-reflection.service";
 import type { AnticipatorySnapshotService } from "../../src/modules/agents/application/services/anticipatory-snapshot.service";
 import type { QuantExecutionPolicyService } from "../../src/modules/pipeline/application/quant-execution-policy.service";
+import type { SelfLearningService } from '../../src/modules/reflection/application/self-learning.service';
 
 import type { FusionService } from "../../src/modules/agents/application/services/fusion.service";
 import type { DecisionService } from "../../src/modules/agents/application/services/decision.service";
@@ -123,6 +124,7 @@ describe("Proactive Thesis Pipeline Integration", () => {
   let mockCollector: { addSignal: ReturnType<typeof vi.fn> };
   let mockRunUpdates: ReturnType<typeof vi.fn>;
   let mockExecutionLock: ReturnType<typeof vi.fn>;
+  let mockSelfLearning: Partial<SelfLearningService>;
 
   afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
 
@@ -154,6 +156,11 @@ describe("Proactive Thesis Pipeline Integration", () => {
 
     mockQuantPolicy = {
       evaluate: vi.fn().mockResolvedValue({ severity: "APPROVE", allowed: true, reasons: [] }),
+    };
+    mockSelfLearning = {
+      evaluateProfitAuthorityForThesis: vi.fn().mockResolvedValue({
+        action: 'FULL_SIZE', sizeFactor: 1, reason: 'stable exact lifecycle',
+      }),
     };
 
     const fusionResult = makeFusionResult();
@@ -231,6 +238,7 @@ describe("Proactive Thesis Pipeline Integration", () => {
       mockTradeResearcher as unknown as TradeResearcherService,
       mockCritic as unknown as ChainOfThoughtReflectionService,
       mockSnapshotService as unknown as AnticipatorySnapshotService,
+      mockSelfLearning as SelfLearningService,
     );
 
 
@@ -360,6 +368,32 @@ describe("Proactive Thesis Pipeline Integration", () => {
     expect(mockLiveTrading.assessPipelineDecision).toHaveBeenCalledWith(expect.objectContaining({
       decision: expect.objectContaining({ executionContext: expect.objectContaining({ action: 'PROBE', riskTier: 'PROBE' }) }),
     }));
+  });
+
+  it('caps an immature lifecycle cohort at 0.15 before proactive risk persistence', async () => {
+    mockSelfLearning.evaluateProfitAuthorityForThesis = vi.fn().mockResolvedValue({
+      action: 'PROBE_ONLY', sizeFactor: 0.15, reason: 'insufficient exact history',
+    });
+
+    await pipelineRunner.run(makeJob());
+
+    expect(mockLiveTrading.assessPipelineDecision).toHaveBeenCalledWith(expect.objectContaining({
+      tradePlanContext: expect.objectContaining({
+        proactive: expect.objectContaining({ sizeFactor: 0.15 }),
+      }),
+    }));
+    expect(mockLiveTrading.executePipeline).toHaveBeenCalledOnce();
+  });
+
+  it('does not persist risk or execute a suppressed exact lifecycle cohort', async () => {
+    mockSelfLearning.evaluateProfitAuthorityForThesis = vi.fn().mockResolvedValue({
+      action: 'SUPPRESSED', sizeFactor: 0, reason: 'negative exact expectancy',
+    });
+
+    await pipelineRunner.run(makeJob());
+
+    expect(mockLiveTrading.assessPipelineDecision).not.toHaveBeenCalled();
+    expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
   });
 
   // ── Scenario 2: Confirmation add — CONFIRMED stage allowed ────────────────

@@ -210,6 +210,7 @@ export interface ProfitAuthorityResult {
   netExpectancy: number;
   profitFactor: number;
   largestWinnerConcentration: number;
+  maxDrawdown: number;
   sequentialWindows: {
     first: ProfitAuthorityWindow;
     second: ProfitAuthorityWindow;
@@ -246,6 +247,18 @@ function evaluateProfitWindow(outcomes: TradeLifecycleOutcome[]): ProfitAuthorit
   };
 }
 
+function netREquityDrawdown(outcomes: TradeLifecycleOutcome[]): number {
+  let equity = 0;
+  let peak = 0;
+  let maxDrawdown = 0;
+  for (const outcome of outcomes) {
+    equity += outcome.netR as number;
+    peak = Math.max(peak, equity);
+    if (peak > 0) maxDrawdown = Math.max(maxDrawdown, (peak - equity) / peak);
+  }
+  return maxDrawdown;
+}
+
 /**
  * Grants sizing authority only to a deduplicated, exact lifecycle cohort.
  * Broader evidence is deliberately excluded: it may inform a probe elsewhere,
@@ -273,6 +286,7 @@ export function evaluateProfitAuthority(
     0,
   );
   const largestWinnerConcentration = totalProfit > 0 ? largestWinner / totalProfit : 0;
+  const maxDrawdown = netREquityDrawdown(finalized);
   const splitAt = Math.floor(finalized.length / 2);
   const first = evaluateProfitWindow(finalized.slice(0, splitAt));
   const second = evaluateProfitWindow(finalized.slice(splitAt));
@@ -282,6 +296,7 @@ export function evaluateProfitAuthority(
     netExpectancy: metrics.meanNetR,
     profitFactor: metrics.profitFactor,
     largestWinnerConcentration: Number(largestWinnerConcentration.toFixed(4)),
+    maxDrawdown: Number(maxDrawdown.toFixed(4)),
     sequentialWindows: { first, second, allPositive },
   };
 
@@ -299,6 +314,7 @@ export function evaluateProfitAuthority(
     metrics.meanNetR > 0 &&
     metrics.profitFactor > minProfitFactor &&
     largestWinnerConcentration <= maxWinnerConcentration &&
+    maxDrawdown < 0.15 &&
     allPositive
   ) {
     return {
