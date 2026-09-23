@@ -111,6 +111,7 @@ export const StoredProbeSchema = z.object({
 export const ProactiveAuthorizationSchema = z.object({
   kind: z.literal('PROACTIVE'), mode: z.enum(['OBSERVE', 'SHADOW', 'DEMO']),
   requiredEnvironment: z.literal('DEMO'), connectionId: z.string().min(1), thesisId: z.string().min(1),
+  opportunityId: z.string().min(1),
   thesis: TradeThesisSchema, snapshot: AnticipatoryMarketSnapshotSchema,
 });
 

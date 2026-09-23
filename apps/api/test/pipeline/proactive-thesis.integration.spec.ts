@@ -41,7 +41,7 @@ const makeJob = (): PipelineJob => ({
   userId: "user-1",
   provider: "BINANCE_FUTURES",
   symbol: SYMBOL,
-  params: { interval: "15m", lookbackCandles: 150 },
+  params: { interval: "15m", lookbackCandles: 150, opportunityId: "opportunity-1" },
   trigger: "SCHEDULE",
   createdAt: new Date().toISOString(),
 });
@@ -464,6 +464,18 @@ describe("Proactive Thesis Pipeline Integration", () => {
     expect(await pipelineRunner.run(makeJob())).toEqual({
       outcome: "SKIPPED", reason: "SKIPPED_BY_PROACTIVE_MODE",
     });
+    expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before research when a proactive job has no source opportunity", async () => {
+    const job = makeJob();
+    delete job.params?.opportunityId;
+
+    await expect(pipelineRunner.run(job)).resolves.toEqual({
+      outcome: "SKIPPED",
+      reason: "PROACTIVE_OPPORTUNITY_REQUIRED",
+    });
+    expect(mockTradeResearcher.research).not.toHaveBeenCalled();
     expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
   });
 

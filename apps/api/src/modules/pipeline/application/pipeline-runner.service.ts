@@ -596,6 +596,19 @@ export class PipelineRunnerService {
       let criticSizeFactor = 1;
       
       if (job.pipelineId === 'proactive-thesis' && this.tradeResearcher && this.critic && this.anticipatorySnapshot) {
+        const opportunityId = typeof job.params?.opportunityId === 'string'
+          ? job.params.opportunityId.trim()
+          : '';
+        if (!opportunityId) {
+          const completedAt = new Date();
+          await this.finalizeEarlyTerminalRun(
+            runId,
+            { status: 'SKIPPED', decision: 'WAIT', skippedReason: 'PROACTIVE_OPPORTUNITY_REQUIRED' },
+            'PROACTIVE_OPPORTUNITY_REQUIRED',
+            completedAt,
+          );
+          return { outcome: 'SKIPPED', reason: 'PROACTIVE_OPPORTUNITY_REQUIRED' };
+        }
         const executionEvidence = await this.liveTrading.proactiveExecutionEvidence(job.userId, job.provider as ExchangeProvider, symbol);
         const snapshot = await this.anticipatorySnapshot.build({
           userId: job.userId,
@@ -652,7 +665,7 @@ export class PipelineRunnerService {
         }
         if (!research.researchRunId) throw new Error('THESIS_AUDIT_PARENT_REQUIRED');
         criticSizeFactor = review.action === 'REDUCE_SIZE' ? (review.sizeFactor ?? 0) : 1;
-        proactive = { thesisId: research.researchRunId, thesis: proactiveThesis, snapshot,
+        proactive = { thesisId: research.researchRunId, opportunityId, thesis: proactiveThesis, snapshot,
           mode: proactiveMode as ProactiveExecutionContext['mode'], sizeFactor: 1 };
         const netR = calculateThesisNetR(proactiveThesis, snapshot) ?? 0;
         const probability = baseline.expectedWinProbability;

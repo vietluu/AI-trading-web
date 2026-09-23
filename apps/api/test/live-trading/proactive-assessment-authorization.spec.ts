@@ -4,7 +4,7 @@ import { createBaseSnapshot, createValidLongThesis } from '../helpers/thesis-fix
 
 function fixture(mode: string, environment = 'DEMO') {
   const assessment = { id: 'assessment-1', userId: 'user-1', approved: true, positionSize: 0.01, leverage: 1, decision: 'LONG', connectionId: 'demo', createdAt: new Date(),
-    executionAuthorization: { kind: 'PROACTIVE', mode, requiredEnvironment: 'DEMO', connectionId: 'demo', thesisId: 'thesis-1', snapshot: createBaseSnapshot(), thesis: createValidLongThesis() } };
+    executionAuthorization: { kind: 'PROACTIVE', mode, requiredEnvironment: 'DEMO', connectionId: 'demo', thesisId: 'thesis-1', opportunityId: 'opportunity-1', snapshot: createBaseSnapshot(), thesis: createValidLongThesis() } };
   const submit = vi.fn();
   const service = new LiveTradingService({ riskAssessment: { findFirst: () => Promise.resolve(assessment), findUnique: () => Promise.resolve(assessment) }, liveOrder: { findUnique: () => Promise.resolve(null) } } as never,
     { get: () => Promise.resolve({ id: 'demo', environment, isEnabled: true, isVerified: true }), list: () => Promise.resolve([{ id: 'demo', environment, isEnabled: true, isVerified: true }]), placeOrder: submit } as never,

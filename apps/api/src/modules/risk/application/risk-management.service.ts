@@ -116,7 +116,7 @@ export class RiskManagementService {
     const proactive = input.tradePlanContext?.proactive;
     const executionAuthorization = proactive ? {
       kind: 'PROACTIVE', mode: proactive.mode, requiredEnvironment: 'DEMO', connectionId: sanitizedConnectionId,
-      thesisId: proactive.thesisId, thesis: proactive.thesis, snapshot: proactive.snapshot,
+      thesisId: proactive.thesisId, opportunityId: proactive.opportunityId, thesis: proactive.thesis, snapshot: proactive.snapshot,
     } as unknown as Prisma.InputJsonValue : Prisma.DbNull;
     const row = await tx.riskAssessment.upsert({
       where: { pipelineRunId: input.pipelineRunId },

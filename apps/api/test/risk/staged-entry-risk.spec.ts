@@ -74,7 +74,7 @@ function proactiveInput(state: 'PROBE_READY' | 'CONFIRMED' | 'WATCHING' = 'PROBE
   thesis.trigger = [{ type: 'PRICE_ABOVE', price: 108100, description: 'Declared reclaim' }];
   const input = getBaseInput('LONG');
   input.marketData.price = 108200;
-  input.marketData.tradePlanContext = { atr: 200, proactive: { thesisId: 'thesis-1', thesis, snapshot, mode: 'DEMO', sizeFactor: 1 } };
+  input.marketData.tradePlanContext = { atr: 200, proactive: { thesisId: 'thesis-1', opportunityId: 'opportunity-1', thesis, snapshot, mode: 'DEMO', sizeFactor: 1 } };
   input.now = new Date(cutoff);
   return input;
 }

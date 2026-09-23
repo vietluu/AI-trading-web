@@ -29,6 +29,10 @@ function fixture() {
     setup: 'TREND_PULLBACK', direction: 'LONG', state: 'PROBE_READY', invalidationPrice: 107_500,
     expiresAt: new Date('2026-09-09T12:30:00.000Z'), lastObservedCutoff: new Date('2026-09-09T11:45:00.000Z'), thesisVersion: 1,
   };
+  const unrelatedOpportunity = {
+    ...opportunity, id: 'opportunity-2', setup: 'RANGE_REVERSAL', state: 'WATCHING',
+  };
+  let includeUnrelatedOpportunity = false;
   const transitions: Array<Record<string, unknown>> = [];
   const orders: Array<Record<string, unknown>> = [];
   const contexts = new Set<string>();
@@ -48,8 +52,15 @@ function fixture() {
     },
     anticipatoryMarketSnapshot: { findFirst: () => Promise.resolve(latestSnapshot) },
     opportunity: {
-      findFirst: () => Promise.resolve(opportunity),
-      update: ({ data }: { data: Record<string, unknown> }) => { Object.assign(opportunity, data); return Promise.resolve(opportunity); },
+      findFirst: ({ where }: { where?: { id?: string } } = {}) => {
+        if (where?.id === opportunity.id) return Promise.resolve(opportunity);
+        if (where?.id === unrelatedOpportunity.id) return Promise.resolve(unrelatedOpportunity);
+        return Promise.resolve(includeUnrelatedOpportunity ? unrelatedOpportunity : opportunity);
+      },
+      update: ({ where, data }: { where?: { id?: string }; data: Record<string, unknown> }) => {
+        const row = where?.id === unrelatedOpportunity.id ? unrelatedOpportunity : opportunity;
+        Object.assign(row, data); return Promise.resolve(row);
+      },
     },
     opportunityTransition: {
       upsert: ({ create }: { create: Record<string, unknown> }) => {
@@ -96,9 +107,9 @@ function fixture() {
     userId: 'user-1', connectionId, pipelineRunId: 'pipeline-1', symbol: snapshot.symbol,
     decision: { decision: applied.direction, confidence: applied.confidence, regime: { type: 'TRENDING' }, conflictLevel: 'LOW' } as DecisionOutput,
     account: { balance: new Prisma.Decimal(10000), equity: new Prisma.Decimal(10000), peakEquity: new Prisma.Decimal(10000) }, positions, price: 108200, volatility: 0.01,
-    tradePlanContext: { timeframeMs: 900000, proactive: { thesisId: 'audit-1', thesis: applied, snapshot, mode, sizeFactor: 1 } },
+    tradePlanContext: { timeframeMs: 900000, proactive: { thesisId: 'audit-1', opportunityId: opportunity.id, thesis: applied, snapshot, mode, sizeFactor: 1 } },
   });
-  return { db, live, submitted, orders, audits, researcher, critic, context, thesis, snapshot, assess, fullAnalysisTrigger, liveQuote, transitions, opportunity, setPositions: (value: Array<Record<string, unknown>>) => { positions = value; }, setCurrentPrice: (price: number) => { currentPrice = price; }, setLatestSnapshot: (value: unknown) => { latestSnapshot = value; }, assessment: () => assessment };
+  return { db, live, submitted, orders, audits, researcher, critic, context, thesis, snapshot, assess, fullAnalysisTrigger, liveQuote, transitions, opportunity, unrelatedOpportunity, setMultipleOpportunities: () => { includeUnrelatedOpportunity = true; }, setPositions: (value: Array<Record<string, unknown>>) => { positions = value; }, setCurrentPrice: (price: number) => { currentPrice = price; }, setLatestSnapshot: (value: unknown) => { latestSnapshot = value; }, assessment: () => assessment };
 }
 
 describe('joined proactive execution with external IO fixtures', () => {
@@ -171,6 +182,37 @@ describe('joined proactive execution with external IO fixtures', () => {
 
     expect(await f.live.executePipeline('user-1', 'pipeline-1')).toMatchObject({
       outcome: 'EXECUTION_FAILED', errorMessage: 'PERSISTED_THESIS_ENTRY_THESIS_INVALIDATED',
+    });
+    expect(f.submitted).toEqual([]);
+  });
+  it('persists a terminal entry result only on its originating opportunity', async () => {
+    const f = fixture();
+    expect(await f.assess(f.thesis)).toMatchObject({ approved: true });
+    (f.assessment()!.executionAuthorization as Prisma.JsonObject).opportunityId = f.opportunity.id;
+    f.setMultipleOpportunities();
+    f.setLatestSnapshot({ id: 'snapshot-4', snapshotJson: f.snapshot });
+    f.setCurrentPrice(108_621);
+
+    expect(await f.live.executePipeline('user-1', 'pipeline-1')).toMatchObject({
+      outcome: 'EXECUTION_FAILED', errorMessage: 'PERSISTED_THESIS_ENTRY_CHASE_DISTANCE_EXCEEDED',
+    });
+    expect(f.opportunity.state).toBe('TOO_LATE');
+    expect(f.unrelatedOpportunity.state).toBe('WATCHING');
+    expect(f.transitions).toHaveLength(1);
+    expect(f.transitions[0]).toMatchObject({ opportunityId: f.opportunity.id });
+  });
+  it('does not close an opposite position when full authorization validation rejects an otherwise enterable thesis', async () => {
+    const f = fixture();
+    expect(await f.assess(f.thesis)).toMatchObject({ approved: true });
+    const authorization = f.assessment()!.executionAuthorization as Prisma.JsonObject;
+    authorization.thesis = {
+      ...(authorization.thesis as Prisma.JsonObject),
+      expectedNetR: 0.5,
+    };
+    f.setPositions([{ symbol: 'BTC-USDT', side: 'SHORT', quantity: new Prisma.Decimal(0.01), entryPrice: new Prisma.Decimal(108_200), markPrice: new Prisma.Decimal(108_200), leverage: 1 }]);
+
+    expect(await f.live.executePipeline('user-1', 'pipeline-1')).toMatchObject({
+      outcome: 'EXECUTION_FAILED', errorMessage: 'PROACTIVE_EXECUTION_NOT_AUTHORIZED',
     });
     expect(f.submitted).toEqual([]);
   });

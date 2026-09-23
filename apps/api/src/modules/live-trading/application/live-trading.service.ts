@@ -952,6 +952,8 @@ export class LiveTradingService {
         assessment.executionAuthorization,
         connection.provider,
         assessment.symbol,
+        connection.id,
+        connection.environment,
       );
       proactiveOrderTerms(assessment.tradePlan, assessment.executionAuthorization);
     }
@@ -3055,6 +3057,8 @@ export class LiveTradingService {
     authorization: unknown,
     provider: ExchangeProvider,
     symbol: string,
+    connectionId: string,
+    environment: string,
   ): Promise<void> {
     const parsed = ProactiveAuthorizationSchema.parse(authorization);
     const ticker = await this.publicExchanges.ticker(provider, symbol);
@@ -3098,6 +3102,9 @@ export class LiveTradingService {
     if (decision.action !== 'ENTER') {
       throw new ForbiddenException(`PERSISTED_THESIS_ENTRY_${decision.reasonCode}`);
     }
+    if (!proactiveAuthorizationAllowed(authorization, connectionId, environment)) {
+      throw new ForbiddenException('PROACTIVE_EXECUTION_NOT_AUTHORIZED');
+    }
   }
 
   private async persistPersistedThesisEntryTransition(
@@ -3115,6 +3122,7 @@ export class LiveTradingService {
     await this.prisma.$transaction(async (transaction) => {
       const opportunity = await transaction.opportunity.findFirst({
         where: {
+          id: authorization.opportunityId,
           userId,
           provider: authorization.snapshot.provider,
           symbol,
