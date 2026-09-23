@@ -10,6 +10,9 @@ describe("RiskConfigService user limits", () => {
       riskPerTrade: 0.005,
       maxPositions: 3,
       maxSameDirectionPositions: 1,
+      drawdownReducedPct: 0.08,
+      drawdownDiagnosticProbePct: 0.12,
+      drawdownHaltPct: 0.15,
     });
   });
 

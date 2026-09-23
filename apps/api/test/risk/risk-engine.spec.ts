@@ -6,6 +6,7 @@ import {
   calculatePositionSize,
   calculateProtectivePrices,
   evaluateRisk,
+  resolveDrawdownRiskPolicy,
   type RiskInput,
   type RiskLimits,
 } from "../../src/modules/risk/domain/risk-engine";
@@ -75,6 +76,29 @@ const input = (overrides: Partial<RiskInput> = {}): RiskInput => ({
 });
 
 describe("risk engine", () => {
+  it("resolves profit-first drawdown boundaries without blocking protective exits", () => {
+    expect(resolveDrawdownRiskPolicy(0.079, "ENTER")).toEqual({
+      tier: "NORMAL",
+      maxSizeFactor: 1,
+    });
+    expect(resolveDrawdownRiskPolicy(0.08, "ENTER")).toEqual({
+      tier: "REDUCED",
+      maxSizeFactor: 0.5,
+    });
+    expect(resolveDrawdownRiskPolicy(0.12, "ENTER")).toMatchObject({
+      tier: "DIAGNOSTIC_PROBE",
+      maxSizeFactor: 0.1,
+    });
+    expect(resolveDrawdownRiskPolicy(0.15, "PROBE")).toMatchObject({
+      tier: "HALTED",
+      maxSizeFactor: 0,
+    });
+    expect(resolveDrawdownRiskPolicy(0.15, "PROTECTIVE_EXIT")).toEqual({
+      tier: "NORMAL",
+      maxSizeFactor: 1,
+    });
+  });
+
   it("calculates capital-at-risk sizing and 1:2 protective prices", () => {
     const prices = calculateProtectivePrices("LONG", 50_000, 0.02, 2);
     expect(prices).toEqual({ stopLoss: 49_000, takeProfit: 52_000 });
@@ -314,6 +338,20 @@ describe("risk engine", () => {
         limits,
       ),
     ).toMatchObject({ approved: false, reason: "MAX_DRAWDOWN_EXCEEDED" });
+  });
+
+  it("does not turn a live-capable full entry into a diagnostic probe at twelve percent drawdown", () => {
+    expect(
+      evaluateRisk(
+        input({
+          account: { balance: 10_000, equity: 8_800, peakEquity: 10_000 },
+        }),
+        limits,
+      ),
+    ).toMatchObject({
+      approved: false,
+      reason: "DRAWDOWN_DIAGNOSTIC_PROBE_REQUIRED",
+    });
   });
 
   it("blocks repeated entries in the same symbol and direction within the cooldown window", () => {
