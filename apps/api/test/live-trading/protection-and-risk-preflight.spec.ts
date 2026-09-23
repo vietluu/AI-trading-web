@@ -432,6 +432,34 @@ describe("live protection and exchange risk preflight", () => {
     })).resolves.toMatchObject({ positionSize: 0.1 });
   });
 
+  it("caps a stale full-size approval to the reduced one-percent risk budget at ten-percent drawdown", async () => {
+    const { service, prisma } = build({ ...limits, maxDrawdown: 0.1, maxExposure: 1 });
+    prisma.liveAccountSnapshot.findFirst.mockResolvedValue({
+      totalEquity: 9_000, availableBalance: 9_000,
+    });
+    prisma.liveAccountSnapshot.aggregate.mockResolvedValue({ _max: { totalEquity: 10_000 } });
+    prisma.livePosition.findMany.mockResolvedValue([]);
+
+    await expect(internals(service).assertExchangePortfolioRisk("user-1", "conn-1", {
+      symbol: "ETH-USDT", positionSize: 8, leverage: 2,
+      referencePrice: 2_000, stopLoss: 1_980,
+    })).resolves.toMatchObject({ positionSize: 4.166666666666 });
+  });
+
+  it("caps a stale full-size approval to the diagnostic 0.10R risk budget at thirteen-percent drawdown", async () => {
+    const { service, prisma } = build({ ...limits, maxDrawdown: 0.1, maxExposure: 1 });
+    prisma.liveAccountSnapshot.findFirst.mockResolvedValue({
+      totalEquity: 8_700, availableBalance: 8_700,
+    });
+    prisma.liveAccountSnapshot.aggregate.mockResolvedValue({ _max: { totalEquity: 10_000 } });
+    prisma.livePosition.findMany.mockResolvedValue([]);
+
+    await expect(internals(service).assertExchangePortfolioRisk("user-1", "conn-1", {
+      symbol: "ETH-USDT", positionSize: 8, leverage: 2,
+      referencePrice: 2_000, stopLoss: 1_980,
+    })).resolves.toMatchObject({ positionSize: 0.805555555555 });
+  });
+
   it("blocks leverage whose planned stop loss exceeds the margin ROE ceiling", async () => {
     const { service, prisma } = build();
     prisma.liveAccountSnapshot.findFirst.mockResolvedValue({

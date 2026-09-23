@@ -3256,12 +3256,19 @@ export class LiveTradingService {
       );
     }
     const referencePrice = Number(assessment.referencePrice);
-    const plannedLoss =
-      requestedPositionSize *
-      (Math.abs(referencePrice - stopLoss) +
-        referencePrice * limits.estimatedRoundTripCostPct);
+    const lossPerUnit =
+      Math.abs(referencePrice - stopLoss) +
+      referencePrice * limits.estimatedRoundTripCostPct;
+    const drawdownRiskBudget =
+      equity * limits.riskPerTrade * drawdownPolicy.maxSizeFactor;
+    const drawdownCappedPositionSize =
+      drawdownPolicy.maxSizeFactor < 1 && lossPerUnit > 0
+        ? Math.min(requestedPositionSize, drawdownRiskBudget / lossPerUnit)
+        : requestedPositionSize;
+    const plannedLoss = drawdownCappedPositionSize * lossPerUnit;
     const plannedEquityRiskPct = plannedLoss / equity;
-    const requiredMarginForRisk = requestedNotional / requestedLeverage;
+    const requiredMarginForRisk =
+      (drawdownCappedPositionSize * referencePrice) / requestedLeverage;
     const plannedMarginRoe = plannedLoss / requiredMarginForRisk;
     const tradePlan = assessment.tradePlan as
       { strategy?: string; timeframeMs?: number } | null | undefined;
@@ -3278,7 +3285,8 @@ export class LiveTradingService {
     );
     if (
       !Number.isFinite(plannedEquityRiskPct) ||
-      plannedEquityRiskPct > limits.riskPerTrade + 1e-8
+      plannedEquityRiskPct >
+        limits.riskPerTrade * drawdownPolicy.maxSizeFactor + 1e-8
     ) {
       throw new ForbiddenException(
         "Exchange preflight failed: risk per trade exceeded",
@@ -3330,7 +3338,7 @@ export class LiveTradingService {
     }, 0);
     const sizing = this.deriveExecutionSizing(
       {
-        positionSize: requestedPositionSize,
+        positionSize: drawdownCappedPositionSize,
         leverage: requestedLeverage,
         referencePrice: Number(assessment.referencePrice),
       },
