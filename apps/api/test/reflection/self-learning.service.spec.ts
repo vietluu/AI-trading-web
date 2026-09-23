@@ -2,8 +2,59 @@ import { describe, expect, it, vi } from 'vitest';
 import { SelfLearningService } from '../../src/modules/reflection/application/self-learning.service';
 import { BASE_WEIGHTS } from '../../src/modules/agents/domain/constants/decision.constants';
 
+function lifecycleRow(thesisId: string, netR: number, sequence: number) {
+  return {
+    id: `outcome-${thesisId}`,
+    thesisId,
+    symbol: 'BTC-USDT',
+    provider: 'BINANCE',
+    timeframe: '15m',
+    direction: 'LONG',
+    setup: 'BREAKOUT',
+    regime: 'TRENDING_UP',
+    status: 'FINALIZED',
+    sourceDataCutoff: new Date('2026-09-01T00:00:00.000Z'),
+    openedAt: new Date(`2026-09-${String(1 + sequence).padStart(2, '0')}T00:00:00.000Z`),
+    closedAt: new Date(`2026-09-${String(1 + sequence).padStart(2, '0')}T01:00:00.000Z`),
+    totalEnteredQuantity: 1,
+    totalExitedQuantity: 1,
+    averageEntryPrice: 100,
+    averageExitPrice: 100 + netR * 10,
+    realizedGrossPnl: netR * 10,
+    signedFees: 0,
+    signedFunding: 0,
+    realizedNetPnl: netR * 10,
+    initialRisk: 10,
+    netR,
+    configurationHash: 'v1',
+    schemaVersion: 1,
+    calculationVersion: 1,
+  };
+}
+
 describe('SelfLearningService.evaluateShadowSignals promotion state machine integration', () => {
   const userId = 'user-test-uuid';
+
+  it('returns exact lifecycle profitability authority instead of broad-cohort approval', async () => {
+    const rows = Array.from({ length: 30 }, (_, index) =>
+      lifecycleRow(`thesis-${index}`, index % 3 === 0 ? -1 : 1, index),
+    );
+    const prisma = {
+      tradeLifecycleOutcome: { findMany: vi.fn().mockResolvedValue(rows) },
+    };
+    const service = new SelfLearningService(prisma as never, {} as never);
+
+    const authority = await service.evaluateProfitAuthorityForThesis(
+      'BTC-USDT|15m|TRENDING_UP|LONG|BREAKOUT|v1',
+    );
+
+    expect(authority).toMatchObject({
+      action: 'FULL_SIZE',
+      sampleSize: 30,
+      sizeFactor: 1,
+      sequentialWindows: { allPositive: true },
+    });
+  });
 
   it('promotes SHADOW candidate to DEMO_CANARY when promotion transition is allowed', async () => {
     let storedConfig: Record<string, unknown> = {

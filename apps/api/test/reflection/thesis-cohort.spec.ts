@@ -5,6 +5,8 @@ import {
   deduplicateLifecycleOutcomes,
   calibrateCohortFromLifecycle,
   evaluateThesisCohort,
+  evaluateProfitAuthority,
+  selectExactCohortOutcomes,
   calculateCriticLift,
   type ThesisCohortKeyParams,
 } from '../../src/modules/reflection/domain/thesis-cohort';
@@ -19,6 +21,103 @@ describe('Thesis Cohort Calibration & AI Lift Domain', () => {
     setup: 'BREAKOUT',
     executionPolicyVersion: 'v1',
   };
+
+  const profitOutcome = (
+    thesisId: string,
+    netR: number,
+    sequence: number,
+  ): TradeLifecycleOutcome => ({
+    thesisId,
+    symbol: 'BTC-USDT',
+    provider: 'BINANCE',
+    timeframe: '15m',
+    direction: 'LONG',
+    setup: 'BREAKOUT',
+    regime: 'TRENDING_UP',
+    status: 'FINALIZED',
+    sourceDataCutoff: new Date('2026-09-10T00:00:00.000Z'),
+    openedAt: new Date(`2026-09-${String(1 + sequence).padStart(2, '0')}T00:00:00.000Z`),
+    closedAt: new Date(`2026-09-${String(1 + sequence).padStart(2, '0')}T01:00:00.000Z`),
+    totalEnteredQuantity: 1,
+    totalExitedQuantity: 1,
+    averageEntryPrice: 100,
+    averageExitPrice: 100 + netR * 10,
+    realizedGrossPnl: netR * 10,
+    signedFees: 0,
+    signedFunding: 0,
+    realizedNetPnl: netR * 10,
+    initialRisk: 10,
+    netR,
+    schemaVersion: 1,
+    calculationVersion: 1,
+    configurationHash: 'v1',
+  });
+
+  it('governs exact lifecycle sizing with mature, stable, distributed profitability', () => {
+    const immature = Array.from({ length: 29 }, (_, index) =>
+      profitOutcome(`immature-${index}`, index % 3 === 0 ? -1 : 1, index),
+    );
+    const stablePositive = Array.from({ length: 30 }, (_, index) =>
+      profitOutcome(`stable-${index}`, index % 3 === 0 ? -1 : 1, index),
+    );
+    const matureNegative = Array.from({ length: 20 }, (_, index) =>
+      profitOutcome(`negative-${index}`, index % 4 === 0 ? 0.5 : -1, index),
+    );
+    const concentrated = [
+      profitOutcome('concentrated-winner', 20, 0),
+      ...Array.from({ length: 29 }, (_, index) =>
+        profitOutcome(`concentrated-${index}`, index % 2 === 0 ? 1 : -1, index + 1),
+      ),
+    ];
+
+    expect(evaluateProfitAuthority(immature)).toMatchObject({
+      action: 'PROBE_ONLY',
+      sampleSize: 29,
+      sizeFactor: 0.15,
+    });
+    expect(evaluateProfitAuthority(stablePositive)).toMatchObject({
+      action: 'FULL_SIZE',
+      sampleSize: 30,
+      profitFactor: 2,
+      sequentialWindows: { allPositive: true },
+    });
+    expect(evaluateProfitAuthority(matureNegative)).toMatchObject({
+      action: 'SUPPRESSED',
+      sampleSize: 20,
+    });
+    expect(evaluateProfitAuthority(concentrated)).toMatchObject({
+      action: 'PROBE_ONLY',
+      sampleSize: 30,
+    });
+    expect(evaluateProfitAuthority(concentrated).largestWinnerConcentration).toBeGreaterThan(0.35);
+  });
+
+  it('deduplicates a thesis before calculating profitability authority', () => {
+    const outcomes = Array.from({ length: 29 }, (_, index) =>
+      profitOutcome(`unique-${index}`, index % 3 === 0 ? -1 : 1, index),
+    );
+    outcomes.push(profitOutcome('revised-thesis', -5, 29));
+    outcomes.push(profitOutcome('revised-thesis', 1, 30));
+
+    const authority = evaluateProfitAuthority(outcomes);
+
+    expect(authority).toMatchObject({ action: 'FULL_SIZE', sampleSize: 30 });
+    expect(authority.netExpectancy).toBeCloseTo(0.3333, 4);
+  });
+
+  it('excludes lifecycle outcomes with missing exact cohort dimensions from full-size authority', () => {
+    const exactOutcomes = Array.from({ length: 29 }, (_, index) =>
+      profitOutcome(`exact-${index}`, index % 3 === 0 ? -1 : 1, index),
+    );
+    const missingRegime = profitOutcome('missing-regime', 1, 29);
+    delete missingRegime.regime;
+
+    const authority = evaluateProfitAuthority(
+      selectExactCohortOutcomes(defaultCohortParams, [...exactOutcomes, missingRegime]),
+    );
+
+    expect(authority).toMatchObject({ action: 'PROBE_ONLY', sampleSize: 29 });
+  });
 
   it('1. Formats and parses cohort key as symbol|timeframe|regime|direction|setup|executionPolicyVersion', () => {
     const key = buildThesisCohortKey(defaultCohortParams);
@@ -705,14 +804,15 @@ describe('Thesis Cohort Calibration & AI Lift Domain', () => {
     expect(v1Decision.action).toBe('REDUCE_SIZE');
     expect(v1Decision.scope).not.toBe('EXACT');
 
-    // Target is policy v2: matches exactly
+    // Target is policy v2: exact policy matching is not by itself enough for full size.
+    // The new lifecycle authority requires 30 exact outcomes, so 25 remains a probe.
     const v2Decision = evaluateThesisCohort(
       'BTC-USDT|15m|TRENDING_UP|LONG|BREAKOUT|v2',
       v2Outcomes,
       { minExactSamples: 20 },
     );
-    expect(v2Decision.action).toBe('APPROVE');
-    expect(v2Decision.scope).toBe('EXACT');
+    expect(v2Decision.action).toBe('REDUCE_SIZE');
+    expect(v2Decision.sizeFactor).toBeLessThanOrEqual(0.15);
     expect(v2Decision.sampleSize).toBe(25);
   });
 
@@ -820,5 +920,3 @@ describe('Thesis Cohort Calibration & AI Lift Domain', () => {
     expect(c2.avoidedLossR).toBeCloseTo(0.5, 2);
   });
 });
-
-
