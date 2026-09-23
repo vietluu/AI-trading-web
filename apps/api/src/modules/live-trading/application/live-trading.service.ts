@@ -2,6 +2,7 @@ import { assertDeclaredLimitOrder } from '../../../exchange/domain/declared-limi
 import { isRestingEntryExpired } from '../domain/resting-limit-expiry';
 import type { AnticipatoryExecutionInput } from '../../agents/domain/analysis/anticipatory-snapshot-builder';
 import { evaluatePersistedThesisEntry, proactiveOrderTerms, proactiveAuthorizationAllowed, ProactiveAuthorizationSchema, StoredProbeSchema, thesisTriggersSatisfied } from '../../risk/domain/thesis-execution';
+import { transitionPersistedThesisEntry, type OpportunityObservationState } from '../../pipeline/domain/opportunity-state-machine';
 import { normalizeTerminalOrderStatus } from "../domain/closed-trade-cycle";
 
 export function resolveExecutionOrderTerms(
@@ -918,9 +919,16 @@ export class LiveTradingService {
       where: { id: dto.riskAssessmentId, userId },
     });
     if (!assessment) throw new NotFoundException("Risk assessment not found");
-    if (assessment.executionAuthorization && (!proactiveAuthorizationAllowed(assessment.executionAuthorization, dto.connectionId, connection.environment) ||
-      process.env.PROACTIVE_AI_MODE !== 'DEMO')) throw new ForbiddenException('PROACTIVE_EXECUTION_NOT_AUTHORIZED');
-    if (assessment.executionAuthorization) proactiveOrderTerms(assessment.tradePlan, assessment.executionAuthorization);
+    const proactiveAuthorization = assessment.executionAuthorization
+      ? ProactiveAuthorizationSchema.safeParse(assessment.executionAuthorization)
+      : undefined;
+    if (assessment.executionAuthorization && (
+      !proactiveAuthorization?.success ||
+      proactiveAuthorization.data.mode !== 'DEMO' ||
+      proactiveAuthorization.data.connectionId !== dto.connectionId ||
+      connection.environment !== 'DEMO' ||
+      process.env.PROACTIVE_AI_MODE !== 'DEMO'
+    )) throw new ForbiddenException('PROACTIVE_EXECUTION_NOT_AUTHORIZED');
     if (assessment.connectionId && assessment.connectionId !== dto.connectionId) throw new ForbiddenException('RISK_CONNECTION_MISMATCH');
     if (
       !assessment.approved ||
@@ -937,6 +945,15 @@ export class LiveTradingService {
       this.config.values.approvalTtlMs
     ) {
       throw new ForbiddenException("Order blocked: risk approval has expired");
+    }
+    if (assessment.executionAuthorization) {
+      await this.assertPersistedThesisEntryAllowed(
+        userId,
+        assessment.executionAuthorization,
+        connection.provider,
+        assessment.symbol,
+      );
+      proactiveOrderTerms(assessment.tradePlan, assessment.executionAuthorization);
     }
     const existingApproval = await this.prisma.liveOrder.findUnique({
       where: { riskAssessmentId: assessment.id },
@@ -1069,13 +1086,6 @@ export class LiveTradingService {
       referencePrice: sizing.referencePrice,
     });
     const approvedTerms = resolveExecutionOrderTerms(assessment.tradePlan, new Date());
-    if (assessment.executionAuthorization) {
-      await this.assertPersistedThesisEntryAllowed(
-        assessment.executionAuthorization,
-        connection.provider,
-        assessment.symbol,
-      );
-    }
     const result = await this.submit(
       userId,
       connection,
@@ -3041,6 +3051,7 @@ export class LiveTradingService {
   }
 
   private async assertPersistedThesisEntryAllowed(
+    userId: string,
     authorization: unknown,
     provider: ExchangeProvider,
     symbol: string,
@@ -3050,7 +3061,7 @@ export class LiveTradingService {
     const currentPrice = Number(ticker.markPrice ?? ticker.lastPrice);
     const snapshots = this.prisma as unknown as {
       anticipatoryMarketSnapshot?: {
-        findFirst: (args: unknown) => Promise<{ snapshotJson: unknown } | null>;
+        findFirst: (args: unknown) => Promise<{ id: string; snapshotJson: unknown } | null>;
       };
     };
     const latestRow = snapshots.anticipatoryMarketSnapshot
@@ -3074,9 +3085,91 @@ export class LiveTradingService {
         ? snapshot.volatility.atr
         : Number.NaN,
     });
+    if (['TOO_LATE', 'EXPIRED', 'INVALIDATED'].includes(decision.action)) {
+      await this.persistPersistedThesisEntryTransition(
+        userId,
+        parsed,
+        latestRow,
+        snapshot,
+        decision,
+        symbol,
+      );
+    }
     if (decision.action !== 'ENTER') {
       throw new ForbiddenException(`PERSISTED_THESIS_ENTRY_${decision.reasonCode}`);
     }
+  }
+
+  private async persistPersistedThesisEntryTransition(
+    userId: string,
+    authorization: ReturnType<typeof ProactiveAuthorizationSchema.parse>,
+    snapshotRow: { id: string; snapshotJson: unknown } | null,
+    snapshot: ReturnType<typeof AnticipatoryMarketSnapshotSchema.parse>,
+    decision: ReturnType<typeof evaluatePersistedThesisEntry>,
+    symbol: string,
+  ): Promise<void> {
+    if (!snapshotRow) return;
+    const sourceDataCutoff = new Date(snapshot.sourceDataCutoff);
+    if (!Number.isFinite(sourceDataCutoff.getTime())) return;
+
+    await this.prisma.$transaction(async (transaction) => {
+      const opportunity = await transaction.opportunity.findFirst({
+        where: {
+          userId,
+          provider: authorization.snapshot.provider,
+          symbol,
+          timeframe: authorization.snapshot.timeframe,
+        },
+        orderBy: { updatedAt: 'desc' },
+      });
+      if (!opportunity) return;
+
+      const transition = transitionPersistedThesisEntry({
+        state: opportunity.state,
+        setup: opportunity.setup as OpportunityObservationState['setup'],
+        direction: opportunity.direction as OpportunityObservationState['direction'],
+        invalidationPrice: opportunity.invalidationPrice === null
+          ? null
+          : Number(opportunity.invalidationPrice),
+        expiresAt: opportunity.expiresAt,
+        lastObservedCutoff: opportunity.lastObservedCutoff,
+      }, sourceDataCutoff, decision);
+      const idempotencyKey = [
+        'persisted-thesis-entry',
+        opportunity.id,
+        sourceDataCutoff.toISOString(),
+      ].join(':');
+      await transaction.opportunityTransition.upsert({
+        where: {
+          opportunityId_sourceDataCutoff: {
+            opportunityId: opportunity.id,
+            sourceDataCutoff,
+          },
+        },
+        update: {
+          fromState: transition.fromState,
+          toState: transition.toState,
+          reasonCode: transition.reasonCode,
+          idempotencyKey,
+        },
+        create: {
+          opportunityId: opportunity.id,
+          snapshotId: snapshotRow.id,
+          fromState: transition.fromState,
+          toState: transition.toState,
+          reasonCode: transition.reasonCode,
+          sourceDataCutoff: transition.sourceDataCutoff,
+          idempotencyKey,
+        },
+      });
+      await transaction.opportunity.update({
+        where: { id: opportunity.id },
+        data: {
+          state: transition.toState,
+          lastObservedCutoff: transition.sourceDataCutoff,
+        },
+      });
+    });
   }
 
   private async assertExchangePortfolioRisk(

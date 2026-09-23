@@ -45,6 +45,7 @@ export type OpportunityTransitionReasonCode =
   | 'PERSISTED_THESIS_ENTRY_TOO_LATE'
   | 'PERSISTED_THESIS_ENTRY_EXPIRED'
   | 'PERSISTED_THESIS_ENTRY_INVALIDATED'
+  | PersistedThesisEntryReasonCode
   | 'CONDITIONS_UNCHANGED';
 
 export interface OpportunityObservationState {
@@ -96,26 +97,19 @@ export function transitionPersistedThesisEntry(
   sourceDataCutoff: Date,
   decision: PersistedThesisEntryDecision,
 ): OpportunityTransition {
-  const target = decision.action === 'ENTER'
-    ? 'PROBE_READY'
-    : decision.action === 'TOO_LATE'
-      ? 'TOO_LATE'
-      : decision.action === 'EXPIRED'
-        ? 'EXPIRED'
-        : decision.action === 'INVALIDATED'
-          ? 'INVALIDATED'
-          : current.state;
-  const reasonCode = decision.action === 'ENTER'
-    ? 'PERSISTED_THESIS_ENTRY_READY'
-    : decision.action === 'TOO_LATE'
-      ? 'PERSISTED_THESIS_ENTRY_TOO_LATE'
-      : decision.action === 'EXPIRED'
-        ? 'PERSISTED_THESIS_ENTRY_EXPIRED'
-        : decision.action === 'INVALIDATED'
-          ? 'PERSISTED_THESIS_ENTRY_INVALIDATED'
-          : 'PERSISTED_THESIS_ENTRY_WAITING';
+  const target = TERMINAL_STATES.has(current.state)
+    ? current.state
+    : decision.action === 'ENTER'
+      ? 'PROBE_READY'
+      : decision.action === 'TOO_LATE'
+        ? 'TOO_LATE'
+        : decision.action === 'EXPIRED'
+          ? 'EXPIRED'
+          : decision.action === 'INVALIDATED'
+            ? 'INVALIDATED'
+            : current.state;
   return {
-    ...result(current, sourceDataCutoff, target, reasonCode),
+    ...result(current, sourceDataCutoff, target, decision.reasonCode),
     entryAction: decision.action,
     entryReasonCode: decision.reasonCode,
   };

@@ -23,6 +23,13 @@ const approve: ThesisReview = { action: 'APPROVE', reasonCodes: [], evidenceRefs
 function fixture() {
   let assessment: RiskAssessment | null = null;
   let latestSnapshot: unknown = null;
+  let positions: Array<Record<string, unknown>> = [];
+  const opportunity = {
+    id: 'opportunity-1', userId: 'user-1', provider: 'BINANCE_FUTURES', symbol: 'BTC-USDT', timeframe: '15m',
+    setup: 'TREND_PULLBACK', direction: 'LONG', state: 'PROBE_READY', invalidationPrice: 107_500,
+    expiresAt: new Date('2026-09-09T12:30:00.000Z'), lastObservedCutoff: new Date('2026-09-09T11:45:00.000Z'), thesisVersion: 1,
+  };
+  const transitions: Array<Record<string, unknown>> = [];
   const orders: Array<Record<string, unknown>> = [];
   const contexts = new Set<string>();
   const audits: Array<Prisma.AgentRunUncheckedCreateInput> = [];
@@ -40,13 +47,24 @@ function fixture() {
       },
     },
     anticipatoryMarketSnapshot: { findFirst: () => Promise.resolve(latestSnapshot) },
-    livePosition: { findFirst: () => Promise.resolve(null), findMany: () => Promise.resolve([]) },
+    opportunity: {
+      findFirst: () => Promise.resolve(opportunity),
+      update: ({ data }: { data: Record<string, unknown> }) => { Object.assign(opportunity, data); return Promise.resolve(opportunity); },
+    },
+    opportunityTransition: {
+      upsert: ({ create }: { create: Record<string, unknown> }) => {
+        if (!transitions.some((entry) => entry.idempotencyKey === create.idempotencyKey)) transitions.push(create);
+        return Promise.resolve(create);
+      },
+    },
+    livePosition: { findFirst: () => Promise.resolve(positions[0] ?? null), findMany: () => Promise.resolve(positions) },
     liveAccountSnapshot: { findFirst: () => Promise.resolve({ totalEquity: 10000, availableBalance: 10000 }), aggregate: () => Promise.resolve({ _max: { totalEquity: 10000 } }) },
     liveOrder: {
       findUnique: () => Promise.resolve(null), findFirst: () => Promise.resolve(null), findMany: () => Promise.resolve([]),
       create: ({ data }: { data: Record<string, unknown> }) => { const row = { ...data, id: 'order-1', createdAt: new Date(), updatedAt: new Date() }; orders.push(row); return Promise.resolve(row); },
       update: ({ data }: { data: Record<string, unknown> }) => { Object.assign(orders[0]!, data); return Promise.resolve(orders[0]); },
     },
+    $transaction: (callback: (tx: unknown) => unknown) => callback(db),
   };
   const config = { getUserLimits: () => Promise.resolve(limits) };
   const risk = new RiskManagementService(db as never, config as never);
@@ -80,7 +98,7 @@ function fixture() {
     account: { balance: new Prisma.Decimal(10000), equity: new Prisma.Decimal(10000), peakEquity: new Prisma.Decimal(10000) }, positions, price: 108200, volatility: 0.01,
     tradePlanContext: { timeframeMs: 900000, proactive: { thesisId: 'audit-1', thesis: applied, snapshot, mode, sizeFactor: 1 } },
   });
-  return { db, live, submitted, orders, audits, researcher, critic, context, thesis, snapshot, assess, fullAnalysisTrigger, liveQuote, setCurrentPrice: (price: number) => { currentPrice = price; }, setLatestSnapshot: (value: unknown) => { latestSnapshot = value; }, assessment: () => assessment };
+  return { db, live, submitted, orders, audits, researcher, critic, context, thesis, snapshot, assess, fullAnalysisTrigger, liveQuote, transitions, opportunity, setPositions: (value: Array<Record<string, unknown>>) => { positions = value; }, setCurrentPrice: (price: number) => { currentPrice = price; }, setLatestSnapshot: (value: unknown) => { latestSnapshot = value; }, assessment: () => assessment };
 }
 
 describe('joined proactive execution with external IO fixtures', () => {
@@ -111,6 +129,48 @@ describe('joined proactive execution with external IO fixtures', () => {
     expect(await f.live.executePipeline('user-1', 'pipeline-1')).toMatchObject({
       outcome: 'EXECUTION_FAILED',
       errorMessage: 'PERSISTED_THESIS_ENTRY_CHASE_DISTANCE_EXCEEDED',
+    });
+    expect(f.submitted).toEqual([]);
+  });
+  it.each([
+    { name: 'chase expiry', price: 108_621, expectedState: 'TOO_LATE', expectedReason: 'CHASE_DISTANCE_EXCEEDED' },
+    { name: 'structural invalidation', price: 107_500, expectedState: 'INVALIDATED', expectedReason: 'THESIS_INVALIDATED' },
+    { name: 'thesis expiry', price: 108_300, expectedState: 'EXPIRED', expectedReason: 'THESIS_EXPIRED' },
+  ])('persists the canonical terminal transition for $name without an order', async ({ price, expectedState, expectedReason }) => {
+    const f = fixture();
+    expect(await f.assess(f.thesis)).toMatchObject({ approved: true });
+    if (expectedState === 'EXPIRED') (f.assessment()!.executionAuthorization as Prisma.JsonObject).thesis = {
+      ...(f.assessment()!.executionAuthorization as Prisma.JsonObject).thesis as Prisma.JsonObject,
+      expiresAt: '2026-09-09T12:00:00.000Z',
+    };
+    f.setLatestSnapshot({ id: 'snapshot-2', snapshotJson: f.snapshot });
+    f.setCurrentPrice(price);
+
+    expect(await f.live.executePipeline('user-1', 'pipeline-1')).toMatchObject({
+      outcome: 'EXECUTION_FAILED',
+      errorMessage: `PERSISTED_THESIS_ENTRY_${expectedReason}`,
+    });
+    expect(f.opportunity.state).toBe(expectedState);
+    expect(f.transitions).toHaveLength(1);
+    expect(f.transitions[0]).toMatchObject({
+      opportunityId: 'opportunity-1', snapshotId: 'snapshot-2', toState: expectedState, reasonCode: expectedReason,
+    });
+    expect(await f.live.executePipeline('user-1', 'pipeline-1')).toMatchObject({
+      outcome: 'EXECUTION_FAILED',
+      errorMessage: `PERSISTED_THESIS_ENTRY_${expectedReason}`,
+    });
+    expect(f.transitions).toHaveLength(1);
+    expect(f.submitted).toEqual([]);
+  });
+  it('does not close an opposite position before rejecting an invalid persisted thesis', async () => {
+    const f = fixture();
+    expect(await f.assess(f.thesis)).toMatchObject({ approved: true });
+    f.setPositions([{ symbol: 'BTC-USDT', side: 'SHORT', quantity: new Prisma.Decimal(0.01), entryPrice: new Prisma.Decimal(108_200), markPrice: new Prisma.Decimal(108_200), leverage: 1 }]);
+    f.setLatestSnapshot({ id: 'snapshot-3', snapshotJson: f.snapshot });
+    f.setCurrentPrice(107_500);
+
+    expect(await f.live.executePipeline('user-1', 'pipeline-1')).toMatchObject({
+      outcome: 'EXECUTION_FAILED', errorMessage: 'PERSISTED_THESIS_ENTRY_THESIS_INVALIDATED',
     });
     expect(f.submitted).toEqual([]);
   });
