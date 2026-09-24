@@ -25,6 +25,10 @@ export type ProactiveThesisScheduleResult = {
 
 const PROACTIVE_DELIVERY_LEASE_MS = 60_000;
 
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
 @Injectable()
 export class PipelineService {
   private readonly proactiveThesisDeliveries = new Map<
@@ -304,7 +308,7 @@ export class PipelineService {
     let renewal: Promise<void> | undefined;
     let leaseError: unknown;
     const renew = (): Promise<void> => {
-      if (leaseError) return Promise.reject(leaseError);
+      if (leaseError) return Promise.reject(asError(leaseError));
       if (!renewal) {
         const now = new Date();
         renewal = this.repository.renewProactiveThesisDelivery(

@@ -204,7 +204,11 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
     reason: string,
     error?: unknown,
   ) {
-    const message = error instanceof Error ? error.message : error == null ? undefined : String(error);
+    const message = error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : undefined;
     this.logger.warn({
       event: "opportunity_proactive_schedule_failed",
       scheduleId: input.scheduleId,

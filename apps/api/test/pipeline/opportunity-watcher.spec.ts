@@ -224,17 +224,16 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
     });
 
     expect(result).toEqual({ status: 'FAILED', reason: 'PROACTIVE_THESIS_TRIGGER_FAILED' });
-    expect(auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
-        action: 'OPPORTUNITY_PROACTIVE_SCHEDULE_FAILED',
-        metadata: expect.objectContaining({
-          opportunityId: 'opp-1',
-          snapshotId: 'snapshot-1',
-          sourceDataCutoff: '2026-09-09T01:00:00.000Z',
-          reason: 'PROACTIVE_THESIS_TRIGGER_FAILED',
-        }),
-      }),
-    }));
+    const [firstAudit] = auditLog.create.mock.calls[0] as [{
+      data: { action: string; metadata: Record<string, unknown> };
+    }];
+    expect(firstAudit.data.action).toBe('OPPORTUNITY_PROACTIVE_SCHEDULE_FAILED');
+    expect(firstAudit.data.metadata).toMatchObject({
+      opportunityId: 'opp-1',
+      snapshotId: 'snapshot-1',
+      sourceDataCutoff: '2026-09-09T01:00:00.000Z',
+      reason: 'PROACTIVE_THESIS_TRIGGER_FAILED',
+    });
   });
 
   it('retries failed proactive delivery when the next tick sees the same anchor', async () => {
@@ -317,15 +316,16 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
     }).then((value) => { settled = true; return value; });
     await Promise.resolve();
     await Promise.resolve();
-    expect(auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
-        action: 'OPPORTUNITY_PROACTIVE_SCHEDULE_FAILED',
-        metadata: expect.objectContaining({
-          opportunityId: 'opp-1', snapshotId: 'snapshot-1', sourceDataCutoff: '2026-09-09T01:00:00.000Z',
-          reason: 'PROACTIVE_THESIS_DELIVERY_IN_PROGRESS',
-        }),
-      }),
-    }));
+    const [activeDeliveryAudit] = auditLog.create.mock.calls[0] as [{
+      data: { action: string; metadata: Record<string, unknown> };
+    }];
+    expect(activeDeliveryAudit.data.action).toBe('OPPORTUNITY_PROACTIVE_SCHEDULE_FAILED');
+    expect(activeDeliveryAudit.data.metadata).toMatchObject({
+      opportunityId: 'opp-1',
+      snapshotId: 'snapshot-1',
+      sourceDataCutoff: '2026-09-09T01:00:00.000Z',
+      reason: 'PROACTIVE_THESIS_DELIVERY_IN_PROGRESS',
+    });
     expect(settled).toBe(false);
     completeAudit();
     await expect(result).resolves.toEqual(failure);
@@ -376,12 +376,13 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
 
     await scheduler.tick(new Date('2026-09-09T01:00:01.000Z'));
     expect(prisma.pipelineSchedule.update).not.toHaveBeenCalled();
-    expect(prisma.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
-        action: 'OPPORTUNITY_PROACTIVE_SCHEDULE_FAILED',
-        metadata: expect.objectContaining({ reason: 'PROACTIVE_THESIS_DELIVERY_IN_PROGRESS' }),
-      }),
-    }));
+    const [leaseAudit] = prisma.auditLog.create.mock.calls[0] as [{
+      data: { action: string; metadata: Record<string, unknown> };
+    }];
+    expect(leaseAudit.data.action).toBe('OPPORTUNITY_PROACTIVE_SCHEDULE_FAILED');
+    expect(leaseAudit.data.metadata).toMatchObject({
+      reason: 'PROACTIVE_THESIS_DELIVERY_IN_PROGRESS',
+    });
     await scheduler.tick(new Date('2026-09-09T01:00:06.000Z'));
 
     expect(pipeline.scheduleProactiveThesis).toHaveBeenCalledTimes(2);
@@ -548,21 +549,24 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
     expect(pipeline.scheduleProactiveThesis).toHaveBeenCalledTimes(1);
     expect(pipeline.trigger).toHaveBeenCalledTimes(1);
     expect(prisma.auditLog.create).not.toHaveBeenCalled();
-    expect(pipeline.scheduleProactiveThesis).toHaveBeenCalledWith(expect.objectContaining({
-      userId: 'user-1',
-      scheduleId: 'schedule-1',
-      request: expect.objectContaining({
-        pipelineId: 'proactive-thesis',
-        symbol: 'BTC-USDT',
-        provider: 'BINANCE_FUTURES',
-        params: expect.objectContaining({
-          interval: '15m',
-          opportunityId: 'opp-1',
-          snapshotId: 'snapshot-1',
-          sourceDataCutoff: cutoff.toISOString(),
-        }) as unknown,
-      }),
-    }));
+    const [scheduledInput] = pipeline.scheduleProactiveThesis.mock.calls[0] as [{
+      userId: string;
+      scheduleId: string;
+      request: unknown;
+    }];
+    expect(scheduledInput.userId).toBe('user-1');
+    expect(scheduledInput.scheduleId).toBe('schedule-1');
+    expect(PipelineRunRequestSchema.parse(scheduledInput.request)).toMatchObject({
+      pipelineId: 'proactive-thesis',
+      symbol: 'BTC-USDT',
+      provider: 'BINANCE_FUTURES',
+      params: {
+        interval: '15m',
+        opportunityId: 'opp-1',
+        snapshotId: 'snapshot-1',
+        sourceDataCutoff: cutoff.toISOString(),
+      },
+    });
     expect(pipeline.trigger).toHaveBeenCalledWith(
       'user-1',
       expect.objectContaining({

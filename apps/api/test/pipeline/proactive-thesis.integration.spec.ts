@@ -249,9 +249,14 @@ describe("Proactive Thesis Pipeline Integration", () => {
   it('marks a claimed proactive execution terminal when the execution lock is busy', async () => {
     mockExecutionLock.mockResolvedValue(false);
     await expect(pipelineRunner.run(makeJob())).rejects.toThrow('EXECUTION_LOCK_BUSY');
-    expect(mockRunUpdates).toHaveBeenCalledWith('run-1', expect.objectContaining({
-      status: 'FAILED', errorCode: 'EXECUTION_LOCK_BUSY', completedAt: expect.any(Date),
-    }));
+    const [, terminalUpdate] = mockRunUpdates.mock.calls.at(-1)! as [string, {
+      status?: string;
+      errorCode?: string;
+      completedAt?: Date;
+    }];
+    expect(terminalUpdate.status).toBe('FAILED');
+    expect(terminalUpdate.errorCode).toBe('EXECUTION_LOCK_BUSY');
+    expect(terminalUpdate.completedAt).toBeInstanceOf(Date);
     expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
   });
 
@@ -319,16 +324,28 @@ describe("Proactive Thesis Pipeline Integration", () => {
 
     await pipelineRunner.run(makeJob());
 
-    expect(mockDecision.decideForUser).toHaveBeenCalledWith(
-      expect.anything(),
-      'user-1',
-      expect.objectContaining({
-        newsProbeAuthority: expect.objectContaining({
-          news: expect.objectContaining({ importance: 85, confidence: 90, direction: 'POSITIVE', publishedAt: cutoff }),
-          causality: expect.objectContaining({ priceChangePercent: 2, volumeRatio: 1.6, deltaOiPercent: 1.2 }),
-        }),
-      }),
-    );
+    const [, userId, decisionContext] = mockDecision.decideForUser.mock.calls.at(-1)! as [
+      unknown,
+      string,
+      {
+        newsProbeAuthority?: {
+          news?: Record<string, unknown>;
+          causality?: Record<string, unknown>;
+        };
+      },
+    ];
+    expect(userId).toBe('user-1');
+    expect(decisionContext.newsProbeAuthority?.news).toMatchObject({
+      importance: 85,
+      confidence: 90,
+      direction: 'POSITIVE',
+      publishedAt: cutoff,
+    });
+    expect(decisionContext.newsProbeAuthority?.causality).toMatchObject({
+      priceChangePercent: 2,
+      volumeRatio: 1.6,
+      deltaOiPercent: 1.2,
+    });
   });
 
   it.each([null, cutoff])('fails closed when high-impact news has only a legacy publication timestamp of %s', async (latestPublishedAt) => {

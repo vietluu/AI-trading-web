@@ -90,12 +90,14 @@ describe('PipelineService', () => {
     expect(first).toMatchObject({ status: 'SCHEDULED', runId: 'proactive-run-1' });
     expect(duplicate).toMatchObject({ status: 'DUPLICATE', runId: 'proactive-run-1' });
     expect(repository.createRun).toHaveBeenCalledTimes(1);
-    expect(repository.createRun).toHaveBeenCalledWith(expect.objectContaining({
-      proactiveThesisKey: 'proactive-thesis:opp-1:snapshot-1',
-      storedContext: expect.objectContaining({
-        proactiveThesisIdempotencyKey: 'proactive-thesis:opp-1:snapshot-1',
-      }),
-    }));
+    const [createRunInput] = repository.createRun.mock.calls[0] as [{
+      proactiveThesisKey?: string;
+      storedContext?: { proactiveThesisIdempotencyKey?: string };
+    }];
+    expect(createRunInput.proactiveThesisKey).toBe('proactive-thesis:opp-1:snapshot-1');
+    expect(createRunInput.storedContext?.proactiveThesisIdempotencyKey).toBe(
+      'proactive-thesis:opp-1:snapshot-1',
+    );
 
     const resumedRepository = {
       createRun: vi.fn(),

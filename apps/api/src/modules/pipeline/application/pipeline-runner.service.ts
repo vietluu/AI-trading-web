@@ -675,7 +675,7 @@ export class PipelineRunnerService {
                 symbol,
                 timeframe: String(interval),
                 regime: proactiveThesis.regime,
-                direction: proactiveThesis.direction as 'LONG' | 'SHORT',
+                direction: proactiveThesis.direction,
                 setup: proactiveThesis.setup,
                 executionPolicyVersion: `v${snapshot.calculationVersion}`,
               },

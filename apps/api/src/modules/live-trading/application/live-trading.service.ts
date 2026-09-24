@@ -927,7 +927,7 @@ export class LiveTradingService {
       !proactiveAuthorization?.success ||
       proactiveAuthorization.data.mode !== 'DEMO' ||
       proactiveAuthorization.data.connectionId !== dto.connectionId ||
-      connection.environment !== 'DEMO' ||
+      connection.environment !== ExchangeEnvironment.DEMO ||
       process.env.PROACTIVE_AI_MODE !== 'DEMO'
     )) throw new ForbiddenException('PROACTIVE_EXECUTION_NOT_AUTHORIZED');
     if (assessment.connectionId && assessment.connectionId !== dto.connectionId) throw new ForbiddenException('RISK_CONNECTION_MISMATCH');
