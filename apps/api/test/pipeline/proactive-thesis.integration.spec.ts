@@ -286,7 +286,7 @@ describe("Proactive Thesis Pipeline Integration", () => {
     delete process.env.PROACTIVE_AI_MODE;
   });
 
-  it('does not resurrect a directional proactive thesis after a baseline news-corrobation WAIT', async () => {
+  it('does not resurrect a directional proactive thesis after a baseline news-corroboration WAIT', async () => {
     mockDecision.decideForUser.mockResolvedValue({
       ...makeFusionResult().fusionOutput,
       decision: 'WAIT',

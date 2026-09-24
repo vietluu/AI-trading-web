@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { ExchangeProvider, PipelineTrigger } from '@prisma/client';
 import { PipelineRunRequestSchema, PipelineSymbolSchema, type PipelineRunRequest, type PipelineSymbol } from '@platform/shared';
@@ -31,6 +31,7 @@ function asError(error: unknown): Error {
 
 @Injectable()
 export class PipelineService {
+  private readonly logger = new Logger(PipelineService.name);
   private readonly proactiveThesisDeliveries = new Map<
     string,
     Promise<ProactiveThesisScheduleResult>
@@ -338,7 +339,15 @@ export class PipelineService {
       return result;
     } catch (error) {
       await stop();
-      await this.repository.finalizeProactiveThesisDelivery(runId, token, 'FAILED', new Date());
+      try {
+        await this.repository.finalizeProactiveThesisDelivery(runId, token, 'FAILED', new Date());
+      } catch (finalizeError) {
+        this.logger.warn({
+          event: 'proactive_thesis_delivery_finalize_failed',
+          runId,
+          message: finalizeError instanceof Error ? finalizeError.message : String(finalizeError),
+        });
+      }
       throw error;
     } finally {
       await stop();
