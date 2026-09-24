@@ -54,4 +54,39 @@ describe('resolveCalibrationAuthority', () => {
       forceProbe: false,
     });
   });
+
+  it('preserves synthesized economics with probe sizing for setups with opportunity score 73', () => {
+    expect(resolveCalibrationAuthority({
+      status: 'CALIBRATED',
+      scope: 'STRATEGY_CONTEXT',
+      fallbackUsed: true,
+      hardGateEligible: false,
+      empiricalProbability: 0.2874,
+    }, {
+      decision: 'SHORT' as const,
+      confidence: 82,
+      directionalAgreement: 100,
+      opportunityScore: 73,
+    })).toEqual({
+      authority: 'PROBE_TELEMETRY',
+      empiricalProbability: undefined,
+      preserveSynthesizedEconomics: true,
+      forceProbe: true,
+    });
+  });
+
+  it('bounds uncalibrated cold-start setup to probe while preserving economics', () => {
+    expect(resolveCalibrationAuthority(undefined, {
+      decision: 'LONG' as const,
+      confidence: 85,
+      directionalAgreement: 100,
+      opportunityScore: 78,
+    })).toEqual({
+      authority: 'NEUTRAL',
+      empiricalProbability: undefined,
+      preserveSynthesizedEconomics: true,
+      forceProbe: false,
+    });
+  });
 });
+

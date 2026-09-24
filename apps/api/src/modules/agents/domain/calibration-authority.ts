@@ -46,7 +46,7 @@ export function resolveCalibrationAuthority(
   const strongDirectionalSetup = decision.decision !== 'WAIT' &&
     decision.confidence >= 80 &&
     (decision.directionalAgreement ?? 0) >= 80 &&
-    decision.opportunityScore >= 75;
+    decision.opportunityScore >= 70;
 
   if (fallbackTelemetry && strongDirectionalSetup) {
     return {
@@ -57,10 +57,14 @@ export function resolveCalibrationAuthority(
     };
   }
 
+  const isColdStart = !calibration ||
+    calibration.status === 'INSUFFICIENT_HISTORY' ||
+    calibration.hardGateEligible === false;
+
   return {
     authority: 'NEUTRAL',
     empiricalProbability: undefined,
-    preserveSynthesizedEconomics: calibration?.status === 'INSUFFICIENT_HISTORY' && strongDirectionalSetup,
+    preserveSynthesizedEconomics: isColdStart && strongDirectionalSetup,
     forceProbe: false,
   };
 }
