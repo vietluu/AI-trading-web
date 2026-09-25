@@ -40,6 +40,7 @@ import { ExternalDataModule } from "../external-data/external-data.module";
 import { HighImportanceNewsTriggerService } from "./application/high-importance-news-trigger.service";
 import { MacroEventTriggerService } from "./application/macro-event-trigger.service";
 import { OpportunityWatcherService } from "./application/opportunity-watcher.service";
+import { ReflectionModule } from '../reflection/reflection.module';
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { OpportunityWatcherService } from "./application/opportunity-watcher.ser
     SettingsModule,
     PortfolioModule,
     ExternalDataModule,
+    ReflectionModule,
     BullModule.registerQueue(
       { name: PIPELINE_RUN_QUEUE_NAME },
       { name: PIPELINE_RETRY_QUEUE_NAME },

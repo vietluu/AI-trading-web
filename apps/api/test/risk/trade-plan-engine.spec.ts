@@ -49,7 +49,7 @@ describe("adaptive trade plan engine", () => {
         atr: 1_000,
         support: 108_000,
         resistance: 112_000,
-        proactive: { thesisId: "thesis-1", thesis, snapshot, mode: "DEMO", sizeFactor: 1 },
+        proactive: { thesisId: "thesis-1", opportunityId: "opportunity-1", thesis, snapshot, mode: "DEMO", sizeFactor: 1 },
       },
       configuredStopLossPct: 0.02,
       configuredRiskRewardRatio: 1.5,
@@ -76,7 +76,7 @@ describe("adaptive trade plan engine", () => {
         atr: 1_000,
         support: 108_000,
         resistance: 112_000,
-        proactive: { thesisId: "thesis-1", thesis, snapshot, mode: "DEMO", sizeFactor: 1 },
+        proactive: { thesisId: "thesis-1", opportunityId: "opportunity-1", thesis, snapshot, mode: "DEMO", sizeFactor: 1 },
       },
       configuredStopLossPct: 0.02,
       configuredRiskRewardRatio: 1.5,
@@ -100,7 +100,7 @@ describe("adaptive trade plan engine", () => {
         atr: 1_000,
         support: 108_000,
         resistance: 112_000,
-        proactive: { thesisId: "thesis-1", thesis, snapshot, mode: "DEMO", sizeFactor: 1 },
+        proactive: { thesisId: "thesis-1", opportunityId: "opportunity-1", thesis, snapshot, mode: "DEMO", sizeFactor: 1 },
       },
       configuredStopLossPct: 0.02,
       configuredRiskRewardRatio: 1.5,
@@ -592,7 +592,7 @@ describe("adaptive trade plan engine", () => {
         atr: 1_000,
         support: 108_000,
         resistance: 115_000,
-        proactive: { thesisId: "thesis-rec-1", thesis, snapshot, mode: "DEMO", sizeFactor: 1 },
+        proactive: { thesisId: "thesis-rec-1", opportunityId: "opportunity-1", thesis, snapshot, mode: "DEMO", sizeFactor: 1 },
       },
       configuredStopLossPct: 0.02,
       configuredRiskRewardRatio: 1.5,
@@ -721,4 +721,3 @@ describe("adaptive trade plan engine", () => {
     expect(plan.limitTtlCandles).toBe(1);
   });
 });
-

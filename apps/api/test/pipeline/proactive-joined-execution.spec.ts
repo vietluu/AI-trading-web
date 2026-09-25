@@ -22,6 +22,20 @@ const approve: ThesisReview = { action: 'APPROVE', reasonCodes: [], evidenceRefs
 
 function fixture() {
   let assessment: RiskAssessment | null = null;
+  let latestSnapshot: unknown = null;
+  let positions: Array<Record<string, unknown>> = [];
+  let account = { totalEquity: 10_000, availableBalance: 10_000, peakEquity: 10_000 };
+  let activeLimits = { ...limits };
+  const opportunity = {
+    id: 'opportunity-1', userId: 'user-1', provider: 'BINANCE_FUTURES', symbol: 'BTC-USDT', timeframe: '15m',
+    setup: 'TREND_PULLBACK', direction: 'LONG', state: 'PROBE_READY', invalidationPrice: 107_500,
+    expiresAt: new Date('2026-09-09T12:30:00.000Z'), lastObservedCutoff: new Date('2026-09-09T11:45:00.000Z'), thesisVersion: 1,
+  };
+  const unrelatedOpportunity = {
+    ...opportunity, id: 'opportunity-2', setup: 'RANGE_REVERSAL', state: 'WATCHING',
+  };
+  let includeUnrelatedOpportunity = false;
+  const transitions: Array<Record<string, unknown>> = [];
   const orders: Array<Record<string, unknown>> = [];
   const contexts = new Set<string>();
   const audits: Array<Prisma.AgentRunUncheckedCreateInput> = [];
@@ -38,15 +52,37 @@ function fixture() {
         return Promise.resolve(assessment);
       },
     },
-    livePosition: { findFirst: () => Promise.resolve(null), findMany: () => Promise.resolve([]) },
-    liveAccountSnapshot: { findFirst: () => Promise.resolve({ totalEquity: 10000, availableBalance: 10000 }), aggregate: () => Promise.resolve({ _max: { totalEquity: 10000 } }) },
+    anticipatoryMarketSnapshot: { findFirst: () => Promise.resolve(latestSnapshot) },
+    opportunity: {
+      findFirst: ({ where }: { where?: { id?: string } } = {}) => {
+        if (where?.id === opportunity.id) return Promise.resolve(opportunity);
+        if (where?.id === unrelatedOpportunity.id) return Promise.resolve(unrelatedOpportunity);
+        return Promise.resolve(includeUnrelatedOpportunity ? unrelatedOpportunity : opportunity);
+      },
+      update: ({ where, data }: { where?: { id?: string }; data: Record<string, unknown> }) => {
+        const row = where?.id === unrelatedOpportunity.id ? unrelatedOpportunity : opportunity;
+        Object.assign(row, data); return Promise.resolve(row);
+      },
+    },
+    opportunityTransition: {
+      upsert: ({ create }: { create: Record<string, unknown> }) => {
+        if (!transitions.some((entry) => entry.idempotencyKey === create.idempotencyKey)) transitions.push(create);
+        return Promise.resolve(create);
+      },
+    },
+    livePosition: { findFirst: () => Promise.resolve(positions[0] ?? null), findMany: () => Promise.resolve(positions) },
+    liveAccountSnapshot: {
+      findFirst: () => Promise.resolve({ totalEquity: account.totalEquity, availableBalance: account.availableBalance }),
+      aggregate: () => Promise.resolve({ _max: { totalEquity: account.peakEquity } }),
+    },
     liveOrder: {
       findUnique: () => Promise.resolve(null), findFirst: () => Promise.resolve(null), findMany: () => Promise.resolve([]),
       create: ({ data }: { data: Record<string, unknown> }) => { const row = { ...data, id: 'order-1', createdAt: new Date(), updatedAt: new Date() }; orders.push(row); return Promise.resolve(row); },
       update: ({ data }: { data: Record<string, unknown> }) => { Object.assign(orders[0]!, data); return Promise.resolve(orders[0]); },
     },
+    $transaction: (callback: (tx: unknown) => unknown) => callback(db),
   };
-  const config = { getUserLimits: () => Promise.resolve(limits) };
+  const config = { getUserLimits: () => Promise.resolve(activeLimits) };
   const risk = new RiskManagementService(db as never, config as never);
   const submitted: Array<Record<string, unknown>> = [];
   const connection = { id: connectionId, environment: 'DEMO', provider: 'OKX_FUTURES', isEnabled: true, isVerified: true };
@@ -58,12 +94,17 @@ function fixture() {
     account: () => Promise.reject(new Error('Fixture exchange unavailable after submission')),
     positions: () => Promise.resolve([]), openOrders: () => Promise.resolve([]),
   };
+  let currentPrice = 108_300;
+  const liveQuote = vi.fn(() => Promise.resolve({
+    provider: 'OKX_FUTURES', symbol: 'BTC-USDT', markPrice: String(currentPrice), lastPrice: String(currentPrice),
+  }));
   const live = new LiveTradingService(db as never, exchange as never,
     { values: { mode: 'DEMO', runtimeEnabled: true, approvalTtlMs: 60000, cooldownMs: 0, maxEntryDriftBps: 10 }, assertExecutionAllowed: () => undefined } as never,
-    { record: () => Promise.resolve() } as never, config as never, risk, {} as never, {} as never);
+    { record: () => Promise.resolve() } as never, config as never, risk, {} as never, { ticker: liveQuote } as never);
   const thesis = createValidLongThesis(); thesis.targets = [{ price: 112000, fraction: 1 }]; thesis.setup = 'TREND_PULLBACK';
   const snapshot = createBaseSnapshot();
-  const provider = { execute: () => Promise.resolve({ json: { preferred: thesis, alternatives: [] }, provider: 'OPENAI', model: 'fixture', usage: { promptTokens: 1, completionTokens: 1 } }) };
+  const fullAnalysisTrigger = vi.fn(() => Promise.resolve({ json: { preferred: thesis, alternatives: [] }, provider: 'OPENAI', model: 'fixture', usage: { promptTokens: 1, completionTokens: 1 } }));
+  const provider = { execute: fullAnalysisTrigger };
   const researcher = new TradeResearcherService(provider as never, new DecisionService({} as never), db as never);
   const critic = new ChainOfThoughtReflectionService({ execute: () => Promise.resolve({ json: approve }) } as never);
   const context = { userId: 'user-1', parentSnapshotId: 'pipeline-1', configHash: 'fixture-config-hash', promptVersion: 1 };
@@ -71,9 +112,16 @@ function fixture() {
     userId: 'user-1', connectionId, pipelineRunId: 'pipeline-1', symbol: snapshot.symbol,
     decision: { decision: applied.direction, confidence: applied.confidence, regime: { type: 'TRENDING' }, conflictLevel: 'LOW' } as DecisionOutput,
     account: { balance: new Prisma.Decimal(10000), equity: new Prisma.Decimal(10000), peakEquity: new Prisma.Decimal(10000) }, positions, price: 108200, volatility: 0.01,
-    tradePlanContext: { timeframeMs: 900000, proactive: { thesisId: 'audit-1', thesis: applied, snapshot, mode, sizeFactor: 1 } },
+    tradePlanContext: { timeframeMs: 900000, proactive: { thesisId: 'audit-1', opportunityId: opportunity.id, thesis: applied, snapshot, mode, sizeFactor: 1 } },
   });
-  return { db, live, submitted, orders, audits, researcher, critic, context, thesis, snapshot, assess, assessment: () => assessment };
+  return { db, live, submitted, orders, audits, researcher, critic, context, thesis, snapshot, assess, fullAnalysisTrigger, liveQuote, transitions, opportunity, unrelatedOpportunity, setMultipleOpportunities: () => { includeUnrelatedOpportunity = true; }, setPositions: (value: Array<Record<string, unknown>>) => { positions = value; }, setCurrentPrice: (price: number) => { currentPrice = price; }, setLatestSnapshot: (value: unknown) => { latestSnapshot = value; }, assessment: () => assessment,
+    configureDiagnosticPreflight: () => {
+      account = { totalEquity: 8_700, availableBalance: 8_700, peakEquity: 10_000 };
+      activeLimits = { ...activeLimits, riskPerTrade: 0.02, maxExposure: 1 };
+      if (!assessment) throw new Error('assessment must exist before configuring diagnostic preflight');
+      assessment.positionSize = new Prisma.Decimal(8);
+    },
+  };
 }
 
 describe('joined proactive execution with external IO fixtures', () => {
@@ -89,10 +137,139 @@ describe('joined proactive execution with external IO fixtures', () => {
     expect(await f.assess(applied)).toMatchObject({ approved: true, stopLoss: 107400 });
     expect(f.audits[1]).toMatchObject({ parentRunId: 'audit-1', contextSnapshotId: 'context-1', output: { appliedThesis: { decisionSource: 'AI' } } });
     expect(f.assessment()?.executionAuthorization).toMatchObject({ mode: 'DEMO', connectionId });
+    f.fullAnalysisTrigger.mockClear();
     expect(await f.live.executePipeline('user-1', 'pipeline-1')).toMatchObject({ outcome: 'ORDER_SUBMITTED' });
+    expect(f.fullAnalysisTrigger).not.toHaveBeenCalled();
     expect(f.submitted).toHaveLength(1);
     expect(f.submitted[0]).toMatchObject({ orderType: 'LIMIT', limitPrice: '108200', timeInForce: 'IOC', expiresAt: '2026-09-09T12:15:00.000Z', takeProfit: '112000' });
     expect(f.orders[0]).toMatchObject({ type: 'LIMIT', tradePlan: { targets: [{ price: 112000, fraction: 1 }] } });
+  });
+  it('public execute rejects an ordinary stale approval at diagnostic drawdown without submitting', async () => {
+    const f = fixture();
+    expect(await f.assess(f.thesis)).toMatchObject({ approved: true });
+    f.configureDiagnosticPreflight();
+    f.assessment()!.executionAuthorization = null;
+
+    await expect(f.live.execute('user-1', {
+      connectionId, riskAssessmentId: 'assessment-1', clientOrderId: 'diagnostic-ordinary',
+    }, {}, { skipPreExecutionSync: true })).rejects.toThrow('DRAWDOWN_DIAGNOSTIC_PROBE_REQUIRED');
+
+    expect(f.submitted).toEqual([]);
+  });
+  it('public execute submits an authorized DEMO PROBE_READY limit order at the diagnostic cap', async () => {
+    const f = fixture();
+    expect(await f.assess(f.thesis)).toMatchObject({ approved: true });
+    f.configureDiagnosticPreflight();
+
+    await expect(f.live.execute('user-1', {
+      connectionId, riskAssessmentId: 'assessment-1', clientOrderId: 'diagnostic-probe',
+    }, {}, { skipPreExecutionSync: true })).resolves.toMatchObject({ id: 'order-1' });
+
+    expect(f.submitted).toHaveLength(1);
+    expect(f.submitted[0]).toMatchObject({
+      quantity: '0.0191587756', orderType: 'LIMIT', limitPrice: '108200', timeInForce: 'IOC',
+    });
+  });
+  it('does not submit a DEMO order after the persisted chase limit is exceeded', async () => {
+    const f = fixture();
+    expect(await f.assess(f.thesis)).toMatchObject({ approved: true });
+    f.setCurrentPrice(108_621);
+
+    expect(await f.live.executePipeline('user-1', 'pipeline-1')).toMatchObject({
+      outcome: 'EXECUTION_FAILED',
+      errorMessage: 'PERSISTED_THESIS_ENTRY_CHASE_DISTANCE_EXCEEDED',
+    });
+    expect(f.submitted).toEqual([]);
+  });
+  it.each([
+    { name: 'chase expiry', price: 108_621, expectedState: 'TOO_LATE', expectedReason: 'CHASE_DISTANCE_EXCEEDED' },
+    { name: 'structural invalidation', price: 107_500, expectedState: 'INVALIDATED', expectedReason: 'THESIS_INVALIDATED' },
+    { name: 'thesis expiry', price: 108_300, expectedState: 'EXPIRED', expectedReason: 'THESIS_EXPIRED' },
+  ])('persists the canonical terminal transition for $name without an order', async ({ price, expectedState, expectedReason }) => {
+    const f = fixture();
+    expect(await f.assess(f.thesis)).toMatchObject({ approved: true });
+    if (expectedState === 'EXPIRED') (f.assessment()!.executionAuthorization as Prisma.JsonObject).thesis = {
+      ...(f.assessment()!.executionAuthorization as Prisma.JsonObject).thesis as Prisma.JsonObject,
+      expiresAt: '2026-09-09T12:00:00.000Z',
+    };
+    f.setLatestSnapshot({ id: 'snapshot-2', snapshotJson: f.snapshot });
+    f.setCurrentPrice(price);
+
+    expect(await f.live.executePipeline('user-1', 'pipeline-1')).toMatchObject({
+      outcome: 'EXECUTION_FAILED',
+      errorMessage: `PERSISTED_THESIS_ENTRY_${expectedReason}`,
+    });
+    expect(f.opportunity.state).toBe(expectedState);
+    expect(f.transitions).toHaveLength(1);
+    expect(f.transitions[0]).toMatchObject({
+      opportunityId: 'opportunity-1', snapshotId: 'snapshot-2', toState: expectedState, reasonCode: expectedReason,
+    });
+    expect(await f.live.executePipeline('user-1', 'pipeline-1')).toMatchObject({
+      outcome: 'EXECUTION_FAILED',
+      errorMessage: `PERSISTED_THESIS_ENTRY_${expectedReason}`,
+    });
+    expect(f.transitions).toHaveLength(1);
+    expect(f.submitted).toEqual([]);
+  });
+  it('does not close an opposite position before rejecting an invalid persisted thesis', async () => {
+    const f = fixture();
+    expect(await f.assess(f.thesis)).toMatchObject({ approved: true });
+    f.setPositions([{ symbol: 'BTC-USDT', side: 'SHORT', quantity: new Prisma.Decimal(0.01), entryPrice: new Prisma.Decimal(108_200), markPrice: new Prisma.Decimal(108_200), leverage: 1 }]);
+    f.setLatestSnapshot({ id: 'snapshot-3', snapshotJson: f.snapshot });
+    f.setCurrentPrice(107_500);
+
+    expect(await f.live.executePipeline('user-1', 'pipeline-1')).toMatchObject({
+      outcome: 'EXECUTION_FAILED', errorMessage: 'PERSISTED_THESIS_ENTRY_THESIS_INVALIDATED',
+    });
+    expect(f.submitted).toEqual([]);
+  });
+  it('persists a terminal entry result only on its originating opportunity', async () => {
+    const f = fixture();
+    expect(await f.assess(f.thesis)).toMatchObject({ approved: true });
+    (f.assessment()!.executionAuthorization as Prisma.JsonObject).opportunityId = f.opportunity.id;
+    f.setMultipleOpportunities();
+    f.setLatestSnapshot({ id: 'snapshot-4', snapshotJson: f.snapshot });
+    f.setCurrentPrice(108_621);
+
+    expect(await f.live.executePipeline('user-1', 'pipeline-1')).toMatchObject({
+      outcome: 'EXECUTION_FAILED', errorMessage: 'PERSISTED_THESIS_ENTRY_CHASE_DISTANCE_EXCEEDED',
+    });
+    expect(f.opportunity.state).toBe('TOO_LATE');
+    expect(f.unrelatedOpportunity.state).toBe('WATCHING');
+    expect(f.transitions).toHaveLength(1);
+    expect(f.transitions[0]).toMatchObject({ opportunityId: f.opportunity.id });
+  });
+  it('does not close an opposite position when full authorization validation rejects an otherwise enterable thesis', async () => {
+    const f = fixture();
+    expect(await f.assess(f.thesis)).toMatchObject({ approved: true });
+    const authorization = f.assessment()!.executionAuthorization as Prisma.JsonObject;
+    authorization.thesis = {
+      ...(authorization.thesis as Prisma.JsonObject),
+      expectedNetR: 0.5,
+    };
+    f.setPositions([{ symbol: 'BTC-USDT', side: 'SHORT', quantity: new Prisma.Decimal(0.01), entryPrice: new Prisma.Decimal(108_200), markPrice: new Prisma.Decimal(108_200), leverage: 1 }]);
+
+    expect(await f.live.executePipeline('user-1', 'pipeline-1')).toMatchObject({
+      outcome: 'EXECUTION_FAILED', errorMessage: 'PROACTIVE_EXECUTION_NOT_AUTHORIZED',
+    });
+    expect(f.submitted).toEqual([]);
+  });
+  it('uses the latest persisted snapshot ATR without rerunning the researcher', async () => {
+    const f = fixture();
+    expect(await f.assess(f.thesis)).toMatchObject({ approved: true });
+    const latest = structuredClone(f.snapshot);
+    if (latest.volatility.coverage !== 'AVAILABLE') throw new Error('fixture volatility must be available');
+    latest.volatility.atr = 250;
+    f.setLatestSnapshot({ snapshotJson: latest });
+    f.setCurrentPrice(108_621);
+    f.fullAnalysisTrigger.mockClear();
+
+    expect(await f.live.executePipeline('user-1', 'pipeline-1')).toMatchObject({
+      outcome: 'EXECUTION_FAILED',
+      errorMessage: 'PERSISTED_THESIS_ENTRY_PULLBACK_PENDING',
+    });
+    expect(f.fullAnalysisTrigger).not.toHaveBeenCalled();
+    expect(f.submitted).toEqual([]);
   });
   it('REQUIRE_TRIGGER remains no-order after real Risk persistence', async () => {
     const f = fixture(); const thesis = applyThesisReview(f.thesis, { ...approve, action: 'REQUIRE_TRIGGER' });

@@ -59,6 +59,8 @@ export class PipelineQueueService {
         type: "exponential",
         delay: FULL_ANALYSIS_DECISION.retryPolicy.backoffMs,
       },
+      // Proactive execution claims live in the database, so queue history can
+      // stay bounded even across redelivery after a lost acknowledgement.
       removeOnComplete: 500,
       removeOnFail: 1000,
     });

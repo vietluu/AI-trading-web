@@ -12,6 +12,9 @@ describe("validateEnvironment", () => {
       CORS_ORIGINS: "http://localhost:3000, http://127.0.0.1:3000",
       SESSION_SECRET: "a-secure-test-session-secret-with-32-characters",
       ENCRYPTION_MASTER_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      DRAWDOWN_REDUCED_PCT: "0.09",
+      DRAWDOWN_DIAGNOSTIC_PROBE_PCT: "0.13",
+      DRAWDOWN_HALT_PCT: "0.16",
     });
 
     expect(environment.API_PORT).toBe(3100);
@@ -19,6 +22,23 @@ describe("validateEnvironment", () => {
       "http://localhost:3000",
       "http://127.0.0.1:3000",
     ]);
+    expect(environment.DRAWDOWN_REDUCED_PCT).toBe(0.09);
+    expect(environment.DRAWDOWN_DIAGNOSTIC_PROBE_PCT).toBe(0.13);
+    expect(environment.DRAWDOWN_HALT_PCT).toBe(0.16);
+  });
+
+  it("rejects incorrectly ordered drawdown tiers", () => {
+    expect(() =>
+      validateEnvironment({
+        DATABASE_URL: "postgresql://user:password@localhost:5432/platform",
+        REDIS_URL: "redis://localhost:6379",
+        SESSION_SECRET: "a-secure-test-session-secret-with-32-characters",
+        ENCRYPTION_MASTER_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        DRAWDOWN_REDUCED_PCT: "0.12",
+        DRAWDOWN_DIAGNOSTIC_PROBE_PCT: "0.12",
+        DRAWDOWN_HALT_PCT: "0.15",
+      }),
+    ).toThrow("DRAWDOWN_REDUCED_PCT must be below");
   });
 
   it("rejects a non-PostgreSQL database URL", () => {

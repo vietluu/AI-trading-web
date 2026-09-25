@@ -1,7 +1,8 @@
 import { assertDeclaredLimitOrder } from '../../../exchange/domain/declared-limit-order';
 import { isRestingEntryExpired } from '../domain/resting-limit-expiry';
 import type { AnticipatoryExecutionInput } from '../../agents/domain/analysis/anticipatory-snapshot-builder';
-import { proactiveOrderTerms, proactiveAuthorizationAllowed, ProactiveAuthorizationSchema, StoredProbeSchema, thesisTriggersSatisfied } from '../../risk/domain/thesis-execution';
+import { evaluatePersistedThesisEntry, proactiveOrderTerms, proactiveAuthorizationAllowed, ProactiveAuthorizationSchema, StoredProbeSchema, thesisTriggersSatisfied } from '../../risk/domain/thesis-execution';
+import { transitionPersistedThesisEntry, type OpportunityObservationState } from '../../pipeline/domain/opportunity-state-machine';
 import { normalizeTerminalOrderStatus } from "../domain/closed-trade-cycle";
 
 export function resolveExecutionOrderTerms(
@@ -54,7 +55,7 @@ import {
   Optional,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import type { DecisionOutput, RiskOutput } from "@platform/shared";
+import { AnticipatoryMarketSnapshotSchema, type DecisionOutput, type RiskOutput } from "@platform/shared";
 import { AuditService } from "../../../audit/audit.service";
 import type { RequestMetadata } from "../../../common/request-context";
 import { PrismaService } from "../../../database/prisma.service";
@@ -81,6 +82,7 @@ import { RiskConfigService } from "../../risk/application/risk-config.service";
 import {
   estimatedLiquidationLeverageLimit,
   maxStopLossRoeForStrategy,
+  resolveDrawdownRiskPolicy,
 } from "../../risk/domain/risk-engine";
 import { RISK_ENGINE_CONSTANTS } from "../../risk/domain/risk-engine.constants";
 import { RiskManagementService } from "../../risk/application/risk-management.service";
@@ -918,9 +920,16 @@ export class LiveTradingService {
       where: { id: dto.riskAssessmentId, userId },
     });
     if (!assessment) throw new NotFoundException("Risk assessment not found");
-    if (assessment.executionAuthorization && (!proactiveAuthorizationAllowed(assessment.executionAuthorization, dto.connectionId, connection.environment) ||
-      process.env.PROACTIVE_AI_MODE !== 'DEMO')) throw new ForbiddenException('PROACTIVE_EXECUTION_NOT_AUTHORIZED');
-    if (assessment.executionAuthorization) proactiveOrderTerms(assessment.tradePlan, assessment.executionAuthorization);
+    const proactiveAuthorization = assessment.executionAuthorization
+      ? ProactiveAuthorizationSchema.safeParse(assessment.executionAuthorization)
+      : undefined;
+    if (assessment.executionAuthorization && (
+      !proactiveAuthorization?.success ||
+      proactiveAuthorization.data.mode !== 'DEMO' ||
+      proactiveAuthorization.data.connectionId !== dto.connectionId ||
+      connection.environment !== ExchangeEnvironment.DEMO ||
+      process.env.PROACTIVE_AI_MODE !== 'DEMO'
+    )) throw new ForbiddenException('PROACTIVE_EXECUTION_NOT_AUTHORIZED');
     if (assessment.connectionId && assessment.connectionId !== dto.connectionId) throw new ForbiddenException('RISK_CONNECTION_MISMATCH');
     if (
       !assessment.approved ||
@@ -937,6 +946,17 @@ export class LiveTradingService {
       this.config.values.approvalTtlMs
     ) {
       throw new ForbiddenException("Order blocked: risk approval has expired");
+    }
+    if (assessment.executionAuthorization) {
+      await this.assertPersistedThesisEntryAllowed(
+        userId,
+        assessment.executionAuthorization,
+        connection.provider,
+        assessment.symbol,
+        connection.id,
+        connection.environment,
+      );
+      proactiveOrderTerms(assessment.tradePlan, assessment.executionAuthorization);
     }
     const existingApproval = await this.prisma.liveOrder.findUnique({
       where: { riskAssessmentId: assessment.id },
@@ -1012,6 +1032,7 @@ export class LiveTradingService {
       userId,
       dto.connectionId,
       assessment,
+      connection.environment,
     );
     const desiredSide = assessment.decision as "LONG" | "SHORT";
     const same = positions.find((position) => position.side === desiredSide);
@@ -3033,6 +3054,134 @@ export class LiveTradingService {
     }
   }
 
+  private async assertPersistedThesisEntryAllowed(
+    userId: string,
+    authorization: unknown,
+    provider: ExchangeProvider,
+    symbol: string,
+    connectionId: string,
+    environment: string,
+  ): Promise<void> {
+    const parsed = ProactiveAuthorizationSchema.parse(authorization);
+    const ticker = await this.publicExchanges.ticker(provider, symbol);
+    const currentPrice = Number(ticker.markPrice ?? ticker.lastPrice);
+    const snapshots = this.prisma as unknown as {
+      anticipatoryMarketSnapshot?: {
+        findFirst: (args: unknown) => Promise<{ id: string; snapshotJson: unknown } | null>;
+      };
+    };
+    const latestRow = snapshots.anticipatoryMarketSnapshot
+      ? await snapshots.anticipatoryMarketSnapshot.findFirst({
+        where: {
+          provider: parsed.snapshot.provider,
+          symbol,
+          timeframe: parsed.snapshot.timeframe,
+          sourceDataCutoff: { lte: new Date() },
+        },
+        orderBy: { sourceDataCutoff: 'desc' },
+      })
+      : null;
+    const latestSnapshot = AnticipatoryMarketSnapshotSchema.safeParse(latestRow?.snapshotJson);
+    const snapshot = latestSnapshot.success ? latestSnapshot.data : parsed.snapshot;
+    const decision = evaluatePersistedThesisEntry({
+      thesis: parsed.thesis,
+      snapshot,
+      currentPrice,
+      atr: snapshot.volatility.coverage === 'AVAILABLE'
+        ? snapshot.volatility.atr
+        : Number.NaN,
+    });
+    if (['TOO_LATE', 'EXPIRED', 'INVALIDATED'].includes(decision.action)) {
+      await this.persistPersistedThesisEntryTransition(
+        userId,
+        parsed,
+        latestRow,
+        snapshot,
+        decision,
+        symbol,
+      );
+    }
+    if (decision.action !== 'ENTER') {
+      throw new ForbiddenException(`PERSISTED_THESIS_ENTRY_${decision.reasonCode}`);
+    }
+    if (!proactiveAuthorizationAllowed(authorization, connectionId, environment)) {
+      throw new ForbiddenException('PROACTIVE_EXECUTION_NOT_AUTHORIZED');
+    }
+  }
+
+  private async persistPersistedThesisEntryTransition(
+    userId: string,
+    authorization: ReturnType<typeof ProactiveAuthorizationSchema.parse>,
+    snapshotRow: { id: string; snapshotJson: unknown } | null,
+    snapshot: ReturnType<typeof AnticipatoryMarketSnapshotSchema.parse>,
+    decision: ReturnType<typeof evaluatePersistedThesisEntry>,
+    symbol: string,
+  ): Promise<void> {
+    if (!snapshotRow) return;
+    const sourceDataCutoff = new Date(snapshot.sourceDataCutoff);
+    if (!Number.isFinite(sourceDataCutoff.getTime())) return;
+
+    await this.prisma.$transaction(async (transaction) => {
+      const opportunity = await transaction.opportunity.findFirst({
+        where: {
+          id: authorization.opportunityId,
+          userId,
+          provider: authorization.snapshot.provider,
+          symbol,
+          timeframe: authorization.snapshot.timeframe,
+        },
+        orderBy: { updatedAt: 'desc' },
+      });
+      if (!opportunity) return;
+
+      const transition = transitionPersistedThesisEntry({
+        state: opportunity.state,
+        setup: opportunity.setup as OpportunityObservationState['setup'],
+        direction: opportunity.direction as OpportunityObservationState['direction'],
+        invalidationPrice: opportunity.invalidationPrice === null
+          ? null
+          : Number(opportunity.invalidationPrice),
+        expiresAt: opportunity.expiresAt,
+        lastObservedCutoff: opportunity.lastObservedCutoff,
+      }, sourceDataCutoff, decision);
+      const idempotencyKey = [
+        'persisted-thesis-entry',
+        opportunity.id,
+        sourceDataCutoff.toISOString(),
+      ].join(':');
+      await transaction.opportunityTransition.upsert({
+        where: {
+          opportunityId_sourceDataCutoff: {
+            opportunityId: opportunity.id,
+            sourceDataCutoff,
+          },
+        },
+        update: {
+          fromState: transition.fromState,
+          toState: transition.toState,
+          reasonCode: transition.reasonCode,
+          idempotencyKey,
+        },
+        create: {
+          opportunityId: opportunity.id,
+          snapshotId: snapshotRow.id,
+          fromState: transition.fromState,
+          toState: transition.toState,
+          reasonCode: transition.reasonCode,
+          sourceDataCutoff: transition.sourceDataCutoff,
+          idempotencyKey,
+        },
+      });
+      await transaction.opportunity.update({
+        where: { id: opportunity.id },
+        data: {
+          state: transition.toState,
+          lastObservedCutoff: transition.sourceDataCutoff,
+        },
+      });
+    });
+  }
+
   private async assertExchangePortfolioRisk(
     userId: string,
     connectionId: string,
@@ -3045,6 +3194,7 @@ export class LiveTradingService {
       tradePlan?: Prisma.JsonValue | null;
       executionAuthorization?: Prisma.JsonValue | null;
     },
+    connectionEnvironment: string,
   ): Promise<{
     positionSize: number;
     leverage: number;
@@ -3086,10 +3236,30 @@ export class LiveTradingService {
       requestedPositionSize * Number(assessment.referencePrice);
     const drawdown =
       peakEquity > 0 ? Math.max(0, (peakEquity - equity) / peakEquity) : 1;
-    if (drawdown >= limits.maxDrawdown) {
+    const drawdownPolicy = resolveDrawdownRiskPolicy(
+      drawdown,
+      "ENTER",
+      limits,
+    );
+    if (drawdownPolicy.tier === "HALTED") {
       throw new ForbiddenException(
         "Exchange preflight failed: maximum drawdown exceeded",
       );
+    }
+    if (drawdownPolicy.tier === "DIAGNOSTIC_PROBE") {
+      const authorization = ProactiveAuthorizationSchema.safeParse(
+        assessment.executionAuthorization,
+      );
+      if (
+        !authorization.success ||
+        authorization.data.mode !== "DEMO" ||
+        authorization.data.requiredEnvironment !== "DEMO" ||
+        authorization.data.connectionId !== connectionId ||
+        connectionEnvironment !== "DEMO" ||
+        authorization.data.thesis.state !== "PROBE_READY"
+      ) {
+        throw new ForbiddenException("DRAWDOWN_DIAGNOSTIC_PROBE_REQUIRED");
+      }
     }
     if (assessment.leverage > limits.maxLeverage) {
       throw new ForbiddenException(
@@ -3103,12 +3273,19 @@ export class LiveTradingService {
       );
     }
     const referencePrice = Number(assessment.referencePrice);
-    const plannedLoss =
-      requestedPositionSize *
-      (Math.abs(referencePrice - stopLoss) +
-        referencePrice * limits.estimatedRoundTripCostPct);
+    const lossPerUnit =
+      Math.abs(referencePrice - stopLoss) +
+      referencePrice * limits.estimatedRoundTripCostPct;
+    const drawdownRiskBudget =
+      equity * limits.riskPerTrade * drawdownPolicy.maxSizeFactor;
+    const drawdownCappedPositionSize =
+      drawdownPolicy.maxSizeFactor < 1 && lossPerUnit > 0
+        ? Math.min(requestedPositionSize, drawdownRiskBudget / lossPerUnit)
+        : requestedPositionSize;
+    const plannedLoss = drawdownCappedPositionSize * lossPerUnit;
     const plannedEquityRiskPct = plannedLoss / equity;
-    const requiredMarginForRisk = requestedNotional / requestedLeverage;
+    const requiredMarginForRisk =
+      (drawdownCappedPositionSize * referencePrice) / requestedLeverage;
     const plannedMarginRoe = plannedLoss / requiredMarginForRisk;
     const tradePlan = assessment.tradePlan as
       { strategy?: string; timeframeMs?: number } | null | undefined;
@@ -3125,7 +3302,8 @@ export class LiveTradingService {
     );
     if (
       !Number.isFinite(plannedEquityRiskPct) ||
-      plannedEquityRiskPct > limits.riskPerTrade + 1e-8
+      plannedEquityRiskPct >
+        limits.riskPerTrade * drawdownPolicy.maxSizeFactor + 1e-8
     ) {
       throw new ForbiddenException(
         "Exchange preflight failed: risk per trade exceeded",
@@ -3177,7 +3355,7 @@ export class LiveTradingService {
     }, 0);
     const sizing = this.deriveExecutionSizing(
       {
-        positionSize: requestedPositionSize,
+        positionSize: drawdownCappedPositionSize,
         leverage: requestedLeverage,
         referencePrice: Number(assessment.referencePrice),
       },

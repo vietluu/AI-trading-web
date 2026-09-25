@@ -8,7 +8,7 @@ function fixture(setup: TradeThesis['setup'] = 'TREND_PULLBACK') {
   const snapshot = createBaseSnapshot();
   const run = () => buildAdaptiveTradePlan({ symbol: snapshot.symbol, side: 'LONG', entryPrice: 108200,
     decision: { decision: 'LONG', regime: { type: 'RANGING' } } as DecisionOutput,
-    market: { proactive: { thesisId: 'thesis-1', thesis, snapshot, mode: 'DEMO', sizeFactor: 1 }, timeframeMs: 900000 },
+    market: { proactive: { thesisId: 'thesis-1', opportunityId: 'opportunity-1', thesis, snapshot, mode: 'DEMO', sizeFactor: 1 }, timeframeMs: 900000 },
     configuredStopLossPct: 0.02, configuredRiskRewardRatio: 2 });
   return { thesis, snapshot, run };
 }

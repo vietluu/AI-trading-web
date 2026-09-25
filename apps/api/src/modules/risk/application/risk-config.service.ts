@@ -22,6 +22,12 @@ export class RiskConfigService {
         this.config.get<number>("MAX_SAME_DIRECTION_POSITIONS") ?? 1,
       maxLeverage: this.config.get<number>("MAX_LEVERAGE") ?? 50,
       maxDrawdown: this.config.get<number>("MAX_DRAWDOWN") ?? 0.15,
+      drawdownReducedPct:
+        this.config.get<number>("DRAWDOWN_REDUCED_PCT") ?? 0.08,
+      drawdownDiagnosticProbePct:
+        this.config.get<number>("DRAWDOWN_DIAGNOSTIC_PROBE_PCT") ?? 0.12,
+      drawdownHaltPct:
+        this.config.get<number>("DRAWDOWN_HALT_PCT") ?? 0.15,
       maxExposure: this.config.get<number>("MAX_EXPOSURE") ?? 0.6,
       cooldownMs: this.config.get<number>("TRADE_COOLDOWN_MS") ?? 60_000,
       lossReentryCooldownMs:

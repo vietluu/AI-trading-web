@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PipelineService } from '../../src/modules/pipeline/application/pipeline.service';
 
+function deliveryLeaseMethods() {
+  return {
+    renewProactiveThesisDelivery: vi.fn().mockResolvedValue({ count: 1 }),
+    finalizeProactiveThesisDelivery: vi.fn().mockResolvedValue({ count: 1 }),
+  };
+}
+
 describe('PipelineService', () => {
   it('queues manual runs so HTTP requests respect worker backpressure', async () => {
     const repository = {
@@ -9,6 +16,7 @@ describe('PipelineService', () => {
       updateRun: vi.fn().mockResolvedValue(undefined),
       countRecent: vi.fn().mockResolvedValue(0),
       latestForSymbol: vi.fn().mockResolvedValue(null),
+      findProactiveThesisRun: vi.fn().mockResolvedValue(null),
     };
     const queue = {
       enqueue: vi.fn().mockResolvedValue(undefined),
@@ -45,6 +53,281 @@ describe('PipelineService', () => {
     );
     expect(runner.run).not.toHaveBeenCalled();
     expect(result).toMatchObject({ id: 'run-1' });
+  });
+
+  it('schedules a proactive thesis once for the same opportunity and snapshot', async () => {
+    const repository = {
+      ...deliveryLeaseMethods(),
+      createRun: vi.fn().mockResolvedValue({ id: 'proactive-run-1' }),
+      createSteps: vi.fn().mockResolvedValue(undefined),
+      updateRun: vi.fn().mockResolvedValue(undefined),
+      countRecent: vi.fn().mockResolvedValue(0),
+      latestForSymbol: vi.fn().mockResolvedValue(null),
+      findProactiveThesisRun: vi.fn().mockResolvedValue(null),
+    };
+    const queue = { enqueue: vi.fn().mockResolvedValue(undefined) };
+    const config = { enabled: true, maxRunsPerHour: 120, cooldownMs: 60_000 };
+    const service = new PipelineService(repository as never, queue as never, config as never);
+    const input = {
+      userId: 'user-1',
+      request: {
+        pipelineId: 'proactive-thesis',
+        symbol: 'BTC-USDT',
+        provider: 'BINANCE_FUTURES',
+        params: {
+          interval: '15m',
+          opportunityId: 'opp-1',
+          snapshotId: 'snapshot-1',
+          sourceDataCutoff: '2026-09-09T01:00:00.000Z',
+        },
+      },
+      scheduleId: 'schedule-1',
+    };
+
+    const first = await service.scheduleProactiveThesis(input);
+    const duplicate = await service.scheduleProactiveThesis(input);
+
+    expect(first).toMatchObject({ status: 'SCHEDULED', runId: 'proactive-run-1' });
+    expect(duplicate).toMatchObject({ status: 'DUPLICATE', runId: 'proactive-run-1' });
+    expect(repository.createRun).toHaveBeenCalledTimes(1);
+    const [createRunInput] = repository.createRun.mock.calls[0] as [{
+      proactiveThesisKey?: string;
+      storedContext?: { proactiveThesisIdempotencyKey?: string };
+    }];
+    expect(createRunInput.proactiveThesisKey).toBe('proactive-thesis:opp-1:snapshot-1');
+    expect(createRunInput.storedContext?.proactiveThesisIdempotencyKey).toBe(
+      'proactive-thesis:opp-1:snapshot-1',
+    );
+
+    const resumedRepository = {
+      createRun: vi.fn(),
+      createSteps: vi.fn(),
+      updateRun: vi.fn(),
+      countRecent: vi.fn(),
+      latestForSymbol: vi.fn(),
+      findProactiveThesisRun: vi.fn().mockResolvedValue({
+        id: 'proactive-run-1',
+        proactiveDeliveryState: 'DELIVERED',
+      }),
+    };
+    const resumedService = new PipelineService(
+      resumedRepository as never,
+      queue as never,
+      config as never,
+    );
+
+    await expect(resumedService.scheduleProactiveThesis(input)).resolves.toMatchObject({
+      status: 'DUPLICATE',
+      runId: 'proactive-run-1',
+    });
+    expect(resumedRepository.createRun).not.toHaveBeenCalled();
+    expect(resumedRepository.findProactiveThesisRun).toHaveBeenCalledWith(
+      'proactive-thesis:opp-1:snapshot-1',
+    );
+  });
+
+  it('atomically reuses one proactive thesis run across concurrent schedulers', async () => {
+    const duplicateError = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+    const repository = {
+      ...deliveryLeaseMethods(),
+      createRun: vi.fn()
+        .mockResolvedValueOnce({ id: 'proactive-run-1' })
+        .mockRejectedValueOnce(duplicateError),
+      createSteps: vi.fn().mockResolvedValue(undefined),
+      updateRun: vi.fn().mockResolvedValue(undefined),
+      countRecent: vi.fn().mockResolvedValue(0),
+      latestForSymbol: vi.fn().mockResolvedValue(null),
+      findProactiveThesisRun: vi.fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          id: 'proactive-run-1',
+          proactiveDeliveryState: 'DELIVERED',
+        }),
+    };
+    const queue = { enqueue: vi.fn().mockResolvedValue(undefined) };
+    const config = { enabled: true, maxRunsPerHour: 120, cooldownMs: 60_000 };
+    const input = {
+      userId: 'user-1',
+      request: {
+        pipelineId: 'proactive-thesis',
+        symbol: 'BTC-USDT',
+        provider: 'BINANCE_FUTURES',
+        params: {
+          interval: '15m',
+          opportunityId: 'opp-1',
+          snapshotId: 'snapshot-1',
+          sourceDataCutoff: '2026-09-09T01:00:00.000Z',
+        },
+      },
+      scheduleId: 'schedule-1',
+    };
+    const firstScheduler = new PipelineService(repository as never, queue as never, config as never);
+    const secondScheduler = new PipelineService(repository as never, queue as never, config as never);
+
+    const results = await Promise.all([
+      firstScheduler.scheduleProactiveThesis(input),
+      secondScheduler.scheduleProactiveThesis(input),
+    ]);
+
+    expect(results).toEqual(expect.arrayContaining([
+      { status: 'SCHEDULED', runId: 'proactive-run-1' },
+      { status: 'DUPLICATE', runId: 'proactive-run-1' },
+    ]));
+    expect(repository.createRun).toHaveBeenCalledTimes(2);
+    expect(repository.createSteps).toHaveBeenCalledTimes(1);
+    expect(queue.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('reclaims a persisted proactive run when queue delivery fails after insertion', async () => {
+    const repository = {
+      ...deliveryLeaseMethods(),
+      createRun: vi.fn().mockResolvedValue({ id: 'proactive-run-1' }),
+      createSteps: vi.fn().mockResolvedValue(undefined),
+      updateRun: vi.fn().mockResolvedValue(undefined),
+      countRecent: vi.fn().mockResolvedValue(0),
+      latestForSymbol: vi.fn().mockResolvedValue(null),
+      findProactiveThesisRun: vi.fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 'proactive-run-1', proactiveDeliveryState: 'FAILED' }),
+      claimProactiveThesisDelivery: vi.fn().mockResolvedValue({ count: 1 }),
+    };
+    const queue = {
+      enqueue: vi.fn()
+        .mockRejectedValueOnce(new Error('queue unavailable'))
+        .mockResolvedValueOnce(undefined),
+    };
+    const config = { enabled: true, maxRunsPerHour: 120, cooldownMs: 60_000 };
+    const service = new PipelineService(repository as never, queue as never, config as never);
+    const input = {
+      userId: 'user-1',
+      request: {
+        pipelineId: 'proactive-thesis', symbol: 'BTC-USDT', provider: 'BINANCE_FUTURES',
+        params: {
+          interval: '15m', opportunityId: 'opp-1', snapshotId: 'snapshot-1',
+          sourceDataCutoff: '2026-09-09T01:00:00.000Z',
+        },
+      },
+      scheduleId: 'schedule-1',
+    };
+
+    await expect(service.scheduleProactiveThesis(input)).rejects.toThrow('queue unavailable');
+    await expect(service.scheduleProactiveThesis(input)).resolves.toEqual({
+      status: 'SCHEDULED', runId: 'proactive-run-1',
+    });
+
+    expect(repository.createRun).toHaveBeenCalledTimes(1);
+    expect(repository.claimProactiveThesisDelivery).toHaveBeenCalledWith(
+      'proactive-run-1',
+      expect.any(Date),
+      expect.any(Date),
+      expect.any(String),
+    );
+    expect(queue.enqueue).toHaveBeenCalledTimes(2);
+    expect(repository.finalizeProactiveThesisDelivery).toHaveBeenCalledWith(
+      'proactive-run-1',
+      expect.any(String),
+      'DELIVERED',
+      expect.any(Date),
+    );
+  });
+
+  it('reclaims an initial delivery interrupted with an expired proactive lease', async () => {
+    const now = new Date('2026-09-09T01:05:00.000Z');
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const repository = {
+      ...deliveryLeaseMethods(),
+      createRun: vi.fn(),
+      createSteps: vi.fn().mockResolvedValue(undefined),
+      updateRun: vi.fn().mockResolvedValue(undefined),
+      countRecent: vi.fn().mockResolvedValue(0),
+      latestForSymbol: vi.fn().mockResolvedValue(null),
+      findProactiveThesisRun: vi.fn().mockResolvedValue({
+        id: 'proactive-run-initial-crash',
+        proactiveDeliveryState: 'DELIVERING',
+        proactiveDeliveryLeaseExpiresAt: new Date('2026-09-09T01:04:59.999Z'),
+      }),
+      claimProactiveThesisDelivery: vi.fn().mockImplementation(
+        (_id: string, claimedAt?: Date, leaseExpiresAt?: Date) => Promise.resolve(
+          claimedAt instanceof Date && leaseExpiresAt instanceof Date ? { count: 1 } : { count: 0 },
+        ),
+      ),
+    };
+    const queue = { enqueue: vi.fn().mockResolvedValue(undefined) };
+    const config = { enabled: true, maxRunsPerHour: 120, cooldownMs: 60_000 };
+    const service = new PipelineService(repository as never, queue as never, config as never);
+
+    await expect(service.scheduleProactiveThesis({
+      userId: 'user-1',
+      request: {
+        pipelineId: 'proactive-thesis', symbol: 'BTC-USDT', provider: 'BINANCE_FUTURES',
+        params: {
+          interval: '15m', opportunityId: 'opp-lease-1', snapshotId: 'snapshot-lease-1',
+          sourceDataCutoff: '2026-09-09T01:00:00.000Z',
+        },
+      },
+      scheduleId: 'schedule-1',
+    })).resolves.toEqual({ status: 'SCHEDULED', runId: 'proactive-run-initial-crash' });
+
+    expect(repository.createRun).not.toHaveBeenCalled();
+    expect(repository.claimProactiveThesisDelivery).toHaveBeenCalledWith(
+      'proactive-run-initial-crash',
+      now,
+      new Date('2026-09-09T01:06:00.000Z'),
+      expect.any(String),
+    );
+    expect(queue.enqueue).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it('reclaims a reclaim delivery interrupted with an expired proactive lease', async () => {
+    const now = new Date('2026-09-09T01:10:00.000Z');
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const repository = {
+      ...deliveryLeaseMethods(),
+      createRun: vi.fn(),
+      createSteps: vi.fn().mockResolvedValue(undefined),
+      updateRun: vi.fn().mockResolvedValue(undefined),
+      countRecent: vi.fn().mockResolvedValue(0),
+      latestForSymbol: vi.fn().mockResolvedValue(null),
+      findProactiveThesisRun: vi.fn().mockResolvedValue({
+        id: 'proactive-run-reclaim-crash',
+        proactiveDeliveryState: 'DELIVERING',
+        proactiveDeliveryLeaseExpiresAt: new Date('2026-09-09T01:09:59.999Z'),
+      }),
+      claimProactiveThesisDelivery: vi.fn().mockImplementation(
+        (_id: string, claimedAt?: Date, leaseExpiresAt?: Date) => Promise.resolve(
+          claimedAt instanceof Date && leaseExpiresAt instanceof Date ? { count: 1 } : { count: 0 },
+        ),
+      ),
+    };
+    const queue = { enqueue: vi.fn().mockResolvedValue(undefined) };
+    const config = { enabled: true, maxRunsPerHour: 120, cooldownMs: 60_000 };
+    const service = new PipelineService(repository as never, queue as never, config as never);
+
+    await expect(service.scheduleProactiveThesis({
+      userId: 'user-1',
+      request: {
+        pipelineId: 'proactive-thesis', symbol: 'BTC-USDT', provider: 'BINANCE_FUTURES',
+        params: {
+          interval: '15m', opportunityId: 'opp-lease-2', snapshotId: 'snapshot-lease-2',
+          sourceDataCutoff: '2026-09-09T01:00:00.000Z',
+        },
+      },
+      scheduleId: 'schedule-1',
+    })).resolves.toEqual({ status: 'SCHEDULED', runId: 'proactive-run-reclaim-crash' });
+
+    expect(repository.createRun).not.toHaveBeenCalled();
+    expect(repository.claimProactiveThesisDelivery).toHaveBeenCalledWith(
+      'proactive-run-reclaim-crash',
+      now,
+      new Date('2026-09-09T01:11:00.000Z'),
+      expect.any(String),
+    );
+    expect(queue.enqueue).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
   });
 
   it('propagates canonical executionContext with deep equality to storedContext and assessPipelineDecision', async () => {

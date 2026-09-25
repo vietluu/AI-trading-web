@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PipelineRunRequestSchema } from '@platform/shared';
 
 import { PipelineSchedulerService } from '../../src/modules/pipeline/application/pipeline-scheduler.service';
 import { OpportunityWatcherService } from '../../src/modules/pipeline/application/opportunity-watcher.service';
@@ -202,6 +203,193 @@ describe('OpportunityWatcherService', () => {
 describe('PipelineSchedulerService observe-mode isolation', () => {
   beforeEach(() => vi.restoreAllMocks());
 
+  it('persists a proactive scheduling failure before returning FAILED', async () => {
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const auditLog = { create: vi.fn().mockResolvedValue({}) };
+    const pipeline = { scheduleProactiveThesis: vi.fn().mockRejectedValue(new Error('queue unavailable')) };
+    const scheduler = new PipelineSchedulerService(
+      { auditLog } as never,
+      pipeline as never,
+      { enabled: true } as never,
+    );
+
+    const result = await scheduler.scheduleProactiveThesis({
+      userId: 'user-1',
+      scheduleId: 'schedule-1',
+      symbol: 'BTC-USDT',
+      provider: 'BINANCE_FUTURES',
+      opportunityId: 'opp-1',
+      snapshotId: 'snapshot-1',
+      sourceDataCutoff: new Date('2026-09-09T01:00:00.000Z'),
+    });
+
+    expect(result).toEqual({ status: 'FAILED', reason: 'PROACTIVE_THESIS_TRIGGER_FAILED' });
+    const [firstAudit] = auditLog.create.mock.calls[0] as [{
+      data: { action: string; metadata: Record<string, unknown> };
+    }];
+    expect(firstAudit.data.action).toBe('OPPORTUNITY_PROACTIVE_SCHEDULE_FAILED');
+    expect(firstAudit.data.metadata).toMatchObject({
+      opportunityId: 'opp-1',
+      snapshotId: 'snapshot-1',
+      sourceDataCutoff: '2026-09-09T01:00:00.000Z',
+      reason: 'PROACTIVE_THESIS_TRIGGER_FAILED',
+    });
+  });
+
+  it('retries failed proactive delivery when the next tick sees the same anchor', async () => {
+    const cutoff = new Date('2026-09-09T01:00:00.000Z');
+    const schedule = {
+      id: 'schedule-1', userId: 'user-1', pipelineId: 'FULL_ANALYSIS_DECISION',
+      symbols: ['BTC-USDT'], strategyIds: ['trend'], provider: 'BINANCE_FUTURES',
+      mode: 'INTERVAL', intervalMs: 900_000, lastTriggeredAt: undefined,
+      timezone: 'UTC', maxRunsPerHour: 12,
+    };
+    const prisma = {
+      pipelineSchedule: {
+        findMany: vi.fn().mockResolvedValue([schedule]),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      auditLog: { create: vi.fn().mockResolvedValue({}) },
+    };
+    const pipeline = {
+      trigger: vi.fn().mockResolvedValue({ id: 'normal-run-1' }),
+      scheduleProactiveThesis: vi.fn()
+        .mockRejectedValueOnce(new Error('queue unavailable'))
+        .mockResolvedValueOnce({ status: 'SCHEDULED', runId: 'proactive-run-1' }),
+    };
+    const scanner = {
+      reserveAnchor: vi.fn()
+        .mockResolvedValueOnce({
+          run: true,
+          fingerprint: 'closed-candle',
+          sourceDataCutoff: cutoff,
+        })
+        .mockResolvedValueOnce({
+          run: false,
+          fingerprint: 'closed-candle',
+          sourceDataCutoff: cutoff,
+        }),
+    };
+    const watcher = {
+      observe: vi.fn()
+        .mockResolvedValueOnce({
+          state: 'WATCHING', duplicate: false, opportunityId: 'opp-1', snapshotId: 'snapshot-1',
+        })
+        .mockResolvedValueOnce({
+          state: 'WATCHING', duplicate: true, opportunityId: 'opp-1', snapshotId: 'snapshot-1',
+        }),
+    };
+    const scheduler = new PipelineSchedulerService(
+      prisma as never,
+      pipeline as never,
+      { enabled: true } as never,
+      undefined,
+      scanner as never,
+      undefined,
+      watcher as never,
+    );
+
+    await scheduler.tick(new Date('2026-09-09T01:00:01.000Z'));
+    await scheduler.tick(new Date('2026-09-09T01:00:06.000Z'));
+
+    expect(pipeline.trigger).toHaveBeenCalledTimes(1);
+    expect(pipeline.scheduleProactiveThesis).toHaveBeenCalledTimes(2);
+    expect(watcher.observe).toHaveBeenCalledTimes(2);
+    expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
+    expect(prisma.pipelineSchedule.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists the active-delivery failure audit before exposing FAILED', async () => {
+    const failure = { status: 'FAILED', runId: 'run-active-1', reason: 'PROACTIVE_THESIS_DELIVERY_IN_PROGRESS' };
+    let completeAudit!: () => void;
+    const audit = new Promise<void>((resolve) => { completeAudit = resolve; });
+    const auditLog = { create: vi.fn().mockReturnValue(audit) };
+    const scheduler = new PipelineSchedulerService(
+      { auditLog } as never,
+      { scheduleProactiveThesis: vi.fn().mockResolvedValue(failure) } as never,
+      { enabled: true } as never,
+    );
+    let settled = false;
+    const result = scheduler.scheduleProactiveThesis({
+      userId: 'user-1', scheduleId: 'schedule-1', symbol: 'BTC-USDT', provider: 'BINANCE_FUTURES',
+      opportunityId: 'opp-1', snapshotId: 'snapshot-1', sourceDataCutoff: new Date('2026-09-09T01:00:00.000Z'),
+    }).then((value) => { settled = true; return value; });
+    await Promise.resolve();
+    await Promise.resolve();
+    const [activeDeliveryAudit] = auditLog.create.mock.calls[0] as [{
+      data: { action: string; metadata: Record<string, unknown> };
+    }];
+    expect(activeDeliveryAudit.data.action).toBe('OPPORTUNITY_PROACTIVE_SCHEDULE_FAILED');
+    expect(activeDeliveryAudit.data.metadata).toMatchObject({
+      opportunityId: 'opp-1',
+      snapshotId: 'snapshot-1',
+      sourceDataCutoff: '2026-09-09T01:00:00.000Z',
+      reason: 'PROACTIVE_THESIS_DELIVERY_IN_PROGRESS',
+    });
+    expect(settled).toBe(false);
+    completeAudit();
+    await expect(result).resolves.toEqual(failure);
+  });
+
+  it('does not stamp a duplicate anchor while proactive delivery is still in flight', async () => {
+    const cutoff = new Date('2026-09-09T01:00:00.000Z');
+    const schedule = {
+      id: 'schedule-lease-1', userId: 'user-1', pipelineId: 'FULL_ANALYSIS_DECISION',
+      symbols: ['BTC-USDT'], strategyIds: ['trend'], provider: 'BINANCE_FUTURES',
+      mode: 'INTERVAL', intervalMs: 900_000, lastTriggeredAt: undefined,
+      timezone: 'UTC', maxRunsPerHour: 12,
+    };
+    const prisma = {
+      pipelineSchedule: {
+        findMany: vi.fn().mockResolvedValue([schedule]),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      auditLog: { create: vi.fn().mockResolvedValue({}) },
+    };
+    const pipeline = {
+      trigger: vi.fn(),
+      scheduleProactiveThesis: vi.fn()
+        .mockResolvedValueOnce({ status: 'FAILED', runId: 'proactive-run-lease-1', reason: 'PROACTIVE_THESIS_DELIVERY_IN_PROGRESS' })
+        .mockResolvedValueOnce({ status: 'SCHEDULED', runId: 'proactive-run-lease-1' }),
+    };
+    const scanner = {
+      reserveAnchor: vi.fn().mockResolvedValue({
+        run: false,
+        fingerprint: 'closed-candle',
+        sourceDataCutoff: cutoff,
+      }),
+    };
+    const watcher = {
+      observe: vi.fn().mockResolvedValue({
+        state: 'WATCHING', duplicate: true, opportunityId: 'opp-lease-1', snapshotId: 'snapshot-lease-1',
+      }),
+    };
+    const scheduler = new PipelineSchedulerService(
+      prisma as never,
+      pipeline as never,
+      { enabled: true } as never,
+      undefined,
+      scanner as never,
+      undefined,
+      watcher as never,
+    );
+
+    await scheduler.tick(new Date('2026-09-09T01:00:01.000Z'));
+    expect(prisma.pipelineSchedule.update).not.toHaveBeenCalled();
+    const [leaseAudit] = prisma.auditLog.create.mock.calls[0] as [{
+      data: { action: string; metadata: Record<string, unknown> };
+    }];
+    expect(leaseAudit.data.action).toBe('OPPORTUNITY_PROACTIVE_SCHEDULE_FAILED');
+    expect(leaseAudit.data.metadata).toMatchObject({
+      reason: 'PROACTIVE_THESIS_DELIVERY_IN_PROGRESS',
+    });
+    await scheduler.tick(new Date('2026-09-09T01:00:06.000Z'));
+
+    expect(pipeline.scheduleProactiveThesis).toHaveBeenCalledTimes(2);
+    expect(pipeline.trigger).not.toHaveBeenCalled();
+    expect(prisma.pipelineSchedule.update).toHaveBeenCalledTimes(1);
+  });
+
   it('contains watcher failure and still dispatches the existing pipeline after a closed primary candle', async () => {
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     const cutoff = new Date('2026-09-09T01:00:00.000Z');
@@ -223,8 +411,17 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
         findMany: vi.fn().mockResolvedValue([schedule]),
         update: vi.fn().mockResolvedValue({}),
       },
+      auditLog: {
+        create: vi.fn().mockResolvedValue({}),
+      },
     };
-    const pipeline = { trigger: vi.fn().mockResolvedValue({ id: 'run-1' }) };
+    const pipeline = {
+      trigger: vi.fn().mockImplementation((_userId: string, request: unknown) => {
+        PipelineRunRequestSchema.parse(request);
+        return Promise.resolve({ id: 'run-1' });
+      }),
+      scheduleProactiveThesis: vi.fn().mockResolvedValue({ status: 'SCHEDULED', runId: 'proactive-run-1' }),
+    };
     const scanner = {
       reserveAnchor: vi.fn().mockResolvedValue({
         run: true,
@@ -308,8 +505,17 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
         findMany: vi.fn().mockResolvedValue([schedule]),
         update: vi.fn().mockResolvedValue({}),
       },
+      auditLog: {
+        create: vi.fn().mockResolvedValue({}),
+      },
     };
-    const pipeline = { trigger: vi.fn().mockResolvedValue({ id: 'run-1' }) };
+    const pipeline = {
+      trigger: vi.fn().mockImplementation((_userId: string, request: unknown) => {
+        PipelineRunRequestSchema.parse(request);
+        return Promise.resolve({ id: 'run-1' });
+      }),
+      scheduleProactiveThesis: vi.fn().mockResolvedValue({ status: 'SCHEDULED', runId: 'proactive-run-1' }),
+    };
     const scanner = {
       reserveAnchor: vi.fn().mockResolvedValue({
         run: true,
@@ -340,31 +546,27 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
     await scheduler.tick(new Date('2026-09-09T01:00:01.000Z'));
 
     expect(watcher.observe).toHaveBeenCalledTimes(1);
-    expect(pipeline.trigger).toHaveBeenCalledTimes(2);
-    expect(pipeline.trigger).toHaveBeenCalledWith(
-      'user-1',
-      expect.objectContaining({
-        pipelineId: 'proactive-thesis',
-        symbol: 'BTC-USDT',
-        provider: 'BINANCE_FUTURES',
-        params: expect.objectContaining({
-          interval: '15m',
-          opportunityId: 'opp-1',
-          snapshotId: 'snapshot-1',
-          sourceDataCutoff: cutoff.toISOString(),
-        }) as unknown,
-      }),
-      'SCHEDULE',
-      expect.objectContaining({
-        scheduleId: 'schedule-1',
-        bypassCooldown: true,
-        storedContext: expect.objectContaining({
-          opportunityId: 'opp-1',
-          snapshotId: 'snapshot-1',
-          sourceDataCutoff: cutoff.toISOString(),
-        }) as unknown,
-      }),
-    );
+    expect(pipeline.scheduleProactiveThesis).toHaveBeenCalledTimes(1);
+    expect(pipeline.trigger).toHaveBeenCalledTimes(1);
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    const [scheduledInput] = pipeline.scheduleProactiveThesis.mock.calls[0] as [{
+      userId: string;
+      scheduleId: string;
+      request: unknown;
+    }];
+    expect(scheduledInput.userId).toBe('user-1');
+    expect(scheduledInput.scheduleId).toBe('schedule-1');
+    expect(PipelineRunRequestSchema.parse(scheduledInput.request)).toMatchObject({
+      pipelineId: 'proactive-thesis',
+      symbol: 'BTC-USDT',
+      provider: 'BINANCE_FUTURES',
+      params: {
+        interval: '15m',
+        opportunityId: 'opp-1',
+        snapshotId: 'snapshot-1',
+        sourceDataCutoff: cutoff.toISOString(),
+      },
+    });
     expect(pipeline.trigger).toHaveBeenCalledWith(
       'user-1',
       expect.objectContaining({
@@ -377,8 +579,10 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
       }),
     );
 
-    // 2. Duplicate observation does NOT trigger proactive-thesis
+    // 2. Duplicate observation reuses the existing proactive-thesis run.
     pipeline.trigger.mockClear();
+    pipeline.scheduleProactiveThesis.mockClear();
+    pipeline.scheduleProactiveThesis.mockResolvedValueOnce({ status: 'DUPLICATE', runId: 'proactive-run-1' });
     watcher.observe.mockResolvedValueOnce({
       state: 'WATCHING',
       duplicate: true,
@@ -388,12 +592,7 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
     });
     await scheduler.tick(new Date('2026-09-09T01:15:01.000Z'));
     expect(pipeline.trigger).toHaveBeenCalledTimes(1);
-    expect(pipeline.trigger).not.toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ pipelineId: 'proactive-thesis' }),
-      expect.anything(),
-      expect.anything(),
-    );
+    expect(pipeline.scheduleProactiveThesis).toHaveBeenCalledTimes(1);
 
     // 3. Terminal observation (e.g. EXPIRED) does NOT trigger proactive-thesis
     pipeline.trigger.mockClear();
@@ -414,4 +613,3 @@ describe('PipelineSchedulerService observe-mode isolation', () => {
     );
   });
 });
-

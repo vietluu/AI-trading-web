@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ExchangeProvider } from '../src/exchange/domain/exchange.types';
 import { MarketToolDataService } from '../src/modules/ai-tools/infrastructure/tools/market-tool-data.service';
+import { MarketCausalityGetTool } from '../src/modules/ai-tools/infrastructure/tools/market-tools';
 import { OnChainMetricsGetTool } from '../src/modules/ai-tools/infrastructure/tools/onchain-tools';
 import {
   NewsArticlesListTool,
@@ -10,6 +11,33 @@ import {
 } from '../src/modules/ai-tools/infrastructure/tools/news-tools';
 
 describe('AI market and news tool fallbacks', () => {
+  it('exposes causality metrics while keeping unavailable liquidation evidence explicit', async () => {
+    const dataService = {
+      candles: vi.fn().mockResolvedValue([
+        { close: '100', volume: '100' },
+        { close: '101', volume: '100' },
+        { close: '103', volume: '180' },
+      ]),
+      openInterest: vi.fn().mockResolvedValue([
+        { openInterest: '1000' },
+        { openInterest: '1030' },
+      ]),
+      funding: vi.fn().mockResolvedValue([{ fundingRate: '-0.0002' }]),
+    };
+    const output = await new MarketCausalityGetTool(dataService as never).execute(
+      { symbol: 'SOL-USDT', provider: 'OKX_FUTURES', interval: '15m' },
+      { invocationId: 'invocation-1' } as never,
+    );
+
+    expect(output).toMatchObject({
+      symbol: 'SOL-USDT',
+      volumeRatio: 1.8,
+      deltaOiPercent: 3,
+      squeezeIndicator: 'SHORT_SQUEEZE',
+      missingEvidence: ['LIQUIDATION_DATA_UNAVAILABLE'],
+    });
+  });
+
   it('accepts canonical symbols beyond BTC and ETH', () => {
     const tools = [
       new NewsArticlesListTool({} as never),

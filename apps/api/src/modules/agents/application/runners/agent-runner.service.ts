@@ -589,7 +589,9 @@ export class AgentRunnerService {
         validation.validatedOutput &&
         definition.buildToolCalls
       ) {
-        const validatedRecord = validation.validatedOutput as Record<
+        const validatedRecord = (definition.finalizeOutput
+          ? definition.finalizeOutput(validation.validatedOutput, toolData, usedTools)
+          : validation.validatedOutput) as Record<
           string,
           unknown
         >;

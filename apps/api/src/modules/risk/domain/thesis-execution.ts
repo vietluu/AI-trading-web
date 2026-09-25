@@ -2,7 +2,95 @@ import type { PlaceOrderCommand } from '../../../exchange/domain/exchange.types'
 import { z } from 'zod';
 import { AnticipatoryMarketSnapshotSchema, TradeThesisSchema, StructuredTriggerSchema } from '@platform/shared';
 import { validateTradeThesis } from '../../agents/domain/trade-thesis-validator';
-import type { AnticipatoryMarketSnapshot, StructuredTrigger } from '@platform/shared';
+import type { AnticipatoryMarketSnapshot, StructuredTrigger, TradeThesis } from '@platform/shared';
+
+export type PersistedThesisEntryAction =
+  | 'ENTER'
+  | 'WAIT_PULLBACK'
+  | 'TOO_LATE'
+  | 'EXPIRED'
+  | 'INVALIDATED';
+
+export type PersistedThesisEntryReasonCode =
+  | 'ENTRY_ZONE_AND_TRIGGER_SATISFIED'
+  | 'TRIGGER_NOT_SATISFIED'
+  | 'PULLBACK_PENDING'
+  | 'CHASE_DISTANCE_EXCEEDED'
+  | 'THESIS_EXPIRED'
+  | 'THESIS_INVALIDATED'
+  | 'THESIS_MARKED_TOO_LATE'
+  | 'THESIS_NOT_ACTIONABLE'
+  | 'MARKET_PRICE_UNAVAILABLE'
+  | 'VOLATILITY_UNAVAILABLE';
+
+export interface PersistedThesisEntryInput {
+  thesis: TradeThesis;
+  snapshot: AnticipatoryMarketSnapshot;
+  currentPrice: number;
+  atr: number;
+  now?: Date;
+}
+
+export interface PersistedThesisEntryDecision {
+  action: PersistedThesisEntryAction;
+  reasonCode: PersistedThesisEntryReasonCode;
+}
+
+/**
+ * Evaluates only the geometry declared in an already-persisted thesis. It is
+ * deliberately pure so submitting an order cannot trigger another AI run.
+ */
+export function evaluatePersistedThesisEntry(
+  input: PersistedThesisEntryInput,
+): PersistedThesisEntryDecision {
+  const { thesis, snapshot, currentPrice, atr } = input;
+  const now = input.now ?? new Date();
+  const expiresAt = Date.parse(thesis.expiresAt);
+
+  if (!Number.isFinite(expiresAt) || now.getTime() >= expiresAt) {
+    return { action: 'EXPIRED', reasonCode: 'THESIS_EXPIRED' };
+  }
+  if (thesis.state === 'TOO_LATE') {
+    return { action: 'TOO_LATE', reasonCode: 'THESIS_MARKED_TOO_LATE' };
+  }
+  if (thesis.direction === 'WAIT' || thesis.entryZone === null) {
+    return { action: 'WAIT_PULLBACK', reasonCode: 'THESIS_NOT_ACTIONABLE' };
+  }
+  if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+    return { action: 'WAIT_PULLBACK', reasonCode: 'MARKET_PRICE_UNAVAILABLE' };
+  }
+
+  if (thesis.invalidation && (
+    thesis.direction === 'LONG'
+      ? currentPrice <= thesis.invalidation.price
+      : currentPrice >= thesis.invalidation.price
+  )) {
+    return { action: 'INVALIDATED', reasonCode: 'THESIS_INVALIDATED' };
+  }
+  if (!Number.isFinite(atr) || atr <= 0) {
+    return { action: 'WAIT_PULLBACK', reasonCode: 'VOLATILITY_UNAVAILABLE' };
+  }
+
+  const outsideChaseSide = thesis.direction === 'LONG'
+    ? currentPrice > thesis.entryZone.upper
+    : currentPrice < thesis.entryZone.lower;
+  if (outsideChaseSide) {
+    const distance = thesis.direction === 'LONG'
+      ? currentPrice - thesis.entryZone.upper
+      : thesis.entryZone.lower - currentPrice;
+    if (distance / atr > thesis.maximumChaseDistanceAtr) {
+      return { action: 'TOO_LATE', reasonCode: 'CHASE_DISTANCE_EXCEEDED' };
+    }
+  }
+
+  if (!thesisTriggersSatisfied(thesis.trigger, snapshot, currentPrice)) {
+    return { action: 'WAIT_PULLBACK', reasonCode: 'TRIGGER_NOT_SATISFIED' };
+  }
+  if (currentPrice < thesis.entryZone.lower || currentPrice > thesis.entryZone.upper) {
+    return { action: 'WAIT_PULLBACK', reasonCode: 'PULLBACK_PENDING' };
+  }
+  return { action: 'ENTER', reasonCode: 'ENTRY_ZONE_AND_TRIGGER_SATISFIED' };
+}
 
 /** Only deterministic, declared trigger types can authorize confirmation. */
 export function thesisTriggersSatisfied(triggers: StructuredTrigger[], snapshot: AnticipatoryMarketSnapshot, price: number): boolean {
@@ -23,6 +111,7 @@ export const StoredProbeSchema = z.object({
 export const ProactiveAuthorizationSchema = z.object({
   kind: z.literal('PROACTIVE'), mode: z.enum(['OBSERVE', 'SHADOW', 'DEMO']),
   requiredEnvironment: z.literal('DEMO'), connectionId: z.string().min(1), thesisId: z.string().min(1),
+  opportunityId: z.string().min(1),
   thesis: TradeThesisSchema, snapshot: AnticipatoryMarketSnapshotSchema,
 });
 

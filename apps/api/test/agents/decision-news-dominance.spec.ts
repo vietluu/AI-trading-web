@@ -29,6 +29,7 @@ function baseAnalyses(): { analyses: FusionInput; fusionOutput: FusionOutput } {
     news: {
       summary: 'No breaking news.',
       impact: { level: 'LOW', direction: 'NEUTRAL' }, keyEvents: [], themes: [],
+      latestPublishedAt: null,
       riskSignals: [], dataQuality: 'GOOD', usedTools: ['news.articles.list'], generatedAt,
     },
     sentiment: {
@@ -161,12 +162,55 @@ describe('DecisionService - News Dominance & Macro Momentum Override', () => {
     input.news!.impact = { level: 'HIGH', direction: 'POSITIVE' };
     input.news!.summary = 'SEC approves crypto spot ETF officially!';
 
-    const output = service.decide(input);
+    const output = service.decide(input, {
+      newsProbeAuthority: {
+        news: {
+          importance: 90,
+          confidence: 90,
+          direction: 'POSITIVE',
+          sourceIds: ['coindesk', 'reuters'],
+          publishedAt: new Date().toISOString(),
+        },
+        causality: {
+          priceChangePercent: 1.5,
+          volumeRatio: 1.6,
+          missingEvidence: ['LIQUIDATION_DATA_UNAVAILABLE'],
+        },
+      },
+    });
 
     expect(output.decision).toBe('LONG');
     expect(output.overrides).toEqual(expect.arrayContaining([
       expect.stringContaining('High-impact positive news increased the bias toward LONG.'),
     ]));
     expect(output.reasoning).toContain('normalized bullish bias');
+  });
+
+  it('keeps a high-impact news shock at WAIT without independent corroboration', () => {
+    const service = new DecisionService({} as never);
+    const input = createDecisionInput();
+    input.technical!.trend.direction = 'SIDEWAYS';
+    input.market!.trend.direction = 'SIDEWAYS';
+    input.news!.impact = { level: 'HIGH', direction: 'POSITIVE' };
+
+    const output = service.decide(input, {
+      newsProbeAuthority: {
+        news: {
+          importance: 90,
+          confidence: 90,
+          direction: 'POSITIVE',
+          sourceIds: ['coindesk'],
+          publishedAt: new Date().toISOString(),
+        },
+        causality: {
+          priceChangePercent: 1.5,
+          volumeRatio: 1.6,
+          missingEvidence: ['LIQUIDATION_DATA_UNAVAILABLE'],
+        },
+      },
+    });
+
+    expect(output.decision).toBe('WAIT');
+    expect(output.overrides).toContain('NEWS_CORROBORATION_INSUFFICIENT');
   });
 });

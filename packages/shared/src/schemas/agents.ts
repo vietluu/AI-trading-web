@@ -355,6 +355,17 @@ export const NewsAgentOutputSchema = z
         })
         .strict(),
     ),
+    // This is article publication time from the news source, never the time
+    // the analyst fetched or generated an analysis. Null means freshness is
+    // unknowable and must not authorize a news-accelerated trade.
+    latestPublishedAt: z.string().datetime().nullable().default(null),
+    // Runner-owned evidence from one qualifying tool article. Legacy outputs
+    // without this item cannot grant news-probe authority.
+    probeEvidence: z.object({
+      direction: z.enum(['POSITIVE', 'NEGATIVE']),
+      importance: z.number().min(80).max(100),
+      publishedAt: z.string().datetime(),
+    }).strict().nullable().optional(),
     themes: z.array(z.string()),
     riskSignals: z.array(z.string()),
     dataQuality: AgentDataQualitySchema,

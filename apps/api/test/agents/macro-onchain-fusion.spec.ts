@@ -52,6 +52,7 @@ function analysisFixture(): FusionInput {
       summary: "Recent news impact is positive.",
       impact: { level: "MEDIUM", direction: "POSITIVE" },
       keyEvents: [],
+      latestPublishedAt: null,
       themes: ["institutional"],
       riskSignals: [],
       dataQuality: "GOOD",

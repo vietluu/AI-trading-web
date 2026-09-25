@@ -563,6 +563,11 @@ model PipelineRun {
   marketRegime            String?
   configurationVersion    Int?
   evaluationKey           String?
+  proactiveThesisKey      String?             @unique
+  proactiveDeliveryState  String?
+  proactiveDeliveryLeaseExpiresAt DateTime?
+  proactiveDeliveryToken  String?             @db.Uuid
+  proactiveExecutionClaimedAt DateTime?
   learningStage           String?
   timeframe               String?
   skippedReason           String?
@@ -2618,4 +2623,3 @@ model ShadowExecutionPlan {
   @@index([status, isComplete])
   @@map("shadow_execution_plans")
 }
-

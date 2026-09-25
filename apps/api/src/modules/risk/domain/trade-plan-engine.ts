@@ -24,6 +24,7 @@ export type TradePlanStrategy =
 
 export interface ProactiveExecutionContext {
   thesisId: string;
+  opportunityId: string;
   parentThesisId?: string;
   thesis: TradeThesis;
   snapshot: AnticipatoryMarketSnapshot;

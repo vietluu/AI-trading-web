@@ -15,11 +15,14 @@ import type { LiveEligibilityReviewInput } from '@platform/shared';
 import { createHash } from 'node:crypto';
 import {
   evaluateThesisCohort,
+  evaluateProfitAuthority,
   calculateCriticLift,
   parseThesisCohortKey,
+  selectExactCohortOutcomes,
   type ThesisCohortKeyParams,
   type CohortEvaluationResult,
   type EvaluateCohortOptions,
+  type ProfitAuthorityResult,
   type CriticLiftReport,
   type PairedCandidateLiftInput,
 } from '../domain/thesis-cohort';
@@ -1468,6 +1471,62 @@ export class SelfLearningService {
   }
 
   /**
+   * Returns sizing authority from the exact, finalized lifecycle cohort only.
+   * Broader evidence is intentionally excluded from this decision contract.
+   */
+  async evaluateProfitAuthorityForThesis(
+    cohortKey: string | ThesisCohortKeyParams,
+    options?: EvaluateCohortOptions,
+  ): Promise<ProfitAuthorityResult> {
+    const params = typeof cohortKey === 'string' ? parseThesisCohortKey(cohortKey) : cohortKey;
+    const rows = await this.prisma.tradeLifecycleOutcome.findMany({
+      where: {
+        status: 'FINALIZED',
+        netR: { not: null },
+        ...(params.symbol ? { symbol: params.symbol } : {}),
+        ...(params.timeframe ? { timeframe: params.timeframe } : {}),
+        ...(params.regime ? { regime: params.regime } : {}),
+        ...(params.direction ? { direction: params.direction } : {}),
+        ...(params.setup ? { setup: params.setup } : {}),
+        ...(params.configurationHash ? { configurationHash: params.configurationHash } : {}),
+        ...(options?.asOf ? { closedAt: { lte: options.asOf } } : {}),
+      },
+      orderBy: { closedAt: 'desc' },
+      take: 1000,
+    });
+    const outcomes: TradeLifecycleOutcome[] = rows.map((r) => ({
+      id: r.id,
+      thesisId: r.thesisId,
+      symbol: r.symbol,
+      provider: r.provider,
+      timeframe: r.timeframe,
+      direction: r.direction as 'LONG' | 'SHORT',
+      setup: r.setup ?? undefined,
+      regime: r.regime ?? undefined,
+      status: r.status as 'FINALIZED',
+      sourceDataCutoff: r.sourceDataCutoff,
+      openedAt: r.openedAt,
+      closedAt: r.closedAt,
+      totalEnteredQuantity: Number(r.totalEnteredQuantity),
+      totalExitedQuantity: Number(r.totalExitedQuantity),
+      averageEntryPrice: Number(r.averageEntryPrice),
+      averageExitPrice: r.averageExitPrice != null ? Number(r.averageExitPrice) : null,
+      realizedGrossPnl: Number(r.realizedGrossPnl),
+      signedFees: Number(r.signedFees),
+      signedFunding: Number(r.signedFunding),
+      realizedNetPnl: Number(r.realizedNetPnl),
+      initialRisk: r.initialRisk != null ? Number(r.initialRisk) : null,
+      netR: r.netR != null ? Number(r.netR) : null,
+      configurationHash: r.configurationHash,
+      schemaVersion: r.schemaVersion,
+      calculationVersion: r.calculationVersion,
+      metadata: (r.metadata as Record<string, unknown>) ?? undefined,
+    }));
+
+    return evaluateProfitAuthority(selectExactCohortOutcomes(params, outcomes));
+  }
+
+  /**
    * Calculates paired Critic Lift (avoided loss, missed win, net lift) across Rules vs
    * AI Researcher vs AI+Critic from persisted TradeThesis, ThesisReview, and TradeLifecycleOutcome records.
    */
@@ -1522,4 +1581,3 @@ export class SelfLearningService {
     return calculateCriticLift(candidates);
   }
 }
-

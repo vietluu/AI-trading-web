@@ -12,6 +12,7 @@ import type { TradeResearcherService } from "../../src/modules/agents/applicatio
 import type { ChainOfThoughtReflectionService } from "../../src/modules/agents/application/services/chain-of-thought-reflection.service";
 import type { AnticipatorySnapshotService } from "../../src/modules/agents/application/services/anticipatory-snapshot.service";
 import type { QuantExecutionPolicyService } from "../../src/modules/pipeline/application/quant-execution-policy.service";
+import type { SelfLearningService } from '../../src/modules/reflection/application/self-learning.service';
 
 import type { FusionService } from "../../src/modules/agents/application/services/fusion.service";
 import type { DecisionService } from "../../src/modules/agents/application/services/decision.service";
@@ -25,7 +26,7 @@ import type { PipelineJob } from "../../src/modules/pipeline/infrastructure/pipe
 import type { MarketDataService } from "../../src/market-data/application/market-data.service";
 import type { SettingsService } from "../../src/settings/settings.service";
 import type { RedisService } from "../../src/redis/redis.service";
-import type { DecisionOutput } from "@platform/shared";
+import type { DecisionOutput, FusionInput } from "@platform/shared";
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -41,7 +42,7 @@ const makeJob = (): PipelineJob => ({
   userId: "user-1",
   provider: "BINANCE_FUTURES",
   symbol: SYMBOL,
-  params: { interval: "15m", lookbackCandles: 150 },
+  params: { interval: "15m", lookbackCandles: 150, opportunityId: "opportunity-1" },
   trigger: "SCHEDULE",
   createdAt: new Date().toISOString(),
 });
@@ -118,7 +119,12 @@ describe("Proactive Thesis Pipeline Integration", () => {
   let mockCritic: Partial<ChainOfThoughtReflectionService>;
   let mockSnapshotService: Partial<AnticipatorySnapshotService>;
   let mockQuantPolicy: Partial<QuantExecutionPolicyService>;
+  let mockDecision: { decideForUser: ReturnType<typeof vi.fn>; calibrateForExecution: ReturnType<typeof vi.fn> };
+  let mockFusion: { runDetailed: ReturnType<typeof vi.fn> };
   let mockCollector: { addSignal: ReturnType<typeof vi.fn> };
+  let mockRunUpdates: ReturnType<typeof vi.fn>;
+  let mockExecutionLock: ReturnType<typeof vi.fn>;
+  let mockSelfLearning: Partial<SelfLearningService>;
 
   afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
 
@@ -151,22 +157,32 @@ describe("Proactive Thesis Pipeline Integration", () => {
     mockQuantPolicy = {
       evaluate: vi.fn().mockResolvedValue({ severity: "APPROVE", allowed: true, reasons: [] }),
     };
+    mockSelfLearning = {
+      evaluateProfitAuthorityForThesis: vi.fn().mockResolvedValue({
+        action: 'FULL_SIZE', sizeFactor: 1, reason: 'stable exact lifecycle',
+      }),
+    };
 
     const fusionResult = makeFusionResult();
+    mockFusion = { runDetailed: vi.fn().mockResolvedValue(fusionResult) };
+    mockDecision = {
+      decideForUser: vi.fn().mockResolvedValue(fusionResult.fusionOutput),
+      calibrateForExecution: vi.fn().mockImplementation((d: DecisionOutput) => Promise.resolve({ ...fusionResult.fusionOutput, ...d })),
+    };
     mockCollector = { addSignal: vi.fn().mockResolvedValue({ ready: true }) };
+    mockRunUpdates = vi.fn().mockResolvedValue(undefined);
+    mockExecutionLock = vi.fn().mockResolvedValue(true);
 
     pipelineRunner = new PipelineRunnerService(
       // fusion
-      { runDetailed: vi.fn().mockResolvedValue(fusionResult) } as unknown as FusionService,
+      mockFusion as unknown as FusionService,
       // decision
-      {
-        decideForUser: vi.fn().mockResolvedValue(fusionResult.fusionOutput),
-        calibrateForExecution: vi.fn().mockImplementation((d: DecisionOutput) => Promise.resolve({ ...fusionResult.fusionOutput, ...d })),
-      } as unknown as DecisionService,
+      mockDecision as unknown as DecisionService,
       // repository
       {
+        claimProactiveThesisExecution: vi.fn().mockResolvedValue({ count: 1 }),
         updateStep: vi.fn().mockResolvedValue(undefined),
-        updateRun: vi.fn().mockResolvedValue(undefined),
+        updateRun: mockRunUpdates,
         updateJob: vi.fn().mockResolvedValue(undefined),
         markJobFailed: vi.fn().mockResolvedValue(undefined),
         markJobCompleted: vi.fn().mockResolvedValue(undefined),
@@ -186,7 +202,7 @@ describe("Proactive Thesis Pipeline Integration", () => {
           values: {
             close: PRICE, rsi14: 55, atr14: 800,
             ema20: 99_500, ema50: 98_000, ema200: 95_000,
-            volumeChangePercent: 5, adx14: 28, efficiencyRatio20: 0.45,
+            priceChangePercent: 2, volumeChangePercent: 60, adx14: 28, efficiencyRatio20: 0.45,
             rollingLow: 97_000, rollingHigh: 103_000,
           },
         }),
@@ -210,7 +226,7 @@ describe("Proactive Thesis Pipeline Integration", () => {
       { recordStageTelemetry: vi.fn() } as unknown as PipelineAnalyticsService,                       // analytics
       mockLiveTrading as unknown as LiveTradingService,
       // redis
-      { setNx: vi.fn().mockResolvedValue(true), compareAndDelete: vi.fn().mockResolvedValue(undefined) } as unknown as RedisService,
+      { setNx: mockExecutionLock, compareAndDelete: vi.fn().mockResolvedValue(undefined) } as unknown as RedisService,
       // judge
       { evaluate: vi.fn().mockReturnValue({ verdict: "APPROVE", severity: "APPROVE", approved: true, reasons: [] }) },
       // settings
@@ -222,12 +238,27 @@ describe("Proactive Thesis Pipeline Integration", () => {
       mockTradeResearcher as unknown as TradeResearcherService,
       mockCritic as unknown as ChainOfThoughtReflectionService,
       mockSnapshotService as unknown as AnticipatorySnapshotService,
+      mockSelfLearning as SelfLearningService,
     );
 
 
   });
 
   // ── Scenario 1: Squeeze probe — full happy path ────────────────────────────
+
+  it('marks a claimed proactive execution terminal when the execution lock is busy', async () => {
+    mockExecutionLock.mockResolvedValue(false);
+    await expect(pipelineRunner.run(makeJob())).rejects.toThrow('EXECUTION_LOCK_BUSY');
+    const [, terminalUpdate] = mockRunUpdates.mock.calls.at(-1)! as [string, {
+      status?: string;
+      errorCode?: string;
+      completedAt?: Date;
+    }];
+    expect(terminalUpdate.status).toBe('FAILED');
+    expect(terminalUpdate.errorCode).toBe('EXECUTION_LOCK_BUSY');
+    expect(terminalUpdate.completedAt).toBeInstanceOf(Date);
+    expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
+  });
 
   it("squeeze probe: thesis flows through researcher -> critic -> risk -> submission", async () => {
     vi.stubEnv("PROACTIVE_AI_MODE", "DEMO");
@@ -253,6 +284,135 @@ describe("Proactive Thesis Pipeline Integration", () => {
     expect(mockLiveTrading.executePipeline).toHaveBeenCalledWith("user-1", "run-1", { requiredEnvironment: "DEMO" });
 
     delete process.env.PROACTIVE_AI_MODE;
+  });
+
+  it('does not resurrect a directional proactive thesis after a baseline news-corroboration WAIT', async () => {
+    mockDecision.decideForUser.mockResolvedValue({
+      ...makeFusionResult().fusionOutput,
+      decision: 'WAIT',
+      overrides: ['NEWS_CORROBORATION_INSUFFICIENT'],
+    });
+
+    await expect(pipelineRunner.run(makeJob())).resolves.toEqual({
+      outcome: 'SKIPPED',
+      reason: 'NEWS_CORROBORATION_INSUFFICIENT',
+    });
+
+    expect(mockLiveTrading.assessPipelineDecision).not.toHaveBeenCalled();
+    expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
+  });
+
+  it('passes fresh high-news quality and snapshot market causality into the production decision path', async () => {
+    const fusionResult = makeFusionResult();
+    const freshNews: FusionInput['news'] = {
+      summary: 'Fresh positive protocol announcement.',
+      impact: { level: 'HIGH', direction: 'POSITIVE' },
+      keyEvents: [{ title: 'Protocol approval', impact: 'POSITIVE', importance: 90 }],
+      themes: [], riskSignals: [], dataQuality: 'GOOD', usedTools: ['news.articles.list'],
+      latestPublishedAt: cutoff,
+      probeEvidence: { direction: 'POSITIVE', importance: 85, publishedAt: cutoff },
+      generatedAt: cutoff,
+    };
+    mockFusion.runDetailed.mockResolvedValue({
+      ...fusionResult,
+      analyses: { ...fusionResult.analyses, news: freshNews },
+    });
+    mockSnapshotService.build = vi.fn().mockResolvedValue({
+      ...makeSnapshot(),
+      participation: { ...makeSnapshot().participation, volumeRatio: 1.6, volumeState: 'EXPANDING' },
+    });
+
+    await pipelineRunner.run(makeJob());
+
+    const [, userId, decisionContext] = mockDecision.decideForUser.mock.calls.at(-1)! as [
+      unknown,
+      string,
+      {
+        newsProbeAuthority?: {
+          news?: Record<string, unknown>;
+          causality?: Record<string, unknown>;
+        };
+      },
+    ];
+    expect(userId).toBe('user-1');
+    expect(decisionContext.newsProbeAuthority?.news).toMatchObject({
+      importance: 85,
+      confidence: 90,
+      direction: 'POSITIVE',
+      publishedAt: cutoff,
+    });
+    expect(decisionContext.newsProbeAuthority?.causality).toMatchObject({
+      priceChangePercent: 2,
+      volumeRatio: 1.6,
+      deltaOiPercent: 1.2,
+    });
+  });
+
+  it.each([null, cutoff])('fails closed when high-impact news has only a legacy publication timestamp of %s', async (latestPublishedAt) => {
+    const fusionResult = makeFusionResult();
+    const newsWithoutPublicationTime: FusionInput['news'] = {
+      summary: 'Reprocessed old positive protocol announcement.',
+      impact: { level: 'HIGH', direction: 'POSITIVE' },
+      keyEvents: [{ title: 'Old protocol approval', impact: 'POSITIVE', importance: 90 }],
+      themes: [], riskSignals: [], dataQuality: 'GOOD', usedTools: ['news.articles.list'],
+      latestPublishedAt,
+      // This generic analysis metadata is deliberately not article publication
+      // time and must never authorize a fresh news probe.
+      provenance: { provider: 'news-feed', sourceTimestamp: cutoff, coverage: 'FULL', unavailableFields: [] },
+      generatedAt: cutoff,
+    };
+    mockFusion.runDetailed.mockResolvedValue({
+      ...fusionResult,
+      analyses: { ...fusionResult.analyses, news: newsWithoutPublicationTime },
+    });
+
+    await pipelineRunner.run(makeJob());
+
+    const metadata = mockDecision.decideForUser.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(metadata.newsProbeAuthority).toBeUndefined();
+  });
+
+  it('propagates a corroborated non-exact news decision as a probe to risk sizing', async () => {
+    const baseline = makeFusionResult().fusionOutput;
+    mockDecision.decideForUser.mockResolvedValue({
+      ...baseline,
+      executionContext: { ...baseline.executionContext, action: 'PROBE', riskTier: 'PROBE' },
+      thesis: { action: 'PROBE' },
+    });
+
+    await pipelineRunner.run(makeJob());
+
+    expect(mockLiveTrading.assessPipelineDecision).toHaveBeenCalledWith(expect.objectContaining({
+      decision: expect.objectContaining({
+        executionContext: expect.objectContaining({ action: 'PROBE', riskTier: 'PROBE' }) as unknown,
+      }) as unknown,
+    }));
+  });
+
+  it('caps an immature lifecycle cohort at 0.15 before proactive risk persistence', async () => {
+    mockSelfLearning.evaluateProfitAuthorityForThesis = vi.fn().mockResolvedValue({
+      action: 'PROBE_ONLY', sizeFactor: 0.15, reason: 'insufficient exact history',
+    });
+
+    await pipelineRunner.run(makeJob());
+
+    expect(mockLiveTrading.assessPipelineDecision).toHaveBeenCalledWith(expect.objectContaining({
+      tradePlanContext: expect.objectContaining({
+        proactive: expect.objectContaining({ sizeFactor: 0.15 }) as unknown,
+      }) as unknown,
+    }));
+    expect(mockLiveTrading.executePipeline).toHaveBeenCalledOnce();
+  });
+
+  it('does not persist risk or execute a suppressed exact lifecycle cohort', async () => {
+    mockSelfLearning.evaluateProfitAuthorityForThesis = vi.fn().mockResolvedValue({
+      action: 'SUPPRESSED', sizeFactor: 0, reason: 'negative exact expectancy',
+    });
+
+    await pipelineRunner.run(makeJob());
+
+    expect(mockLiveTrading.assessPipelineDecision).not.toHaveBeenCalled();
+    expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
   });
 
   // ── Scenario 2: Confirmation add — CONFIRMED stage allowed ────────────────
@@ -357,6 +517,18 @@ describe("Proactive Thesis Pipeline Integration", () => {
     expect(await pipelineRunner.run(makeJob())).toEqual({
       outcome: "SKIPPED", reason: "SKIPPED_BY_PROACTIVE_MODE",
     });
+    expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before research when a proactive job has no source opportunity", async () => {
+    const job = makeJob();
+    delete job.params?.opportunityId;
+
+    await expect(pipelineRunner.run(job)).resolves.toEqual({
+      outcome: "SKIPPED",
+      reason: "PROACTIVE_OPPORTUNITY_REQUIRED",
+    });
+    expect(mockTradeResearcher.research).not.toHaveBeenCalled();
     expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
   });
 

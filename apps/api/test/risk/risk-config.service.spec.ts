@@ -1,5 +1,6 @@
 import { ConfigService } from "@nestjs/config";
 import { describe, expect, it, vi } from "vitest";
+import { validateEnvironment } from "../../src/config/environment";
 import { RiskConfigService } from "../../src/modules/risk/application/risk-config.service";
 
 describe("RiskConfigService user limits", () => {
@@ -10,6 +11,39 @@ describe("RiskConfigService user limits", () => {
       riskPerTrade: 0.005,
       maxPositions: 3,
       maxSameDirectionPositions: 1,
+      drawdownReducedPct: 0.08,
+      drawdownDiagnosticProbePct: 0.12,
+      drawdownHaltPct: 0.15,
+    });
+  });
+
+  it("uses validated string environment overrides for drawdown tiers", () => {
+    const environment = validateEnvironment({
+      NODE_ENV: "production",
+      DATABASE_URL: "postgresql://user:password@localhost:5432/platform",
+      REDIS_URL: "redis://localhost:6379",
+      SESSION_SECRET: "a-secure-production-session-secret-with-32-characters",
+      ENCRYPTION_MASTER_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+      COOKIE_SECURE: "true",
+      AUTH_EMAIL_SMTP_HOST: "smtp.example.com",
+      AUTH_EMAIL_FROM: "AI Trading <no-reply@example.com>",
+      DRAWDOWN_REDUCED_PCT: "0.09",
+      DRAWDOWN_DIAGNOSTIC_PROBE_PCT: "0.13",
+      DRAWDOWN_HALT_PCT: "0.16",
+    });
+
+    const service = new RiskConfigService(new ConfigService(environment));
+
+    expect(environment).toMatchObject({
+      NODE_ENV: "production",
+      DRAWDOWN_REDUCED_PCT: 0.09,
+      DRAWDOWN_DIAGNOSTIC_PROBE_PCT: 0.13,
+      DRAWDOWN_HALT_PCT: 0.16,
+    });
+    expect(service.values).toMatchObject({
+      drawdownReducedPct: 0.09,
+      drawdownDiagnosticProbePct: 0.13,
+      drawdownHaltPct: 0.16,
     });
   });
 

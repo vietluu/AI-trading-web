@@ -11,6 +11,7 @@ import {
   FusionRunInputSchema,
   type FusionInput,
   type FusionOutput,
+  type AnticipatoryMarketSnapshot,
 } from "@platform/shared";
 import { AgentInvocationSource } from "../../agents/domain/enums";
 import { FusionService } from "../../agents/application/services/fusion.service";
@@ -59,6 +60,8 @@ import type { TradePlanMarketContext } from "../../risk/domain/trade-plan-engine
 import { TradeResearcherService } from "../../agents/application/services/trade-researcher.service";
 import { ChainOfThoughtReflectionService } from "../../agents/application/services/chain-of-thought-reflection.service";
 import { AnticipatorySnapshotService } from "../../agents/application/services/anticipatory-snapshot.service";
+import { SelfLearningService } from '../../reflection/application/self-learning.service';
+import type { ProfitAuthorityResult } from '../../reflection/domain/thesis-cohort';
 import {
   selectBlockingGate,
   type GateDecisionRecord,
@@ -67,6 +70,7 @@ import {
 } from "../domain/gate-decision";
 import { evaluateExecutionReadiness } from "../domain/execution-readiness";
 import { buildEvaluationKey } from "../domain/evaluation-identity";
+import type { NewsProbeAuthorityInput } from '../../agents/domain/news-probe-authority';
 
 class PipelineCancelledError extends Error {}
 class PipelineExecutionLockBusyError extends Error {}
@@ -80,6 +84,56 @@ const DISLOCATION_CANARY_ADVISORY_REASONS = new Set([
   "CALIBRATION_UNRELIABLE",
 ]);
 const BUILT_IN_CONFIGURATION_VERSION = 0;
+
+function finiteNumber(value: unknown): number | undefined {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function newsProbeAuthorityFromPipelineEvidence(input: {
+  analyses: FusionInput;
+  indicatorSnapshot?: { values?: Record<string, unknown> } | null;
+  anticipatorySnapshot?: AnticipatoryMarketSnapshot;
+}): NewsProbeAuthorityInput | undefined {
+  const news = input.analyses.news;
+  if (!news || news.impact.direction === 'NEUTRAL') return undefined;
+  // The runner overwrites this item from a single qualifying tool article in
+  // every mode. Model/legacy timestamps and aggregate scores have no authority.
+  const evidence = news.probeEvidence;
+  if (!evidence || evidence.direction !== news.impact.direction) return undefined;
+  const confidence = news.dataQuality === 'GOOD' ? 90 : news.dataQuality === 'PARTIAL' ? 70 : 0;
+  const snapshot = input.anticipatorySnapshot;
+  const derivatives = snapshot?.derivatives.coverage === 'AVAILABLE'
+    ? snapshot.derivatives
+    : undefined;
+  const participation = snapshot?.participation.coverage === 'AVAILABLE'
+    ? snapshot.participation
+    : undefined;
+  const volumeChangePercent = finiteNumber(input.indicatorSnapshot?.values?.volumeChangePercent);
+  const volumeRatio = participation?.volumeRatio ??
+    (volumeChangePercent === undefined ? undefined : 1 + volumeChangePercent / 100);
+  const liquidation = derivatives?.liquidationContext;
+
+  return {
+    news: {
+      importance: evidence.importance,
+      confidence,
+      direction: evidence.direction,
+      // News analyst output intentionally does not expose article IDs. Do not
+      // convert titles, tools, or provider names into fabricated source IDs.
+      sourceIds: [],
+      publishedAt: evidence.publishedAt,
+    },
+    causality: {
+      priceChangePercent: finiteNumber(input.indicatorSnapshot?.values?.priceChangePercent),
+      volumeRatio,
+      deltaOiPercent: derivatives?.openInterestChangePct,
+      fundingRate: derivatives?.fundingRate ?? finiteNumber(input.analyses.market?.derivatives?.fundingRate),
+      liquidationEvidence: liquidation?.coverage === 'AVAILABLE' &&
+        liquidation.longLiquidations + liquidation.shortLiquidations > 0,
+    },
+  };
+}
 
 function marketDislocationFromParams(value: unknown): {
   direction: "BULLISH" | "BEARISH";
@@ -152,11 +206,16 @@ export class PipelineRunnerService {
     @Optional() @Inject(TradeResearcherService) private readonly tradeResearcher?: TradeResearcherService,
     @Optional() @Inject(ChainOfThoughtReflectionService) private readonly critic?: ChainOfThoughtReflectionService,
     @Optional() @Inject(AnticipatorySnapshotService) private readonly anticipatorySnapshot?: AnticipatorySnapshotService,
+    @Optional() private readonly selfLearning?: SelfLearningService,
   ) {}
 
   async run(
     job: PipelineJob,
   ): Promise<{ outcome: string; reason?: string } | undefined> {
+    if (job.pipelineId === 'proactive-thesis') {
+      const claim = await this.repository.claimProactiveThesisExecution(String(job.runId), new Date());
+      if (claim.count === 0) return { outcome: 'DUPLICATE' };
+    }
     const definition = resolvePipelineDefinition(job.pipelineId);
     
     // Only the declared release modes can enter the proactive pipeline.
@@ -537,9 +596,23 @@ export class PipelineRunnerService {
       let synthesizedOutput: DecisionOutput;
       let proactiveThesis: TradeThesis | undefined;
       let proactive: ProactiveExecutionContext | undefined;
+      let lifecycleAuthority: Pick<ProfitAuthorityResult, 'action' | 'sizeFactor' | 'reason'> | undefined;
       let criticSizeFactor = 1;
       
       if (job.pipelineId === 'proactive-thesis' && this.tradeResearcher && this.critic && this.anticipatorySnapshot) {
+        const opportunityId = typeof job.params?.opportunityId === 'string'
+          ? job.params.opportunityId.trim()
+          : '';
+        if (!opportunityId) {
+          const completedAt = new Date();
+          await this.finalizeEarlyTerminalRun(
+            runId,
+            { status: 'SKIPPED', decision: 'WAIT', skippedReason: 'PROACTIVE_OPPORTUNITY_REQUIRED' },
+            'PROACTIVE_OPPORTUNITY_REQUIRED',
+            completedAt,
+          );
+          return { outcome: 'SKIPPED', reason: 'PROACTIVE_OPPORTUNITY_REQUIRED' };
+        }
         const executionEvidence = await this.liveTrading.proactiveExecutionEvidence(job.userId, job.provider as ExchangeProvider, symbol);
         const snapshot = await this.anticipatorySnapshot.build({
           userId: job.userId,
@@ -559,7 +632,24 @@ export class PipelineRunnerService {
           pipelineRunId: runId, provider: job.provider, timeframe: String(interval), referencePrice: lastPrice,
           anticipatorySnapshot: snapshot,
           closedCandleEvidence,
+          newsProbeAuthority: newsProbeAuthorityFromPipelineEvidence({
+            analyses,
+            indicatorSnapshot,
+            anticipatorySnapshot: snapshot,
+          }),
         });
+        if (baseline.decision === 'WAIT') {
+          const reason = baseline.overrides.find((override) => override.startsWith('NEWS_')) ?? 'BASELINE_DECISION_WAIT';
+          const completedAt = new Date();
+          await this.finishStep(runId, 'decision', { baseline, reason }, completedAt);
+          await this.finalizeEarlyTerminalRun(
+            runId,
+            { status: 'SKIPPED', decision: 'WAIT', skippedReason: reason },
+            reason,
+            completedAt,
+          );
+          return { outcome: 'SKIPPED', reason };
+        }
         const review = ThesisReviewSchema.parse(await this.critic.reflect({ snapshot, thesis: research.preferred,
           scenarios: baseline.scenarios, cohortEvidence: baseline.confidenceCalibration }, job.userId));
         proactiveThesis = applyThesisReview(research.preferred, review);
@@ -579,8 +669,25 @@ export class PipelineRunnerService {
         }
         if (!research.researchRunId) throw new Error('THESIS_AUDIT_PARENT_REQUIRED');
         criticSizeFactor = review.action === 'REDUCE_SIZE' ? (review.sizeFactor ?? 0) : 1;
-        proactive = { thesisId: research.researchRunId, thesis: proactiveThesis, snapshot,
-          mode: proactiveMode as ProactiveExecutionContext['mode'], sizeFactor: 1 };
+        lifecycleAuthority = this.selfLearning
+          ? await this.selfLearning.evaluateProfitAuthorityForThesis(
+              {
+                symbol,
+                timeframe: String(interval),
+                regime: proactiveThesis.regime,
+                direction: proactiveThesis.direction,
+                setup: proactiveThesis.setup,
+                executionPolicyVersion: `v${snapshot.calculationVersion}`,
+              },
+              { asOf: new Date(snapshot.sourceDataCutoff) },
+            )
+          : {
+              action: 'PROBE_ONLY',
+              sizeFactor: 0.15,
+              reason: 'LIFECYCLE_AUTHORITY_UNAVAILABLE',
+            };
+        proactive = { thesisId: research.researchRunId, opportunityId, thesis: proactiveThesis, snapshot,
+          mode: proactiveMode as ProactiveExecutionContext['mode'], sizeFactor: lifecycleAuthority.sizeFactor };
         const netR = calculateThesisNetR(proactiveThesis, snapshot) ?? 0;
         const probability = baseline.expectedWinProbability;
         const type = proactiveThesis.regime.includes('RANGING') ? 'RANGING' as const
@@ -610,6 +717,10 @@ export class PipelineRunnerService {
           timeframe: String(interval),
           referencePrice: lastPrice,
           closedCandleEvidence,
+          newsProbeAuthority: newsProbeAuthorityFromPipelineEvidence({
+            analyses,
+            indicatorSnapshot,
+          }),
         });
       }
       // Existing short-timeframe schedules that already opted into breakout
@@ -961,8 +1072,19 @@ export class PipelineRunnerService {
         sourceDataAgeMs,
         createdAt: decisionCompletedAt.toISOString(),
       });
+      const lifecycleAuthorityGate = lifecycleAuthority
+        ? {
+            severity: lifecycleAuthority.action === 'SUPPRESSED'
+              ? 'BLOCK' as const
+              : lifecycleAuthority.action === 'PROBE_ONLY'
+                ? 'REDUCE_SIZE' as const
+                : 'APPROVE' as const,
+            sizeFactor: lifecycleAuthority.sizeFactor,
+            reasons: [lifecycleAuthority.reason],
+          }
+        : { severity: 'APPROVE' as const, sizeFactor: 1, reasons: [] };
       const composedSize = composeEvidenceSize([judge, { severity: quant.severity, sizeFactor: quant.sizeFactor, reasons: quant.reasons ?? [] },
-        { severity: criticSizeFactor < 1 ? 'REDUCE_SIZE' : 'APPROVE', sizeFactor: criticSizeFactor, reasons: [] }]);
+        { severity: criticSizeFactor < 1 ? 'REDUCE_SIZE' : 'APPROVE', sizeFactor: criticSizeFactor, reasons: [] }, lifecycleAuthorityGate]);
       if (proactive) proactive.sizeFactor = composedSize.sizeFactor ?? 1;
       const executionDecision = actionable && composedSize.severity !== 'BLOCK'
         ? output
@@ -976,7 +1098,9 @@ export class PipelineRunnerService {
         ? 1 + Number(indicatorSnapshot?.values.volumeChangePercent) / 100
         : undefined;
       let submissionStartedAt: Date | undefined;
-      let executionGateReason: string | undefined;
+      let executionGateReason: string | undefined = lifecycleAuthority?.action === 'SUPPRESSED'
+        ? 'EXACT_LIFECYCLE_SUPPRESSED'
+        : undefined;
       let canaryCooldownKey: string | undefined;
       let retainCanaryCooldown = false;
       let pipelineOutcome: { outcome: string; reason?: string } | undefined;
@@ -1077,7 +1201,7 @@ export class PipelineRunnerService {
         if (report.ready) {
           await this.executeConfluenceBatch(job.confluenceBatchId, job.userId);
         }
-      } else if (actionable) {
+      } else if (actionable && !executionGateReason) {
         // ─── Distributed Execution Lock ───────────────────────────────────────
         // Prevent race condition: multiple concurrent pipelines for the same user
         // could all read the same balance snapshot and collectively over-leverage.
@@ -1088,9 +1212,8 @@ export class PipelineRunnerService {
         const acquired = await this.redis.setNx(lockKey, runId, lockTtl);
 
         if (!acquired) {
-          // Preserve the approved candidate and let BullMQ retry after its
-          // configured backoff. Completing the run here would silently discard
-          // a valid signal merely because another symbol acquired the mutex first.
+          // Ordinary pipelines can retry after backoff. Proactive executions
+          // have a permanent claim and report a terminal failure for replay.
           this.logger.warn({
             event: 'pipeline_execution_lock_busy',
             userId: job.userId,
@@ -1445,7 +1568,7 @@ export class PipelineRunnerService {
       const failureBlockingGate = failureGates
         ? selectBlockingGate(failureGates)
         : undefined;
-      if (!executionLockBusy) {
+      if (!executionLockBusy || job.pipelineId === 'proactive-thesis') {
         await this.finalizeEarlyTerminalRun(
           runId,
           {

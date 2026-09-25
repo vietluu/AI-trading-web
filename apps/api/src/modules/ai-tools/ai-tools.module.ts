@@ -24,6 +24,7 @@ import {
   MarketIndicatorsGetTool,
   MarketFundingGetTool,
   MarketOpenInterestGetTool,
+  MarketCausalityGetTool,
   MarketOrderBookGetTool,
 } from "./infrastructure/tools/market-tools";
 import { MarketToolDataService } from "./infrastructure/tools/market-tool-data.service";
@@ -86,6 +87,7 @@ import { OnChainMetricsGetTool } from "./infrastructure/tools/onchain-tools";
     MarketIndicatorsGetTool,
     MarketFundingGetTool,
     MarketOpenInterestGetTool,
+    MarketCausalityGetTool,
     MarketOrderBookGetTool,
     NewsArticlesListTool,
     NewsArticleGetTool,
@@ -124,6 +126,7 @@ export class AIToolsModule implements OnModuleInit {
     private readonly indicatorsTool: MarketIndicatorsGetTool,
     private readonly fundingTool: MarketFundingGetTool,
     private readonly openInterestTool: MarketOpenInterestGetTool,
+    private readonly causalityTool: MarketCausalityGetTool,
     private readonly orderBookTool: MarketOrderBookGetTool,
     private readonly newsArticlesTool: NewsArticlesListTool,
     private readonly newsArticleGetTool: NewsArticleGetTool,
@@ -147,6 +150,7 @@ export class AIToolsModule implements OnModuleInit {
     this.registry.register(this.indicatorsTool);
     this.registry.register(this.fundingTool);
     this.registry.register(this.openInterestTool);
+    this.registry.register(this.causalityTool);
     this.registry.register(this.orderBookTool);
     this.registry.register(this.newsArticlesTool);
     this.registry.register(this.newsArticleGetTool);

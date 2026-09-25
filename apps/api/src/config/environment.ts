@@ -619,6 +619,13 @@ const environmentSchema = z
       .default(1),
     MAX_LEVERAGE: z.coerce.number().int().min(1).max(125).default(50),
     MAX_DRAWDOWN: z.coerce.number().positive().max(1).default(0.15),
+    DRAWDOWN_REDUCED_PCT: z.coerce.number().positive().max(1).default(0.08),
+    DRAWDOWN_DIAGNOSTIC_PROBE_PCT: z.coerce
+      .number()
+      .positive()
+      .max(1)
+      .default(0.12),
+    DRAWDOWN_HALT_PCT: z.coerce.number().positive().max(1).default(0.15),
     MAX_EXPOSURE: z.coerce.number().positive().max(1).default(0.6),
     RISK_REWARD_RATIO: z.coerce.number().min(1).max(10).default(2),
     HIGH_VOLATILITY_THRESHOLD: z.coerce
@@ -693,6 +700,19 @@ const environmentSchema = z
       .default(2),
   })
   .superRefine((environment, context) => {
+    if (
+      environment.DRAWDOWN_REDUCED_PCT >=
+        environment.DRAWDOWN_DIAGNOSTIC_PROBE_PCT ||
+      environment.DRAWDOWN_DIAGNOSTIC_PROBE_PCT >=
+        environment.DRAWDOWN_HALT_PCT
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "DRAWDOWN_REDUCED_PCT must be below DRAWDOWN_DIAGNOSTIC_PROBE_PCT, which must be below DRAWDOWN_HALT_PCT",
+        path: ["DRAWDOWN_REDUCED_PCT"],
+      });
+    }
     if (
       environment.TRADING_MODE === "LIVE" &&
       !environment.LIVE_TRADING_ENABLED

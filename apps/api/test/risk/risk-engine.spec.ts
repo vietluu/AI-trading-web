@@ -6,6 +6,7 @@ import {
   calculatePositionSize,
   calculateProtectivePrices,
   evaluateRisk,
+  resolveDrawdownRiskPolicy,
   type RiskInput,
   type RiskLimits,
 } from "../../src/modules/risk/domain/risk-engine";
@@ -75,6 +76,31 @@ const input = (overrides: Partial<RiskInput> = {}): RiskInput => ({
 });
 
 describe("risk engine", () => {
+  it("resolves profit-first drawdown boundaries without blocking protective exits", () => {
+    expect(resolveDrawdownRiskPolicy(0.079, "ENTER")).toEqual({
+      tier: "NORMAL",
+      maxSizeFactor: 1,
+    });
+    expect(resolveDrawdownRiskPolicy(0.08, "ENTER")).toEqual({
+      tier: "REDUCED",
+      maxSizeFactor: 0.5,
+    });
+    expect(resolveDrawdownRiskPolicy(0.12, "ENTER")).toMatchObject({
+      tier: "DIAGNOSTIC_PROBE",
+      maxSizeFactor: 0.1,
+    });
+    expect(resolveDrawdownRiskPolicy(0.15, "PROBE")).toMatchObject({
+      tier: "HALTED",
+      maxSizeFactor: 0,
+    });
+    expect(resolveDrawdownRiskPolicy(0.15, "PROTECTIVE_EXIT")).toEqual({
+      tier: "NORMAL",
+      maxSizeFactor: 1,
+    });
+    expect(resolveDrawdownRiskPolicy(0.1, "ENTER", { maxDrawdown: 0.1 }))
+      .toEqual({ tier: "REDUCED", maxSizeFactor: 0.5 });
+  });
+
   it("calculates capital-at-risk sizing and 1:2 protective prices", () => {
     const prices = calculateProtectivePrices("LONG", 50_000, 0.02, 2);
     expect(prices).toEqual({ stopLoss: 49_000, takeProfit: 52_000 });
@@ -106,6 +132,30 @@ describe("risk engine", () => {
     expect(result.positionSize).toBeCloseTo(200 / 1040, 8);
     expect(result.plannedLoss).toBeCloseTo(200, 5);
     expect(result.plannedEquityRiskPct).toBeCloseTo(0.02, 8);
+  });
+
+  it("caps a governed probe at fifteen percent of normal size", () => {
+    const executionContext = buildExecutionContext({
+      regime: "PRE_BREAKOUT",
+      setup: "TRANSITION_PROBE",
+      action: "PROBE",
+      price: 50_000,
+      support: 49_000,
+      resistance: 50_500,
+      atr: 500,
+      sourceDataCutoff: new Date("2026-08-02T00:10:00Z"),
+      primaryCandleClosed: true,
+      triggerConfirmed: true,
+    });
+
+    const result = evaluateRisk(input({ executionContext }), {
+      ...limits,
+      maxExposure: 1,
+    });
+
+    expect(result.approved).toBe(true);
+    expect(result.tradePlan).toMatchObject({ riskTier: "PROBE", sizeFactor: 0.15 });
+    expect(result.positionSize).toBeCloseTo((200 / 1040) * 0.15, 8);
   });
 
   it("rejects a setup when round-trip cost consumes too much stop distance", () => {
@@ -290,6 +340,20 @@ describe("risk engine", () => {
         limits,
       ),
     ).toMatchObject({ approved: false, reason: "MAX_DRAWDOWN_EXCEEDED" });
+  });
+
+  it("does not turn a live-capable full entry into a diagnostic probe at twelve percent drawdown", () => {
+    expect(
+      evaluateRisk(
+        input({
+          account: { balance: 10_000, equity: 8_800, peakEquity: 10_000 },
+        }),
+        limits,
+      ),
+    ).toMatchObject({
+      approved: false,
+      reason: "DRAWDOWN_DIAGNOSTIC_PROBE_REQUIRED",
+    });
   });
 
   it("blocks repeated entries in the same symbol and direction within the cooldown window", () => {
@@ -727,4 +791,3 @@ describe("DecisionRiskPolicyService executionEvidence EV gate", () => {
     expect(result.evEvaluationPath).toBeUndefined();
   });
 });
-

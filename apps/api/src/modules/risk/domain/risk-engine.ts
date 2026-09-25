@@ -2,6 +2,8 @@ import { validateTradeThesis } from '../../agents/domain/trade-thesis-validator'
 import { thesisTriggersSatisfied } from './thesis-execution';
 import { validateSetupLocation } from '../../pipeline/domain/execution-context';
 import type {
+  DrawdownRequestedAction,
+  DrawdownRiskPolicy,
   LastTradeRecord,
   RiskAccount,
   RiskEvaluation,
@@ -14,6 +16,8 @@ import { buildAdaptiveTradePlan } from "./trade-plan-engine";
 import { adaptiveTradingPolicy } from "../../pipeline/domain/adaptive-trading-policy";
 
 export type {
+  DrawdownRequestedAction,
+  DrawdownRiskPolicy,
   LastTradeRecord,
   RiskAccount,
   RiskEvaluation,
@@ -21,6 +25,10 @@ export type {
   RiskLimits,
   RiskPosition,
 };
+
+const DEFAULT_DRAWDOWN_REDUCED_PCT = 0.08;
+const DEFAULT_DRAWDOWN_DIAGNOSTIC_PROBE_PCT = 0.12;
+const DEFAULT_DRAWDOWN_HALT_PCT = 0.15;
 
 const finitePositive = (value: number): boolean =>
   Number.isFinite(value) && value > 0;
@@ -61,6 +69,50 @@ export function estimatedLiquidationLeverageLimit(
 
 export function calculateDrawdown(equity: number, peakEquity: number): number {
   return peakEquity > 0 ? clamp((peakEquity - equity) / peakEquity, 0, 1) : 1;
+}
+
+function drawdownThresholds(limits?: Pick<
+  RiskLimits,
+  "drawdownReducedPct" | "drawdownDiagnosticProbePct" | "drawdownHaltPct"
+>) {
+  const reduced = finitePositive(limits?.drawdownReducedPct ?? Number.NaN)
+    ? limits!.drawdownReducedPct!
+    : DEFAULT_DRAWDOWN_REDUCED_PCT;
+  const diagnostic = finitePositive(limits?.drawdownDiagnosticProbePct ?? Number.NaN)
+    ? limits!.drawdownDiagnosticProbePct!
+    : DEFAULT_DRAWDOWN_DIAGNOSTIC_PROBE_PCT;
+  const halt = finitePositive(limits?.drawdownHaltPct ?? Number.NaN)
+    ? limits!.drawdownHaltPct!
+    : DEFAULT_DRAWDOWN_HALT_PCT;
+  return { reduced, diagnostic, halt };
+}
+
+/**
+ * Applies only to orders that increase exposure. Reduce-only/protective exits
+ * must continue to work even while the new-entry circuit breaker is halted.
+ */
+export function resolveDrawdownRiskPolicy(
+  drawdownPct: number,
+  requestedAction: DrawdownRequestedAction,
+  limits?: Pick<
+    RiskLimits,
+    "maxDrawdown" | "drawdownReducedPct" | "drawdownDiagnosticProbePct" | "drawdownHaltPct"
+  >,
+): DrawdownRiskPolicy {
+  if (requestedAction === "PROTECTIVE_EXIT" || requestedAction === "REDUCE_ONLY") {
+    return { tier: "NORMAL", maxSizeFactor: 1 };
+  }
+
+  const drawdown = Number.isFinite(drawdownPct)
+    ? clamp(drawdownPct, 0, 1)
+    : 1;
+  const thresholds = drawdownThresholds(limits);
+  if (drawdown >= thresholds.halt) return { tier: "HALTED", maxSizeFactor: 0 };
+  if (drawdown >= thresholds.diagnostic) {
+    return { tier: "DIAGNOSTIC_PROBE", maxSizeFactor: 0.1 };
+  }
+  if (drawdown >= thresholds.reduced) return { tier: "REDUCED", maxSizeFactor: 0.5 };
+  return { tier: "NORMAL", maxSizeFactor: 1 };
 }
 
 export function calculateProtectivePrices(
@@ -174,7 +226,12 @@ export function evaluateRisk(
   if (decision.conflictLevel === "HIGH") return reject("HIGH_SIGNAL_CONFLICT");
   if (marketData.volatility >= limits.abnormalVolatility)
     return reject("ABNORMAL_VOLATILITY");
-  if (drawdownPct >= limits.maxDrawdown) return reject("MAX_DRAWDOWN_EXCEEDED");
+  const drawdownPolicy = resolveDrawdownRiskPolicy(
+    drawdownPct,
+    "ENTER",
+    limits,
+  );
+  if (drawdownPolicy.tier === "HALTED") return reject("MAX_DRAWDOWN_EXCEEDED");
 
   const context =
     input.executionContext ??
@@ -277,6 +334,12 @@ export function evaluateRisk(
     const validation = validateTradeThesis(proactive.thesis, snapshot, { now: input.now ?? new Date() });
     if (!validation.valid) return reject(validation.reasonCodes[0] ?? 'THESIS_INVALID');
   }
+  if (
+    drawdownPolicy.tier === "DIAGNOSTIC_PROBE" &&
+    (!proactive ||
+      !["DEMO", "SHADOW"].includes(proactive.mode) ||
+      proactive.thesis.state !== "PROBE_READY")
+  ) return reject("DRAWDOWN_DIAGNOSTIC_PROBE_REQUIRED");
   const sameSymbolPosition = input.currentPositions.find(
     (position) => position.symbol === input.symbol,
   );
@@ -341,14 +404,18 @@ export function evaluateRisk(
     executionContext: context,
   });
 
-  if (
+  const explicitProbeRequested =
     isReversalTransitionProbe ||
     context?.riskTier === "PROBE" ||
     context?.action === "PROBE" ||
-    context?.setup === "TRANSITION_PROBE"
-  ) {
+    context?.setup === "TRANSITION_PROBE";
+  if (explicitProbeRequested) {
     plan.riskTier = "PROBE";
-    plan.sizeFactor = Math.min(plan.sizeFactor ?? 1, 0.2);
+    plan.sizeFactor = Math.min(plan.sizeFactor ?? 1, 0.15);
+  }
+  if (drawdownPolicy.tier === "DIAGNOSTIC_PROBE") {
+    plan.riskTier = "PROBE";
+    plan.sizeFactor = Math.min(plan.sizeFactor ?? 1, drawdownPolicy.maxSizeFactor);
   }
 
   if (input.executionPlan) {
@@ -475,11 +542,6 @@ export function evaluateRisk(
   const effectiveMaxLeverage = Math.min(limits.maxLeverage, assetMaxLeverage);
   const effectiveHighVolatility = limits.highVolatility * (policy.liquidityClass === "MAJOR" ? 1 : policy.liquidityClass === "LIQUID_ALT" ? 1.5 : 2.5);
   const highVolatility = marketData.volatility >= effectiveHighVolatility;
-  if (highVolatility)
-    positionSize = rounded(
-      positionSize * limits.highVolatilitySizeFactor,
-      RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
-    );
   if (plan.strategy === "RANGE_REVERSAL") {
     positionSize = rounded(
       positionSize * 0.6,
@@ -492,10 +554,29 @@ export function evaluateRisk(
     (sum, position) => sum + Math.abs(position.size * position.markPrice),
     0,
   );
-  if (plan.stagedEntry) {
-    const multiplier = plan.stagedEntry.stage === 'CONFIRMED' ? plan.stagedEntry.confirmationSizePct : plan.stagedEntry.probeSizePct;
-    positionSize *= multiplier * (proactive?.sizeFactor ?? 1);
-  }
+  const cohortSizeFactor = proactive?.sizeFactor ?? 1;
+  const stagedEntrySizeFactor = plan.stagedEntry
+    ? plan.stagedEntry.stage === 'CONFIRMED'
+      ? plan.stagedEntry.confirmationSizePct
+      : plan.stagedEntry.probeSizePct
+    : 1;
+  const probeSizeFactor = explicitProbeRequested
+    ? Math.min(stagedEntrySizeFactor, 0.15)
+    : stagedEntrySizeFactor;
+  const volatilitySizeFactor = highVolatility
+    ? limits.highVolatilitySizeFactor
+    : 1;
+  const finalSizeFactor = Math.min(
+    cohortSizeFactor,
+    probeSizeFactor,
+    volatilitySizeFactor,
+    drawdownPolicy.maxSizeFactor,
+  );
+  positionSize = rounded(
+    positionSize * finalSizeFactor,
+    RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
+  );
+  plan.sizeFactor = finalSizeFactor;
   const availableExposure = Math.max(0, account.equity * limits.maxExposure - retainedExposure);
   positionSize = Math.floor(Math.min(positionSize, availableExposure / marketData.price) * 1e12) / 1e12;
   if (lossStreakSizeFactor < 1) {
@@ -504,18 +585,6 @@ export function evaluateRisk(
       RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
     );
     plan.lossStreakSizeFactor = lossStreakSizeFactor;
-  }
-  if (
-    isReversalTransitionProbe ||
-    context?.riskTier === "PROBE" ||
-    context?.action === "PROBE" ||
-    context?.setup === "TRANSITION_PROBE"
-  ) {
-    positionSize = rounded(
-      positionSize * 0.2,
-      RISK_ENGINE_CONSTANTS.POSITION_SIZE_PRECISION_DIGITS,
-    );
-    plan.sizeFactor = Math.min(plan.sizeFactor ?? 1, 0.2);
   }
   if (!finitePositive(positionSize))
     return reject("MAX_PORTFOLIO_EXPOSURE_EXCEEDED");

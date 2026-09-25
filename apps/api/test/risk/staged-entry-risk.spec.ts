@@ -74,7 +74,7 @@ function proactiveInput(state: 'PROBE_READY' | 'CONFIRMED' | 'WATCHING' = 'PROBE
   thesis.trigger = [{ type: 'PRICE_ABOVE', price: 108100, description: 'Declared reclaim' }];
   const input = getBaseInput('LONG');
   input.marketData.price = 108200;
-  input.marketData.tradePlanContext = { atr: 200, proactive: { thesisId: 'thesis-1', thesis, snapshot, mode: 'DEMO', sizeFactor: 1 } };
+  input.marketData.tradePlanContext = { atr: 200, proactive: { thesisId: 'thesis-1', opportunityId: 'opportunity-1', thesis, snapshot, mode: 'DEMO', sizeFactor: 1 } };
   input.now = new Date(cutoff);
   return input;
 }
@@ -123,12 +123,30 @@ describe('governed staged theses', () => {
     const input = proactiveInput('CONFIRMED'); const position = probePosition(-0.04); position.stopLoss = 107000; input.currentPositions = [position];
     expect(evaluateRisk(input, defaultLimits).approved).toBe(false);
   });
-  it('applies critic/evidence reduction without changing geometry', () => {
+  it('uses the smaller cohort authority cap without compounding size reductions', () => {
     const full = evaluateRisk(proactiveInput(), defaultLimits);
     const input = proactiveInput(); input.marketData.tradePlanContext!.proactive!.sizeFactor = 0.2;
     const small = evaluateRisk(input, defaultLimits);
     expect(small.approved).toBe(true);
     expect(small.stopLoss).toBe(full.stopLoss);
-    expect(small.positionSize!).toBeCloseTo(full.positionSize! * 0.2, 8);
+    expect(small.positionSize!).toBeCloseTo(full.positionSize! * (0.2 / 0.25), 8);
+  });
+  it('caps a twelve-percent drawdown diagnostic probe at the minimum size factor', () => {
+    const normal = evaluateRisk(proactiveInput(), {
+      ...defaultLimits,
+      maxDrawdown: 0.15,
+    });
+    const input = proactiveInput();
+    input.account = { balance: 10000, equity: 8800, peakEquity: 10000 };
+    input.marketData.tradePlanContext!.proactive!.sizeFactor = 0.2;
+
+    const risk = evaluateRisk(input, {
+      ...defaultLimits,
+      maxDrawdown: 0.15,
+    });
+
+    expect(risk.approved).toBe(true);
+    expect(risk.tradePlan).toMatchObject({ riskTier: 'PROBE', sizeFactor: 0.1 });
+    expect(risk.positionSize!).toBeCloseTo(normal.positionSize! * 0.4, 8);
   });
 });

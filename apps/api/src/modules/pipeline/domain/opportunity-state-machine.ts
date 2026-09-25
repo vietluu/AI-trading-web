@@ -2,6 +2,11 @@ import type {
   AnticipatoryMarketSnapshot,
   OpportunityState,
 } from '@platform/shared';
+import type {
+  PersistedThesisEntryAction,
+  PersistedThesisEntryDecision,
+  PersistedThesisEntryReasonCode,
+} from '../../risk/domain/thesis-execution';
 
 export const OPPORTUNITY_WATCHER_POLICY = Object.freeze({
   minimumSqueezeDurationCandles: 3,
@@ -35,6 +40,12 @@ export type OpportunityTransitionReasonCode =
   | 'RANGE_BOUNDARY_SETUP_FORMING'
   | 'BREAKOUT_SETUP_FORMING'
   | 'PROBE_ALIGNMENT_CONFIRMED'
+  | 'PERSISTED_THESIS_ENTRY_READY'
+  | 'PERSISTED_THESIS_ENTRY_WAITING'
+  | 'PERSISTED_THESIS_ENTRY_TOO_LATE'
+  | 'PERSISTED_THESIS_ENTRY_EXPIRED'
+  | 'PERSISTED_THESIS_ENTRY_INVALIDATED'
+  | PersistedThesisEntryReasonCode
   | 'CONDITIONS_UNCHANGED';
 
 export interface OpportunityObservationState {
@@ -52,6 +63,8 @@ export interface OpportunityTransition {
   toState: OpportunityState;
   reasonCode: OpportunityTransitionReasonCode;
   sourceDataCutoff: Date;
+  entryAction?: PersistedThesisEntryAction;
+  entryReasonCode?: PersistedThesisEntryReasonCode;
 }
 
 const TERMINAL_STATES = new Set<OpportunityState>([
@@ -72,6 +85,33 @@ function result(
     toState,
     reasonCode,
     sourceDataCutoff,
+  };
+}
+
+/**
+ * Carries the deterministic entry result into the persisted opportunity
+ * lifecycle without re-evaluating AI or changing its declared geometry.
+ */
+export function transitionPersistedThesisEntry(
+  current: OpportunityObservationState,
+  sourceDataCutoff: Date,
+  decision: PersistedThesisEntryDecision,
+): OpportunityTransition {
+  const target = TERMINAL_STATES.has(current.state)
+    ? current.state
+    : decision.action === 'ENTER'
+      ? 'PROBE_READY'
+      : decision.action === 'TOO_LATE'
+        ? 'TOO_LATE'
+        : decision.action === 'EXPIRED'
+          ? 'EXPIRED'
+          : decision.action === 'INVALIDATED'
+            ? 'INVALIDATED'
+            : current.state;
+  return {
+    ...result(current, sourceDataCutoff, target, decision.reasonCode),
+    entryAction: decision.action,
+    entryReasonCode: decision.reasonCode,
   };
 }
 

@@ -698,6 +698,7 @@ export class FusionService {
           summary: "News analysis is unavailable.",
           impact: { level: "LOW", direction: "NEUTRAL" },
           keyEvents: [],
+          latestPublishedAt: null,
           themes: [],
           riskSignals: ["Agent execution failed or returned invalid output."],
           dataQuality: "INSUFFICIENT",

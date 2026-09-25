@@ -6,7 +6,7 @@ import {
   OnModuleInit,
   Optional,
 } from "@nestjs/common";
-import { PipelineScheduleInputSchema } from "@platform/shared";
+import { PipelineRunRequestSchema, PipelineScheduleInputSchema } from "@platform/shared";
 import {
   ExchangeProvider as PrismaExchangeProvider,
   type PipelineSchedule,
@@ -21,6 +21,22 @@ import { MarketEventScannerService } from "./market-event-scanner.service";
 import { PortfolioService } from "../../portfolio/application/portfolio.service";
 import { OpportunityWatcherService } from "./opportunity-watcher.service";
 import { ExchangeInterval } from "../../../exchange/domain/exchange.types";
+
+type ProactiveThesisScheduleInput = {
+  userId: string;
+  scheduleId: string;
+  symbol: string;
+  provider: PrismaExchangeProvider;
+  opportunityId: string;
+  snapshotId: string;
+  sourceDataCutoff: Date;
+};
+
+type ProactiveThesisScheduleResult = {
+  status: "SCHEDULED" | "DUPLICATE" | "FAILED";
+  runId?: string;
+  reason?: string;
+};
 
 @Injectable()
 export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
@@ -140,6 +156,86 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  async scheduleProactiveThesis(
+    input: ProactiveThesisScheduleInput,
+  ): Promise<ProactiveThesisScheduleResult> {
+    const sourceDataCutoff = input.sourceDataCutoff.toISOString();
+    const request = PipelineRunRequestSchema.parse({
+      pipelineId: "proactive-thesis",
+      symbol: input.symbol,
+      provider: input.provider,
+      params: {
+        interval: "15m",
+        opportunityId: input.opportunityId,
+        snapshotId: input.snapshotId,
+        sourceDataCutoff,
+      },
+    });
+
+    try {
+      const delivery = await this.pipeline.scheduleProactiveThesis({
+        userId: input.userId,
+        request,
+        scheduleId: input.scheduleId,
+      });
+      if (delivery.status === "FAILED") {
+        await this.recordProactiveSchedulingFailure(
+          input,
+          sourceDataCutoff,
+          delivery.reason ?? "PROACTIVE_THESIS_TRIGGER_FAILED",
+        );
+      }
+      return delivery;
+    } catch (error) {
+      const reason = "PROACTIVE_THESIS_TRIGGER_FAILED";
+      await this.recordProactiveSchedulingFailure(
+        input,
+        sourceDataCutoff,
+        reason,
+        error,
+      );
+      return { status: "FAILED", reason };
+    }
+  }
+
+  private async recordProactiveSchedulingFailure(
+    input: ProactiveThesisScheduleInput,
+    sourceDataCutoff: string,
+    reason: string,
+    error?: unknown,
+  ) {
+    const message = error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : undefined;
+    this.logger.warn({
+      event: "opportunity_proactive_schedule_failed",
+      scheduleId: input.scheduleId,
+      symbol: input.symbol,
+      opportunityId: input.opportunityId,
+      snapshotId: input.snapshotId,
+      sourceDataCutoff,
+      reason,
+      ...(message ? { message } : {}),
+    });
+    await this.prisma.auditLog.create({
+      data: {
+        action: "OPPORTUNITY_PROACTIVE_SCHEDULE_FAILED",
+        userId: input.userId,
+        metadata: {
+          scheduleId: input.scheduleId,
+          symbol: input.symbol,
+          opportunityId: input.opportunityId,
+          snapshotId: input.snapshotId,
+          sourceDataCutoff,
+          reason,
+          ...(message ? { error: message } : {}),
+        },
+      },
+    });
+  }
+
   private readonly activeSchedules = new Set<string>();
 
   async tick(now = new Date()) {
@@ -177,6 +273,7 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
         this.activeSchedules.add(schedule.id);
         try {
           const triggerPromises: Promise<boolean>[] = [];
+          let proactiveDeliveryFailed = false;
           if (!(await this.hasEligibleExchangeConnection(schedule.userId, schedule.provider))) {
             this.logger.warn({
               event: "pipeline_schedule_missing_exchange_connection",
@@ -221,10 +318,6 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
                     symbol,
                     fingerprint: anchor.fingerprint,
                   });
-                  // Count this as a healthy scheduler cycle so a duplicate
-                  // candle is not reconsidered every five seconds.
-                  triggerPromises.push(Promise.resolve(true));
-                  continue;
                 }
                 if (anchor.sourceDataCutoff && this.opportunityWatcher) {
                   try {
@@ -235,67 +328,26 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
                       timeframe: ExchangeInterval.FIFTEEN_MINUTES,
                       sourceDataCutoff: anchor.sourceDataCutoff,
                     });
-                    if (
-                      observation &&
-                      observation.state === "WATCHING" &&
-                      observation.duplicate === false
-                    ) {
+                    if (observation && observation.state === "WATCHING") {
                       try {
-                        await this.pipeline.trigger(
-                          schedule.userId,
-                          {
-                            pipelineId: "proactive-thesis",
-                            symbol,
-                            provider: schedule.provider,
-                            params: {
-                              interval: "15m",
-                              opportunityId: observation.opportunityId,
-                              snapshotId: observation.snapshotId,
-                              sourceDataCutoff: anchor.sourceDataCutoff.toISOString(),
-                            },
-                          },
-                          "SCHEDULE",
-                          {
-                            scheduleId: schedule.id,
-                            bypassCooldown: true,
-                            storedContext: {
-                              opportunityId: observation.opportunityId,
-                              snapshotId: observation.snapshotId,
-                              sourceDataCutoff: anchor.sourceDataCutoff.toISOString(),
-                            },
-                          },
-                        );
-                      } catch (error) {
-                        this.logger.warn({
-                          event: "opportunity_proactive_schedule_failed",
+                        const delivery = await this.scheduleProactiveThesis({
+                          userId: schedule.userId,
                           scheduleId: schedule.id,
                           symbol,
+                          provider: schedule.provider,
                           opportunityId: observation.opportunityId,
                           snapshotId: observation.snapshotId,
-                          sourceDataCutoff: anchor.sourceDataCutoff.toISOString(),
-                          message: error instanceof Error ? error.message : String(error),
+                          sourceDataCutoff: anchor.sourceDataCutoff,
                         });
-                        await this.prisma.auditLog
-                          .create({
-                            data: {
-                              action: "OPPORTUNITY_PROACTIVE_SCHEDULE_FAILED",
-                              userId: schedule.userId,
-                              metadata: {
-                                scheduleId: schedule.id,
-                                symbol,
-                                opportunityId: observation.opportunityId,
-                                snapshotId: observation.snapshotId,
-                                sourceDataCutoff: anchor.sourceDataCutoff.toISOString(),
-                                error: error instanceof Error ? error.message : String(error),
-                              },
-                            },
-                          })
-                          .catch((logErr: unknown) => {
-                            this.logger.error({
-                              event: "opportunity_proactive_schedule_audit_persist_failed",
-                              error: logErr instanceof Error ? logErr.message : String(logErr),
-                            });
-                          });
+                        proactiveDeliveryFailed ||= delivery.status === "FAILED";
+                      } catch (error) {
+                        proactiveDeliveryFailed = true;
+                        this.logger.error({
+                          event: "opportunity_proactive_schedule_audit_persist_failed",
+                          scheduleId: schedule.id,
+                          symbol,
+                          error: error instanceof Error ? error.message : String(error),
+                        });
                       }
                     }
                   } catch (error) {
@@ -307,6 +359,13 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
                       message: error instanceof Error ? error.message : String(error),
                     });
                   }
+                }
+                if (!anchor.run) {
+                  // The normal pipeline was already dispatched for this
+                  // candle, but a WATCHING opportunity may need to retry its
+                  // own delivery after a recorded scheduling failure.
+                  triggerPromises.push(Promise.resolve(!proactiveDeliveryFailed));
+                  continue;
                 }
               } catch (error) {
                 // Fingerprinting is an optimization. The pipeline freshness
@@ -355,7 +414,7 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
           }
 
           const results = await Promise.all(triggerPromises);
-          if (results.some(Boolean)) {
+          if (!proactiveDeliveryFailed && results.some(Boolean)) {
             try {
               await this.prisma.pipelineSchedule.update({
                 where: { id: schedule.id },

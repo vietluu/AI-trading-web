@@ -72,6 +72,12 @@ export interface RiskLimits {
   maxSameDirectionPositions?: number;
   maxLeverage: number;
   maxDrawdown: number;
+  /** Drawdown at which new-entry risk is cut to one half. Defaults to 8%. */
+  drawdownReducedPct?: number;
+  /** Drawdown at which new entries become 0.10R diagnostic probes. Defaults to 12%. */
+  drawdownDiagnosticProbePct?: number;
+  /** Drawdown at which all new entries halt. Defaults to 15%. */
+  drawdownHaltPct?: number;
   maxExposure: number;
   cooldownMs: number;
   /** Base pause after one net losing trade; consecutive losses escalate to 4x. */
@@ -96,6 +102,23 @@ export interface RiskLimits {
   rangeScalpRoeMultiplier: number;
   /** Required estimated price distance between the stop and liquidation. */
   minLiquidationBufferPct: number;
+}
+
+export type DrawdownRequestedAction =
+  | "ENTER"
+  | "PROBE"
+  | "PROTECTIVE_EXIT"
+  | "REDUCE_ONLY";
+
+export type DrawdownRiskTier =
+  | "NORMAL"
+  | "REDUCED"
+  | "DIAGNOSTIC_PROBE"
+  | "HALTED";
+
+export interface DrawdownRiskPolicy {
+  tier: DrawdownRiskTier;
+  maxSizeFactor: number;
 }
 
 export interface RiskEvaluation extends RiskOutput {

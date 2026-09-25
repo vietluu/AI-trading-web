@@ -194,6 +194,145 @@ export function calibrateCohortFromLifecycle(
   };
 }
 
+export type ProfitAuthorityAction = 'FULL_SIZE' | 'PROBE_ONLY' | 'SUPPRESSED';
+
+export interface ProfitAuthorityWindow {
+  sampleSize: number;
+  netExpectancy: number;
+  profitFactor: number;
+  positive: boolean;
+}
+
+export interface ProfitAuthorityResult {
+  action: ProfitAuthorityAction;
+  sizeFactor: number;
+  sampleSize: number;
+  netExpectancy: number;
+  profitFactor: number;
+  largestWinnerConcentration: number;
+  maxDrawdown: number;
+  sequentialWindows: {
+    first: ProfitAuthorityWindow;
+    second: ProfitAuthorityWindow;
+    allPositive: boolean;
+  };
+  reason: string;
+}
+
+export interface EvaluateProfitAuthorityOptions {
+  fullSizeMinimumSamples?: number;
+  suppressionMinimumSamples?: number;
+  minProfitFactor?: number;
+  maxWinnerConcentration?: number;
+  probeSizeFactor?: number;
+}
+
+function outcomeTimestamp(outcome: TradeLifecycleOutcome): number {
+  return (
+    outcome.closedAt?.getTime() ??
+    outcome.updatedAt?.getTime() ??
+    outcome.sourceDataCutoff?.getTime() ??
+    outcome.openedAt.getTime()
+  );
+}
+
+function evaluateProfitWindow(outcomes: TradeLifecycleOutcome[]): ProfitAuthorityWindow {
+  const metrics = calibrateCohortFromLifecycle(outcomes, { minSampleSize: 0 });
+  const positive = metrics.meanNetR > 0 && metrics.profitFactor > 1.1;
+  return {
+    sampleSize: metrics.sampleSize,
+    netExpectancy: metrics.meanNetR,
+    profitFactor: metrics.profitFactor,
+    positive,
+  };
+}
+
+function netREquityDrawdown(outcomes: TradeLifecycleOutcome[]): number {
+  let equity = 0;
+  let peak = 0;
+  let maxDrawdown = 0;
+  for (const outcome of outcomes) {
+    equity += outcome.netR as number;
+    peak = Math.max(peak, equity);
+    if (peak > 0) maxDrawdown = Math.max(maxDrawdown, (peak - equity) / peak);
+  }
+  return maxDrawdown;
+}
+
+/**
+ * Grants sizing authority only to a deduplicated, exact lifecycle cohort.
+ * Broader evidence is deliberately excluded: it may inform a probe elsewhere,
+ * but it cannot authorize full size or suppress an unestablished symbol.
+ */
+export function evaluateProfitAuthority(
+  outcomes: TradeLifecycleOutcome[],
+  options?: EvaluateProfitAuthorityOptions,
+): ProfitAuthorityResult {
+  const fullSizeMinimumSamples = options?.fullSizeMinimumSamples ?? 30;
+  const suppressionMinimumSamples = options?.suppressionMinimumSamples ?? 20;
+  const minProfitFactor = options?.minProfitFactor ?? 1.1;
+  const maxWinnerConcentration = options?.maxWinnerConcentration ?? 0.35;
+  const probeSizeFactor = Math.min(0.15, Math.max(0, options?.probeSizeFactor ?? 0.15));
+  const finalized = deduplicateLifecycleOutcomes(outcomes)
+    .filter((outcome) => outcome.status === 'FINALIZED' && typeof outcome.netR === 'number')
+    .sort((left, right) => outcomeTimestamp(left) - outcomeTimestamp(right));
+  const metrics = calibrateCohortFromLifecycle(finalized, { minSampleSize: 0 });
+  const totalProfit = finalized.reduce(
+    (sum, outcome) => sum + Math.max(0, outcome.netR as number),
+    0,
+  );
+  const largestWinner = finalized.reduce(
+    (largest, outcome) => Math.max(largest, Math.max(0, outcome.netR as number)),
+    0,
+  );
+  const largestWinnerConcentration = totalProfit > 0 ? largestWinner / totalProfit : 0;
+  const maxDrawdown = netREquityDrawdown(finalized);
+  const splitAt = Math.floor(finalized.length / 2);
+  const first = evaluateProfitWindow(finalized.slice(0, splitAt));
+  const second = evaluateProfitWindow(finalized.slice(splitAt));
+  const allPositive = first.positive && second.positive;
+  const base = {
+    sampleSize: metrics.sampleSize,
+    netExpectancy: metrics.meanNetR,
+    profitFactor: metrics.profitFactor,
+    largestWinnerConcentration: Number(largestWinnerConcentration.toFixed(4)),
+    maxDrawdown: Number(maxDrawdown.toFixed(4)),
+    sequentialWindows: { first, second, allPositive },
+  };
+
+  if (metrics.sampleSize >= suppressionMinimumSamples && metrics.meanNetR < 0) {
+    return {
+      ...base,
+      action: 'SUPPRESSED',
+      sizeFactor: 0,
+      reason: `NEGATIVE_EXACT_LIFECYCLE_EXPECTANCY: ${metrics.meanNetR}R across ${metrics.sampleSize} outcomes`,
+    };
+  }
+
+  if (
+    metrics.sampleSize >= fullSizeMinimumSamples &&
+    metrics.meanNetR > 0 &&
+    metrics.profitFactor > minProfitFactor &&
+    largestWinnerConcentration <= maxWinnerConcentration &&
+    maxDrawdown < 0.15 &&
+    allPositive
+  ) {
+    return {
+      ...base,
+      action: 'FULL_SIZE',
+      sizeFactor: 1,
+      reason: `STABLE_EXACT_LIFECYCLE_PROFITABILITY: expectancy=${metrics.meanNetR}R, PF=${metrics.profitFactor}`,
+    };
+  }
+
+  return {
+    ...base,
+    action: 'PROBE_ONLY',
+    sizeFactor: probeSizeFactor,
+    reason: `EXACT_LIFECYCLE_PROBE_ONLY: samples=${metrics.sampleSize}, expectancy=${metrics.meanNetR}R, PF=${metrics.profitFactor}, concentration=${base.largestWinnerConcentration}`,
+  };
+}
+
 export type CohortAction = 'APPROVE' | 'REDUCE_SIZE' | 'BLOCK';
 export type CohortScope = 'EXACT' | 'BROADER' | 'FALLBACK' | 'NONE';
 
@@ -223,6 +362,23 @@ function matchesPolicyVersion(outcome: TradeLifecycleOutcome, policyVersion: str
   return cleanParam === cleanCalc || cleanParam === cleanSchema;
 }
 
+export function selectExactCohortOutcomes(
+  params: ThesisCohortKeyParams,
+  outcomes: TradeLifecycleOutcome[],
+): TradeLifecycleOutcome[] {
+  return deduplicateLifecycleOutcomes(outcomes).filter((outcome) => {
+    if (outcome.status !== 'FINALIZED' || typeof outcome.netR !== 'number') return false;
+    const symbolMatch = outcome.symbol === params.symbol;
+    const timeframeMatch = outcome.timeframe === params.timeframe;
+    const regimeMatch = outcome.regime === params.regime;
+    const directionMatch = outcome.direction === params.direction;
+    const setupMatch = outcome.setup === params.setup;
+    const policyMatch = matchesPolicyVersion(outcome, params.executionPolicyVersion);
+    const configHashMatch = !params.configurationHash || outcome.configurationHash === params.configurationHash;
+    return symbolMatch && timeframeMatch && regimeMatch && directionMatch && setupMatch && policyMatch && configHashMatch;
+  });
+}
+
 /**
  * Evaluates thesis cohort evidence with hierarchical fallback:
  * 1. Checks exact cohort match:
@@ -242,8 +398,7 @@ export function evaluateThesisCohort(
   const params = typeof target === 'string' ? parseThesisCohortKey(target) : target;
   const minExactSamples = options?.minExactSamples ?? 20;
   const minBroaderSamples = options?.minBroaderSamples ?? 20;
-  const maxFallbackSizeFactor = Math.min(0.75, Math.max(0.1, options?.maxFallbackSizeFactor ?? 0.5));
-  const minPositiveExpectancy = options?.minPositiveExpectancy ?? 0.05;
+  const maxFallbackSizeFactor = Math.min(0.15, Math.max(0, options?.maxFallbackSizeFactor ?? 0.15));
 
   // Enforce point-in-time cutoff if asOf is provided
   const timeFilteredOutcomes = options?.asOf
@@ -259,48 +414,29 @@ export function evaluateThesisCohort(
   );
 
   // Exact cohort partition: same symbol, timeframe, regime, direction, setup, policy, configurationHash
-  const exactOutcomes = finalized.filter((o) => {
-    const symbolMatch = o.symbol === params.symbol;
-    const timeframeMatch = !params.timeframe || !o.timeframe || o.timeframe === params.timeframe;
-    const regimeMatch = !o.regime || o.regime === params.regime;
-    const directionMatch = o.direction === params.direction;
-    const setupMatch = !o.setup || o.setup === params.setup;
-    const policyMatch = matchesPolicyVersion(o, params.executionPolicyVersion);
-    const configHashMatch = !params.configurationHash || !o.configurationHash || o.configurationHash === params.configurationHash;
-    return symbolMatch && timeframeMatch && regimeMatch && directionMatch && setupMatch && policyMatch && configHashMatch;
-  });
+  const exactOutcomes = selectExactCohortOutcomes(params, timeFilteredOutcomes);
 
   const exactMetrics = calibrateCohortFromLifecycle(exactOutcomes, { minSampleSize: minExactSamples });
+  const exactAuthority = evaluateProfitAuthority(exactOutcomes);
 
-  // 1. Mature EXACT cohort evidence available
-  if (exactMetrics.sampleSize >= minExactSamples) {
-    if (exactMetrics.meanNetR < 0 || exactMetrics.winRate < 0.35) {
+  // Exact lifecycle evidence is the sole source of full-size and suppression authority.
+  if (exactAuthority.action === 'SUPPRESSED') {
       return {
         action: 'BLOCK',
         sizeFactor: 0,
         scope: 'EXACT',
-        reason: `RELIABLE_NEGATIVE_EXACT_COHORT: meanNetR=${exactMetrics.meanNetR}R, winRate=${(exactMetrics.winRate * 100).toFixed(1)}%`,
+        reason: exactAuthority.reason,
         sampleSize: exactMetrics.sampleSize,
         metrics: exactMetrics,
       };
-    }
+  }
 
-    if (exactMetrics.meanNetR >= minPositiveExpectancy && exactMetrics.profitFactor >= 1.1) {
-      return {
-        action: 'APPROVE',
-        sizeFactor: 1.0,
-        scope: 'EXACT',
-        reason: `CALIBRATED_POSITIVE_EXACT_COHORT: meanNetR=${exactMetrics.meanNetR}R, PF=${exactMetrics.profitFactor}`,
-        sampleSize: exactMetrics.sampleSize,
-        metrics: exactMetrics,
-      };
-    }
-
+  if (exactAuthority.action === 'FULL_SIZE') {
     return {
-      action: 'REDUCE_SIZE',
-      sizeFactor: 0.5,
+      action: 'APPROVE',
+      sizeFactor: 1,
       scope: 'EXACT',
-      reason: `MARGINAL_EXACT_COHORT: meanNetR=${exactMetrics.meanNetR}R, PF=${exactMetrics.profitFactor}`,
+      reason: exactAuthority.reason,
       sampleSize: exactMetrics.sampleSize,
       metrics: exactMetrics,
     };
@@ -323,17 +459,11 @@ export function evaluateThesisCohort(
   // Fallback MUST NEVER return APPROVE (full size 1.0) and MUST NEVER return BLOCK on an unrelated symbol!
   // It returns REDUCE_SIZE with bounded size factor.
   if (broaderMetrics.sampleSize >= minBroaderSamples) {
-    // Bounded size factor: scaled by performance, capped at maxFallbackSizeFactor (e.g. 0.5)
-    const boundedSize =
-      broaderMetrics.meanNetR > 0
-        ? Math.min(maxFallbackSizeFactor, Math.max(0.25, maxFallbackSizeFactor * (broaderMetrics.winRate / 0.5)))
-        : 0.25;
-
     return {
       action: 'REDUCE_SIZE',
-      sizeFactor: Number(boundedSize.toFixed(2)),
+      sizeFactor: maxFallbackSizeFactor,
       scope: 'BROADER',
-      reason: `HIERARCHICAL_FALLBACK_REDUCE_SIZE: exact samples (${exactMetrics.sampleSize}/${minExactSamples}) insufficient; broader sample=${broaderMetrics.sampleSize}`,
+      reason: `HIERARCHICAL_FALLBACK_PROBE_ONLY: exact lifecycle authority=${exactAuthority.action}; broader sample=${broaderMetrics.sampleSize}`,
       sampleSize: broaderMetrics.sampleSize,
       metrics: broaderMetrics,
     };
@@ -342,9 +472,9 @@ export function evaluateThesisCohort(
   // Global / Cold start fallback
   return {
     action: 'REDUCE_SIZE',
-    sizeFactor: Math.min(0.25, maxFallbackSizeFactor),
+    sizeFactor: maxFallbackSizeFactor,
     scope: broaderMetrics.sampleSize > 0 ? 'FALLBACK' : 'NONE',
-    reason: `HIERARCHICAL_FALLBACK_COLD_START: insufficient exact (${exactMetrics.sampleSize}) and broader (${broaderMetrics.sampleSize}) evidence`,
+    reason: `HIERARCHICAL_FALLBACK_PROBE_ONLY: exact lifecycle authority=${exactAuthority.action}; broader sample=${broaderMetrics.sampleSize}`,
     sampleSize: exactMetrics.sampleSize,
     metrics: exactMetrics,
   };
