@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/require-await, @typescript-eslint/no-unused-vars */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PipelineService } from '../../src/modules/pipeline/application/pipeline.service';
 import { PipelineRunnerService } from '../../src/modules/pipeline/application/pipeline-runner.service';
@@ -83,50 +84,51 @@ function fixture() {
   const steps = new Set<string>();
   const prisma = {
     pipelineRun: {
-      create: vi.fn(({ data }: PipelineRunCreateArgs) => {
+      create: vi.fn(async ({ data }: PipelineRunCreateArgs) => {
         if ([...rows.values()].some((row) => row.proactiveThesisKey === data.proactiveThesisKey)) {
           throw Object.assign(new Error('duplicate'), { code: 'P2002' });
         }
         const row: PipelineRunRow = {
+          id: data.id ?? 'run-1',
           status: 'QUEUED', proactiveDeliveryToken: null, proactiveExecutionClaimedAt: null,
           proactiveDeliveryState: null, proactiveDeliveryLeaseExpiresAt: null, ...data,
         };
         rows.set(row.id, row);
-        return Promise.resolve({ ...row });
+        return { ...row };
       }),
-      findUnique: vi.fn(({ where }: PipelineRunWhereArgs) => {
+      findUnique: vi.fn(async ({ where }: PipelineRunWhereArgs) => {
         const row = [...rows.values()].find((item) => matches(item, where));
-        return Promise.resolve(row ? { ...row } : null);
+        return row ? { ...row } : null;
       }),
-      updateMany: vi.fn(({ where, data }: PipelineRunUpdateManyArgs) => {
+      updateMany: vi.fn(async ({ where, data }: PipelineRunUpdateManyArgs) => {
         const selected = [...rows.values()].filter((row) => matches(row, where));
         selected.forEach((row) => Object.assign(row, data));
-        return Promise.resolve({ count: selected.length });
+        return { count: selected.length };
       }),
-      update: vi.fn(({ where, data }: PipelineRunUpdateArgs) => {
+      update: vi.fn(async ({ where, data }: PipelineRunUpdateArgs) => {
         const row = rows.get(where.id);
         if (!row) throw new Error(`Unknown row ${where.id}`);
         Object.assign(row, data);
-        return Promise.resolve({ ...row });
+        return { ...row };
       }),
-      count: vi.fn(() => Promise.resolve(0)),
-      findFirst: vi.fn(() => Promise.resolve(null)),
+      count: vi.fn(async () => 0),
+      findFirst: vi.fn(async () => null),
     },
     pipelineStepRun: {
-      createMany: vi.fn(({ data }: PipelineStepCreateManyArgs) => {
+      createMany: vi.fn(async ({ data }: PipelineStepCreateManyArgs) => {
         data.forEach((step) => steps.add(`${step.runId}:${step.stepId}`));
-        return Promise.resolve({ count: data.length });
+        return { count: data.length };
       }),
-      updateMany: vi.fn(() => Promise.resolve({ count: steps.size })),
+      updateMany: vi.fn(async () => ({ count: steps.size })),
     },
-    portfolioStrategy: { findMany: vi.fn(() => Promise.resolve([])) },
+    portfolioStrategy: { findMany: vi.fn(async () => []) },
   };
   const repository = new PipelineRepository(prisma as never);
-  const queue = { enqueue: vi.fn(() => undefined) };
+  const queue = { enqueue: vi.fn(async (_job?: PipelineJob) => undefined) };
   const service = () => new PipelineService(repository, queue as never, {
     enabled: true, maxRunsPerHour: 120, cooldownMs: 60_000,
   } as never);
-  const cancellation = { isCancelled: vi.fn(() => false) };
+  const cancellation = { isCancelled: vi.fn(async () => false) };
   const runner = () => new PipelineRunnerService(
     {} as never, {} as never, repository, cancellation as never, {} as never,
     {} as never, {} as never, {} as never, {} as never, {} as never, {} as never,
@@ -140,13 +142,13 @@ describe('durable proactive delivery ownership', () => {
 
   it('starts the lease after slow pre-insert quota work', async () => {
     const f = fixture();
-    f.prisma.pipelineRun.count.mockImplementationOnce(() => {
+    f.prisma.pipelineRun.count.mockImplementationOnce(async () => {
       vi.setSystemTime(new Date('2026-09-21T00:02:00.000Z'));
       return 0;
     });
     await f.service().scheduleProactiveThesis(input);
     const [{ data: inserted }] = f.prisma.pipelineRun.create.mock.calls[0] as [PipelineRunCreateArgs];
-    expect(inserted.proactiveDeliveryLeaseExpiresAt.getTime()).toBeGreaterThan(Date.now());
+    expect(inserted.proactiveDeliveryLeaseExpiresAt?.getTime()).toBeGreaterThan(Date.now());
   });
 
   it('retries a rate-limited proactive request without acknowledging nonexistent delivery', async () => {
@@ -197,7 +199,8 @@ describe('durable proactive delivery ownership', () => {
   it('rejects a stale token for renewal and both finalization outcomes', async () => {
     const f = fixture();
     f.rows.set('run-1', {
-      id: 'run-1', proactiveDeliveryState: 'DELIVERING', proactiveDeliveryToken: 'new-owner',
+      id: 'run-1', status: 'QUEUED', proactiveExecutionClaimedAt: null,
+      proactiveDeliveryState: 'DELIVERING', proactiveDeliveryToken: 'new-owner',
       proactiveDeliveryLeaseExpiresAt: new Date(Date.now() + 60_000),
     });
     expect(await f.repository.renewProactiveThesisDelivery('run-1', 'old-owner', new Date(), new Date(Date.now() + 60_000))).toEqual({ count: 0 });
@@ -230,7 +233,7 @@ describe('durable proactive delivery ownership', () => {
       if (args.data.proactiveDeliveryState === 'DELIVERED') throw new Error('acknowledgement lost');
       return update(args);
     });
-    f.queue.enqueue.mockImplementation(async (job: PipelineJob) => { await f.runner().run(job); });
+    f.queue.enqueue.mockImplementation(async (job?: PipelineJob) => { if (job) await f.runner().run(job); });
     await expect(f.service().scheduleProactiveThesis(input)).rejects.toThrow('acknowledgement lost');
     f.prisma.pipelineRun.updateMany.mockImplementation(updateMany);
     f.prisma.pipelineRun.update.mockImplementation(update);
@@ -245,7 +248,7 @@ describe('durable proactive delivery ownership', () => {
   it('executes and finalizes once across concurrent worker delivery and later re-addition', async () => {
     const f = fixture();
     await f.service().scheduleProactiveThesis(input);
-    const job = f.queue.enqueue.mock.calls[0]![0];
+    const job = (f.queue.enqueue.mock.calls as unknown as Array<[PipelineJob]>)[0]![0];
     const gate = deferred();
     f.cancellation.isCancelled.mockImplementationOnce(async () => { await gate.promise; return false; });
     const first = f.runner().run(job);
@@ -261,7 +264,7 @@ describe('durable proactive delivery ownership', () => {
   it.each(['COMPLETED', 'FAILED', 'SKIPPED', 'CANCELLED', 'TIMEOUT'])('never restarts a legacy terminal %s run', async (status) => {
     const f = fixture();
     await f.service().scheduleProactiveThesis(input);
-    const job = f.queue.enqueue.mock.calls[0]![0];
+    const job = (f.queue.enqueue.mock.calls as unknown as Array<[PipelineJob]>)[0]![0];
     f.rows.get(job.runId)!.status = status;
     await f.runner().run(job);
     expect(f.rows.get(job.runId)!.status).toBe(status);

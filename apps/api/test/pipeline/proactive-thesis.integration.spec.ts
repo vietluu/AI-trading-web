@@ -383,7 +383,9 @@ describe("Proactive Thesis Pipeline Integration", () => {
     await pipelineRunner.run(makeJob());
 
     expect(mockLiveTrading.assessPipelineDecision).toHaveBeenCalledWith(expect.objectContaining({
-      decision: expect.objectContaining({ executionContext: expect.objectContaining({ action: 'PROBE', riskTier: 'PROBE' }) }),
+      decision: expect.objectContaining({
+        executionContext: expect.objectContaining({ action: 'PROBE', riskTier: 'PROBE' }) as unknown,
+      }) as unknown,
     }));
   });
 
@@ -396,8 +398,8 @@ describe("Proactive Thesis Pipeline Integration", () => {
 
     expect(mockLiveTrading.assessPipelineDecision).toHaveBeenCalledWith(expect.objectContaining({
       tradePlanContext: expect.objectContaining({
-        proactive: expect.objectContaining({ sizeFactor: 0.15 }),
-      }),
+        proactive: expect.objectContaining({ sizeFactor: 0.15 }) as unknown,
+      }) as unknown,
     }));
     expect(mockLiveTrading.executePipeline).toHaveBeenCalledOnce();
   });
