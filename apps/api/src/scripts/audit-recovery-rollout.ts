@@ -105,7 +105,7 @@ export async function runRecoveryRolloutAudit(
           GROUP BY "evaluationKey"
           HAVING COUNT(*) > 1
           LIMIT 10;
-        `.catch(() => []);
+        `;
         checks.push({
           name: "SHADOW_PLAN_EVALUATION_KEYS_UNIQUE",
           passed: duplicateKeys.length === 0,
@@ -117,10 +117,33 @@ export async function runRecoveryRolloutAudit(
           take: 1000,
           orderBy: { createdAt: "desc" },
         });
+        const executionIdentityFields = [
+          "liveOrderId",
+          "exchangeOrderId",
+          "pipelineRunId",
+          "orderId",
+          "executionId",
+          "executedAt",
+        ];
+        const shadowExecutionAssociationSupported = shadowPlans.some((plan) =>
+          executionIdentityFields.some((field) => field in (plan as object)),
+        );
+        const shadowExecutionIdentityViolations = shadowPlans.filter((plan) =>
+          executionIdentityFields.some((field) => {
+            const value = (plan as unknown as Record<string, unknown>)[field];
+            return value !== null && value !== undefined && value !== "";
+          }),
+        );
         checks.push({
           name: "SHADOW_EXECUTED_SEPARATION",
-          passed: true,
-          details: { verifiedShadowPlans: shadowPlans.length },
+          passed:
+            shadowExecutionAssociationSupported &&
+            shadowExecutionIdentityViolations.length === 0,
+          details: {
+            supported: shadowExecutionAssociationSupported,
+            verifiedShadowPlans: shadowPlans.length,
+            executionIdentityViolations: shadowExecutionIdentityViolations.length,
+          },
         });
 
         // Check 5: Exact Cohort Key Formatting
@@ -140,7 +163,7 @@ export async function runRecoveryRolloutAudit(
           if (plan.isComplete && plan.grossPnl !== null && plan.netPnl !== null) {
             const gross = Number(plan.grossPnl);
             const net = Number(plan.netPnl);
-            if (gross > 0 && net > gross + 0.001) {
+            if (net > gross + 0.001) {
               pnlArithmeticViolations++;
             }
           }
@@ -153,7 +176,7 @@ export async function runRecoveryRolloutAudit(
 
         // Check 7: Incomplete Exclusions
         const incompleteWithoutReason = shadowPlans.filter(
-          (p) => !p.isComplete && p.terminalReason && p.terminalReason !== "INCOMPLETE_DATA",
+          (p) => !p.isComplete && p.terminalReason !== "INCOMPLETE_DATA",
         );
         checks.push({
           name: "INCOMPLETE_EXCLUSIONS_PROVENANCE",
@@ -163,14 +186,56 @@ export async function runRecoveryRolloutAudit(
 
         // Check 8: Canonical Blocker Reconciliation
         const blockedRuns = await tx.pipelineRun.findMany({
-          where: { decision: "WAIT", skippedReason: { not: null } },
+          where: { decision: "WAIT" },
           take: 50,
           orderBy: { createdAt: "desc" },
         });
+        const invalidBlockedRuns = blockedRuns.filter((run) => {
+          if (typeof run.skippedReason !== "string" || run.skippedReason.trim().length === 0) {
+            return true;
+          }
+          const resultReason = extractString(run.result, "skippedReason");
+          if (resultReason !== undefined && resultReason !== run.skippedReason) return true;
+          const result = run.result;
+          if (result && typeof result === "object" && !Array.isArray(result)) {
+            const blockingGate = (result as Record<string, unknown>).blockingGate;
+            if (blockingGate && typeof blockingGate === "object" && !Array.isArray(blockingGate)) {
+              const gateReason = (blockingGate as Record<string, unknown>).reason;
+              if (typeof gateReason !== "string" || gateReason !== run.skippedReason) return true;
+            }
+          }
+          return false;
+        });
         checks.push({
           name: "CANONICAL_BLOCKER_RECONCILIATION",
-          passed: true,
-          details: { inspectedBlockedRuns: blockedRuns.length },
+          passed: invalidBlockedRuns.length === 0,
+          details: {
+            inspectedBlockedRuns: blockedRuns.length,
+            invalidBlockedRuns: invalidBlockedRuns.length,
+          },
+        });
+
+        const completedRuns = await tx.pipelineRun.findMany({
+          where: { status: "COMPLETED" },
+          include: {
+            steps: {
+              where: { status: { in: ["PENDING", "RUNNING"] } },
+              select: { id: true, status: true },
+            },
+          },
+          take: 1000,
+          orderBy: { createdAt: "desc" },
+        });
+        const incompleteStepRuns = completedRuns.filter((run) =>
+          "steps" in run && Array.isArray(run.steps) && run.steps.length > 0,
+        );
+        checks.push({
+          name: "COMPLETED_RUN_STEPS_TERMINAL",
+          passed: incompleteStepRuns.length === 0,
+          details: {
+            inspectedCompletedRuns: completedRuns.length,
+            incompleteStepRuns: incompleteStepRuns.length,
+          },
         });
 
         // Check 9: Proactive Lifecycle Evidence Reconciliation
