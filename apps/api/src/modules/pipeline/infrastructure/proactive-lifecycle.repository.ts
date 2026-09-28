@@ -176,8 +176,8 @@ function reviewCreateData(input: PersistProactiveReviewInput): Prisma.ThesisRevi
     thesisId: input.thesisId,
     action: input.review.action,
     sizeFactor: input.review.sizeFactor,
-    reasonCodes: input.review.reasonCodes as Prisma.InputJsonValue,
-    evidenceRefs: input.review.evidenceRefs as Prisma.InputJsonValue,
+    reasonCodes: input.review.reasonCodes,
+    evidenceRefs: input.review.evidenceRefs,
     rationale: input.review.rationale,
     sourceDataCutoff: input.sourceDataCutoff,
     modelProvider: input.modelProvider,
@@ -190,7 +190,7 @@ function reviewCreateData(input: PersistProactiveReviewInput): Prisma.ThesisRevi
       review: input.review,
       appliedThesis: input.appliedThesis,
       validation: input.validation,
-    } as Prisma.InputJsonValue,
+    },
   };
 }
 
@@ -207,7 +207,7 @@ function planCreateData(input: PersistExecutionPlanInput): Prisma.ExecutionPlanV
         confidence: input.baseline.confidence,
         generatedAt: input.baseline.generatedAt,
       },
-    } as Prisma.InputJsonValue,
+    },
     sourceDataCutoff: input.sourceDataCutoff,
     modelProvider: input.modelProvider,
     model: input.model,
@@ -264,16 +264,16 @@ function thesisCreateData(input: PersistProactiveThesisInput): Prisma.TradeThesi
     setup: thesis.setup,
     transitionProbability: thesis.transitionProbability,
     entryZone: jsonOrNull(thesis.entryZone),
-    trigger: thesis.trigger as Prisma.InputJsonValue,
+    trigger: thesis.trigger,
     invalidation: jsonOrNull(thesis.invalidation),
     stopLoss: decimalOrNull(thesis.stopLoss),
-    targets: thesis.targets as Prisma.InputJsonValue,
+    targets: thesis.targets,
     expectedNetR: decimalOrNull(thesis.expectedNetR),
     maximumChaseDistanceAtr: decimalOrNull(thesis.maximumChaseDistanceAtr),
     confidence: thesis.confidence,
-    evidenceFor: thesis.evidenceFor as Prisma.InputJsonValue,
-    evidenceAgainst: thesis.evidenceAgainst as Prisma.InputJsonValue,
-    missingEvidence: thesis.missingEvidence as Prisma.InputJsonValue,
+    evidenceFor: thesis.evidenceFor,
+    evidenceAgainst: thesis.evidenceAgainst,
+    missingEvidence: thesis.missingEvidence,
     sourceDataCutoff: new Date(snapshot.sourceDataCutoff),
     schemaVersion: snapshot.schemaVersion,
     calculationVersion: snapshot.calculationVersion,
@@ -281,7 +281,7 @@ function thesisCreateData(input: PersistProactiveThesisInput): Prisma.TradeThesi
     model: input.model,
     promptVersion: input.promptVersion,
     configurationHash: input.configurationHash,
-    thesisJson: thesis as Prisma.InputJsonValue,
+    thesisJson: thesis,
     expiresAt: new Date(thesis.expiresAt),
   };
 }
@@ -323,7 +323,7 @@ function canonicalize(value: unknown): string {
 }
 
 function jsonOrNull(value: object | null): Prisma.InputJsonValue | typeof Prisma.JsonNull {
-  return value === null ? Prisma.JsonNull : value as Prisma.InputJsonValue;
+  return value === null ? Prisma.JsonNull : value;
 }
 
 function decimalOrNull(value: number | null): Prisma.Decimal | null {

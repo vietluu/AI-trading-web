@@ -43,40 +43,40 @@ function createHarness(options: {
 
   const tx = {
     tradeThesis: {
-      create: async ({ data }: { data: Record<string, unknown> }) => {
-        if (options.createConflict) throw Object.assign(new Error('unique'), { code: 'P2002' });
+      create: ({ data }: { data: Record<string, unknown> }) => {
+        if (options.createConflict) return Promise.reject(Object.assign(new Error('unique'), { code: 'P2002' }));
         storedThesis = { id: 'thesis-1', ...data };
-        return storedThesis;
+        return Promise.resolve(storedThesis);
       },
-      findUnique: async () => options.existingThesis ?? null,
+      findUnique: () => Promise.resolve(options.existingThesis ?? null),
     },
     opportunityTransition: {
-      findFirst: async () => storedTransition,
-      updateMany: async ({ where, data }: {
+      findFirst: () => Promise.resolve(storedTransition),
+      updateMany: ({ where, data }: {
         where: { id: string; OR: Array<{ thesisId: string | null }> };
         data: { thesisId: string };
       }) => {
-        if (!storedTransition || storedTransition.id !== where.id) return { count: 0 };
+        if (!storedTransition || storedTransition.id !== where.id) return Promise.resolve({ count: 0 });
         const linkAllowed = where.OR.some((condition) => condition.thesisId === storedTransition.thesisId);
-        if (!linkAllowed) return { count: 0 };
+        if (!linkAllowed) return Promise.resolve({ count: 0 });
         storedTransition.thesisId = data.thesisId;
-        return { count: 1 };
+        return Promise.resolve({ count: 1 });
       },
     },
     thesisReview: {
-      findUnique: async () => options.existingReview ?? storedReview ?? null,
-      create: async ({ data }: { data: Record<string, unknown> }) => {
-        if (options.reviewCreateConflict) throw Object.assign(new Error('unique'), { code: 'P2002' });
+      findUnique: () => Promise.resolve(options.existingReview ?? storedReview ?? null),
+      create: ({ data }: { data: Record<string, unknown> }) => {
+        if (options.reviewCreateConflict) return Promise.reject(Object.assign(new Error('unique'), { code: 'P2002' }));
         storedReview = { id: 'review-1', ...data };
-        return storedReview;
+        return Promise.resolve(storedReview);
       },
     },
     executionPlanVersion: {
-      findUnique: async () => options.existingPlan ?? storedPlan ?? null,
-      create: async ({ data }: { data: Record<string, unknown> }) => {
-        if (options.planCreateConflict) throw Object.assign(new Error('unique'), { code: 'P2002' });
+      findUnique: () => Promise.resolve(options.existingPlan ?? storedPlan ?? null),
+      create: ({ data }: { data: Record<string, unknown> }) => {
+        if (options.planCreateConflict) return Promise.reject(Object.assign(new Error('unique'), { code: 'P2002' }));
         storedPlan = { id: 'plan-1', ...data };
-        return storedPlan;
+        return Promise.resolve(storedPlan);
       },
     },
   };
