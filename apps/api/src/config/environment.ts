@@ -556,6 +556,12 @@ const environmentSchema = z
       .int()
       .positive()
       .default(3_600_000),
+    RECOVERY_ROLLOUT_AUDIT_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(15_000)
+      .max(600_000)
+      .default(120_000),
     LIVE_POSITION_SYNC_ENABLED: z
       .enum(["true", "false"])
       .default("true")

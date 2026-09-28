@@ -155,6 +155,30 @@ describe('live trading checklist simulation', () => {
     }) as never)).rejects.toThrow('duplicate query unavailable');
   });
 
+  it('AUDIT: defaults the read-only transaction timeout to 120 seconds', async () => {
+    const previous = process.env.RECOVERY_ROLLOUT_AUDIT_TIMEOUT_MS;
+    delete process.env.RECOVERY_ROLLOUT_AUDIT_TIMEOUT_MS;
+    const prisma = auditFixture();
+    try {
+      await runRecoveryRolloutAudit(prisma as never);
+      expect(prisma.$transaction.mock.calls[0]?.[1]).toEqual({ timeout: 120_000 });
+    } finally {
+      if (previous === undefined) delete process.env.RECOVERY_ROLLOUT_AUDIT_TIMEOUT_MS;
+      else process.env.RECOVERY_ROLLOUT_AUDIT_TIMEOUT_MS = previous;
+    }
+  });
+
+  it('AUDIT: accepts a bounded configured transaction timeout', async () => {
+    vi.stubEnv('RECOVERY_ROLLOUT_AUDIT_TIMEOUT_MS', '180000');
+    const prisma = auditFixture();
+    try {
+      await runRecoveryRolloutAudit(prisma as never);
+      expect(prisma.$transaction.mock.calls[0]?.[1]).toEqual({ timeout: 180_000 });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('DATA: rejects a directional decision when the source candle is stale', () => {
     const now = Date.parse('2026-08-12T10:00:00.000Z');
     const good = { dataQuality: 'GOOD', generatedAt: new Date(now).toISOString() };

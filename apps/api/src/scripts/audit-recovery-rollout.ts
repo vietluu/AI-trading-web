@@ -24,6 +24,13 @@ function extractString(
   return undefined;
 }
 
+function recoveryAuditTimeoutMs(value: string | undefined): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 15_000 && parsed <= 600_000
+    ? parsed
+    : 120_000;
+}
+
 export async function runRecoveryRolloutAudit(
   databaseUrlOrPrisma?: string | PrismaClient,
 ): Promise<RecoveryRolloutAuditReport> {
@@ -69,7 +76,9 @@ export async function runRecoveryRolloutAudit(
 
   const runTx = async (callback: (tx: Prisma.TransactionClient) => Promise<void>) => {
     if ("$transaction" in prisma && typeof prisma.$transaction === "function") {
-      return prisma.$transaction(callback, { timeout: 15000 });
+      return prisma.$transaction(callback, {
+        timeout: recoveryAuditTimeoutMs(process.env.RECOVERY_ROLLOUT_AUDIT_TIMEOUT_MS),
+      });
     }
     return callback(prisma);
   };
