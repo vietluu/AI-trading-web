@@ -339,7 +339,7 @@ describe('joined proactive execution with external IO fixtures', () => {
       constructor(readonly researcher: TradeResearcherService, readonly critic: ChainOfThoughtReflectionService, readonly snapshot: AnticipatorySnapshotService) {}
     }
     const tokens = Reflect.getMetadata('self:paramtypes', PipelineRunnerService) as Array<{ index: number; param: unknown }>;
-    const proactiveTokens = tokens.filter((token) => token.index >= 16).map((token) => ({ ...token, index: token.index - 16 }));
+    const proactiveTokens = tokens.filter((token) => token.index >= 17).map((token) => ({ ...token, index: token.index - 17 }));
     expect(proactiveTokens).toHaveLength(3);
     Reflect.defineMetadata('self:paramtypes', proactiveTokens, ProactiveDependencies);
     @Module({ providers: [ProactiveDependencies, { provide: TradeResearcherService, useValue: f.researcher }, { provide: ChainOfThoughtReflectionService, useValue: f.critic }, { provide: AnticipatorySnapshotService, useValue: snapshots }] })

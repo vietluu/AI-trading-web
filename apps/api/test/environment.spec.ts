@@ -25,6 +25,7 @@ describe("validateEnvironment", () => {
     expect(environment.DRAWDOWN_REDUCED_PCT).toBe(0.09);
     expect(environment.DRAWDOWN_DIAGNOSTIC_PROBE_PCT).toBe(0.13);
     expect(environment.DRAWDOWN_HALT_PCT).toBe(0.16);
+    expect(environment.RECOVERY_ROLLOUT_AUDIT_TIMEOUT_MS).toBe(120_000);
   });
 
   it("rejects incorrectly ordered drawdown tiers", () => {

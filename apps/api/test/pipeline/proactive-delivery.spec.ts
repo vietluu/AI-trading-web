@@ -130,7 +130,7 @@ function fixture() {
   } as never);
   const cancellation = { isCancelled: vi.fn(async () => false) };
   const runner = () => new PipelineRunnerService(
-    {} as never, {} as never, repository, cancellation as never, {} as never,
+    {} as never, {} as never, repository, {} as never, cancellation as never, {} as never,
     {} as never, {} as never, {} as never, {} as never, {} as never, {} as never,
   );
   return { rows, steps, prisma, repository, queue, service, cancellation, runner };

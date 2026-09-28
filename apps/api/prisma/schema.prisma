@@ -2511,6 +2511,7 @@ model ThesisReview {
   parentReview       ThesisReview? @relation("ThesisReviewVersions", fields: [parentReviewId], references: [id], onDelete: SetNull)
   childReviews       ThesisReview[] @relation("ThesisReviewVersions")
 
+  @@unique([thesisId, configurationHash])
   @@index([thesisId, createdAt])
   @@index([configurationHash])
   @@map("thesis_reviews")

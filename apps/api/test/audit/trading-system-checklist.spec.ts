@@ -24,7 +24,161 @@ const directionalDecision = (): DecisionOutput => ({
   calibrationAdjustment: 0, executionCost: 0.05, generatedAt: new Date().toISOString(),
 });
 
+function auditFixture(input: {
+  shadowPlans?: Array<Record<string, unknown>>;
+  pipelineRuns?: Array<Record<string, unknown>>;
+  duplicateQueryError?: Error;
+} = {}) {
+  const mockPrisma = {
+    $transaction: vi.fn().mockImplementation((cb: (tx: unknown) => Promise<unknown>) => cb(mockPrisma)),
+    $executeRawUnsafe: vi.fn().mockResolvedValue(1),
+    liveOrder: { count: vi.fn().mockResolvedValue(0) },
+    $queryRaw: input.duplicateQueryError
+      ? vi.fn().mockRejectedValue(input.duplicateQueryError)
+      : vi.fn().mockResolvedValue([]),
+    shadowExecutionPlan: { findMany: vi.fn().mockResolvedValue(input.shadowPlans ?? []) },
+    pipelineRun: {
+      findMany: vi.fn().mockImplementation((args?: { where?: Record<string, unknown> }) => {
+        const rows = input.pipelineRuns ?? [];
+        if (args?.where?.pipelineId === 'proactive-thesis') {
+          return Promise.resolve(rows.filter((row) => row.pipelineId === 'proactive-thesis'));
+        }
+        if (args?.where?.decision === 'WAIT') {
+          return Promise.resolve(rows.filter((row) => row.decision === 'WAIT'));
+        }
+        if (args?.where?.status === 'COMPLETED') {
+          return Promise.resolve(rows.filter((row) => row.status === 'COMPLETED'));
+        }
+        return Promise.resolve(rows);
+      }),
+    },
+    opportunityTransition: { findMany: vi.fn().mockResolvedValue([]) },
+    tradeThesis: { findMany: vi.fn().mockResolvedValue([]) },
+    thesisReview: { findMany: vi.fn().mockResolvedValue([]) },
+    executionPlanVersion: { findMany: vi.fn().mockResolvedValue([]) },
+    auditLog: { findMany: vi.fn().mockResolvedValue([]) },
+  };
+  return mockPrisma;
+}
+
 describe('live trading checklist simulation', () => {
+  it('AUDIT: fails shadow separation when a shadow artifact carries execution identity', async () => {
+    const report = await runRecoveryRolloutAudit(auditFixture({
+      shadowPlans: [{
+        cohortKey: 'BTC:15m:LONG:RECOVERY_RECLAIM:v1',
+        isComplete: false,
+        terminalReason: 'INCOMPLETE_DATA',
+        liveOrderId: 'live-order-1',
+      }],
+    }) as never);
+
+    expect(report.checks.find((check) => check.name === 'SHADOW_EXECUTED_SEPARATION')).toMatchObject({
+      passed: false,
+      details: { supported: true, executionIdentityViolations: 1 },
+    });
+  });
+
+  it('AUDIT: reports shadow separation unsupported rather than passing when schema has no execution linkage', async () => {
+    const report = await runRecoveryRolloutAudit(auditFixture() as never);
+
+    expect(report.checks.find((check) => check.name === 'SHADOW_EXECUTED_SEPARATION')).toMatchObject({
+      passed: false,
+      details: { supported: false },
+    });
+  });
+
+  it.each([
+    { grossPnl: 10, netPnl: 11 },
+    { grossPnl: -10, netPnl: -9 },
+  ])('AUDIT: rejects net PnL above gross PnL for $grossPnl gross', async ({ grossPnl, netPnl }) => {
+    const report = await runRecoveryRolloutAudit(auditFixture({
+      shadowPlans: [{
+        cohortKey: 'BTC:15m:LONG:RECOVERY_RECLAIM:v1',
+        isComplete: true,
+        terminalReason: 'TAKE_PROFIT',
+        grossPnl,
+        netPnl,
+      }],
+    }) as never);
+
+    expect(report.checks.find((check) => check.name === 'PNL_ARITHMETIC_RECONCILED')).toMatchObject({
+      passed: false,
+      details: { pnlArithmeticViolations: 1 },
+    });
+  });
+
+  it.each([null, 'EXPIRED_TIME'])('AUDIT: rejects incomplete plans with terminal reason %s', async (terminalReason) => {
+    const report = await runRecoveryRolloutAudit(auditFixture({
+      shadowPlans: [{
+        cohortKey: 'BTC:15m:LONG:RECOVERY_RECLAIM:v1',
+        isComplete: false,
+        terminalReason,
+      }],
+    }) as never);
+
+    expect(report.checks.find((check) => check.name === 'INCOMPLETE_EXCLUSIONS_PROVENANCE')).toMatchObject({
+      passed: false,
+      details: { incompleteInvalidCount: 1 },
+    });
+  });
+
+  it('AUDIT: rejects final WAIT runs without a canonical blocker', async () => {
+    const report = await runRecoveryRolloutAudit(auditFixture({
+      pipelineRuns: [{ id: 'run-1', decision: 'WAIT', status: 'COMPLETED', skippedReason: null, steps: [] }],
+    }) as never);
+
+    expect(report.checks.find((check) => check.name === 'CANONICAL_BLOCKER_RECONCILIATION')).toMatchObject({
+      passed: false,
+      details: { invalidBlockedRuns: 1 },
+    });
+  });
+
+  it('AUDIT: rejects completed runs that retain PENDING or RUNNING steps', async () => {
+    const report = await runRecoveryRolloutAudit(auditFixture({
+      pipelineRuns: [{
+        id: 'run-1',
+        decision: 'LONG',
+        status: 'COMPLETED',
+        steps: [{ status: 'RUNNING' }],
+      }],
+    }) as never);
+
+    expect(report.checks.find((check) => check.name === 'COMPLETED_RUN_STEPS_TERMINAL')).toMatchObject({
+      passed: false,
+      details: { incompleteStepRuns: 1 },
+    });
+  });
+
+  it('AUDIT: propagates duplicate-key query failures instead of treating them as zero duplicates', async () => {
+    await expect(runRecoveryRolloutAudit(auditFixture({
+      duplicateQueryError: new Error('duplicate query unavailable'),
+    }) as never)).rejects.toThrow('duplicate query unavailable');
+  });
+
+  it('AUDIT: defaults the read-only transaction timeout to 120 seconds', async () => {
+    const previous = process.env.RECOVERY_ROLLOUT_AUDIT_TIMEOUT_MS;
+    delete process.env.RECOVERY_ROLLOUT_AUDIT_TIMEOUT_MS;
+    const prisma = auditFixture();
+    try {
+      await runRecoveryRolloutAudit(prisma as never);
+      expect(prisma.$transaction.mock.calls[0]?.[1]).toEqual({ timeout: 120_000 });
+    } finally {
+      if (previous === undefined) delete process.env.RECOVERY_ROLLOUT_AUDIT_TIMEOUT_MS;
+      else process.env.RECOVERY_ROLLOUT_AUDIT_TIMEOUT_MS = previous;
+    }
+  });
+
+  it('AUDIT: accepts a bounded configured transaction timeout', async () => {
+    vi.stubEnv('RECOVERY_ROLLOUT_AUDIT_TIMEOUT_MS', '180000');
+    const prisma = auditFixture();
+    try {
+      await runRecoveryRolloutAudit(prisma as never);
+      expect(prisma.$transaction.mock.calls[0]?.[1]).toEqual({ timeout: 180_000 });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('DATA: rejects a directional decision when the source candle is stale', () => {
     const now = Date.parse('2026-08-12T10:00:00.000Z');
     const good = { dataQuality: 'GOOD', generatedAt: new Date(now).toISOString() };
@@ -235,7 +389,11 @@ describe('live trading checklist simulation', () => {
 
     expect(lifecycleCheck).toBeDefined();
     expect(lifecycleCheck?.passed).toBe(true);
-    expect(report.allPassed).toBe(true);
+    expect(report.allPassed).toBe(false);
+    expect(report.checks.find((check) => check.name === 'SHADOW_EXECUTED_SEPARATION')).toMatchObject({
+      passed: false,
+      details: { supported: false },
+    });
     expect(lifecycleCheck?.details).toMatchObject({
       watchableTransitions: 1,
       proactiveRuns: 1,

@@ -17,6 +17,7 @@ import type { SelfLearningService } from '../../src/modules/reflection/applicati
 import type { FusionService } from "../../src/modules/agents/application/services/fusion.service";
 import type { DecisionService } from "../../src/modules/agents/application/services/decision.service";
 import type { PipelineRepository } from "../../src/modules/pipeline/infrastructure/pipeline.repository";
+import type { ProactiveLifecycleRepository } from '../../src/modules/pipeline/infrastructure/proactive-lifecycle.repository';
 import type { PipelineCancellationService } from "../../src/modules/pipeline/infrastructure/pipeline-cancellation.service";
 import type { PipelineAlertService } from "../../src/modules/pipeline/application/pipeline-alert.service";
 import type { PipelineAnalyticsService } from "../../src/modules/pipeline/application/pipeline-analytics.service";
@@ -42,7 +43,13 @@ const makeJob = (): PipelineJob => ({
   userId: "user-1",
   provider: "BINANCE_FUTURES",
   symbol: SYMBOL,
-  params: { interval: "15m", lookbackCandles: 150, opportunityId: "opportunity-1" },
+  params: {
+    interval: "15m",
+    lookbackCandles: 150,
+    opportunityId: "opportunity-1",
+    snapshotId: 'snapshot-1',
+    sourceDataCutoff: cutoff,
+  },
   trigger: "SCHEDULE",
   createdAt: new Date().toISOString(),
 });
@@ -125,6 +132,14 @@ describe("Proactive Thesis Pipeline Integration", () => {
   let mockRunUpdates: ReturnType<typeof vi.fn>;
   let mockExecutionLock: ReturnType<typeof vi.fn>;
   let mockSelfLearning: Partial<SelfLearningService>;
+  let mockLifecycle: {
+    persistThesis: ReturnType<typeof vi.fn>;
+    persistReview: ReturnType<typeof vi.fn>;
+    persistExecutionPlan: ReturnType<typeof vi.fn>;
+  };
+  let persistedTheses: unknown[];
+  let persistedReviews: unknown[];
+  let persistedPlans: unknown[];
 
   afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
 
@@ -172,6 +187,23 @@ describe("Proactive Thesis Pipeline Integration", () => {
     mockCollector = { addSignal: vi.fn().mockResolvedValue({ ready: true }) };
     mockRunUpdates = vi.fn().mockResolvedValue(undefined);
     mockExecutionLock = vi.fn().mockResolvedValue(true);
+    persistedTheses = [];
+    persistedReviews = [];
+    persistedPlans = [];
+    mockLifecycle = {
+      persistThesis: vi.fn().mockImplementation((input) => {
+        persistedTheses.push(input);
+        return Promise.resolve({ thesisId: 'relational-thesis-1', reused: false });
+      }),
+      persistReview: vi.fn().mockImplementation((input) => {
+        persistedReviews.push(input);
+        return Promise.resolve({ reviewId: 'relational-review-1', reused: false });
+      }),
+      persistExecutionPlan: vi.fn().mockImplementation((input) => {
+        persistedPlans.push(input);
+        return Promise.resolve({ planId: 'relational-plan-1', reused: false });
+      }),
+    };
 
     pipelineRunner = new PipelineRunnerService(
       // fusion
@@ -189,6 +221,7 @@ describe("Proactive Thesis Pipeline Integration", () => {
         activeStrategyKeys: vi.fn().mockResolvedValue(["ai-core"]),
         findRun: vi.fn().mockResolvedValue(null),
       } as unknown as PipelineRepository,
+      mockLifecycle as unknown as ProactiveLifecycleRepository,
       { isCancelled: vi.fn().mockResolvedValue(false) } as unknown as PipelineCancellationService, // cancellation
       // riskPolicy — always allow through; actual risk eval happens in assessPipelineDecision
       { evaluate: vi.fn().mockReturnValue({ actionable: true, reason: undefined }) },
@@ -300,6 +333,47 @@ describe("Proactive Thesis Pipeline Integration", () => {
 
     expect(mockLiveTrading.assessPipelineDecision).not.toHaveBeenCalled();
     expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
+  });
+
+  it('persists researcher evidence before a baseline WAIT and never creates execution authority', async () => {
+    mockDecision.decideForUser.mockResolvedValue({
+      ...makeFusionResult().fusionOutput,
+      decision: 'WAIT',
+      overrides: [],
+    });
+
+    await expect(pipelineRunner.run(makeJob())).resolves.toEqual({
+      outcome: 'SKIPPED',
+      reason: 'BASELINE_DECISION_WAIT',
+    });
+    expect(persistedTheses).toHaveLength(1);
+    expect(persistedTheses[0]).toMatchObject({ opportunityId: 'opportunity-1' });
+    expect(persistedReviews).toHaveLength(0);
+    expect(persistedPlans).toHaveLength(0);
+    expect(mockLiveTrading.assessPipelineDecision).not.toHaveBeenCalled();
+    expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['thesis', 'persistThesis'],
+    ['review', 'persistReview'],
+    ['plan', 'persistExecutionPlan'],
+  ] as const)('fails closed when %s persistence fails', async (_boundary, method) => {
+    mockLifecycle[method].mockRejectedValueOnce(new Error(`FAILED_${method}`));
+
+    await expect(pipelineRunner.run(makeJob())).rejects.toThrow(`FAILED_${method}`);
+    expect(mockLiveTrading.assessPipelineDecision).not.toHaveBeenCalled();
+    expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
+  });
+
+  it('passes the relational thesis ID to risk instead of the researcher agent-run ID', async () => {
+    await pipelineRunner.run(makeJob());
+
+    expect(mockLiveTrading.assessPipelineDecision).toHaveBeenCalledWith(expect.objectContaining({
+      tradePlanContext: expect.objectContaining({
+        proactive: expect.objectContaining({ thesisId: 'relational-thesis-1' }) as unknown,
+      }) as unknown,
+    }));
   });
 
   it('passes fresh high-news quality and snapshot market causality into the production decision path', async () => {

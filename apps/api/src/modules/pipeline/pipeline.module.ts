@@ -20,6 +20,7 @@ import { PipelineHealthService } from "./application/pipeline-health.service";
 import { PipelineAnalyticsService } from "./application/pipeline-analytics.service";
 import { PipelineRecoveryService } from "./application/pipeline-recovery.service";
 import { PipelineRepository } from "./infrastructure/pipeline.repository";
+import { ProactiveLifecycleRepository } from './infrastructure/proactive-lifecycle.repository';
 import { PipelineQueueService } from "./infrastructure/pipeline-queue.service";
 import { PipelineCancellationService } from "./infrastructure/pipeline-cancellation.service";
 import { PipelineProcessor } from "./infrastructure/pipeline.processor";
@@ -79,6 +80,7 @@ import { ReflectionModule } from '../reflection/reflection.module';
     PipelineAnalyticsService,
     PipelineRecoveryService,
     PipelineRepository,
+    ProactiveLifecycleRepository,
     PipelineQueueService,
     PipelineCancellationService,
     PipelineProcessor,
