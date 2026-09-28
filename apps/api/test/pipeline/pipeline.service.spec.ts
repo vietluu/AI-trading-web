@@ -422,6 +422,7 @@ describe('PipelineService', () => {
       fusion as never,
       decision as never,
       repository as never,
+      {} as never,
       { isCancelled: vi.fn().mockResolvedValue(false) } as never,
       new DecisionRiskPolicyService(),
       { evaluate: vi.fn().mockReturnValue({ allowed: true, preliminaryRegime: 'RANGING' }) },

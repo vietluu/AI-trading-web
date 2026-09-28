@@ -17,6 +17,7 @@ import { AgentInvocationSource } from "../../agents/domain/enums";
 import { FusionService } from "../../agents/application/services/fusion.service";
 import { DecisionService } from "../../agents/application/services/decision.service";
 import { PipelineRepository } from "../infrastructure/pipeline.repository";
+import { ProactiveLifecycleRepository } from '../infrastructure/proactive-lifecycle.repository';
 import { PipelineCancellationService } from "../infrastructure/pipeline-cancellation.service";
 import { SignalFilterService } from "./signal-filter.service";
 import { PipelineAlertService } from "./pipeline-alert.service";
@@ -57,7 +58,10 @@ import {
 import { ConfluenceCollectorService } from "../infrastructure/confluence-collector.service";
 import type { DecisionOutput } from "@platform/shared";
 import type { TradePlanMarketContext } from "../../risk/domain/trade-plan-engine";
-import { TradeResearcherService } from "../../agents/application/services/trade-researcher.service";
+import {
+  TradeResearcherService,
+  type TradeResearcherContext,
+} from "../../agents/application/services/trade-researcher.service";
 import { ChainOfThoughtReflectionService } from "../../agents/application/services/chain-of-thought-reflection.service";
 import { AnticipatorySnapshotService } from "../../agents/application/services/anticipatory-snapshot.service";
 import { SelfLearningService } from '../../reflection/application/self-learning.service';
@@ -190,6 +194,7 @@ export class PipelineRunnerService {
     private readonly fusion: FusionService,
     private readonly decision: DecisionService,
     private readonly repository: PipelineRepository,
+    private readonly proactiveLifecycle: ProactiveLifecycleRepository,
     private readonly cancellation: PipelineCancellationService,
     private readonly riskPolicy: DecisionRiskPolicyService,
     private readonly signalFilter: SignalFilterService,
@@ -603,7 +608,13 @@ export class PipelineRunnerService {
         const opportunityId = typeof job.params?.opportunityId === 'string'
           ? job.params.opportunityId.trim()
           : '';
-        if (!opportunityId) {
+        const opportunitySnapshotId = typeof job.params?.snapshotId === 'string'
+          ? job.params.snapshotId.trim()
+          : '';
+        const opportunityCutoff = typeof job.params?.sourceDataCutoff === 'string'
+          ? new Date(job.params.sourceDataCutoff)
+          : new Date(Number.NaN);
+        if (!opportunityId || !opportunitySnapshotId || Number.isNaN(opportunityCutoff.getTime())) {
           const completedAt = new Date();
           await this.finalizeEarlyTerminalRun(
             runId,
@@ -619,14 +630,25 @@ export class PipelineRunnerService {
           symbol,
           provider: job.provider as ExchangeProvider,
           timeframe: String(interval) as ExchangeInterval,
-          sourceDataCutoff: new Date(), execution: executionEvidence,
+          sourceDataCutoff: opportunityCutoff, execution: executionEvidence,
         });
-        const context = {
+        const context: TradeResearcherContext = {
           userId: job.userId,
           configHash: createHash('sha256').update(JSON.stringify({ params: job.params, mode: proactiveMode, schemaVersion: snapshot.schemaVersion, calculationVersion: snapshot.calculationVersion, researcherPrompt: 1, criticPrompt: 1 })).digest('hex'),
           parentSnapshotId: runId, promptVersion: 1,
         };
         const research = await this.tradeResearcher.research(snapshot, context);
+        const persistedThesis = await this.proactiveLifecycle.persistThesis({
+          userId: job.userId,
+          opportunityId,
+          snapshotId: opportunitySnapshotId,
+          thesis: research.preferred,
+          snapshot,
+          configurationHash: context.configHash,
+          modelProvider: context.provider,
+          model: context.model,
+          promptVersion: context.promptVersion,
+        });
         const features = anticipatoryDecisionContext(snapshot);
         const baseline = await this.decision.decideForUser({ symbol, fusionOutput, ...analyses }, job.userId, {
           pipelineRunId: runId, provider: job.provider, timeframe: String(interval), referencePrice: lastPrice,
@@ -655,6 +677,19 @@ export class PipelineRunnerService {
         proactiveThesis = applyThesisReview(research.preferred, review);
         const validation = validateTradeThesis({ ...proactiveThesis, evidenceAgainst: [...proactiveThesis.evidenceAgainst, ...review.evidenceRefs] }, snapshot, { now: new Date() });
         await this.tradeResearcher.persistReview({ context, research, review, appliedThesis: proactiveThesis, validation });
+        await this.proactiveLifecycle.persistReview({
+          thesisId: persistedThesis.thesisId,
+          review,
+          appliedThesis: proactiveThesis,
+          validation,
+          sourceDataCutoff: new Date(snapshot.sourceDataCutoff),
+          configurationHash: context.configHash,
+          modelProvider: context.provider,
+          model: context.model,
+          promptVersion: 1,
+          schemaVersion: snapshot.schemaVersion,
+          calculationVersion: snapshot.calculationVersion,
+        });
         if (!validation.valid || !['PROBE_READY', 'CONFIRMED'].includes(proactiveThesis.state) || proactiveThesis.direction === 'WAIT') {
           const reason = validation.reasonCodes[0] ?? 'THESIS_NOT_EXECUTABLE';
           const completedAt = new Date();
@@ -667,6 +702,19 @@ export class PipelineRunnerService {
           );
           return { outcome: 'SKIPPED', reason };
         }
+        await this.proactiveLifecycle.persistExecutionPlan({
+          thesisId: persistedThesis.thesisId,
+          reviewedThesis: proactiveThesis,
+          validation,
+          baseline,
+          sourceDataCutoff: new Date(snapshot.sourceDataCutoff),
+          configurationHash: context.configHash,
+          modelProvider: context.provider,
+          model: context.model,
+          promptVersion: 1,
+          schemaVersion: snapshot.schemaVersion,
+          calculationVersion: snapshot.calculationVersion,
+        });
         if (!research.researchRunId) throw new Error('THESIS_AUDIT_PARENT_REQUIRED');
         criticSizeFactor = review.action === 'REDUCE_SIZE' ? (review.sizeFactor ?? 0) : 1;
         lifecycleAuthority = this.selfLearning
@@ -686,7 +734,7 @@ export class PipelineRunnerService {
               sizeFactor: 0.15,
               reason: 'LIFECYCLE_AUTHORITY_UNAVAILABLE',
             };
-        proactive = { thesisId: research.researchRunId, opportunityId, thesis: proactiveThesis, snapshot,
+        proactive = { thesisId: persistedThesis.thesisId, opportunityId, thesis: proactiveThesis, snapshot,
           mode: proactiveMode as ProactiveExecutionContext['mode'], sizeFactor: lifecycleAuthority.sizeFactor };
         const netR = calculateThesisNetR(proactiveThesis, snapshot) ?? 0;
         const probability = baseline.expectedWinProbability;
