@@ -1,6 +1,17 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, type TradeThesis as PersistedTradeThesis } from '@prisma/client';
-import type { AnticipatoryMarketSnapshot, TradeThesis } from '@platform/shared';
+import {
+  Prisma,
+  type ExecutionPlanVersion,
+  type ThesisReview as PersistedThesisReview,
+  type TradeThesis as PersistedTradeThesis,
+} from '@prisma/client';
+import type {
+  AnticipatoryMarketSnapshot,
+  DecisionOutput,
+  ThesisReview,
+  ThesisValidationResult,
+  TradeThesis,
+} from '@platform/shared';
 import { PrismaService } from '../../../database/prisma.service';
 
 export interface PersistProactiveThesisInput {
@@ -18,6 +29,34 @@ export interface PersistProactiveThesisInput {
 export interface PersistedProactiveThesis {
   thesisId: string;
   reused: boolean;
+}
+
+export interface PersistProactiveReviewInput {
+  thesisId: string;
+  review: ThesisReview;
+  appliedThesis: TradeThesis;
+  validation: ThesisValidationResult;
+  sourceDataCutoff: Date;
+  configurationHash: string;
+  modelProvider?: string;
+  model?: string;
+  promptVersion: number;
+  schemaVersion: number;
+  calculationVersion: number;
+}
+
+export interface PersistExecutionPlanInput {
+  thesisId: string;
+  reviewedThesis: TradeThesis;
+  validation: ThesisValidationResult;
+  baseline: DecisionOutput;
+  sourceDataCutoff: Date;
+  configurationHash: string;
+  modelProvider?: string;
+  model?: string;
+  promptVersion: number;
+  schemaVersion: number;
+  calculationVersion: number;
 }
 
 @Injectable()
@@ -83,6 +122,129 @@ export class ProactiveLifecycleRepository {
       return { thesisId: persisted.id, reused };
     });
   }
+
+  async persistReview(input: PersistProactiveReviewInput): Promise<{ reviewId: string; reused: boolean }> {
+    const data = reviewCreateData(input);
+    const identity = {
+      thesisId_configurationHash: {
+        thesisId: input.thesisId,
+        configurationHash: input.configurationHash,
+      },
+    };
+    const existing = await this.prisma.thesisReview.findUnique({ where: identity });
+    if (existing) return reuseReview(existing, data);
+
+    try {
+      const created = await this.prisma.thesisReview.create({ data });
+      return { reviewId: created.id, reused: false };
+    } catch (error) {
+      if (!isPrismaUniqueConflict(error)) throw error;
+      const raced = await this.prisma.thesisReview.findUnique({ where: identity });
+      if (!raced) throw error;
+      return reuseReview(raced, data);
+    }
+  }
+
+  async persistExecutionPlan(input: PersistExecutionPlanInput): Promise<{ planId: string; reused: boolean }> {
+    if (
+      !input.validation.valid ||
+      !['PROBE_READY', 'CONFIRMED'].includes(input.reviewedThesis.state) ||
+      !['LONG', 'SHORT'].includes(input.reviewedThesis.direction)
+    ) {
+      throw new Error('PROACTIVE_EXECUTION_PLAN_NOT_ELIGIBLE');
+    }
+
+    const data = planCreateData(input);
+    const identity = { thesisId_version: { thesisId: input.thesisId, version: 1 } };
+    const existing = await this.prisma.executionPlanVersion.findUnique({ where: identity });
+    if (existing) return reusePlan(existing, data);
+
+    try {
+      const created = await this.prisma.executionPlanVersion.create({ data });
+      return { planId: created.id, reused: false };
+    } catch (error) {
+      if (!isPrismaUniqueConflict(error)) throw error;
+      const raced = await this.prisma.executionPlanVersion.findUnique({ where: identity });
+      if (!raced) throw error;
+      return reusePlan(raced, data);
+    }
+  }
+}
+
+function reviewCreateData(input: PersistProactiveReviewInput): Prisma.ThesisReviewUncheckedCreateInput {
+  return {
+    thesisId: input.thesisId,
+    action: input.review.action,
+    sizeFactor: input.review.sizeFactor,
+    reasonCodes: input.review.reasonCodes as Prisma.InputJsonValue,
+    evidenceRefs: input.review.evidenceRefs as Prisma.InputJsonValue,
+    rationale: input.review.rationale,
+    sourceDataCutoff: input.sourceDataCutoff,
+    modelProvider: input.modelProvider,
+    model: input.model,
+    promptVersion: input.promptVersion,
+    configurationHash: input.configurationHash,
+    schemaVersion: input.schemaVersion,
+    calculationVersion: input.calculationVersion,
+    reviewJson: {
+      review: input.review,
+      appliedThesis: input.appliedThesis,
+      validation: input.validation,
+    } as Prisma.InputJsonValue,
+  };
+}
+
+function planCreateData(input: PersistExecutionPlanInput): Prisma.ExecutionPlanVersionUncheckedCreateInput {
+  return {
+    thesisId: input.thesisId,
+    version: 1,
+    status: 'DRAFT',
+    planJson: {
+      reviewedThesis: input.reviewedThesis,
+      validation: input.validation,
+      baselineIdentity: {
+        decision: input.baseline.decision,
+        confidence: input.baseline.confidence,
+        generatedAt: input.baseline.generatedAt,
+      },
+    } as Prisma.InputJsonValue,
+    sourceDataCutoff: input.sourceDataCutoff,
+    modelProvider: input.modelProvider,
+    model: input.model,
+    promptVersion: input.promptVersion,
+    configurationHash: input.configurationHash,
+    schemaVersion: input.schemaVersion,
+    calculationVersion: input.calculationVersion,
+  };
+}
+
+function reuseReview(
+  existing: PersistedThesisReview,
+  expected: Prisma.ThesisReviewUncheckedCreateInput,
+): { reviewId: string; reused: true } {
+  const fields = [
+    'thesisId', 'action', 'sizeFactor', 'reasonCodes', 'evidenceRefs', 'rationale',
+    'sourceDataCutoff', 'modelProvider', 'model', 'promptVersion', 'configurationHash',
+    'schemaVersion', 'calculationVersion', 'reviewJson',
+  ] as const;
+  if (canonicalize(pick(existing, fields)) !== canonicalize(pick(expected, fields))) {
+    throw new Error('PROACTIVE_REVIEW_IDENTITY_CONFLICT');
+  }
+  return { reviewId: existing.id, reused: true };
+}
+
+function reusePlan(
+  existing: ExecutionPlanVersion,
+  expected: Prisma.ExecutionPlanVersionUncheckedCreateInput,
+): { planId: string; reused: true } {
+  const fields = [
+    'thesisId', 'version', 'status', 'planJson', 'sourceDataCutoff', 'modelProvider',
+    'model', 'promptVersion', 'configurationHash', 'schemaVersion', 'calculationVersion',
+  ] as const;
+  if (canonicalize(pick(existing, fields)) !== canonicalize(pick(expected, fields))) {
+    throw new Error('PROACTIVE_EXECUTION_PLAN_IDENTITY_CONFLICT');
+  }
+  return { planId: existing.id, reused: true };
 }
 
 function thesisCreateData(input: PersistProactiveThesisInput): Prisma.TradeThesisUncheckedCreateInput {

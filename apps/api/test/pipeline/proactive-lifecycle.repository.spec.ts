@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { DecisionOutput, ThesisReview, ThesisValidationResult, TradeThesis } from '@platform/shared';
 import { createBaseSnapshot, createValidLongThesis } from '../helpers/thesis-fixture';
 import { ProactiveLifecycleRepository } from '../../src/modules/pipeline/infrastructure/proactive-lifecycle.repository';
 
@@ -22,8 +23,14 @@ function createHarness(options: {
   existingThesis?: Record<string, unknown>;
   transition?: Record<string, unknown> | null;
   createConflict?: boolean;
+  existingReview?: Record<string, unknown>;
+  reviewCreateConflict?: boolean;
+  existingPlan?: Record<string, unknown>;
+  planCreateConflict?: boolean;
 } = {}) {
   let storedThesis: Record<string, unknown> | undefined;
+  let storedReview: Record<string, unknown> | undefined;
+  let storedPlan: Record<string, unknown> | undefined;
   const storedTransition: Record<string, unknown> | null = options.transition === undefined
     ? {
         id: 'transition-1',
@@ -56,13 +63,84 @@ function createHarness(options: {
         return { count: 1 };
       },
     },
+    thesisReview: {
+      findUnique: async () => options.existingReview ?? storedReview ?? null,
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        if (options.reviewCreateConflict) throw Object.assign(new Error('unique'), { code: 'P2002' });
+        storedReview = { id: 'review-1', ...data };
+        return storedReview;
+      },
+    },
+    executionPlanVersion: {
+      findUnique: async () => options.existingPlan ?? storedPlan ?? null,
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        if (options.planCreateConflict) throw Object.assign(new Error('unique'), { code: 'P2002' });
+        storedPlan = { id: 'plan-1', ...data };
+        return storedPlan;
+      },
+    },
   };
-  const prisma = { $transaction: (operation: (client: typeof tx) => unknown) => operation(tx) };
+  const prisma = {
+    $transaction: (operation: (client: typeof tx) => unknown) => operation(tx),
+    thesisReview: tx.thesisReview,
+    executionPlanVersion: tx.executionPlanVersion,
+  };
 
   return {
     repository: new ProactiveLifecycleRepository(prisma as never),
     getStoredThesis: () => storedThesis,
+    getStoredReview: () => storedReview,
+    getStoredPlan: () => storedPlan,
     storedTransition,
+  };
+}
+
+const review: ThesisReview = {
+  action: 'APPROVE',
+  reasonCodes: [],
+  evidenceRefs: [],
+  rationale: 'Risk geometry and evidence are acceptable',
+};
+const validation: ThesisValidationResult = {
+  valid: true,
+  status: 'VALID',
+  reasonCodes: [],
+  reasons: [],
+};
+
+function createReviewInput() {
+  return {
+    thesisId: 'thesis-1',
+    review,
+    appliedThesis: createValidLongThesis(),
+    validation,
+    sourceDataCutoff: cutoff,
+    configurationHash: 'config-v1',
+    modelProvider: 'OPENAI',
+    model: 'gpt-test',
+    promptVersion: 4,
+    schemaVersion: 1,
+    calculationVersion: 1,
+  };
+}
+
+function createPlanInput(thesis: TradeThesis = createValidLongThesis()) {
+  return {
+    thesisId: 'thesis-1',
+    reviewedThesis: thesis,
+    validation,
+    baseline: {
+      decision: 'BUY',
+      confidence: 82,
+      generatedAt: '2026-09-09T12:00:00.000Z',
+    } as unknown as DecisionOutput,
+    sourceDataCutoff: cutoff,
+    configurationHash: 'config-v1',
+    modelProvider: 'OPENAI',
+    model: 'gpt-test',
+    promptVersion: 4,
+    schemaVersion: 1,
+    calculationVersion: 1,
   };
 }
 
@@ -150,4 +228,75 @@ describe('ProactiveLifecycleRepository.persistThesis', () => {
     );
     expect(harness.storedTransition?.thesisId).toBe('thesis-other');
   });
+});
+
+describe('ProactiveLifecycleRepository review and plan persistence', () => {
+  it('persists a critic review linked to the relational thesis ID', async () => {
+    const harness = createHarness();
+
+    await expect(harness.repository.persistReview(createReviewInput())).resolves.toEqual({
+      reviewId: 'review-1',
+      reused: false,
+    });
+    expect(harness.getStoredReview()).toMatchObject({
+      thesisId: 'thesis-1',
+      action: 'APPROVE',
+      configurationHash: 'config-v1',
+      reviewJson: { review, appliedThesis: createValidLongThesis(), validation },
+    });
+  });
+
+  it('reuses only an identical review for the thesis and configuration', async () => {
+    const input = createReviewInput();
+    const initial = createHarness();
+    await initial.repository.persistReview(input);
+    const existing = initial.getStoredReview();
+    const retry = createHarness({ existingReview: existing });
+    await expect(retry.repository.persistReview(input)).resolves.toEqual({ reviewId: 'review-1', reused: true });
+
+    const conflict = createHarness({ existingReview: { ...existing, rationale: 'different' } });
+    await expect(conflict.repository.persistReview(input)).rejects.toThrow(
+      'PROACTIVE_REVIEW_IDENTITY_CONFLICT',
+    );
+  });
+
+  it('creates one DRAFT plan containing the reviewed thesis and baseline identity', async () => {
+    const harness = createHarness();
+
+    await expect(harness.repository.persistExecutionPlan(createPlanInput())).resolves.toEqual({
+      planId: 'plan-1',
+      reused: false,
+    });
+    expect(harness.getStoredPlan()).toMatchObject({
+      thesisId: 'thesis-1',
+      version: 1,
+      status: 'DRAFT',
+      planJson: {
+        reviewedThesis: createValidLongThesis(),
+        validation,
+        baselineIdentity: {
+          decision: 'BUY',
+          confidence: 82,
+          generatedAt: '2026-09-09T12:00:00.000Z',
+        },
+      },
+    });
+  });
+
+  it.each(['WAIT', 'WATCHING', 'TOO_LATE'] as const)(
+    'rejects a non-executable %s thesis before plan persistence',
+    async (state) => {
+      const thesis: TradeThesis = {
+        ...createValidLongThesis(),
+        state,
+        ...(state === 'WAIT' ? { direction: 'WAIT' as const } : {}),
+      };
+      const harness = createHarness();
+
+      await expect(harness.repository.persistExecutionPlan(createPlanInput(thesis))).rejects.toThrow(
+        'PROACTIVE_EXECUTION_PLAN_NOT_ELIGIBLE',
+      );
+      expect(harness.getStoredPlan()).toBeUndefined();
+    },
+  );
 });
