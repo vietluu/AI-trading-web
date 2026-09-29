@@ -74,6 +74,7 @@ export interface LLMModelInfo {
 
 export interface LLMProvider {
   readonly providerType: AIProviderType;
+  isConfigured?(): boolean;
 
   chat(options: LLMRequestOptions): Promise<LLMResponse>;
   stream(options: LLMRequestOptions): AsyncIterable<LLMStreamChunk>;

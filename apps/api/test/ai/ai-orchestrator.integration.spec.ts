@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, vi } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import type { ConfigService } from "@nestjs/config";
 import { type RedisService } from "../../src/redis/redis.service";
 import { ModelRegistryService } from "../../src/modules/ai/infrastructure/registry/model-registry.service";
@@ -35,26 +35,31 @@ describe("AI Orchestrator & Fallback Integration", () => {
   let mockHistoryService: AIHistoryService;
   let mockRedisService: RedisService;
 
+  afterEach(() => vi.unstubAllEnvs());
+
   beforeEach(() => {
-    process.env.MOCK_AI_RESPONSES = "true";
+    vi.stubEnv("MOCK_AI_RESPONSES", "true");
+    vi.stubEnv("ANTHROPIC_API_KEY", "test-anthropic-key");
+    vi.stubEnv("GOOGLE_API_KEY", "test-google-key");
     mockConfigService = {
-      getOrCreateConfig: () => Promise.resolve({
-        id: "cfg-1",
-        userId: "user-123",
-        preferredProvider: "OPENAI",
-        preferredModel: "gpt-5-mini",
-        temperature: 0.7,
-        maxTokens: 2048,
-        timeoutMs: 5000,
-        dailyBudget: 10 as unknown as Prisma.Decimal,
-        monthlyBudget: 100 as unknown as Prisma.Decimal,
-        tokenBudget: 1000000,
-        requestBudget: 1000,
-        fallbackEnabled: true,
-        fallbackProviders: ["ANTHROPIC", "GEMINI", "OLLAMA"],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }),
+      getOrCreateConfig: () =>
+        Promise.resolve({
+          id: "cfg-1",
+          userId: "user-123",
+          preferredProvider: "OPENAI",
+          preferredModel: "gpt-5-mini",
+          temperature: 0.7,
+          maxTokens: 2048,
+          timeoutMs: 5000,
+          dailyBudget: 10 as unknown as Prisma.Decimal,
+          monthlyBudget: 100 as unknown as Prisma.Decimal,
+          tokenBudget: 1000000,
+          requestBudget: 1000,
+          fallbackEnabled: true,
+          fallbackProviders: ["ANTHROPIC", "GEMINI", "OLLAMA"],
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }),
     } as unknown as AIConfigService;
 
     mockBudgetManager = {
@@ -73,7 +78,9 @@ describe("AI Orchestrator & Fallback Integration", () => {
       delete: vi.fn().mockResolvedValue(undefined),
     } as unknown as RedisService;
 
-    const mockEnvConfig = { get: () => undefined } as unknown as ConfigService;
+    const mockEnvConfig = {
+      get: (key: string) => process.env[key],
+    } as unknown as ConfigService;
     modelRegistry = new ModelRegistryService();
     openAIProvider = new OpenAIProvider(mockEnvConfig, modelRegistry);
     anthropicProvider = new AnthropicProvider(mockEnvConfig, modelRegistry);
@@ -84,7 +91,7 @@ describe("AI Orchestrator & Fallback Integration", () => {
       openAIProvider,
       anthropicProvider,
       geminiProvider,
-      ollamaProvider
+      ollamaProvider,
     );
 
     const registry = new PromptRegistry();
@@ -104,7 +111,7 @@ describe("AI Orchestrator & Fallback Integration", () => {
       factory,
       mockHistoryService,
       costEstimator,
-      mockRedisService
+      mockRedisService,
     );
   });
 
@@ -122,6 +129,29 @@ describe("AI Orchestrator & Fallback Integration", () => {
     expect(candidates.slice(0, 2)).toEqual([
       { provider: "GEMINI", model: "gemini-3.1-flash-lite" },
       { provider: "OPENAI", model: "gpt-5-mini" },
+    ]);
+  });
+
+  it("uses discovered Gemini models instead of the stale registry fallback list", () => {
+    const candidates = (
+      orchestrator as unknown as {
+        buildCandidates: (
+          provider: "GEMINI",
+          model: string,
+          fallbacks: [],
+          discoveredModels: string[],
+        ) => Array<{ provider: string; model: string }>;
+      }
+    ).buildCandidates(
+      "GEMINI",
+      "gemini-primary",
+      [],
+      ["gemini-primary", "gemini-current-flash"],
+    );
+
+    expect(candidates).toEqual([
+      { provider: "GEMINI", model: "gemini-primary" },
+      { provider: "GEMINI", model: "gemini-current-flash" },
     ]);
   });
 
@@ -168,9 +198,7 @@ describe("AI Orchestrator & Fallback Integration", () => {
     ]);
 
     expect(
-      candidates.map(
-        (candidate) => `${candidate.provider}:${candidate.model}`,
-      ),
+      candidates.map((candidate) => `${candidate.provider}:${candidate.model}`),
     ).toEqual([
       "OPENAI:gpt-5-mini",
       "ANTHROPIC:claude-3-5-sonnet-20241022",
@@ -196,39 +224,51 @@ describe("AI Orchestrator & Fallback Integration", () => {
 
   it("continues to later Gemini models when the second provider has invalid auth", async () => {
     const calls: string[] = [];
-    const provider = (providerType: "GEMINI" | "OPENAI") => ({
-      providerType,
-      chat: vi.fn((options: { model: string }) => {
-        calls.push(`${providerType}:${options.model}`);
-        if (providerType === "OPENAI") {
-          return Promise.reject(Object.assign(new Error("Invalid API key"), { status: 401 }));
-        }
-        if (options.model === "gemini-primary") {
-          return Promise.reject(Object.assign(new Error("Primary unavailable"), { status: 503 }));
-        }
-        return Promise.resolve({
-          text: "fallback analysis",
-          json: null,
-          finishReason: "stop",
-          usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, estimatedCost: 0 },
-          latencyMs: 1,
-          provider: "GEMINI",
-          model: options.model,
-        });
-      }),
-    }) as unknown as LLMProvider;
+    const provider = (providerType: "GEMINI" | "OPENAI") =>
+      ({
+        providerType,
+        chat: vi.fn((options: { model: string }) => {
+          calls.push(`${providerType}:${options.model}`);
+          if (providerType === "OPENAI") {
+            return Promise.reject(
+              Object.assign(new Error("Invalid API key"), { status: 401 }),
+            );
+          }
+          if (options.model === "gemini-primary") {
+            return Promise.reject(
+              Object.assign(new Error("Primary unavailable"), { status: 503 }),
+            );
+          }
+          return Promise.resolve({
+            text: "fallback analysis",
+            json: null,
+            finishReason: "stop",
+            usage: {
+              promptTokens: 10,
+              completionTokens: 5,
+              totalTokens: 15,
+              estimatedCost: 0,
+            },
+            latencyMs: 1,
+            provider: "GEMINI",
+            model: options.model,
+          });
+        }),
+      }) as unknown as LLMProvider;
     const fallbackFactory = {
-      getProvider: (providerType: "GEMINI" | "OPENAI") => provider(providerType),
+      getProvider: (providerType: "GEMINI" | "OPENAI") =>
+        provider(providerType),
     } as unknown as LLMProviderFactory;
     const baseConfig = await mockConfigService.getOrCreateConfig("user-123");
     const geminiConfig = {
-      getOrCreateConfig: () => Promise.resolve({
-        ...baseConfig,
-        preferredProvider: "GEMINI" as const,
-        preferredModel: "gemini-primary",
-        fallbackEnabled: true,
-        fallbackProviders: ["OPENAI"],
-      }),
+      getOrCreateConfig: () =>
+        Promise.resolve({
+          ...baseConfig,
+          preferredProvider: "GEMINI" as const,
+          preferredModel: "gemini-primary",
+          fallbackEnabled: true,
+          fallbackProviders: ["OPENAI"],
+        }),
     } as unknown as AIConfigService;
     const fallbackOrchestrator = new AIOrchestratorService(
       geminiConfig,
@@ -257,15 +297,88 @@ describe("AI Orchestrator & Fallback Integration", () => {
     });
   });
 
+  it("does not send fallback requests to a provider that is not configured", async () => {
+    const anthropicChat = vi.fn();
+    const geminiChat = vi.fn((options: { model: string }) => {
+      if (options.model === "gemini-primary") {
+        return Promise.reject(
+          Object.assign(new Error("Primary unavailable"), { status: 503 }),
+        );
+      }
+      return Promise.resolve({
+        text: "gemini fallback",
+        json: null,
+        finishReason: "stop",
+        usage: {
+          promptTokens: 10,
+          completionTokens: 5,
+          totalTokens: 15,
+          estimatedCost: 0,
+        },
+        latencyMs: 1,
+        provider: "GEMINI" as const,
+        model: options.model,
+      });
+    });
+    const providers = {
+      GEMINI: {
+        providerType: "GEMINI",
+        chat: geminiChat,
+        health: vi.fn().mockResolvedValue({ status: "HEALTHY" }),
+      },
+      ANTHROPIC: {
+        providerType: "ANTHROPIC",
+        chat: anthropicChat,
+        isConfigured: vi.fn().mockReturnValue(false),
+        health: vi.fn().mockResolvedValue({ status: "HEALTHY" }),
+      },
+    } as const;
+    const providerFactory = {
+      getProvider: (provider: keyof typeof providers) => providers[provider],
+    } as unknown as LLMProviderFactory;
+    const baseConfig = await mockConfigService.getOrCreateConfig("user-123");
+    const geminiOnlyRuntime = new AIOrchestratorService(
+      {
+        getOrCreateConfig: () =>
+          Promise.resolve({
+            ...baseConfig,
+            preferredProvider: "GEMINI" as const,
+            preferredModel: "gemini-primary",
+            fallbackEnabled: true,
+            fallbackProviders: ["ANTHROPIC"],
+          }),
+      } as unknown as AIConfigService,
+      mockBudgetManager,
+      contextBuilder,
+      promptEngine,
+      providerFactory,
+      mockHistoryService,
+      new CostEstimatorService(modelRegistry),
+    );
+
+    const response = await geminiOnlyRuntime.execute({
+      userId: "user-123",
+      userPrompt: "Use only configured providers",
+    });
+
+    expect(anthropicChat).not.toHaveBeenCalled();
+    expect(providers.ANTHROPIC.health).not.toHaveBeenCalled();
+    expect(response.provider).toBe("GEMINI");
+  });
+
   it("should not retry the same provider request multiple times", async () => {
-    const chatMock = vi.fn().mockRejectedValue(Object.assign(new Error("Rate limit exceeded 429"), { status: 429 }));
+    const chatMock = vi
+      .fn()
+      .mockRejectedValue(
+        Object.assign(new Error("Rate limit exceeded 429"), { status: 429 }),
+      );
     const provider = {
       providerType: "OPENAI",
       chat: chatMock as LLMProvider["chat"],
-      stream: (async function* () {
+      stream: async function* () {
         await Promise.resolve();
         yield { deltaToken: "", isComplete: true };
-      }) as LLMProvider["stream"],
+      } as LLMProvider["stream"],
       embedding: vi.fn(),
       countTokens: vi.fn(),
       health: vi.fn(),
@@ -276,14 +389,17 @@ describe("AI Orchestrator & Fallback Integration", () => {
       getProvider: () => provider,
     } as unknown as LLMProviderFactory;
 
-    const baseConfig = await (mockConfigService.getOrCreateConfig?.("user-123") ?? Promise.resolve({}));
+    const baseConfig = await (mockConfigService.getOrCreateConfig?.(
+      "user-123",
+    ) ?? Promise.resolve({}));
     const noRetryConfig = {
       ...mockConfigService,
-      getOrCreateConfig: () => Promise.resolve({
-        ...baseConfig,
-        fallbackEnabled: false,
-        fallbackProviders: [],
-      }),
+      getOrCreateConfig: () =>
+        Promise.resolve({
+          ...baseConfig,
+          fallbackEnabled: false,
+          fallbackProviders: [],
+        }),
     } as unknown as AIConfigService;
 
     const orchestratorNoRetry = new AIOrchestratorService(
@@ -294,14 +410,16 @@ describe("AI Orchestrator & Fallback Integration", () => {
       factoryWithStub,
       mockHistoryService,
       new CostEstimatorService(modelRegistry),
-      mockRedisService
+      mockRedisService,
     );
 
-    await expect(orchestratorNoRetry.execute({
-      userId: "user-123",
-      userPrompt: "Should not retry",
-      provider: "OPENAI",
-    })).rejects.toThrow("AI Request failed");
+    await expect(
+      orchestratorNoRetry.execute({
+        userId: "user-123",
+        userPrompt: "Should not retry",
+        provider: "OPENAI",
+      }),
+    ).rejects.toThrow("AI Request failed");
 
     expect(chatMock).toHaveBeenCalledTimes(2);
   });
@@ -323,16 +441,19 @@ describe("AI Orchestrator & Fallback Integration", () => {
     } as unknown as LLMProviderFactory;
     const baseConfig = await mockConfigService.getOrCreateConfig("user-123");
     const noFallbackConfig = {
-      getOrCreateConfig: () => Promise.resolve({
-        ...baseConfig,
-        preferredProvider: "OPENAI" as const,
-        fallbackEnabled: false,
-        fallbackProviders: [],
-      }),
+      getOrCreateConfig: () =>
+        Promise.resolve({
+          ...baseConfig,
+          preferredProvider: "OPENAI" as const,
+          fallbackEnabled: false,
+          fallbackProviders: [],
+        }),
     } as unknown as AIConfigService;
     const redisValues = new Map<string, string>();
     const redis = {
-      get: vi.fn((key: string) => Promise.resolve(redisValues.get(key) ?? null)),
+      get: vi.fn((key: string) =>
+        Promise.resolve(redisValues.get(key) ?? null),
+      ),
       setWithTtl: vi.fn((key: string, value: string) => {
         redisValues.set(key, value);
         return Promise.resolve();
@@ -357,14 +478,18 @@ describe("AI Orchestrator & Fallback Integration", () => {
       redis,
     );
 
-    await expect(cooldownOrchestrator.execute({
-      userId: "user-123",
-      userPrompt: "first quota request",
-    })).rejects.toThrow("AI Request failed");
-    await expect(cooldownOrchestrator.execute({
-      userId: "user-123",
-      userPrompt: "second request during cooldown",
-    })).rejects.toThrow("quota cooldown is active");
+    await expect(
+      cooldownOrchestrator.execute({
+        userId: "user-123",
+        userPrompt: "first quota request",
+      }),
+    ).rejects.toThrow("AI Request failed");
+    await expect(
+      cooldownOrchestrator.execute({
+        userId: "user-123",
+        userPrompt: "second request during cooldown",
+      }),
+    ).rejects.toThrow("quota cooldown is active");
 
     expect(chatMock).toHaveBeenCalledTimes(2);
     expect(historyLog).toHaveBeenCalledTimes(1);
@@ -386,12 +511,13 @@ describe("AI Orchestrator & Fallback Integration", () => {
     } as unknown as LLMProviderFactory;
     const baseConfig = await mockConfigService.getOrCreateConfig("user-123");
     const noFallbackConfig = {
-      getOrCreateConfig: () => Promise.resolve({
-        ...baseConfig,
-        preferredProvider: "OPENAI" as const,
-        fallbackEnabled: false,
-        fallbackProviders: [],
-      }),
+      getOrCreateConfig: () =>
+        Promise.resolve({
+          ...baseConfig,
+          preferredProvider: "OPENAI" as const,
+          fallbackEnabled: false,
+          fallbackProviders: [],
+        }),
     } as unknown as AIConfigService;
     const unavailableOrchestrator = new AIOrchestratorService(
       noFallbackConfig,
@@ -403,14 +529,18 @@ describe("AI Orchestrator & Fallback Integration", () => {
       new CostEstimatorService(modelRegistry),
     );
 
-    await expect(unavailableOrchestrator.execute({
-      userId: "user-123",
-      userPrompt: "first unavailable request",
-    })).rejects.toMatchObject({ status: 503, code: "ALL_MODELS_UNAVAILABLE" });
-    await expect(unavailableOrchestrator.execute({
-      userId: "user-123",
-      userPrompt: "second request during outage",
-    })).rejects.toMatchObject({ status: 503, code: "ALL_MODELS_UNAVAILABLE" });
+    await expect(
+      unavailableOrchestrator.execute({
+        userId: "user-123",
+        userPrompt: "first unavailable request",
+      }),
+    ).rejects.toMatchObject({ status: 503, code: "ALL_MODELS_UNAVAILABLE" });
+    await expect(
+      unavailableOrchestrator.execute({
+        userId: "user-123",
+        userPrompt: "second request during outage",
+      }),
+    ).rejects.toMatchObject({ status: 503, code: "ALL_MODELS_UNAVAILABLE" });
 
     expect(chatMock).toHaveBeenCalledTimes(2);
   });
@@ -420,7 +550,12 @@ describe("AI Orchestrator & Fallback Integration", () => {
       text: "cached analysis",
       json: null,
       finishReason: "stop",
-      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, estimatedCost: 0.01 },
+      usage: {
+        promptTokens: 10,
+        completionTokens: 5,
+        totalTokens: 15,
+        estimatedCost: 0.01,
+      },
       latencyMs: 100,
       provider: "OPENAI" as const,
       model: "gpt-5-mini",
@@ -428,10 +563,10 @@ describe("AI Orchestrator & Fallback Integration", () => {
     const provider = {
       providerType: "OPENAI",
       chat: chatMock as LLMProvider["chat"],
-      stream: (async function* () {
+      stream: async function* () {
         await Promise.resolve();
         yield { deltaToken: "", isComplete: true };
-      }) as LLMProvider["stream"],
+      } as LLMProvider["stream"],
       embedding: vi.fn(),
       countTokens: vi.fn(),
       health: vi.fn(),
@@ -450,7 +585,7 @@ describe("AI Orchestrator & Fallback Integration", () => {
       factoryWithStub,
       mockHistoryService,
       new CostEstimatorService(modelRegistry),
-      mockRedisService
+      mockRedisService,
     );
 
     const first = await cachedOrchestrator.execute({

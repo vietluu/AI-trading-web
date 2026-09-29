@@ -23,6 +23,13 @@ export class OllamaProvider implements LLMProvider {
     private readonly modelRegistry: ModelRegistryService
   ) {}
 
+  public isConfigured(): boolean {
+    return Boolean(
+      this.configService.get<string>("OLLAMA_BASE_URL") ||
+        process.env.OLLAMA_BASE_URL,
+    );
+  }
+
   private getBaseUrl(): string {
     return (
       this.configService.get<string>("OLLAMA_BASE_URL") ||

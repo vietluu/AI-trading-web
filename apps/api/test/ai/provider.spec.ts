@@ -31,7 +31,7 @@ describe("AI Providers & LLMProviderFactory", () => {
       openAIProvider,
       anthropicProvider,
       geminiProvider,
-      ollamaProvider
+      ollamaProvider,
     );
   });
 
@@ -69,6 +69,69 @@ describe("AI Providers & LLMProviderFactory", () => {
     expect(openAiHealth.models.length).toBeGreaterThan(0);
   });
 
+  it("discovers current Gemini generateContent models from the provider API", async () => {
+    const provider = new GeminiProvider(
+      {
+        get: (key: string) =>
+          key === "GOOGLE_API_KEY" ? "test-key" : undefined,
+      } as unknown as ConfigService,
+      modelRegistry,
+    );
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          models: [
+            {
+              name: "models/gemini-current-flash",
+              displayName: "Gemini Current Flash",
+              inputTokenLimit: 1_048_576,
+              outputTokenLimit: 65_536,
+              supportedGenerationMethods: ["generateContent", "countTokens"],
+            },
+            {
+              name: "models/text-embedding-only",
+              displayName: "Embedding only",
+              supportedGenerationMethods: ["embedContent"],
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const models = await provider.listModels();
+
+    expect(models.map((model) => model.name)).toEqual(["gemini-current-flash"]);
+    expect(
+      modelRegistry.getModel("gemini-current-flash")?.inputCostPer1k,
+    ).toBeGreaterThan(0);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("coalesces concurrent Gemini discovery and caches discovery failures", async () => {
+    const provider = new GeminiProvider(
+      {
+        get: (key: string) =>
+          key === "GOOGLE_API_KEY" ? "test-key" : undefined,
+      } as unknown as ConfigService,
+      modelRegistry,
+    );
+    const fetchMock = vi.fn().mockRejectedValue(new Error("network down"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const [first, second] = await Promise.all([
+      provider.listModels(),
+      provider.listModels(),
+    ]);
+    const third = await provider.listModels();
+
+    expect(first.length).toBeGreaterThan(0);
+    expect(second).toEqual(first);
+    expect(third).toEqual(first);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("opens a quota circuit and prevents queued Gemini calls after the first 429", async () => {
     const originalNodeEnv = process.env.NODE_ENV;
     const originalMockResponses = process.env.MOCK_AI_RESPONSES;
@@ -98,16 +161,20 @@ describe("AI Providers & LLMProviderFactory", () => {
         provider.chat({ model: "gemini-test", userPrompt: "three" }),
       ]);
 
-      expect(results.every((result) => result.status === "rejected")).toBe(true);
+      expect(results.every((result) => result.status === "rejected")).toBe(
+        true,
+      );
       expect(fetchMock).toHaveBeenCalledTimes(1);
-      const queuedError = (results[1] as PromiseRejectedResult).reason as Error & {
+      const queuedError = (results[1] as PromiseRejectedResult)
+        .reason as Error & {
         providerRequestSent?: boolean;
       };
       expect(queuedError.providerRequestSent).toBe(false);
     } finally {
       if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = originalNodeEnv;
-      if (originalMockResponses === undefined) delete process.env.MOCK_AI_RESPONSES;
+      if (originalMockResponses === undefined)
+        delete process.env.MOCK_AI_RESPONSES;
       else process.env.MOCK_AI_RESPONSES = originalMockResponses;
     }
   });

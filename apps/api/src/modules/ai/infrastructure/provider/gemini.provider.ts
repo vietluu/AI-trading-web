@@ -20,10 +20,12 @@ export class GeminiProvider implements LLMProvider {
   private activeRequests = 0;
   private readonly requestWaiters: Array<() => void> = [];
   private cooldownUntil = 0;
+  private discoveredModels?: { models: LLMModelInfo[]; expiresAt: number };
+  private modelDiscoveryPromise?: Promise<LLMModelInfo[]>;
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly modelRegistry: ModelRegistryService
+    private readonly modelRegistry: ModelRegistryService,
   ) {}
 
   private getApiKey(): string | undefined {
@@ -42,6 +44,10 @@ export class GeminiProvider implements LLMProvider {
     );
   }
 
+  public isConfigured(): boolean {
+    return Boolean(this.getApiKey());
+  }
+
   public async chat(options: LLMRequestOptions): Promise<LLMResponse> {
     await this.acquireRequestSlot();
     try {
@@ -52,16 +58,23 @@ export class GeminiProvider implements LLMProvider {
     }
   }
 
-  private async chatWithinSlot(options: LLMRequestOptions): Promise<LLMResponse> {
+  private async chatWithinSlot(
+    options: LLMRequestOptions,
+  ): Promise<LLMResponse> {
     const apiKey = this.getApiKey();
     const startTime = Date.now();
     const model = options.model || "gemini-3.1-flash-lite";
 
     if (!apiKey) {
-      if (process.env.NODE_ENV === "test" || process.env.MOCK_AI_RESPONSES === "true") {
+      if (
+        process.env.NODE_ENV === "test" ||
+        process.env.MOCK_AI_RESPONSES === "true"
+      ) {
         return this.generateMockResponse(options, startTime);
       }
-      throw new Error("Gemini API key is not configured (GOOGLE_API_KEY / GEMINI_API_KEY)");
+      throw new Error(
+        "Gemini API key is not configured (GOOGLE_API_KEY / GEMINI_API_KEY)",
+      );
     }
 
     const contents = [];
@@ -94,7 +107,7 @@ export class GeminiProvider implements LLMProvider {
     const controller = new AbortController();
     const timeout = setTimeout(
       () => controller.abort(),
-      options.timeoutMs ?? 30000
+      options.timeoutMs ?? 30000,
     );
 
     try {
@@ -108,7 +121,7 @@ export class GeminiProvider implements LLMProvider {
           },
           body: JSON.stringify(reqBody),
           signal: options.abortSignal || controller.signal,
-        }
+        },
       );
 
       clearTimeout(timeout);
@@ -118,7 +131,9 @@ export class GeminiProvider implements LLMProvider {
         const status = response.status;
         this.lastError = `HTTP ${status}: ${errorText}`;
         const err = new Error(`Gemini API error (${status}): ${errorText}`);
-        const retryAfterMs = this.retryAfterMs(response.headers.get('retry-after'));
+        const retryAfterMs = this.retryAfterMs(
+          response.headers.get("retry-after"),
+        );
         if (status === 429) {
           this.cooldownUntil = Math.max(
             this.cooldownUntil,
@@ -162,7 +177,9 @@ export class GeminiProvider implements LLMProvider {
         try {
           json = JSON.parse(text) as Record<string, unknown>;
         } catch {
-          this.logger.warn(`Failed to parse JSON response from Gemini: ${text}`);
+          this.logger.warn(
+            `Failed to parse JSON response from Gemini: ${text}`,
+          );
         }
       }
 
@@ -187,7 +204,10 @@ export class GeminiProvider implements LLMProvider {
       clearTimeout(timeout);
       const errorMsg = err instanceof Error ? err.message : String(err);
       this.lastError = errorMsg;
-      if (process.env.NODE_ENV === "test" || process.env.MOCK_AI_RESPONSES === "true") {
+      if (
+        process.env.NODE_ENV === "test" ||
+        process.env.MOCK_AI_RESPONSES === "true"
+      ) {
         return this.generateMockResponse(options, startTime);
       }
       throw err;
@@ -195,14 +215,18 @@ export class GeminiProvider implements LLMProvider {
   }
 
   private maxConcurrentRequests(): number {
-    const configured = Number(this.configService.get<string>('GEMINI_MAX_CONCURRENCY'));
+    const configured = Number(
+      this.configService.get<string>("GEMINI_MAX_CONCURRENCY"),
+    );
     return Number.isFinite(configured) && configured > 0
       ? Math.max(1, Math.floor(configured))
       : 2;
   }
 
   private cooldownMs(): number {
-    const configured = Number(this.configService.get<string>('GEMINI_429_COOLDOWN_MS'));
+    const configured = Number(
+      this.configService.get<string>("GEMINI_429_COOLDOWN_MS"),
+    );
     return Number.isFinite(configured) && configured >= 1_000
       ? configured
       : 60_000;
@@ -233,7 +257,7 @@ export class GeminiProvider implements LLMProvider {
       status: 429,
       retryAfterMs: remainingMs,
       providerRequestSent: false,
-      code: 'AI_PROVIDER_COOLDOWN',
+      code: "AI_PROVIDER_COOLDOWN",
     });
     throw error;
   }
@@ -251,7 +275,7 @@ export class GeminiProvider implements LLMProvider {
   }
 
   public async *stream(
-    options: LLMRequestOptions
+    options: LLMRequestOptions,
   ): AsyncIterable<LLMStreamChunk> {
     const apiKey = this.getApiKey();
     const model = options.model || "gemini-3.1-flash-lite";
@@ -282,18 +306,20 @@ export class GeminiProvider implements LLMProvider {
       {
         method: "POST",
         headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
-      },
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey,
+        },
         body: JSON.stringify({
           contents: [{ parts: [{ text: options.userPrompt }] }],
         }),
         signal: options.abortSignal,
-      }
+      },
     );
 
     if (!response.ok || !response.body) {
-      throw new Error(`Gemini Stream Error (${response.status}): ${await response.text()}`);
+      throw new Error(
+        `Gemini Stream Error (${response.status}): ${await response.text()}`,
+      );
     }
 
     const reader = response.body.getReader();
@@ -315,7 +341,9 @@ export class GeminiProvider implements LLMProvider {
   }
 
   public embedding(text: string): Promise<number[]> {
-    return Promise.resolve(new Array(768).fill(0).map((_, i) => Math.sin(i * text.length)));
+    return Promise.resolve(
+      new Array(768).fill(0).map((_, i) => Math.sin(i * text.length)),
+    );
   }
 
   public countTokens(text: string): Promise<number> {
@@ -349,22 +377,114 @@ export class GeminiProvider implements LLMProvider {
     });
   }
 
-  public listModels(): Promise<LLMModelInfo[]> {
-    return Promise.resolve(this.modelRegistry.getModelsByProvider(this.providerType));
+  public async listModels(): Promise<LLMModelInfo[]> {
+    const apiKey = this.getApiKey();
+    if (!apiKey)
+      return this.modelRegistry.getModelsByProvider(this.providerType);
+    if (this.discoveredModels && this.discoveredModels.expiresAt > Date.now()) {
+      return this.discoveredModels.models;
+    }
+    if (this.modelDiscoveryPromise) return this.modelDiscoveryPromise;
+
+    this.modelDiscoveryPromise = this.discoverModels(apiKey);
+    try {
+      return await this.modelDiscoveryPromise;
+    } finally {
+      this.modelDiscoveryPromise = undefined;
+    }
+  }
+
+  private async discoverModels(apiKey: string): Promise<LLMModelInfo[]> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5_000);
+    try {
+      const response = await fetch(
+        `${this.getBaseUrl()}/models?key=${apiKey}`,
+        {
+          headers: { "x-goog-api-key": apiKey },
+          signal: controller.signal,
+        },
+      );
+      if (!response.ok)
+        throw new Error(`Gemini model discovery failed (${response.status})`);
+      const payload = (await response.json()) as {
+        models?: Array<{
+          name?: string;
+          displayName?: string;
+          inputTokenLimit?: number;
+          outputTokenLimit?: number;
+          supportedGenerationMethods?: string[];
+        }>;
+      };
+      const models = (payload.models ?? [])
+        .filter((model) =>
+          model.supportedGenerationMethods?.includes("generateContent"),
+        )
+        .map((model): LLMModelInfo => {
+          const name = String(model.name ?? "").replace(/^models\//, "");
+          const known = this.modelRegistry.getModel(name);
+          const info: LLMModelInfo = {
+            name,
+            displayName: model.displayName ?? String(model.name ?? ""),
+            provider: "GEMINI",
+            contextWindow: model.inputTokenLimit ?? 0,
+            maxOutput: model.outputTokenLimit ?? 0,
+            supportsTools: true,
+            supportsVision: true,
+            supportsStreaming: true,
+            supportsJSON: true,
+            // Unknown models use conservative Pro-tier prices until explicit
+            // pricing metadata is registered, so budget accounting fails safe.
+            inputCostPer1k: known?.inputCostPer1k ?? 0.00125,
+            outputCostPer1k: known?.outputCostPer1k ?? 0.005,
+          };
+          if (name) this.modelRegistry.registerModel(info);
+          return info;
+        })
+        .filter((model) => model.name.length > 0);
+      if (models.length === 0)
+        throw new Error(
+          "Gemini model discovery returned no generateContent models",
+        );
+      this.discoveredModels = {
+        models,
+        expiresAt: Date.now() + 60 * 60 * 1000,
+      };
+      return models;
+    } catch (error) {
+      this.logger.warn(
+        `Unable to discover Gemini models; using registry fallback: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      const models = this.modelRegistry.getModelsByProvider(this.providerType);
+      this.discoveredModels = {
+        models,
+        expiresAt: Date.now() + 60 * 1000,
+      };
+      return models;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   private generateMockResponse(
     options: LLMRequestOptions,
-    startTime: number
+    startTime: number,
   ): LLMResponse {
     const model = options.model || "gemini-3.1-flash-lite";
-    const text = options.responseFormat === "json" || options.jsonSchema
-      ? JSON.stringify({ status: "success", mockResult: `Gemini response for: ${options.userPrompt}` })
-      : `[Gemini ${model} Mock Response]: Analyzed prompt: "${options.userPrompt.slice(0, 100)}"`;
+    const text =
+      options.responseFormat === "json" || options.jsonSchema
+        ? JSON.stringify({
+            status: "success",
+            mockResult: `Gemini response for: ${options.userPrompt}`,
+          })
+        : `[Gemini ${model} Mock Response]: Analyzed prompt: "${options.userPrompt.slice(0, 100)}"`;
 
     let json: Record<string, unknown> | null = null;
     if (options.responseFormat === "json" || options.jsonSchema) {
-      json = { status: "success", mockResult: `Gemini response for: ${options.userPrompt}` };
+      json = {
+        status: "success",
+        mockResult: `Gemini response for: ${options.userPrompt}`,
+      };
     }
 
     const promptTokens = Math.ceil(options.userPrompt.length / 4) + 8;
