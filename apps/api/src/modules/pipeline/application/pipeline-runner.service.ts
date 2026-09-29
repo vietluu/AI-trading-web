@@ -1,12 +1,19 @@
-import { applyThesisReview, validateTradeThesis, calculateThesisNetR } from '../../agents/domain/trade-thesis-validator';
-import { anticipatoryDecisionContext } from '../../agents/domain/analysis/anticipatory-decision-context';
-import { buildScenarioBlueprint } from '../../agents/domain/analysis/scenario-planning-engine';
-import { composeEvidenceSize } from '../domain/evidence-gate';
-import type { ProactiveExecutionContext } from '../../risk/domain/trade-plan-engine';
-import { ThesisReviewSchema, type TradeThesis } from '@platform/shared';
+import {
+  applyThesisReview,
+  validateTradeThesis,
+  calculateThesisNetR,
+} from "../../agents/domain/trade-thesis-validator";
+import { anticipatoryDecisionContext } from "../../agents/domain/analysis/anticipatory-decision-context";
+import { buildScenarioBlueprint } from "../../agents/domain/analysis/scenario-planning-engine";
+import { composeEvidenceSize } from "../domain/evidence-gate";
+import type { ProactiveExecutionContext } from "../../risk/domain/trade-plan-engine";
+import { ThesisReviewSchema, type TradeThesis } from "@platform/shared";
 import { Injectable, Logger, Optional, Inject } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { ExchangeInterval, ExchangeProvider } from "../../../exchange/domain/exchange.types";
+import {
+  ExchangeInterval,
+  ExchangeProvider,
+} from "../../../exchange/domain/exchange.types";
 import {
   FusionRunInputSchema,
   type FusionInput,
@@ -17,7 +24,7 @@ import { AgentInvocationSource } from "../../agents/domain/enums";
 import { FusionService } from "../../agents/application/services/fusion.service";
 import { DecisionService } from "../../agents/application/services/decision.service";
 import { PipelineRepository } from "../infrastructure/pipeline.repository";
-import { ProactiveLifecycleRepository } from '../infrastructure/proactive-lifecycle.repository';
+import { ProactiveLifecycleRepository } from "../infrastructure/proactive-lifecycle.repository";
 import { PipelineCancellationService } from "../infrastructure/pipeline-cancellation.service";
 import { SignalFilterService } from "./signal-filter.service";
 import { PipelineAlertService } from "./pipeline-alert.service";
@@ -32,12 +39,15 @@ import {
   selectStrategyDecision,
 } from "../../portfolio/domain/strategy-decision";
 import { MarketDataService } from "../../../market-data/application/market-data.service";
-import { buildPinnedCoreAnalysis } from '../domain/pinned-core-analysis';
-import { IndicatorStatus } from '../../../market-data/domain/market-data.enums';
+import { buildPinnedCoreAnalysis } from "../domain/pinned-core-analysis";
+import { IndicatorStatus } from "../../../market-data/domain/market-data.enums";
 import { RedisService } from "../../../redis/redis.service";
 import { DecisionJudgeService } from "./decision-judge.service";
 import { QuantExecutionPolicyService } from "./quant-execution-policy.service";
-import { preferredTradePlanAtr, timeframeMilliseconds } from "../domain/adaptive-trading-policy";
+import {
+  preferredTradePlanAtr,
+  timeframeMilliseconds,
+} from "../domain/adaptive-trading-policy";
 import { SettingsService } from "../../../settings/settings.service";
 import {
   analyzeMultiTimeframe,
@@ -64,8 +74,8 @@ import {
 } from "../../agents/application/services/trade-researcher.service";
 import { ChainOfThoughtReflectionService } from "../../agents/application/services/chain-of-thought-reflection.service";
 import { AnticipatorySnapshotService } from "../../agents/application/services/anticipatory-snapshot.service";
-import { SelfLearningService } from '../../reflection/application/self-learning.service';
-import type { ProfitAuthorityResult } from '../../reflection/domain/thesis-cohort';
+import { SelfLearningService } from "../../reflection/application/self-learning.service";
+import type { ProfitAuthorityResult } from "../../reflection/domain/thesis-cohort";
 import {
   selectBlockingGate,
   type GateDecisionRecord,
@@ -74,7 +84,7 @@ import {
 } from "../domain/gate-decision";
 import { evaluateExecutionReadiness } from "../domain/execution-readiness";
 import { buildEvaluationKey } from "../domain/evaluation-identity";
-import type { NewsProbeAuthorityInput } from '../../agents/domain/news-probe-authority';
+import type { NewsProbeAuthorityInput } from "../../agents/domain/news-probe-authority";
 
 class PipelineCancelledError extends Error {}
 class PipelineExecutionLockBusyError extends Error {}
@@ -100,22 +110,31 @@ function newsProbeAuthorityFromPipelineEvidence(input: {
   anticipatorySnapshot?: AnticipatoryMarketSnapshot;
 }): NewsProbeAuthorityInput | undefined {
   const news = input.analyses.news;
-  if (!news || news.impact.direction === 'NEUTRAL') return undefined;
+  if (!news || news.impact.direction === "NEUTRAL") return undefined;
   // The runner overwrites this item from a single qualifying tool article in
   // every mode. Model/legacy timestamps and aggregate scores have no authority.
   const evidence = news.probeEvidence;
-  if (!evidence || evidence.direction !== news.impact.direction) return undefined;
-  const confidence = news.dataQuality === 'GOOD' ? 90 : news.dataQuality === 'PARTIAL' ? 70 : 0;
+  if (!evidence || evidence.direction !== news.impact.direction)
+    return undefined;
+  const confidence =
+    news.dataQuality === "GOOD" ? 90 : news.dataQuality === "PARTIAL" ? 70 : 0;
   const snapshot = input.anticipatorySnapshot;
-  const derivatives = snapshot?.derivatives.coverage === 'AVAILABLE'
-    ? snapshot.derivatives
-    : undefined;
-  const participation = snapshot?.participation.coverage === 'AVAILABLE'
-    ? snapshot.participation
-    : undefined;
-  const volumeChangePercent = finiteNumber(input.indicatorSnapshot?.values?.volumeChangePercent);
-  const volumeRatio = participation?.volumeRatio ??
-    (volumeChangePercent === undefined ? undefined : 1 + volumeChangePercent / 100);
+  const derivatives =
+    snapshot?.derivatives.coverage === "AVAILABLE"
+      ? snapshot.derivatives
+      : undefined;
+  const participation =
+    snapshot?.participation.coverage === "AVAILABLE"
+      ? snapshot.participation
+      : undefined;
+  const volumeChangePercent = finiteNumber(
+    input.indicatorSnapshot?.values?.volumeChangePercent,
+  );
+  const volumeRatio =
+    participation?.volumeRatio ??
+    (volumeChangePercent === undefined
+      ? undefined
+      : 1 + volumeChangePercent / 100);
   const liquidation = derivatives?.liquidationContext;
 
   return {
@@ -129,23 +148,31 @@ function newsProbeAuthorityFromPipelineEvidence(input: {
       publishedAt: evidence.publishedAt,
     },
     causality: {
-      priceChangePercent: finiteNumber(input.indicatorSnapshot?.values?.priceChangePercent),
+      priceChangePercent: finiteNumber(
+        input.indicatorSnapshot?.values?.priceChangePercent,
+      ),
       volumeRatio,
       deltaOiPercent: derivatives?.openInterestChangePct,
-      fundingRate: derivatives?.fundingRate ?? finiteNumber(input.analyses.market?.derivatives?.fundingRate),
-      liquidationEvidence: liquidation?.coverage === 'AVAILABLE' &&
+      fundingRate:
+        derivatives?.fundingRate ??
+        finiteNumber(input.analyses.market?.derivatives?.fundingRate),
+      liquidationEvidence:
+        liquidation?.coverage === "AVAILABLE" &&
         liquidation.longLiquidations + liquidation.shortLiquidations > 0,
     },
   };
 }
 
-function marketDislocationFromParams(value: unknown): {
-  direction: "BULLISH" | "BEARISH";
-  confirmationCount: number;
-  indicatorCloseTime: string;
-  reasons: string[];
-} | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+function marketDislocationFromParams(value: unknown):
+  | {
+      direction: "BULLISH" | "BEARISH";
+      confirmationCount: number;
+      indicatorCloseTime: string;
+      reasons: string[];
+    }
+  | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return undefined;
   const event = value as Record<string, unknown>;
   if (
     (event.direction !== "BULLISH" && event.direction !== "BEARISH") ||
@@ -153,7 +180,8 @@ function marketDislocationFromParams(value: unknown): {
     typeof event.indicatorCloseTime !== "string" ||
     !Array.isArray(event.reasons) ||
     !event.reasons.every((reason) => typeof reason === "string")
-  ) return undefined;
+  )
+    return undefined;
   return {
     direction: event.direction,
     confirmationCount: Number(event.confirmationCount),
@@ -173,9 +201,14 @@ function gateRecord(
   disposition: GateDisposition,
   reasonCodes: Array<string | undefined>,
 ): GateDecisionRecord {
-  const uniqueReasonCodes = [...new Set(reasonCodes.filter(
-    (reason): reason is string => typeof reason === "string" && reason.length > 0,
-  ))];
+  const uniqueReasonCodes = [
+    ...new Set(
+      reasonCodes.filter(
+        (reason): reason is string =>
+          typeof reason === "string" && reason.length > 0,
+      ),
+    ),
+  ];
   return {
     stage,
     disposition,
@@ -207,24 +240,34 @@ export class PipelineRunnerService {
     @Optional() private readonly settings?: SettingsService,
     @Optional() private readonly quantPolicy?: QuantExecutionPolicyService,
     @Optional() private readonly portfolio?: PortfolioService,
-    @Optional() private readonly confluenceCollector?: ConfluenceCollectorService,
-    @Optional() @Inject(TradeResearcherService) private readonly tradeResearcher?: TradeResearcherService,
-    @Optional() @Inject(ChainOfThoughtReflectionService) private readonly critic?: ChainOfThoughtReflectionService,
-    @Optional() @Inject(AnticipatorySnapshotService) private readonly anticipatorySnapshot?: AnticipatorySnapshotService,
+    @Optional()
+    private readonly confluenceCollector?: ConfluenceCollectorService,
+    @Optional()
+    @Inject(TradeResearcherService)
+    private readonly tradeResearcher?: TradeResearcherService,
+    @Optional()
+    @Inject(ChainOfThoughtReflectionService)
+    private readonly critic?: ChainOfThoughtReflectionService,
+    @Optional()
+    @Inject(AnticipatorySnapshotService)
+    private readonly anticipatorySnapshot?: AnticipatorySnapshotService,
     @Optional() private readonly selfLearning?: SelfLearningService,
   ) {}
 
   async run(
     job: PipelineJob,
   ): Promise<{ outcome: string; reason?: string } | undefined> {
-    if (job.pipelineId === 'proactive-thesis') {
-      const claim = await this.repository.claimProactiveThesisExecution(String(job.runId), new Date());
-      if (claim.count === 0) return { outcome: 'DUPLICATE' };
+    if (job.pipelineId === "proactive-thesis") {
+      const claim = await this.repository.claimProactiveThesisExecution(
+        String(job.runId),
+        new Date(),
+      );
+      if (claim.count === 0) return { outcome: "DUPLICATE" };
     }
     const definition = resolvePipelineDefinition(job.pipelineId);
-    
+
     // Only the declared release modes can enter the proactive pipeline.
-    const proactiveMode = process.env.PROACTIVE_AI_MODE ?? "OBSERVE";
+    let proactiveMode = process.env.PROACTIVE_AI_MODE ?? "OBSERVE";
     if (job.pipelineId === "proactive-thesis") {
       if (!["OBSERVE", "SHADOW", "DEMO"].includes(proactiveMode)) {
         const completedAt = new Date();
@@ -239,23 +282,6 @@ export class PipelineRunnerService {
           completedAt,
         );
         return { outcome: "SKIPPED", reason: "PROACTIVE_AI_MODE_INVALID" };
-      }
-      if (proactiveMode === "DEMO") {
-        const demoVerified = await this.liveTrading.hasVerifiedDemoConnection(job.userId);
-        if (!demoVerified) {
-          const completedAt = new Date();
-          await this.finalizeEarlyTerminalRun(
-            String(job.runId),
-            {
-              status: "SKIPPED",
-              decision: "WAIT",
-              skippedReason: "NO_ELIGIBLE_EXCHANGE_CONNECTION",
-            },
-            "NO_ELIGIBLE_EXCHANGE_CONNECTION",
-            completedAt,
-          );
-          throw new Error("NO_ELIGIBLE_EXCHANGE_CONNECTION: DEMO requires verified demo connection.");
-        }
       }
     }
     if (!definition?.enabled) {
@@ -279,8 +305,11 @@ export class PipelineRunnerService {
     let evaluatedResult: Record<string, unknown> | undefined;
     let riskStageReached = false;
     let executionStageReached = false;
-    let riskAssessment: Awaited<ReturnType<LiveTradingService["assessPipelineDecision"]>> | undefined;
-    let liveExecution: Awaited<ReturnType<LiveTradingService["executePipeline"]>> | undefined;
+    let riskAssessment:
+      | Awaited<ReturnType<LiveTradingService["assessPipelineDecision"]>>
+      | undefined;
+    let liveExecution:
+      Awaited<ReturnType<LiveTradingService["executePipeline"]>> | undefined;
     await this.repository.updateRun(runId, {
       status: "RUNNING",
       startedAt,
@@ -291,7 +320,9 @@ export class PipelineRunnerService {
     try {
       await this.assertNotCancelled(runId);
       const requestedStrategyKeys = Array.isArray(job.params?.strategyIds)
-        ? job.params.strategyIds.filter((item): item is string => typeof item === "string")
+        ? job.params.strategyIds.filter(
+            (item): item is string => typeof item === "string",
+          )
         : typeof job.params?.strategyId === "string"
           ? [job.params.strategyId]
           : ["ai-core"];
@@ -300,11 +331,24 @@ export class PipelineRunnerService {
         requestedStrategyKeys,
         [symbol],
       );
-      const eligibleStrategyKeys = await this.repository.activeStrategyKeys(
+      let eligibleStrategyKeys = await this.repository.activeStrategyKeys(
         job.userId,
         requestedStrategyKeys,
       );
-      if (!eligibleStrategyKeys.length) {
+      const proactiveCoreDisabled =
+        job.pipelineId === "proactive-thesis" &&
+        !eligibleStrategyKeys.includes("ai-core");
+      if (proactiveCoreDisabled) {
+        proactiveMode = "SHADOW";
+        eligibleStrategyKeys = ["ai-core"];
+        this.logger.warn({
+          event: "proactive_strategy_shadow_downgrade",
+          runId,
+          userId: job.userId,
+          symbol,
+          requestedStrategyKeys,
+        });
+      } else if (!eligibleStrategyKeys.length) {
         const completedAt = new Date();
         await this.finalizeEarlyTerminalRun(
           runId,
@@ -322,13 +366,34 @@ export class PipelineRunnerService {
           completedAt,
         );
         this.logger.warn({
-          event: "pipeline_no_active_strategy",
-          runId,
-          userId: job.userId,
-          symbol,
-          requestedStrategyKeys,
-        });
-        return;
+            event: "pipeline_no_active_strategy",
+            runId,
+            userId: job.userId,
+            symbol,
+            requestedStrategyKeys,
+          });
+          return;
+      }
+      if (job.pipelineId === "proactive-thesis" && proactiveMode === "DEMO") {
+        const demoVerified = await this.liveTrading.hasVerifiedDemoConnection(
+          job.userId,
+        );
+        if (!demoVerified) {
+          const completedAt = new Date();
+          await this.finalizeEarlyTerminalRun(
+            runId,
+            {
+              status: "SKIPPED",
+              decision: "WAIT",
+              skippedReason: "NO_ELIGIBLE_EXCHANGE_CONNECTION",
+            },
+            "NO_ELIGIBLE_EXCHANGE_CONNECTION",
+            completedAt,
+          );
+          throw new Error(
+            "NO_ELIGIBLE_EXCHANGE_CONNECTION: DEMO requires verified demo connection.",
+          );
+        }
       }
       let analyses: FusionInput;
       let fusionOutput: FusionOutput;
@@ -340,11 +405,13 @@ export class PipelineRunnerService {
             .catch(() => [] as string[])
         : [];
       const timeframeSelection = selectPipelineTimeframes(
-        typeof job.params?.interval === 'string' ? job.params.interval : undefined,
+        typeof job.params?.interval === "string"
+          ? job.params.interval
+          : undefined,
         preferredTimeframes,
-        typeof definition.defaultParams.interval === 'string'
+        typeof definition.defaultParams.interval === "string"
           ? definition.defaultParams.interval
-          : '15m',
+          : "15m",
       );
       const interval = timeframeSelection.primary;
       const timeframeMarketData = await Promise.all(
@@ -352,34 +419,64 @@ export class PipelineRunnerService {
           try {
             // Refresh candles before reading indicators: parallel reads could
             // capture the old cache while the candle read builds a new bucket.
-            const chronologicalCandles = await this.marketData.getHistoricalCandles({
+            const chronologicalCandles =
+              await this.marketData.getHistoricalCandles({
                 provider: job.provider as unknown as ExchangeProvider,
                 symbol,
                 interval: timeframe as ExchangeInterval,
                 limit: 250,
               });
             const snapshot = await this.marketData.getIndicatorSnapshot(
-                job.provider as unknown as ExchangeProvider, symbol, timeframe as ExchangeInterval);
-            const referenceCandle = chronologicalCandles.filter(candle =>
-              candle.isClosed !== false && new Date(candle.closeTime).getTime() === new Date(snapshot?.candleCloseTime ?? 0).getTime()).at(-1);
-            return { timeframe, snapshot, candles: [...chronologicalCandles].reverse(), referenceCandle };
+              job.provider as unknown as ExchangeProvider,
+              symbol,
+              timeframe as ExchangeInterval,
+            );
+            const referenceCandle = chronologicalCandles
+              .filter(
+                (candle) =>
+                  candle.isClosed !== false &&
+                  new Date(candle.closeTime).getTime() ===
+                    new Date(snapshot?.candleCloseTime ?? 0).getTime(),
+              )
+              .at(-1);
+            return {
+              timeframe,
+              snapshot,
+              candles: [...chronologicalCandles].reverse(),
+              referenceCandle,
+            };
           } catch (error) {
             this.logger.warn({
-              event: 'pipeline_timeframe_data_unavailable',
+              event: "pipeline_timeframe_data_unavailable",
               runId,
               symbol,
               timeframe,
-              message: error instanceof Error ? error.message : 'Unknown market-data error',
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Unknown market-data error",
             });
-            return { timeframe, snapshot: undefined, candles: [], referenceCandle: undefined };
+            return {
+              timeframe,
+              snapshot: undefined,
+              candles: [],
+              referenceCandle: undefined,
+            };
           }
         }),
       );
-      const primaryMarketData = timeframeMarketData.find((item) => item.timeframe === interval)!;
+      const primaryMarketData = timeframeMarketData.find(
+        (item) => item.timeframe === interval,
+      )!;
       const indicatorSnapshot = primaryMarketData.snapshot;
       const recentCandles = primaryMarketData.candles;
-      const pinnedCore = buildPinnedCoreAnalysis(indicatorSnapshot, recentCandles);
-      const lastPrice = primaryMarketData.referenceCandle ? Number(primaryMarketData.referenceCandle.close) : undefined;
+      const pinnedCore = buildPinnedCoreAnalysis(
+        indicatorSnapshot,
+        recentCandles,
+      );
+      const lastPrice = primaryMarketData.referenceCandle
+        ? Number(primaryMarketData.referenceCandle.close)
+        : undefined;
       const nowMs = Date.now();
       const staleTimeframes = timeframeMarketData
         .filter((item) => {
@@ -412,27 +509,36 @@ export class PipelineRunnerService {
       const multiTimeframe = analyzeMultiTimeframe(
         interval,
         timeframeMarketData
-          .filter((item) => !staleTimeframeSet.has(item.timeframe) &&
-            item.referenceCandle?.isClosed === true && item.snapshot?.status === IndicatorStatus.CLOSED &&
-            new Date(item.referenceCandle.closeTime).getTime() <= new Date(indicatorSnapshot?.candleCloseTime ?? 0).getTime())
+          .filter(
+            (item) =>
+              !staleTimeframeSet.has(item.timeframe) &&
+              item.referenceCandle?.isClosed === true &&
+              item.snapshot?.status === IndicatorStatus.CLOSED &&
+              new Date(item.referenceCandle.closeTime).getTime() <=
+                new Date(indicatorSnapshot?.candleCloseTime ?? 0).getTime(),
+          )
           .map((item) => ({
             timeframe: item.timeframe,
-            close: item.referenceCandle ? Number(item.referenceCandle.close) : undefined,
+            close: item.referenceCandle
+              ? Number(item.referenceCandle.close)
+              : undefined,
             ema20: Number(item.snapshot?.values.ema20),
             ema50: Number(item.snapshot?.values.ema50),
             rsi: Number(item.snapshot?.values.rsi14),
             isClosed: item.referenceCandle?.isClosed,
           })),
       );
-      const closedCandleEvidence = pinnedCore ? { ...pinnedCore.executionEvidence, multiTimeframe } : undefined;
+      const closedCandleEvidence = pinnedCore
+        ? { ...pinnedCore.executionEvidence, multiTimeframe }
+        : undefined;
 
       // Only reject if the primary execution timeframe itself is stale.
       // Secondary/optional timeframes are excluded above for graceful degradation.
       if (staleTimeframeSet.has(interval)) {
         const completedAt = new Date();
-        const reason = `STALE_MARKET_DATA:${staleTimeframes.join(',')}`;
+        const reason = `STALE_MARKET_DATA:${staleTimeframes.join(",")}`;
         this.logger.warn({
-          event: 'pipeline_stale_market_data_rejected',
+          event: "pipeline_stale_market_data_rejected",
           runId,
           symbol,
           interval,
@@ -441,19 +547,20 @@ export class PipelineRunnerService {
         await this.finalizeEarlyTerminalRun(
           runId,
           {
-            status: 'COMPLETED',
+            status: "COMPLETED",
             durationMs: completedAt.getTime() - startedAt.getTime(),
-            decision: 'WAIT',
+            decision: "WAIT",
             confidence: 0,
-            dataQuality: 'INSUFFICIENT',
+            dataQuality: "INSUFFICIENT",
             timeframe: String(interval),
             skippedReason: reason,
             result: {
-              decision: 'WAIT',
+              decision: "WAIT",
               reason,
               actionable: false,
               staleTimeframes,
-              multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue,
+              multiTimeframe:
+                multiTimeframe as unknown as Prisma.InputJsonValue,
             },
           },
           reason,
@@ -463,7 +570,7 @@ export class PipelineRunnerService {
       }
       if (staleTimeframes.length > 0) {
         this.logger.warn({
-          event: 'pipeline_optional_timeframe_data_ignored',
+          event: "pipeline_optional_timeframe_data_ignored",
           runId,
           symbol,
           interval,
@@ -478,7 +585,9 @@ export class PipelineRunnerService {
         timeframe: String(interval),
         rsi: Number(indicatorSnapshot?.values.rsi14),
         atr: Number(indicatorSnapshot?.values.atr14),
-        volumeChangePercent: Number(indicatorSnapshot?.values.volumeChangePercent),
+        volumeChangePercent: Number(
+          indicatorSnapshot?.values.volumeChangePercent,
+        ),
         ema20: Number(indicatorSnapshot?.values.ema20),
         ema50: Number(indicatorSnapshot?.values.ema50),
         ema200: Number(indicatorSnapshot?.values.ema200),
@@ -498,16 +607,18 @@ export class PipelineRunnerService {
           runId,
           symbol,
           exchange: String(job.provider),
-          timeframe: String(job.params?.interval ?? definition.defaultParams.interval),
-          stageName: 'signal-filter',
+          timeframe: String(
+            job.params?.interval ?? definition.defaultParams.interval,
+          ),
+          stageName: "signal-filter",
           inputSummary: `rsi=${Number(indicatorSnapshot?.values.rsi14)}, atr=${Number(indicatorSnapshot?.values.atr14)}`,
-          outputSummary: signalFilter.reason ?? 'signal-filter rejected',
+          outputSummary: signalFilter.reason ?? "signal-filter rejected",
           confidence: 0,
           opportunityScore: 0,
           riskScore: 0,
-          decision: 'WAIT',
+          decision: "WAIT",
           rejectReason: signalFilter.reason,
-          executionResult: 'REJECTED',
+          executionResult: "REJECTED",
           durationMs: completedAt.getTime() - startedAt.getTime(),
           tokenUsage: 0,
           apiCost: 0,
@@ -527,8 +638,12 @@ export class PipelineRunnerService {
               decision: "WAIT",
               reason: signalFilter.reason,
               actionable: false,
-              signalFilter: { allowed: signalFilter.allowed, reason: signalFilter.reason },
-              multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue,
+              signalFilter: {
+                allowed: signalFilter.allowed,
+                reason: signalFilter.reason,
+              },
+              multiTimeframe:
+                multiTimeframe as unknown as Prisma.InputJsonValue,
             },
           },
           signalFilter.reason ?? "SIGNAL_FILTER_BLOCKED",
@@ -601,41 +716,80 @@ export class PipelineRunnerService {
       let synthesizedOutput: DecisionOutput;
       let proactiveThesis: TradeThesis | undefined;
       let proactive: ProactiveExecutionContext | undefined;
-      let lifecycleAuthority: Pick<ProfitAuthorityResult, 'action' | 'sizeFactor' | 'reason'> | undefined;
+      let lifecycleAuthority:
+        | Pick<ProfitAuthorityResult, "action" | "sizeFactor" | "reason">
+        | undefined;
       let criticSizeFactor = 1;
-      
-      if (job.pipelineId === 'proactive-thesis' && this.tradeResearcher && this.critic && this.anticipatorySnapshot) {
-        const opportunityId = typeof job.params?.opportunityId === 'string'
-          ? job.params.opportunityId.trim()
-          : '';
-        const opportunitySnapshotId = typeof job.params?.snapshotId === 'string'
-          ? job.params.snapshotId.trim()
-          : '';
-        const opportunityCutoff = typeof job.params?.sourceDataCutoff === 'string'
-          ? new Date(job.params.sourceDataCutoff)
-          : new Date(Number.NaN);
-        if (!opportunityId || !opportunitySnapshotId || Number.isNaN(opportunityCutoff.getTime())) {
+
+      if (
+        job.pipelineId === "proactive-thesis" &&
+        this.tradeResearcher &&
+        this.critic &&
+        this.anticipatorySnapshot
+      ) {
+        const opportunityId =
+          typeof job.params?.opportunityId === "string"
+            ? job.params.opportunityId.trim()
+            : "";
+        const opportunitySnapshotId =
+          typeof job.params?.snapshotId === "string"
+            ? job.params.snapshotId.trim()
+            : "";
+        const opportunityCutoff =
+          typeof job.params?.sourceDataCutoff === "string"
+            ? new Date(job.params.sourceDataCutoff)
+            : new Date(Number.NaN);
+        if (
+          !opportunityId ||
+          !opportunitySnapshotId ||
+          Number.isNaN(opportunityCutoff.getTime())
+        ) {
           const completedAt = new Date();
           await this.finalizeEarlyTerminalRun(
             runId,
-            { status: 'SKIPPED', decision: 'WAIT', skippedReason: 'PROACTIVE_OPPORTUNITY_REQUIRED' },
-            'PROACTIVE_OPPORTUNITY_REQUIRED',
+            {
+              status: "SKIPPED",
+              decision: "WAIT",
+              skippedReason: "PROACTIVE_OPPORTUNITY_REQUIRED",
+            },
+            "PROACTIVE_OPPORTUNITY_REQUIRED",
             completedAt,
           );
-          return { outcome: 'SKIPPED', reason: 'PROACTIVE_OPPORTUNITY_REQUIRED' };
+          return {
+            outcome: "SKIPPED",
+            reason: "PROACTIVE_OPPORTUNITY_REQUIRED",
+          };
         }
-        const executionEvidence = await this.liveTrading.proactiveExecutionEvidence(job.userId, job.provider as ExchangeProvider, symbol);
+        const executionEvidence =
+          await this.liveTrading.proactiveExecutionEvidence(
+            job.userId,
+            job.provider as ExchangeProvider,
+            symbol,
+          );
         const snapshot = await this.anticipatorySnapshot.build({
           userId: job.userId,
           symbol,
           provider: job.provider as ExchangeProvider,
           timeframe: String(interval) as ExchangeInterval,
-          sourceDataCutoff: opportunityCutoff, execution: executionEvidence,
+          sourceDataCutoff: opportunityCutoff,
+          execution: executionEvidence,
         });
         const context: TradeResearcherContext = {
           userId: job.userId,
-          configHash: createHash('sha256').update(JSON.stringify({ params: job.params, mode: proactiveMode, schemaVersion: snapshot.schemaVersion, calculationVersion: snapshot.calculationVersion, researcherPrompt: 1, criticPrompt: 1 })).digest('hex'),
-          parentSnapshotId: runId, promptVersion: 1,
+          configHash: createHash("sha256")
+            .update(
+              JSON.stringify({
+                params: job.params,
+                mode: proactiveMode,
+                schemaVersion: snapshot.schemaVersion,
+                calculationVersion: snapshot.calculationVersion,
+                researcherPrompt: 1,
+                criticPrompt: 1,
+              }),
+            )
+            .digest("hex"),
+          parentSnapshotId: runId,
+          promptVersion: 1,
         };
         const research = await this.tradeResearcher.research(snapshot, context);
         const persistedThesis = await this.proactiveLifecycle.persistThesis({
@@ -650,33 +804,73 @@ export class PipelineRunnerService {
           promptVersion: context.promptVersion,
         });
         const features = anticipatoryDecisionContext(snapshot);
-        const baseline = await this.decision.decideForUser({ symbol, fusionOutput, ...analyses }, job.userId, {
-          pipelineRunId: runId, provider: job.provider, timeframe: String(interval), referencePrice: lastPrice,
-          anticipatorySnapshot: snapshot,
-          closedCandleEvidence,
-          newsProbeAuthority: newsProbeAuthorityFromPipelineEvidence({
-            analyses,
-            indicatorSnapshot,
+        const baseline = await this.decision.decideForUser(
+          { symbol, fusionOutput, ...analyses },
+          job.userId,
+          {
+            pipelineRunId: runId,
+            provider: job.provider,
+            timeframe: String(interval),
+            referencePrice: lastPrice,
             anticipatorySnapshot: snapshot,
-          }),
-        });
-        if (baseline.decision === 'WAIT') {
-          const reason = baseline.overrides.find((override) => override.startsWith('NEWS_')) ?? 'BASELINE_DECISION_WAIT';
+            closedCandleEvidence,
+            newsProbeAuthority: newsProbeAuthorityFromPipelineEvidence({
+              analyses,
+              indicatorSnapshot,
+              anticipatorySnapshot: snapshot,
+            }),
+          },
+        );
+        if (baseline.decision === "WAIT") {
+          const reason =
+            baseline.overrides.find((override) =>
+              override.startsWith("NEWS_"),
+            ) ?? "BASELINE_DECISION_WAIT";
           const completedAt = new Date();
-          await this.finishStep(runId, 'decision', { baseline, reason }, completedAt);
+          await this.finishStep(
+            runId,
+            "decision",
+            { baseline, reason },
+            completedAt,
+          );
           await this.finalizeEarlyTerminalRun(
             runId,
-            { status: 'SKIPPED', decision: 'WAIT', skippedReason: reason },
+            { status: "SKIPPED", decision: "WAIT", skippedReason: reason },
             reason,
             completedAt,
           );
-          return { outcome: 'SKIPPED', reason };
+          return { outcome: "SKIPPED", reason };
         }
-        const review = ThesisReviewSchema.parse(await this.critic.reflect({ snapshot, thesis: research.preferred,
-          scenarios: baseline.scenarios, cohortEvidence: baseline.confidenceCalibration }, job.userId));
+        const review = ThesisReviewSchema.parse(
+          await this.critic.reflect(
+            {
+              snapshot,
+              thesis: research.preferred,
+              scenarios: baseline.scenarios,
+              cohortEvidence: baseline.confidenceCalibration,
+            },
+            job.userId,
+          ),
+        );
         proactiveThesis = applyThesisReview(research.preferred, review);
-        const validation = validateTradeThesis({ ...proactiveThesis, evidenceAgainst: [...proactiveThesis.evidenceAgainst, ...review.evidenceRefs] }, snapshot, { now: new Date() });
-        await this.tradeResearcher.persistReview({ context, research, review, appliedThesis: proactiveThesis, validation });
+        const validation = validateTradeThesis(
+          {
+            ...proactiveThesis,
+            evidenceAgainst: [
+              ...proactiveThesis.evidenceAgainst,
+              ...review.evidenceRefs,
+            ],
+          },
+          snapshot,
+          { now: new Date() },
+        );
+        await this.tradeResearcher.persistReview({
+          context,
+          research,
+          review,
+          appliedThesis: proactiveThesis,
+          validation,
+        });
         await this.proactiveLifecycle.persistReview({
           thesisId: persistedThesis.thesisId,
           review,
@@ -690,17 +884,26 @@ export class PipelineRunnerService {
           schemaVersion: snapshot.schemaVersion,
           calculationVersion: snapshot.calculationVersion,
         });
-        if (!validation.valid || !['PROBE_READY', 'CONFIRMED'].includes(proactiveThesis.state) || proactiveThesis.direction === 'WAIT') {
-          const reason = validation.reasonCodes[0] ?? 'THESIS_NOT_EXECUTABLE';
+        if (
+          !validation.valid ||
+          !["PROBE_READY", "CONFIRMED"].includes(proactiveThesis.state) ||
+          proactiveThesis.direction === "WAIT"
+        ) {
+          const reason = validation.reasonCodes[0] ?? "THESIS_NOT_EXECUTABLE";
           const completedAt = new Date();
-          await this.finishStep(runId, 'decision', { thesis: proactiveThesis, review, validation }, completedAt);
+          await this.finishStep(
+            runId,
+            "decision",
+            { thesis: proactiveThesis, review, validation },
+            completedAt,
+          );
           await this.finalizeEarlyTerminalRun(
             runId,
-            { status: 'SKIPPED', decision: 'WAIT', skippedReason: reason },
+            { status: "SKIPPED", decision: "WAIT", skippedReason: reason },
             reason,
             completedAt,
           );
-          return { outcome: 'SKIPPED', reason };
+          return { outcome: "SKIPPED", reason };
         }
         await this.proactiveLifecycle.persistExecutionPlan({
           thesisId: persistedThesis.thesisId,
@@ -715,8 +918,10 @@ export class PipelineRunnerService {
           schemaVersion: snapshot.schemaVersion,
           calculationVersion: snapshot.calculationVersion,
         });
-        if (!research.researchRunId) throw new Error('THESIS_AUDIT_PARENT_REQUIRED');
-        criticSizeFactor = review.action === 'REDUCE_SIZE' ? (review.sizeFactor ?? 0) : 1;
+        if (!research.researchRunId)
+          throw new Error("THESIS_AUDIT_PARENT_REQUIRED");
+        criticSizeFactor =
+          review.action === "REDUCE_SIZE" ? (review.sizeFactor ?? 0) : 1;
         lifecycleAuthority = this.selfLearning
           ? await this.selfLearning.evaluateProfitAuthorityForThesis(
               {
@@ -730,46 +935,73 @@ export class PipelineRunnerService {
               { asOf: new Date(snapshot.sourceDataCutoff) },
             )
           : {
-              action: 'PROBE_ONLY',
+              action: "PROBE_ONLY",
               sizeFactor: 0.15,
-              reason: 'LIFECYCLE_AUTHORITY_UNAVAILABLE',
+              reason: "LIFECYCLE_AUTHORITY_UNAVAILABLE",
             };
-        proactive = { thesisId: persistedThesis.thesisId, opportunityId, thesis: proactiveThesis, snapshot,
-          mode: proactiveMode as ProactiveExecutionContext['mode'], sizeFactor: lifecycleAuthority.sizeFactor };
+        proactive = {
+          thesisId: persistedThesis.thesisId,
+          opportunityId,
+          thesis: proactiveThesis,
+          snapshot,
+          mode: proactiveMode as ProactiveExecutionContext["mode"],
+          sizeFactor: lifecycleAuthority.sizeFactor,
+        };
         const netR = calculateThesisNetR(proactiveThesis, snapshot) ?? 0;
         const probability = baseline.expectedWinProbability;
-        const type = proactiveThesis.regime.includes('RANGING') ? 'RANGING' as const
-          : proactiveThesis.regime.includes('VOLATIL') ? 'HIGH_VOLATILITY' as const
-          : proactiveThesis.regime.startsWith('PRE_') ? 'RANGING' as const : baseline.regime.type;
-        synthesizedOutput = { ...baseline,
-          decision: proactiveThesis.direction, decisionSource: proactiveThesis.decisionSource,
-          confidence: proactiveThesis.confidence, regime: { ...baseline.regime, type },
-          expectedReward: netR, expectedLoss: 1, executionCost: 0,
+        const type = proactiveThesis.regime.includes("RANGING")
+          ? ("RANGING" as const)
+          : proactiveThesis.regime.includes("VOLATIL")
+            ? ("HIGH_VOLATILITY" as const)
+            : proactiveThesis.regime.startsWith("PRE_")
+              ? ("RANGING" as const)
+              : baseline.regime.type;
+        synthesizedOutput = {
+          ...baseline,
+          decision: proactiveThesis.direction,
+          decisionSource: proactiveThesis.decisionSource,
+          confidence: proactiveThesis.confidence,
+          regime: { ...baseline.regime, type },
+          expectedReward: netR,
+          expectedLoss: 1,
+          executionCost: 0,
           expectedValue: probability * netR - (1 - probability),
-          profitFactorEstimate: probability * netR / Math.max(0.01, 1 - probability),
+          profitFactorEstimate:
+            (probability * netR) / Math.max(0.01, 1 - probability),
           anticipatorySignals: features.signals,
           reasoning: proactiveThesis.setup,
         };
-        synthesizedOutput.scenarios = buildScenarioBlueprint({ decision: synthesizedOutput.decision, confidence: synthesizedOutput.confidence,
-          regime: synthesizedOutput.regime, currentPrice: features.market.currentPrice, atr: features.market.atr,
-          supportLevel: features.market.support, resistanceLevel: features.market.resistance,
-          hasSfpWick: features.market.liquiditySweep, anticipatorySignals: features.signals });
-      } else {
-        synthesizedOutput = await this.decision.decideForUser({
-          symbol,
-          fusionOutput,
-          ...analyses,
-        }, job.userId, {
-          pipelineRunId: runId,
-          provider: job.provider,
-          timeframe: String(interval),
-          referencePrice: lastPrice,
-          closedCandleEvidence,
-          newsProbeAuthority: newsProbeAuthorityFromPipelineEvidence({
-            analyses,
-            indicatorSnapshot,
-          }),
+        synthesizedOutput.scenarios = buildScenarioBlueprint({
+          decision: synthesizedOutput.decision,
+          confidence: synthesizedOutput.confidence,
+          regime: synthesizedOutput.regime,
+          currentPrice: features.market.currentPrice,
+          atr: features.market.atr,
+          supportLevel: features.market.support,
+          resistanceLevel: features.market.resistance,
+          hasSfpWick: features.market.liquiditySweep,
+          anticipatorySignals: features.signals,
         });
+      } else {
+        synthesizedOutput = await this.decision.decideForUser(
+          {
+            symbol,
+            fusionOutput,
+            ...analyses,
+          },
+          job.userId,
+          {
+            pipelineRunId: runId,
+            provider: job.provider,
+            timeframe: String(interval),
+            referencePrice: lastPrice,
+            closedCandleEvidence,
+            newsProbeAuthority: newsProbeAuthorityFromPipelineEvidence({
+              analyses,
+              indicatorSnapshot,
+            }),
+          },
+        );
       }
       // Existing short-timeframe schedules that already opted into breakout
       // automatically participate in the bounded momentum scalp candidate.
@@ -777,15 +1009,20 @@ export class PipelineRunnerService {
         timeframeMilliseconds(String(interval)) <= 15 * 60_000 &&
         eligibleStrategyKeys.includes("breakout") &&
         !eligibleStrategyKeys.includes("momentum-scalp")
-      ) eligibleStrategyKeys.push("momentum-scalp");
+      )
+        eligibleStrategyKeys.push("momentum-scalp");
       const strategySelection = selectStrategyDecision(
         eligibleStrategyKeys,
         synthesizedOutput,
         analyses,
         {
           timeframe: String(interval),
-          priceChangePercent: Number(indicatorSnapshot?.values.priceChangePercent),
-          volumeChangePercent: Number(indicatorSnapshot?.values.volumeChangePercent),
+          priceChangePercent: Number(
+            indicatorSnapshot?.values.priceChangePercent,
+          ),
+          volumeChangePercent: Number(
+            indicatorSnapshot?.values.volumeChangePercent,
+          ),
           adx: Number(indicatorSnapshot?.values.adx14),
           efficiencyRatio: Number(indicatorSnapshot?.values.efficiencyRatio20),
           ema20: Number(indicatorSnapshot?.values.ema20),
@@ -795,23 +1032,38 @@ export class PipelineRunnerService {
       const primaryRsi = multiTimeframe.frames.find(
         (frame) => frame.timeframe === String(interval),
       )?.rsi;
-      const marketDislocation = job.trigger === "EVENT"
-        ? marketDislocationFromParams(job.params?.eventScan)
-        : undefined;
-      const rankedCandidates = proactive ? [{ strategyKey: 'ai-core', decision: synthesizedOutput, score: synthesizedOutput.opportunityScore }] : rankStrategyDecisionCandidates(
-        eligibleStrategyKeys,
-        synthesizedOutput,
-        analyses,
-        {
-          timeframe: String(interval),
-          priceChangePercent: Number(indicatorSnapshot?.values.priceChangePercent),
-          volumeChangePercent: Number(indicatorSnapshot?.values.volumeChangePercent),
-          adx: Number(indicatorSnapshot?.values.adx14),
-          efficiencyRatio: Number(indicatorSnapshot?.values.efficiencyRatio20),
-          ema20: Number(indicatorSnapshot?.values.ema20),
-          ema50: Number(indicatorSnapshot?.values.ema50),
-        },
-      );
+      const marketDislocation =
+        job.trigger === "EVENT"
+          ? marketDislocationFromParams(job.params?.eventScan)
+          : undefined;
+      const rankedCandidates = proactive
+        ? [
+            {
+              strategyKey: "ai-core",
+              decision: synthesizedOutput,
+              score: synthesizedOutput.opportunityScore,
+            },
+          ]
+        : rankStrategyDecisionCandidates(
+            eligibleStrategyKeys,
+            synthesizedOutput,
+            analyses,
+            {
+              timeframe: String(interval),
+              priceChangePercent: Number(
+                indicatorSnapshot?.values.priceChangePercent,
+              ),
+              volumeChangePercent: Number(
+                indicatorSnapshot?.values.volumeChangePercent,
+              ),
+              adx: Number(indicatorSnapshot?.values.adx14),
+              efficiencyRatio: Number(
+                indicatorSnapshot?.values.efficiencyRatio20,
+              ),
+              ema20: Number(indicatorSnapshot?.values.ema20),
+              ema50: Number(indicatorSnapshot?.values.ema50),
+            },
+          );
       const gateAttempts: Array<{
         strategyKey: string;
         inputDecision: string;
@@ -822,22 +1074,32 @@ export class PipelineRunnerService {
         advisoryReasons: string[];
         gates: GateDecisionRecord[];
       }> = [];
-      let selectedGate: {
-        strategyKey: string;
-        output: Awaited<ReturnType<DecisionService["calibrateForExecution"]>>;
-        judge: ReturnType<DecisionJudgeService["evaluate"]>;
-        multiTimeframeFilter: ReturnType<typeof evaluateMultiTimeframeDecision>;
-        quant: Awaited<ReturnType<QuantExecutionPolicyService["evaluate"]>>;
-        actionable: boolean;
-        dislocationCanary: boolean;
-        blockedReasons: string[];
-        advisoryReasons: string[];
-        gates: GateDecisionRecord[];
-      } | undefined;
+      let selectedGate:
+        | {
+            strategyKey: string;
+            output: Awaited<
+              ReturnType<DecisionService["calibrateForExecution"]>
+            >;
+            judge: ReturnType<DecisionJudgeService["evaluate"]>;
+            multiTimeframeFilter: ReturnType<
+              typeof evaluateMultiTimeframeDecision
+            >;
+            quant: Awaited<ReturnType<QuantExecutionPolicyService["evaluate"]>>;
+            actionable: boolean;
+            dislocationCanary: boolean;
+            blockedReasons: string[];
+            advisoryReasons: string[];
+            gates: GateDecisionRecord[];
+          }
+        | undefined;
       for (const candidate of rankedCandidates) {
         const calibrated = await this.decision.calibrateForExecution(
           closedCandleEvidence
-            ? this.decision.withClosedCandleExecutionContext(candidate.decision, closedCandleEvidence, candidate.strategyKey)
+            ? this.decision.withClosedCandleExecutionContext(
+                candidate.decision,
+                closedCandleEvidence,
+                candidate.strategyKey,
+              )
             : candidate.decision,
           job.userId,
           {
@@ -847,62 +1109,120 @@ export class PipelineRunnerService {
             timeframe: String(interval),
           },
         );
-        const policyContext = { symbol, provider: job.provider, timeframe: String(interval), regime: calibrated.regime.type };
-        const candidateFilter = this.riskPolicy.evaluate(calibrated, policyContext);
+        const policyContext = {
+          symbol,
+          provider: job.provider,
+          timeframe: String(interval),
+          regime: calibrated.regime.type,
+        };
+        const candidateFilter = this.riskPolicy.evaluate(
+          calibrated,
+          policyContext,
+        );
         const candidateReadiness = evaluateExecutionReadiness(calibrated);
         const candidateJudge = this.judge?.evaluate(calibrated, analyses, {
           symbol,
           provider: job.provider,
           timeframe: String(interval),
           referencePrice: lastPrice,
-          sourceTimestamp: indicatorSnapshot?.candleCloseTime ?? recentCandles[0]?.closeTime,
+          sourceTimestamp:
+            indicatorSnapshot?.candleCloseTime ?? recentCandles[0]?.closeTime,
           requireCalibratedConfidence: true,
-          mode: proactive ? proactive.mode === 'DEMO' ? 'DEMO' : 'SHADOW' : process.env.TRADING_MODE === 'LIVE' ? 'LIVE' : 'DEMO',
-        }) ?? { verdict: 'APPROVE' as const, severity: 'APPROVE' as const, approved: true, reasons: [] };
-        const candidateMultiTimeframe = evaluateMultiTimeframeDecision(calibrated.decision, multiTimeframe);
+          mode: proactive
+            ? proactive.mode === "DEMO"
+              ? "DEMO"
+              : "SHADOW"
+            : process.env.TRADING_MODE === "LIVE"
+              ? "LIVE"
+              : "DEMO",
+        }) ?? {
+          verdict: "APPROVE" as const,
+          severity: "APPROVE" as const,
+          approved: true,
+          reasons: [],
+        };
+        const candidateMultiTimeframe = evaluateMultiTimeframeDecision(
+          calibrated.decision,
+          multiTimeframe,
+        );
         const candidateQuant = this.quantPolicy
-          ? await this.quantPolicy.evaluate({
-              userId: job.userId,
-              symbol,
-              provider: job.provider,
-              timeframe: String(interval),
-              strategyKey: candidate.strategyKey,
-              mode: proactive ? proactive.mode === 'DEMO' ? 'DEMO' : 'SHADOW' : process.env.TRADING_MODE === 'LIVE' ? 'LIVE' : 'DEMO',
-              decision: calibrated,
-              executionReady: candidateReadiness.allowed,
-              multiTimeframeConfirmation: candidateMultiTimeframe.confirmation,
-              primaryRsi,
-              marketEventImpact: analyses.news.impact.level,
-              marketEventDirection: analyses.news.impact.direction,
-              marketDislocation,
-            }).catch((error: unknown) => {
-              this.logger.error({
-                event: "quant_execution_policy_failed",
-                runId,
+          ? await this.quantPolicy
+              .evaluate({
+                userId: job.userId,
                 symbol,
+                provider: job.provider,
+                timeframe: String(interval),
                 strategyKey: candidate.strategyKey,
-                message: error instanceof Error ? error.message : "Unknown quant policy error",
-              });
-              return { severity: 'BLOCK' as const, riskTier: 'BLOCKED' as const, executionPolicy: 'BLOCK' as const, allowed: false as const, advisory: false as const, reason: "QUANT_POLICY_UNAVAILABLE" as const };
-            })
-          : { severity: 'BLOCK' as const, riskTier: 'BLOCKED' as const, executionPolicy: 'BLOCK' as const, allowed: false as const, advisory: false as const, reason: "QUANT_VALIDATION_MISSING" as const };
+                mode: proactive
+                  ? proactive.mode === "DEMO"
+                    ? "DEMO"
+                    : "SHADOW"
+                  : process.env.TRADING_MODE === "LIVE"
+                    ? "LIVE"
+                    : "DEMO",
+                decision: calibrated,
+                executionReady: candidateReadiness.allowed,
+                multiTimeframeConfirmation:
+                  candidateMultiTimeframe.confirmation,
+                primaryRsi,
+                marketEventImpact: analyses.news.impact.level,
+                marketEventDirection: analyses.news.impact.direction,
+                marketDislocation,
+              })
+              .catch((error: unknown) => {
+                this.logger.error({
+                  event: "quant_execution_policy_failed",
+                  runId,
+                  symbol,
+                  strategyKey: candidate.strategyKey,
+                  message:
+                    error instanceof Error
+                      ? error.message
+                      : "Unknown quant policy error",
+                });
+                return {
+                  severity: "BLOCK" as const,
+                  riskTier: "BLOCKED" as const,
+                  executionPolicy: "BLOCK" as const,
+                  allowed: false as const,
+                  advisory: false as const,
+                  reason: "QUANT_POLICY_UNAVAILABLE" as const,
+                };
+              })
+          : {
+              severity: "BLOCK" as const,
+              riskTier: "BLOCKED" as const,
+              executionPolicy: "BLOCK" as const,
+              allowed: false as const,
+              advisory: false as const,
+              reason: "QUANT_VALIDATION_MISSING" as const,
+            };
         const candidateBlockedReasons = [
           candidateFilter.reason,
           ...candidateReadiness.reasonCodes,
           ...candidateJudge.reasons,
           candidateQuant.allowed ? undefined : candidateQuant.reason,
-          candidateMultiTimeframe.allowed ? undefined : candidateMultiTimeframe.reason,
+          candidateMultiTimeframe.allowed
+            ? undefined
+            : candidateMultiTimeframe.reason,
         ].filter((item): item is string => Boolean(item));
-        const standardActionable = candidateFilter.actionable && candidateReadiness.allowed && candidateJudge.approved &&
-          candidateQuant.allowed && candidateQuant.dislocationCanary !== true &&
+        const standardActionable =
+          candidateFilter.actionable &&
+          candidateReadiness.allowed &&
+          candidateJudge.approved &&
+          candidateQuant.allowed &&
+          candidateQuant.dislocationCanary !== true &&
           candidateMultiTimeframe.allowed;
-        const filterCanaryCompatible = candidateFilter.actionable ||
+        const filterCanaryCompatible =
+          candidateFilter.actionable ||
           (typeof candidateFilter.reason === "string" &&
             DISLOCATION_CANARY_ADVISORY_REASONS.has(candidateFilter.reason));
-        const judgeCanaryCompatible = candidateJudge.approved ||
+        const judgeCanaryCompatible =
+          candidateJudge.approved ||
           (candidateJudge.reasons.length > 0 &&
             historicalGateReasonsAreAdvisory(candidateJudge.reasons));
-        const dislocationCanary = !standardActionable &&
+        const dislocationCanary =
+          !standardActionable &&
           candidateReadiness.allowed &&
           candidateQuant.allowed &&
           candidateQuant.dislocationCanary === true &&
@@ -916,9 +1236,12 @@ export class PipelineRunnerService {
             "SIGNAL_FILTER",
             candidateFilter.actionable
               ? "PASS"
-              : dislocationCanary ? "ADVISORY" : "BLOCK",
+              : dislocationCanary
+                ? "ADVISORY"
+                : "BLOCK",
             calibrated.calibrationBlockingReasons?.length
-              ? calibrated.calibrationBlockingReasons : [candidateFilter.reason],
+              ? calibrated.calibrationBlockingReasons
+              : [candidateFilter.reason],
           ),
           gateRecord(
             "EXECUTION_READINESS",
@@ -928,22 +1251,31 @@ export class PipelineRunnerService {
           gateRecord(
             "JUDGE",
             candidateJudge.approved
-              ? candidateJudge.severity === "REDUCE_SIZE" ? "REDUCE_SIZE" : "PASS"
-              : dislocationCanary ? "ADVISORY" : "BLOCK",
+              ? candidateJudge.severity === "REDUCE_SIZE"
+                ? "REDUCE_SIZE"
+                : "PASS"
+              : dislocationCanary
+                ? "ADVISORY"
+                : "BLOCK",
             candidateJudge.reasons,
           ),
           gateRecord(
             "QUANT",
             !candidateQuant.allowed
-              ? candidateQuant.executionPolicy === "ADVISORY" || candidateQuant.advisory
+              ? candidateQuant.executionPolicy === "ADVISORY" ||
+                candidateQuant.advisory
                 ? "ADVISORY"
                 : "BLOCK"
               : candidateQuant.severity === "REDUCE_SIZE"
                 ? "REDUCE_SIZE"
-                : candidateQuant.advisory ? "ADVISORY" : "PASS",
+                : candidateQuant.advisory
+                  ? "ADVISORY"
+                  : "PASS",
             [
               candidateQuant.reason,
-              ...("reasons" in candidateQuant ? candidateQuant.reasons ?? [] : []),
+              ...("reasons" in candidateQuant
+                ? (candidateQuant.reasons ?? [])
+                : []),
             ],
           ),
           gateRecord(
@@ -956,7 +1288,11 @@ export class PipelineRunnerService {
           .filter((gate) => gate.disposition === "BLOCK")
           .flatMap((gate) => gate.reasonCodes);
         const advisoryReasons = candidateGates
-          .filter((gate) => gate.disposition === "ADVISORY" || gate.disposition === "REDUCE_SIZE")
+          .filter(
+            (gate) =>
+              gate.disposition === "ADVISORY" ||
+              gate.disposition === "REDUCE_SIZE",
+          )
           .flatMap((gate) => gate.reasonCodes);
         const evaluated = {
           strategyKey: candidate.strategyKey,
@@ -1007,14 +1343,18 @@ export class PipelineRunnerService {
         gateAttempts,
       };
       const decisionCompletedAt = new Date();
-      const sourceTimestamp = indicatorSnapshot?.candleCloseTime ??
-        recentCandles[0]?.closeTime;
-      const sourceDataCutoff = indicatorSnapshot?.candleCloseTime ?? recentCandles[0]?.closeTime;
+      const sourceTimestamp =
+        indicatorSnapshot?.candleCloseTime ?? recentCandles[0]?.closeTime;
+      const sourceDataCutoff =
+        indicatorSnapshot?.candleCloseTime ?? recentCandles[0]?.closeTime;
       const sourceDataAgeMs = sourceTimestamp
-        ? Math.max(0, decisionCompletedAt.getTime() - new Date(sourceTimestamp).getTime())
+        ? Math.max(
+            0,
+            decisionCompletedAt.getTime() - new Date(sourceTimestamp).getTime(),
+          )
         : undefined;
-      const configurationVersion = output.learningConfiguration?.version ??
-        BUILT_IN_CONFIGURATION_VERSION;
+      const configurationVersion =
+        output.learningConfiguration?.version ?? BUILT_IN_CONFIGURATION_VERSION;
       const evaluationIdentity = sourceDataCutoff
         ? {
             userId: job.userId,
@@ -1031,11 +1371,12 @@ export class PipelineRunnerService {
         ? buildEvaluationKey(evaluationIdentity)
         : undefined;
       if (evaluationKey) {
-        const identityResult = await this.repository.persistEvaluationIdentity?.(
-          runId,
-          evaluationKey,
-          evaluationIdentity,
-        );
+        const identityResult =
+          await this.repository.persistEvaluationIdentity?.(
+            runId,
+            evaluationKey,
+            evaluationIdentity,
+          );
         if (identityResult?.sampleReused) {
           this.logger.log({
             event: "pipeline_evaluation_sample_reused",
@@ -1056,11 +1397,17 @@ export class PipelineRunnerService {
         actionable,
         dislocationCanary,
         blockedReasons: [...new Set(selectedBlockedReasons)],
-        advisoryReasons: [...new Set([
-          ...selectedAdvisoryReasons,
-          ...('advisory' in quant && quant.advisory && quant.reason ? [quant.reason] : []),
-        ])],
-        ...(output.executionContext ? { executionContext: output.executionContext } : {}),
+        advisoryReasons: [
+          ...new Set([
+            ...selectedAdvisoryReasons,
+            ...("advisory" in quant && quant.advisory && quant.reason
+              ? [quant.reason]
+              : []),
+          ]),
+        ],
+        ...(output.executionContext
+          ? { executionContext: output.executionContext }
+          : {}),
       };
       evaluatedGateRecords = [...candidateGates];
       evaluatedResult = {
@@ -1068,12 +1415,16 @@ export class PipelineRunnerService {
         decision: actionable ? output.decision : "WAIT",
         candidateDecision,
         selectedStrategyKey: strategyKey,
-        strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue,
+        strategySelection:
+          executionStrategySelection as unknown as Prisma.InputJsonValue,
         actionable,
         skippedReason: candidateBlockingGate?.reason ?? null,
         gates: evaluatedGateRecords as unknown as Prisma.InputJsonValue,
         ...(candidateBlockingGate
-          ? { blockingGate: candidateBlockingGate as unknown as Prisma.InputJsonValue }
+          ? {
+              blockingGate:
+                candidateBlockingGate as unknown as Prisma.InputJsonValue,
+            }
           : {}),
         signalFilter: {
           allowed: signalFilter.allowed,
@@ -1100,19 +1451,21 @@ export class PipelineRunnerService {
         runId,
         symbol,
         exchange: String(job.provider),
-        timeframe: String(job.params?.interval ?? definition.defaultParams.interval),
-        stageName: 'decision',
-        inputSummary: `regime=${output.regime.type}; conflict=${output.conflictLevel}; strategies=${eligibleStrategyKeys.join(',')}`,
+        timeframe: String(
+          job.params?.interval ?? definition.defaultParams.interval,
+        ),
+        stageName: "decision",
+        inputSummary: `regime=${output.regime.type}; conflict=${output.conflictLevel}; strategies=${eligibleStrategyKeys.join(",")}`,
         outputSummary: `${output.decision}; strategy=${strategyKey}; confidence=${output.confidence}; ev=${output.expectedValue}`,
         confidence: output.confidence,
         opportunityScore: output.opportunityScore,
         riskScore: output.riskScore,
-        decision: actionable ? output.decision : 'WAIT',
+        decision: actionable ? output.decision : "WAIT",
         candidateDecision: output.decision,
         candidateConfidence: output.confidence,
         rejectReason: candidateBlockingGate?.reason,
         blockingStage: candidateBlockingGate?.stage,
-        executionResult: actionable ? 'APPROVED' : 'REJECTED',
+        executionResult: actionable ? "APPROVED" : "REJECTED",
         durationMs: decisionCompletedAt.getTime() - startedAt.getTime(),
         tokenUsage: 0,
         apiCost: 0,
@@ -1122,39 +1475,64 @@ export class PipelineRunnerService {
       });
       const lifecycleAuthorityGate = lifecycleAuthority
         ? {
-            severity: lifecycleAuthority.action === 'SUPPRESSED'
-              ? 'BLOCK' as const
-              : lifecycleAuthority.action === 'PROBE_ONLY'
-                ? 'REDUCE_SIZE' as const
-                : 'APPROVE' as const,
+            severity:
+              lifecycleAuthority.action === "SUPPRESSED"
+                ? ("BLOCK" as const)
+                : lifecycleAuthority.action === "PROBE_ONLY"
+                  ? ("REDUCE_SIZE" as const)
+                  : ("APPROVE" as const),
             sizeFactor: lifecycleAuthority.sizeFactor,
             reasons: [lifecycleAuthority.reason],
           }
-        : { severity: 'APPROVE' as const, sizeFactor: 1, reasons: [] };
-      const composedSize = composeEvidenceSize([judge, { severity: quant.severity, sizeFactor: quant.sizeFactor, reasons: quant.reasons ?? [] },
-        { severity: criticSizeFactor < 1 ? 'REDUCE_SIZE' : 'APPROVE', sizeFactor: criticSizeFactor, reasons: [] }, lifecycleAuthorityGate]);
+        : { severity: "APPROVE" as const, sizeFactor: 1, reasons: [] };
+      const composedSize = composeEvidenceSize([
+        judge,
+        {
+          severity: quant.severity,
+          sizeFactor: quant.sizeFactor,
+          reasons: quant.reasons ?? [],
+        },
+        {
+          severity: criticSizeFactor < 1 ? "REDUCE_SIZE" : "APPROVE",
+          sizeFactor: criticSizeFactor,
+          reasons: [],
+        },
+        lifecycleAuthorityGate,
+      ]);
       if (proactive) proactive.sizeFactor = composedSize.sizeFactor ?? 1;
-      const executionDecision = actionable && composedSize.severity !== 'BLOCK'
-        ? output
-        : { ...output, decision: "WAIT" as const };
-      const volatilityAtr = proactive?.snapshot.volatility.coverage === 'AVAILABLE' ? proactive.snapshot.volatility.atr : preferredTradePlanAtr(
-        indicatorSnapshot?.values.atr14,
-        analyses.market?.volatility.atr,
-      );
+      const executionDecision =
+        actionable && composedSize.severity !== "BLOCK"
+          ? output
+          : { ...output, decision: "WAIT" as const };
+      const volatilityAtr =
+        proactive?.snapshot.volatility.coverage === "AVAILABLE"
+          ? proactive.snapshot.volatility.atr
+          : preferredTradePlanAtr(
+              indicatorSnapshot?.values.atr14,
+              analyses.market?.volatility.atr,
+            );
       const primaryCandle = recentCandles[0];
-      const volumeRatio = Number.isFinite(Number(indicatorSnapshot?.values.volumeChangePercent))
+      const volumeRatio = Number.isFinite(
+        Number(indicatorSnapshot?.values.volumeChangePercent),
+      )
         ? 1 + Number(indicatorSnapshot?.values.volumeChangePercent) / 100
         : undefined;
       let submissionStartedAt: Date | undefined;
-      let executionGateReason: string | undefined = lifecycleAuthority?.action === 'SUPPRESSED'
-        ? 'EXACT_LIFECYCLE_SUPPRESSED'
-        : undefined;
+      let executionGateReason: string | undefined =
+        lifecycleAuthority?.action === "SUPPRESSED"
+          ? "EXACT_LIFECYCLE_SUPPRESSED"
+          : undefined;
       let canaryCooldownKey: string | undefined;
       let retainCanaryCooldown = false;
       let pipelineOutcome: { outcome: string; reason?: string } | undefined;
       // Proactive theses must retain their mode guard and pinned demo connection;
       // generic confluence execution does not carry those release constraints.
-      if (actionable && job.pipelineId !== "proactive-thesis" && job.confluenceBatchId && this.confluenceCollector) {
+      if (
+        actionable &&
+        job.pipelineId !== "proactive-thesis" &&
+        job.confluenceBatchId &&
+        this.confluenceCollector
+      ) {
         const candidateScore = computeMultiFactorCompositeScore({
           confidence: output.confidence,
           opportunityScore: output.opportunityScore,
@@ -1181,14 +1559,41 @@ export class PipelineRunnerService {
             provider: String(job.provider),
             interval: String(interval),
             quant,
-            ...(output.executionContext ? { canonicalExecutionContext: output.executionContext } : {}),
+            ...(output.executionContext
+              ? { canonicalExecutionContext: output.executionContext }
+              : {}),
             tradePlanContext: {
-                  ...(Number.isFinite(lastPrice) ? { currentPrice: lastPrice } : {}),
-                  ...(indicatorSnapshot?.values?.squeezeState ? { squeezeState: indicatorSnapshot.values.squeezeState } : {}),
-                  gateSeverity: judge?.severity === 'REDUCE_SIZE' || (quant && 'severity' in quant && quant.severity === 'REDUCE_SIZE') ? 'REDUCE_SIZE' : 'APPROVE',
-                  ...(synthesizedOutput?.anticipatorySignals?.liquiditySweep ? { liquiditySweep: synthesizedOutput.anticipatorySignals.liquiditySweep.detected } : {}),
-                  ...(synthesizedOutput?.anticipatorySignals?.derivativesImbalance?.squeezeProbability !== undefined ? { derivativesImbalance: synthesizedOutput.anticipatorySignals.derivativesImbalance.squeezeProbability } : {}),
-                  ...(synthesizedOutput?.executionContext ? { executionContext: synthesizedOutput.executionContext } : {}),
+              ...(Number.isFinite(lastPrice)
+                ? { currentPrice: lastPrice }
+                : {}),
+              ...(indicatorSnapshot?.values?.squeezeState
+                ? { squeezeState: indicatorSnapshot.values.squeezeState }
+                : {}),
+              gateSeverity:
+                judge?.severity === "REDUCE_SIZE" ||
+                (quant &&
+                  "severity" in quant &&
+                  quant.severity === "REDUCE_SIZE")
+                  ? "REDUCE_SIZE"
+                  : "APPROVE",
+              ...(synthesizedOutput?.anticipatorySignals?.liquiditySweep
+                ? {
+                    liquiditySweep:
+                      synthesizedOutput.anticipatorySignals.liquiditySweep
+                        .detected,
+                  }
+                : {}),
+              ...(synthesizedOutput?.anticipatorySignals?.derivativesImbalance
+                ?.squeezeProbability !== undefined
+                ? {
+                    derivativesImbalance:
+                      synthesizedOutput.anticipatorySignals.derivativesImbalance
+                        .squeezeProbability,
+                  }
+                : {}),
+              ...(synthesizedOutput?.executionContext
+                ? { executionContext: synthesizedOutput.executionContext }
+                : {}),
               timeframeMs: timeframeMilliseconds(String(interval)),
               ...(Number.isFinite(Number(indicatorSnapshot?.values.rsi14))
                 ? { rsi: Number(indicatorSnapshot?.values.rsi14) }
@@ -1263,18 +1668,17 @@ export class PipelineRunnerService {
           // Ordinary pipelines can retry after backoff. Proactive executions
           // have a permanent claim and report a terminal failure for replay.
           this.logger.warn({
-            event: 'pipeline_execution_lock_busy',
+            event: "pipeline_execution_lock_busy",
             userId: job.userId,
             runId,
             symbol,
           });
-          throw new PipelineExecutionLockBusyError('EXECUTION_LOCK_BUSY');
+          throw new PipelineExecutionLockBusyError("EXECUTION_LOCK_BUSY");
         }
 
         try {
           if (dislocationCanary) {
-            const cooldownKey =
-              `pipeline:dislocation-canary:cooldown:${job.userId}:${symbol}:${output.decision}`;
+            const cooldownKey = `pipeline:dislocation-canary:cooldown:${job.userId}:${symbol}:${output.decision}`;
             const canaryReserved = await this.redis.setNx(
               cooldownKey,
               runId,
@@ -1283,9 +1687,15 @@ export class PipelineRunnerService {
             if (canaryReserved) canaryCooldownKey = cooldownKey;
             else executionGateReason = "DISLOCATION_CANARY_COOLDOWN_ACTIVE";
           }
-          if (proactive?.thesis.setup === 'RECOVERY_RECLAIM' || output.reasoning === 'RECOVERY_RECLAIM') {
+          if (
+            proactive?.thesis.setup === "RECOVERY_RECLAIM" ||
+            output.reasoning === "RECOVERY_RECLAIM"
+          ) {
             executionGateReason = "RECOVERY_SHADOW_ONLY";
-            pipelineOutcome = { outcome: "SKIPPED", reason: "RECOVERY_SHADOW_ONLY" };
+            pipelineOutcome = {
+              outcome: "SKIPPED",
+              reason: "RECOVERY_SHADOW_ONLY",
+            };
           }
           if (!executionGateReason) {
             const assess = async () => {
@@ -1296,7 +1706,8 @@ export class PipelineRunnerService {
               riskAssessment = await this.liveTrading.assessPipelineDecision({
                 userId: job.userId,
                 pipelineRunId: runId,
-                ...(job.pipelineId === "proactive-thesis" && proactiveMode === "DEMO"
+                ...(job.pipelineId === "proactive-thesis" &&
+                proactiveMode === "DEMO"
                   ? { requiredEnvironment: "DEMO" as const }
                   : {}),
                 symbol,
@@ -1304,35 +1715,77 @@ export class PipelineRunnerService {
                 decision: executionDecision,
                 // Momentum scalp currently shares the governed breakout portfolio
                 // bucket while retaining its own decision/quant identity.
-                strategyKey: strategyKey === "momentum-scalp" ? "breakout" : strategyKey,
-                executionSizeFactor: proactive ? undefined : composedSize.sizeFactor,
-                ...(volatilityAtr !== undefined
-                  ? { volatilityAtr }
-                  : {}),
+                strategyKey:
+                  strategyKey === "momentum-scalp" ? "breakout" : strategyKey,
+                executionSizeFactor: proactive
+                  ? undefined
+                  : composedSize.sizeFactor,
+                ...(volatilityAtr !== undefined ? { volatilityAtr } : {}),
                 tradePlanContext: {
                   ...(proactive ? { proactive } : {}),
-                  ...(Number.isFinite(lastPrice) ? { currentPrice: lastPrice } : {}),
-                  ...(indicatorSnapshot?.values?.squeezeState ? { squeezeState: indicatorSnapshot.values.squeezeState } : {}),
-                  gateSeverity: judge?.severity === 'REDUCE_SIZE' || (quant && 'severity' in quant && quant.severity === 'REDUCE_SIZE') ? 'REDUCE_SIZE' : 'APPROVE',
-                  ...(synthesizedOutput?.anticipatorySignals?.liquiditySweep ? { liquiditySweep: synthesizedOutput.anticipatorySignals.liquiditySweep.detected } : {}),
-                  ...(synthesizedOutput?.anticipatorySignals?.derivativesImbalance?.squeezeProbability !== undefined ? { derivativesImbalance: synthesizedOutput.anticipatorySignals.derivativesImbalance.squeezeProbability } : {}),
-                  ...(synthesizedOutput?.executionContext ? { executionContext: synthesizedOutput.executionContext } : {}),
-                  ...(proactive ? anticipatoryDecisionContext(proactive.snapshot).market : {}),
+                  ...(Number.isFinite(lastPrice)
+                    ? { currentPrice: lastPrice }
+                    : {}),
+                  ...(indicatorSnapshot?.values?.squeezeState
+                    ? { squeezeState: indicatorSnapshot.values.squeezeState }
+                    : {}),
+                  gateSeverity:
+                    judge?.severity === "REDUCE_SIZE" ||
+                    (quant &&
+                      "severity" in quant &&
+                      quant.severity === "REDUCE_SIZE")
+                      ? "REDUCE_SIZE"
+                      : "APPROVE",
+                  ...(synthesizedOutput?.anticipatorySignals?.liquiditySweep
+                    ? {
+                        liquiditySweep:
+                          synthesizedOutput.anticipatorySignals.liquiditySweep
+                            .detected,
+                      }
+                    : {}),
+                  ...(synthesizedOutput?.anticipatorySignals
+                    ?.derivativesImbalance?.squeezeProbability !== undefined
+                    ? {
+                        derivativesImbalance:
+                          synthesizedOutput.anticipatorySignals
+                            .derivativesImbalance.squeezeProbability,
+                      }
+                    : {}),
+                  ...(synthesizedOutput?.executionContext
+                    ? { executionContext: synthesizedOutput.executionContext }
+                    : {}),
+                  ...(proactive
+                    ? anticipatoryDecisionContext(proactive.snapshot).market
+                    : {}),
                   timeframeMs: timeframeMilliseconds(String(interval)),
                   ...(Number.isFinite(Number(indicatorSnapshot?.values.rsi14))
                     ? { rsi: Number(indicatorSnapshot?.values.rsi14) }
                     : {}),
-                  ...(Number.isFinite(Number(indicatorSnapshot?.values.rollingLow))
+                  ...(Number.isFinite(
+                    Number(indicatorSnapshot?.values.rollingLow),
+                  )
                     ? { support: Number(indicatorSnapshot?.values.rollingLow) }
                     : {}),
-                  ...(Number.isFinite(Number(indicatorSnapshot?.values.rollingHigh))
-                    ? { resistance: Number(indicatorSnapshot?.values.rollingHigh) }
+                  ...(Number.isFinite(
+                    Number(indicatorSnapshot?.values.rollingHigh),
+                  )
+                    ? {
+                        resistance: Number(
+                          indicatorSnapshot?.values.rollingHigh,
+                        ),
+                      }
                     : {}),
                   ...(Number.isFinite(Number(indicatorSnapshot?.values.adx14))
                     ? { adx: Number(indicatorSnapshot?.values.adx14) }
                     : {}),
-                  ...(Number.isFinite(Number(indicatorSnapshot?.values.efficiencyRatio20))
-                    ? { efficiencyRatio: Number(indicatorSnapshot?.values.efficiencyRatio20) }
+                  ...(Number.isFinite(
+                    Number(indicatorSnapshot?.values.efficiencyRatio20),
+                  )
+                    ? {
+                        efficiencyRatio: Number(
+                          indicatorSnapshot?.values.efficiencyRatio20,
+                        ),
+                      }
                     : {}),
                   ...(Number.isFinite(Number(indicatorSnapshot?.values.ema20))
                     ? { ema20: Number(indicatorSnapshot?.values.ema20) }
@@ -1344,26 +1797,39 @@ export class PipelineRunnerService {
                     ? { breakout: analyses.technical.structure.breakout }
                     : {}),
                   ...(analyses.technical?.structure.marketStructure
-                    ? { marketStructure: analyses.technical.structure.marketStructure }
+                    ? {
+                        marketStructure:
+                          analyses.technical.structure.marketStructure,
+                      }
                     : {}),
-                  ...(primaryCandle && Number.isFinite(Number(primaryCandle.open))
+                  ...(primaryCandle &&
+                  Number.isFinite(Number(primaryCandle.open))
                     ? { candleOpen: Number(primaryCandle.open) }
                     : {}),
-                  ...(primaryCandle && Number.isFinite(Number(primaryCandle.high))
+                  ...(primaryCandle &&
+                  Number.isFinite(Number(primaryCandle.high))
                     ? { candleHigh: Number(primaryCandle.high) }
                     : {}),
-                  ...(primaryCandle && Number.isFinite(Number(primaryCandle.low))
+                  ...(primaryCandle &&
+                  Number.isFinite(Number(primaryCandle.low))
                     ? { candleLow: Number(primaryCandle.low) }
                     : {}),
-                  ...(primaryCandle && Number.isFinite(Number(primaryCandle.close))
+                  ...(primaryCandle &&
+                  Number.isFinite(Number(primaryCandle.close))
                     ? { candleClose: Number(primaryCandle.close) }
                     : {}),
                   ...(volumeRatio !== undefined ? { volumeRatio } : {}),
-                  ...(proactive ? anticipatoryDecisionContext(proactive.snapshot).market : {}),
+                  ...(proactive
+                    ? anticipatoryDecisionContext(proactive.snapshot).market
+                    : {}),
                 },
               });
-              if (riskAssessment.outcome === "NO_ELIGIBLE_EXCHANGE_CONNECTION") {
-                throw new Error("NO_ELIGIBLE_EXCHANGE_CONNECTION: Active verified exchange connection is required to run live risk assessment.");
+              if (
+                riskAssessment.outcome === "NO_ELIGIBLE_EXCHANGE_CONNECTION"
+              ) {
+                throw new Error(
+                  "NO_ELIGIBLE_EXCHANGE_CONNECTION: Active verified exchange connection is required to run live risk assessment.",
+                );
               }
             };
 
@@ -1371,13 +1837,24 @@ export class PipelineRunnerService {
               if (riskAssessment?.outcome === "RISK_APPROVED") {
                 executionStageReached = true;
                 liveExecution = undefined;
-                if (job.pipelineId === 'proactive-thesis' && proactiveMode !== 'DEMO') {
-                  return { outcome: 'SKIPPED' as const, reason: 'SKIPPED_BY_PROACTIVE_MODE' };
+                if (
+                  job.pipelineId === "proactive-thesis" &&
+                  proactiveMode !== "DEMO"
+                ) {
+                  return {
+                    outcome: "SKIPPED" as const,
+                    reason: "SKIPPED_BY_PROACTIVE_MODE",
+                  };
                 }
                 submissionStartedAt = new Date();
-                const execution = job.pipelineId === "proactive-thesis"
-                  ? await this.liveTrading.executePipeline(job.userId, runId, { requiredEnvironment: "DEMO" })
-                  : await this.liveTrading.executePipeline(job.userId, runId);
+                const execution =
+                  job.pipelineId === "proactive-thesis"
+                    ? await this.liveTrading.executePipeline(
+                        job.userId,
+                        runId,
+                        { requiredEnvironment: "DEMO" },
+                      )
+                    : await this.liveTrading.executePipeline(job.userId, runId);
                 liveExecution = execution;
                 return execution;
               }
@@ -1390,14 +1867,17 @@ export class PipelineRunnerService {
             });
             pipelineOutcome = {
               outcome: finalExecution.outcome,
-              ...('reason' in finalExecution && finalExecution.reason
+              ...("reason" in finalExecution && finalExecution.reason
                 ? { reason: finalExecution.reason }
                 : {}),
             };
-            retainCanaryCooldown = dislocationCanary &&
-              finalExecution.outcome === "ORDER_SUBMITTED";
+            retainCanaryCooldown =
+              dislocationCanary && finalExecution.outcome === "ORDER_SUBMITTED";
 
-            if (finalExecution.outcome === "EXECUTION_FAILED" && finalExecution.retryable === true) {
+            if (
+              finalExecution.outcome === "EXECUTION_FAILED" &&
+              finalExecution.retryable === true
+            ) {
               throw new PipelineExecutionRetryableError(
                 finalExecution.errorCode ?? "RETRYABLE_EXCHANGE_FAILURE",
               );
@@ -1410,7 +1890,11 @@ export class PipelineRunnerService {
           // Always release the lock — even if assessment or execution throws
           await this.redis.compareAndDelete(lockKey, runId);
         }
-      } else if (!actionable && job.confluenceBatchId && this.confluenceCollector) {
+      } else if (
+        !actionable &&
+        job.confluenceBatchId &&
+        this.confluenceCollector
+      ) {
         const report = await this.confluenceCollector.reportNonActionable(
           job.confluenceBatchId,
         );
@@ -1422,16 +1906,19 @@ export class PipelineRunnerService {
       const risk = riskAssessment?.risk;
       const riskApproved = Boolean(risk?.approved);
       const orderSubmitted = liveExecution?.outcome === "ORDER_SUBMITTED";
-      const submittedOrder = orderSubmitted && liveExecution && "order" in liveExecution
-        ? liveExecution.order
-        : undefined;
-      const actualPrice = submittedOrder?.status === "FILLED" && submittedOrder.price
-        ? Number(submittedOrder.price)
-        : undefined;
+      const submittedOrder =
+        orderSubmitted && liveExecution && "order" in liveExecution
+          ? liveExecution.order
+          : undefined;
+      const actualPrice =
+        submittedOrder?.status === "FILLED" && submittedOrder.price
+          ? Number(submittedOrder.price)
+          : undefined;
       const referencePrice = Number(lastPrice);
-      const slippageBps = actualPrice && referencePrice > 0
-        ? Math.abs(actualPrice - referencePrice) / referencePrice * 10_000
-        : undefined;
+      const slippageBps =
+        actualPrice && referencePrice > 0
+          ? (Math.abs(actualPrice - referencePrice) / referencePrice) * 10_000
+          : undefined;
       const finalActionable = actionable && !executionGateReason;
       const finalExecutionDecision = finalActionable
         ? executionDecision
@@ -1440,10 +1927,12 @@ export class PipelineRunnerService {
         ? {
             ...candidateDecision,
             actionable: false,
-            blockedReasons: [...new Set([
-              ...candidateDecision.blockedReasons,
-              executionGateReason,
-            ])],
+            blockedReasons: [
+              ...new Set([
+                ...candidateDecision.blockedReasons,
+                executionGateReason,
+              ]),
+            ],
           }
         : candidateDecision;
       const gates = [...candidateGates];
@@ -1452,21 +1941,21 @@ export class PipelineRunnerService {
       } else if (riskAssessment) {
         const riskReason = riskApproved
           ? risk?.reason
-          : risk?.reason ?? riskAssessment.outcome ?? "RISK_NOT_APPROVED";
-        gates.push(gateRecord(
-          "RISK",
-          riskApproved ? "PASS" : "BLOCK",
-          [riskReason],
-        ));
+          : (risk?.reason ?? riskAssessment.outcome ?? "RISK_NOT_APPROVED");
+        gates.push(
+          gateRecord("RISK", riskApproved ? "PASS" : "BLOCK", [riskReason]),
+        );
         if (riskApproved) {
           const executionReason = orderSubmitted
             ? undefined
-            : liveExecution?.errorCode ?? liveExecution?.outcome ?? "ORDER_NOT_SUBMITTED";
-          gates.push(gateRecord(
-            "EXECUTION",
-            orderSubmitted ? "PASS" : "BLOCK",
-            [executionReason],
-          ));
+            : (liveExecution?.errorCode ??
+              liveExecution?.outcome ??
+              "ORDER_NOT_SUBMITTED");
+          gates.push(
+            gateRecord("EXECUTION", orderSubmitted ? "PASS" : "BLOCK", [
+              executionReason,
+            ]),
+          );
         }
       }
       const blockingGate = selectBlockingGate(gates);
@@ -1476,10 +1965,12 @@ export class PipelineRunnerService {
         runId,
         symbol,
         exchange: String(job.provider),
-        timeframe: String(job.params?.interval ?? definition.defaultParams.interval),
-        stageName: 'execution',
+        timeframe: String(
+          job.params?.interval ?? definition.defaultParams.interval,
+        ),
+        stageName: "execution",
         inputSummary: `decision=${finalExecutionDecision.decision}; confidence=${output.confidence}`,
-        outputSummary: `risk=${risk?.reason ?? 'approved'}; live=${liveExecution?.outcome ?? 'unknown'}`,
+        outputSummary: `risk=${risk?.reason ?? "approved"}; live=${liveExecution?.outcome ?? "unknown"}`,
         confidence: output.confidence,
         opportunityScore: output.opportunityScore,
         riskScore: risk?.riskScore ?? 0,
@@ -1488,12 +1979,17 @@ export class PipelineRunnerService {
         candidateConfidence: finalCandidateDecision.confidence,
         rejectReason: blockingGate?.reason,
         blockingStage: blockingGate?.stage,
-        executionResult: orderSubmitted ? 'EXECUTED' : riskApproved ? 'RISK_APPROVED' : 'REJECTED',
+        executionResult: orderSubmitted
+          ? "EXECUTED"
+          : riskApproved
+            ? "RISK_APPROVED"
+            : "REJECTED",
         durationMs: completedAt.getTime() - startedAt.getTime(),
         tokenUsage: 0,
         apiCost: 0,
         sourceDataAgeMs,
-        decisionToExecutionMs: completedAt.getTime() - decisionCompletedAt.getTime(),
+        decisionToExecutionMs:
+          completedAt.getTime() - decisionCompletedAt.getTime(),
         submissionLatencyMs: submissionStartedAt
           ? completedAt.getTime() - submissionStartedAt.getTime()
           : undefined,
@@ -1513,13 +2009,28 @@ export class PipelineRunnerService {
         learningStage: output.learningConfiguration?.stage,
         timeframe: String(interval),
         skippedReason: finalSkippedReason ?? null,
-        storedContext: { analyses, fusionOutput, candidateDecision: finalCandidateDecision, strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue, multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue, quant: quant as unknown as Prisma.InputJsonValue, ...(output.executionContext ? { executionContext: output.executionContext as unknown as Prisma.InputJsonValue } : {}) },
+        storedContext: {
+          analyses,
+          fusionOutput,
+          candidateDecision: finalCandidateDecision,
+          strategySelection:
+            executionStrategySelection as unknown as Prisma.InputJsonValue,
+          multiTimeframe: multiTimeframe as unknown as Prisma.InputJsonValue,
+          quant: quant as unknown as Prisma.InputJsonValue,
+          ...(output.executionContext
+            ? {
+                executionContext:
+                  output.executionContext as unknown as Prisma.InputJsonValue,
+              }
+            : {}),
+        },
         result: {
           ...output,
           decision: finalExecutionDecision.decision,
           candidateDecision: finalCandidateDecision,
           selectedStrategyKey: strategyKey,
-          strategySelection: executionStrategySelection as unknown as Prisma.InputJsonValue,
+          strategySelection:
+            executionStrategySelection as unknown as Prisma.InputJsonValue,
           actionable: finalActionable,
           skippedReason: finalSkippedReason ?? null,
           gates: gates as unknown as Prisma.InputJsonValue,
@@ -1542,29 +2053,39 @@ export class PipelineRunnerService {
           quant: quant as unknown as Prisma.InputJsonValue,
         },
       });
-      if (typeof this.repository.skipOpenSteps === 'function') {
-        await this.repository.skipOpenSteps(runId, finalSkippedReason ?? "COMPLETED", completedAt);
+      if (typeof this.repository.skipOpenSteps === "function") {
+        await this.repository.skipOpenSteps(
+          runId,
+          finalSkippedReason ?? "COMPLETED",
+          completedAt,
+        );
       }
       await this.alerts.contextual(runId, symbol, analyses);
       if (!finalActionable && blockingGate) {
-        await this.alerts.blockedOpportunity({
-          runId,
-          userId: job.userId,
-          symbol,
-          decision: finalCandidateDecision.decision,
-          confidence: finalCandidateDecision.confidence,
-          blockingGate,
-          analyses,
-          multiTimeframeConfirmation: multiTimeframeFilter.confirmation,
-          priceChangePercent: Number.isFinite(Number(indicatorSnapshot?.values.priceChangePercent))
-            ? Number(indicatorSnapshot?.values.priceChangePercent)
-            : undefined,
-        }).catch((error: unknown) => this.logger.warn({
-          event: 'pipeline_blocked_opportunity_alert_failed',
-          runId,
-          symbol,
-          message: error instanceof Error ? error.message : String(error),
-        }));
+        await this.alerts
+          .blockedOpportunity({
+            runId,
+            userId: job.userId,
+            symbol,
+            decision: finalCandidateDecision.decision,
+            confidence: finalCandidateDecision.confidence,
+            blockingGate,
+            analyses,
+            multiTimeframeConfirmation: multiTimeframeFilter.confirmation,
+            priceChangePercent: Number.isFinite(
+              Number(indicatorSnapshot?.values.priceChangePercent),
+            )
+              ? Number(indicatorSnapshot?.values.priceChangePercent)
+              : undefined,
+          })
+          .catch((error: unknown) =>
+            this.logger.warn({
+              event: "pipeline_blocked_opportunity_alert_failed",
+              runId,
+              symbol,
+              message: error instanceof Error ? error.message : String(error),
+            }),
+          );
       }
       if (finalActionable && riskApproved)
         await this.alerts.decision(runId, symbol, output);
@@ -1573,11 +2094,13 @@ export class PipelineRunnerService {
       const completedAt = new Date();
       const cancelled = error instanceof PipelineCancelledError;
       const executionLockBusy = error instanceof PipelineExecutionLockBusyError;
-      const executionRetryable = error instanceof PipelineExecutionRetryableError;
+      const executionRetryable =
+        error instanceof PipelineExecutionRetryableError;
       const timedOut =
         error instanceof Error && error.message === "PIPELINE_TIMEOUT";
       const isNoConnection =
-        error instanceof Error && error.message.includes("NO_ELIGIBLE_EXCHANGE_CONNECTION");
+        error instanceof Error &&
+        error.message.includes("NO_ELIGIBLE_EXCHANGE_CONNECTION");
       const errorCode = cancelled
         ? "CANCELLED_BY_USER"
         : executionLockBusy
@@ -1595,28 +2118,30 @@ export class PipelineRunnerService {
       if (failureGates && riskStageReached) {
         const risk = riskAssessment?.risk;
         const riskApproved = Boolean(risk?.approved);
-        failureGates.push(gateRecord(
-          "RISK",
-          riskApproved ? "PASS" : "BLOCK",
-          [riskApproved
-            ? risk?.reason
-            : risk?.reason ?? riskAssessment?.outcome ?? errorCode],
-        ));
+        failureGates.push(
+          gateRecord("RISK", riskApproved ? "PASS" : "BLOCK", [
+            riskApproved
+              ? risk?.reason
+              : (risk?.reason ?? riskAssessment?.outcome ?? errorCode),
+          ]),
+        );
       }
       if (failureGates && executionStageReached) {
         const orderSubmitted = liveExecution?.outcome === "ORDER_SUBMITTED";
-        failureGates.push(gateRecord(
-          "EXECUTION",
-          orderSubmitted ? "PASS" : "BLOCK",
-          [orderSubmitted
-            ? undefined
-            : liveExecution?.errorCode ?? liveExecution?.outcome ?? errorCode],
-        ));
+        failureGates.push(
+          gateRecord("EXECUTION", orderSubmitted ? "PASS" : "BLOCK", [
+            orderSubmitted
+              ? undefined
+              : (liveExecution?.errorCode ??
+                liveExecution?.outcome ??
+                errorCode),
+          ]),
+        );
       }
       const failureBlockingGate = failureGates
         ? selectBlockingGate(failureGates)
         : undefined;
-      if (!executionLockBusy || job.pipelineId === 'proactive-thesis') {
+      if (!executionLockBusy || job.pipelineId === "proactive-thesis") {
         await this.finalizeEarlyTerminalRun(
           runId,
           {
@@ -1635,7 +2160,10 @@ export class PipelineRunnerService {
                     skippedReason: failureBlockingGate?.reason ?? null,
                     gates: failureGates as unknown as Prisma.InputJsonValue,
                     ...(failureBlockingGate
-                      ? { blockingGate: failureBlockingGate as unknown as Prisma.InputJsonValue }
+                      ? {
+                          blockingGate:
+                            failureBlockingGate as unknown as Prisma.InputJsonValue,
+                        }
                       : {}),
                     riskAssessment,
                     liveExecution,
@@ -1643,7 +2171,9 @@ export class PipelineRunnerService {
                 }
               : {}),
           },
-          cancelled ? "CANCELLED" : failureBlockingGate?.reason ?? errorCode ?? "PIPELINE_FAILED",
+          cancelled
+            ? "CANCELLED"
+            : (failureBlockingGate?.reason ?? errorCode ?? "PIPELINE_FAILED"),
           completedAt,
         );
       } else {
@@ -1664,7 +2194,10 @@ export class PipelineRunnerService {
                   skippedReason: failureBlockingGate?.reason ?? null,
                   gates: failureGates as unknown as Prisma.InputJsonValue,
                   ...(failureBlockingGate
-                    ? { blockingGate: failureBlockingGate as unknown as Prisma.InputJsonValue }
+                    ? {
+                        blockingGate:
+                          failureBlockingGate as unknown as Prisma.InputJsonValue,
+                      }
                     : {}),
                   riskAssessment,
                   liveExecution,
@@ -1674,7 +2207,8 @@ export class PipelineRunnerService {
         });
       }
       if (cancelled) return;
-      if (!executionLockBusy && !executionRetryable) await this.alerts.repeatedFailure(runId, symbol);
+      if (!executionLockBusy && !executionRetryable)
+        await this.alerts.repeatedFailure(runId, symbol);
       throw error;
     }
   }
@@ -1702,7 +2236,7 @@ export class PipelineRunnerService {
       ...data,
       completedAt,
     });
-    if (typeof this.repository.skipOpenSteps === 'function') {
+    if (typeof this.repository.skipOpenSteps === "function") {
       await this.repository.skipOpenSteps(runId, reason, completedAt);
     }
   }
@@ -1766,10 +2300,7 @@ export class PipelineRunnerService {
    * Evaluates a completed confluence batch, executes the selected best candidate,
    * boosts sizing, and shadow logs rejected signals.
    */
-  async executeConfluenceBatch(
-    batchId: string,
-    userId: string,
-  ): Promise<void> {
+  async executeConfluenceBatch(batchId: string, userId: string): Promise<void> {
     if (!this.confluenceCollector) return;
 
     const batch = await this.confluenceCollector.drainBatch(batchId);
@@ -1789,7 +2320,11 @@ export class PipelineRunnerService {
     const selected = evaluation.selected;
     const lockKey = `pipeline:exec:lock:${userId}`;
     const lockTtl = 30;
-    const acquired = await this.redis.setNx(lockKey, selected.pipelineRunId, lockTtl);
+    const acquired = await this.redis.setNx(
+      lockKey,
+      selected.pipelineRunId,
+      lockTtl,
+    );
 
     if (!acquired) {
       this.logger.warn({
@@ -1803,19 +2338,26 @@ export class PipelineRunnerService {
     }
 
     try {
-      let riskAssessment: Awaited<ReturnType<LiveTradingService["assessPipelineDecision"]>> | undefined;
+      let riskAssessment:
+        | Awaited<ReturnType<LiveTradingService["assessPipelineDecision"]>>
+        | undefined;
 
       const assess = async () => {
         riskAssessment = await this.liveTrading.assessPipelineDecision({
           userId,
           pipelineRunId: selected.pipelineRunId,
           symbol: selected.symbol,
-          provider: selected.executionContext.provider as unknown as ExchangeProvider,
-          decision: selected.executionContext.executionDecision as DecisionOutput,
+          provider: selected.executionContext
+            .provider as unknown as ExchangeProvider,
+          decision: selected.executionContext
+            .executionDecision as DecisionOutput,
           strategyKey: selected.executionContext.strategyKey,
           executionSizeFactor: evaluation.sizeFactor,
-          ...(selected.volatilityAtr !== undefined ? { volatilityAtr: selected.volatilityAtr } : {}),
-          tradePlanContext: selected.executionContext.tradePlanContext as TradePlanMarketContext,
+          ...(selected.volatilityAtr !== undefined
+            ? { volatilityAtr: selected.volatilityAtr }
+            : {}),
+          tradePlanContext: selected.executionContext
+            .tradePlanContext as TradePlanMarketContext,
         });
         if (riskAssessment.outcome === "NO_ELIGIBLE_EXCHANGE_CONNECTION") {
           throw new Error(
@@ -1864,8 +2406,8 @@ export class PipelineRunnerService {
   ): Promise<void> {
     if (evaluation.rejected.length === 0) return;
 
-    const records = await Promise.all(evaluation.rejected.map(
-      async (signal: ConfluenceSignal) => {
+    const records = await Promise.all(
+      evaluation.rejected.map(async (signal: ConfluenceSignal) => {
         const run = await this.repository.findRun(signal.pipelineRunId);
         return {
           id: randomUUID(),
@@ -1873,7 +2415,8 @@ export class PipelineRunnerService {
           pipelineRunId: signal.pipelineRunId,
           evaluationKey: run?.evaluationKey ?? undefined,
           symbol: signal.symbol,
-          provider: signal.executionContext.provider as unknown as ExchangeProvider,
+          provider: signal.executionContext
+            .provider as unknown as ExchangeProvider,
           decision: signal.decision,
           confidence: signal.confidence,
           mode: "CONFLUENCE_REJECTED",
@@ -1881,8 +2424,8 @@ export class PipelineRunnerService {
           outcome: "PENDING",
           marketRegime: signal.regime,
         };
-      },
-    ));
+      }),
+    );
 
     await this.repository.createPaperSignals(records).catch((err) => {
       this.logger.error({

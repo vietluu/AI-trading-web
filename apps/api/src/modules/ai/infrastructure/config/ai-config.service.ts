@@ -17,20 +17,6 @@ export class AIConfigService {
     });
 
     if (existing) {
-      const shouldNormalizeFallback =
-        existing.fallbackEnabled === false &&
-        (!existing.fallbackProviders || existing.fallbackProviders.length === 0);
-
-      if (shouldNormalizeFallback) {
-        return this.prisma.aIConfiguration.update({
-          where: { userId },
-          data: {
-            fallbackEnabled: true,
-            fallbackProviders: ["ANTHROPIC", "GEMINI", "OLLAMA"],
-          },
-        });
-      }
-
       return existing;
     }
 
@@ -48,13 +34,16 @@ export class AIConfigService {
         monthlyBudget: 100.0,
         tokenBudget: 0,
         requestBudget: 5000,
-        fallbackEnabled: true,
-        fallbackProviders: ["ANTHROPIC", "GEMINI", "OLLAMA"],
+        fallbackEnabled: false,
+        fallbackProviders: [],
       },
     });
   }
 
-  public async updateConfig(userId: string, dto: UpdateAIConfigDto): Promise<AIConfiguration> {
+  public async updateConfig(
+    userId: string,
+    dto: UpdateAIConfigDto,
+  ): Promise<AIConfiguration> {
     await this.getOrCreateConfig(userId);
 
     const updateData = {
@@ -64,7 +53,8 @@ export class AIConfigService {
       maxTokens: dto.maxTokens,
       timeoutMs: dto.timeoutMs,
       dailyBudget: dto.dailyBudget !== undefined ? dto.dailyBudget : undefined,
-      monthlyBudget: dto.monthlyBudget !== undefined ? dto.monthlyBudget : undefined,
+      monthlyBudget:
+        dto.monthlyBudget !== undefined ? dto.monthlyBudget : undefined,
       tokenBudget: dto.tokenBudget,
       requestBudget: dto.requestBudget,
       fallbackEnabled: dto.fallbackEnabled,
@@ -78,11 +68,13 @@ export class AIConfigService {
 
     // Synchronize settings with background system user so pipeline uses Settings UI in real-time
     if (userId !== "system") {
-      await this.prisma.aIConfiguration.upsert({
-        where: { userId: "system" },
-        create: { userId: "system", ...updateData },
-        update: updateData,
-      }).catch(() => null);
+      await this.prisma.aIConfiguration
+        .upsert({
+          where: { userId: "system" },
+          create: { userId: "system", ...updateData },
+          update: updateData,
+        })
+        .catch(() => null);
     }
 
     return updated;
@@ -100,7 +92,9 @@ export class AIConfigService {
       tokenBudget: config.tokenBudget,
       requestBudget: config.requestBudget,
       fallbackEnabled: config.fallbackEnabled,
-      fallbackProviders: config.fallbackProviders as ("OPENAI" | "ANTHROPIC" | "GEMINI" | "OLLAMA")[],
+      fallbackProviders: config.fallbackProviders as (
+        "OPENAI" | "ANTHROPIC" | "GEMINI" | "OLLAMA"
+      )[],
     };
   }
 }

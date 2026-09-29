@@ -80,11 +80,10 @@ export function shouldDisableStrategy(
   const sharpe = Number(metrics.sharpeRatio);
   return (
     metrics.drawdownPct >= limits.maxDrawdown ||
-    (enoughEvidence && (
-      metrics.returnPct <= limits.disableReturnPct ||
-      metrics.winRate < limits.disableWinRate ||
-      (Number.isFinite(sharpe) && sharpe <= -1)
-    ))
+    (enoughEvidence &&
+      (metrics.returnPct <= limits.disableReturnPct ||
+        (metrics.winRate < limits.disableWinRate && metrics.returnPct <= 0) ||
+        (Number.isFinite(sharpe) && sharpe <= -1)))
   );
 }
 

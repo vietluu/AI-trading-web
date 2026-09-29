@@ -34,6 +34,10 @@ export class AnthropicProvider implements LLMProvider {
     );
   }
 
+  public isConfigured(): boolean {
+    return Boolean(this.getApiKey());
+  }
+
   public async chat(options: LLMRequestOptions): Promise<LLMResponse> {
     const apiKey = this.getApiKey();
     const startTime = Date.now();

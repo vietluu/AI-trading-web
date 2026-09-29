@@ -1,8 +1,16 @@
 import { Injectable, Logger, Optional } from "@nestjs/common";
 import { AIProviderType, AIResponseDto } from "@platform/shared";
-import { LLMProvider, LLMRequestOptions, LLMResponse, LLMStreamChunk } from "../domain/interfaces/llm-provider.interface";
+import {
+  LLMProvider,
+  LLMRequestOptions,
+  LLMResponse,
+  LLMStreamChunk,
+} from "../domain/interfaces/llm-provider.interface";
 import { AIConfigService } from "../infrastructure/config/ai-config.service";
-import { ContextBuilderService, ContextSourceData } from "../infrastructure/context/context-builder.service";
+import {
+  ContextBuilderService,
+  ContextSourceData,
+} from "../infrastructure/context/context-builder.service";
 import { AIHistoryService } from "../infrastructure/history/ai-history.service";
 import { PromptEngineService } from "../infrastructure/prompt/prompt-engine.service";
 import { LLMProviderFactory } from "../infrastructure/provider/llm-provider.factory";
@@ -39,8 +47,14 @@ export class AIOrchestratorService {
   private readonly logger = new Logger(AIOrchestratorService.name);
   private readonly promptCacheTtlSeconds = 30;
   private readonly maxInMemoryPromptCacheEntries = 500;
-  private readonly inMemoryPromptCache = new Map<string, { response: AIResponseDto; expiresAt: number }>();
-  private readonly inFlightPromptCache = new Map<string, Promise<AIResponseDto>>();
+  private readonly inMemoryPromptCache = new Map<
+    string,
+    { response: AIResponseDto; expiresAt: number }
+  >();
+  private readonly inFlightPromptCache = new Map<
+    string,
+    Promise<AIResponseDto>
+  >();
   private readonly geminiFallbackModels = [
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
@@ -74,7 +88,9 @@ export class AIOrchestratorService {
   ) {}
 
   public async execute(options: AIExecuteOptions): Promise<AIResponseDto> {
-    const userConfig = await this.configService.getOrCreateConfig(options.userId);
+    const userConfig = await this.configService.getOrCreateConfig(
+      options.userId,
+    );
 
     // 2. Build context
     const { contextString } = options.contextSources
@@ -95,7 +111,7 @@ export class AIOrchestratorService {
             system: options.variables?.system as Record<string, unknown>,
             context: { marketContext: contextString },
           },
-          options.templateVersion
+          options.templateVersion,
         )
       : this.promptEngine.renderDirect({
           userPrompt: userText,
@@ -104,7 +120,8 @@ export class AIOrchestratorService {
         });
 
     // 4. Provider resolution & fallback chain
-    const primaryProviderType = options.provider || userConfig.preferredProvider;
+    const primaryProviderType =
+      options.provider || userConfig.preferredProvider;
     const modelName = options.model || userConfig.preferredModel;
     const fallbackTypes = userConfig.fallbackEnabled
       ? (userConfig.fallbackProviders as AIProviderType[])
@@ -130,32 +147,62 @@ export class AIOrchestratorService {
 
     const cachedResponse = await this.getCachedResponse(promptCacheKey);
     if (cachedResponse) {
-      this.logger.log(`Reusing cached AI response for prompt fingerprint ${promptCacheKey.slice(0, 12)}`);
+      this.logger.log(
+        `Reusing cached AI response for prompt fingerprint ${promptCacheKey.slice(0, 12)}`,
+      );
       return cachedResponse;
     }
 
     const inFlight = this.inFlightPromptCache.get(promptCacheKey);
     if (inFlight) {
-      this.logger.log(`Reusing in-flight AI response for prompt fingerprint ${promptCacheKey.slice(0, 12)}`);
+      this.logger.log(
+        `Reusing in-flight AI response for prompt fingerprint ${promptCacheKey.slice(0, 12)}`,
+      );
       return inFlight;
     }
 
     // 1. Budget check
     const budgetCheck = await this.budgetManager.checkBudget(options.userId);
     if (!budgetCheck.allowed) {
-      throw new Error(`AI Request blocked by budget policy: ${budgetCheck.reason}`);
+      throw new Error(
+        `AI Request blocked by budget policy: ${budgetCheck.reason}`,
+      );
+    }
+
+    let discoveredGeminiModels: string[] | undefined;
+    if (
+      primaryProviderType === "GEMINI" &&
+      process.env.MOCK_AI_RESPONSES !== "true"
+    ) {
+      try {
+        discoveredGeminiModels = (
+          await this.providerFactory.getProvider("GEMINI").listModels()
+        ).map((model) => model.name);
+      } catch (error) {
+        this.logger.warn(
+          `Unable to load current Gemini models: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
 
     const candidates = this.buildCandidates(
       primaryProviderType,
       modelName,
       fallbackTypes,
+      discoveredGeminiModels,
     );
 
     let lastError: Error | null = null;
     let response: LLMResponse | null = null;
     const executionStartedAt = Date.now();
-    const attemptedCandidates: Array<{ provider: AIProviderType; model: string; outcome: "tried" | "skipped"; reason?: string; status?: number; code?: string }> = [];
+    const attemptedCandidates: Array<{
+      provider: AIProviderType;
+      model: string;
+      outcome: "tried" | "skipped";
+      reason?: string;
+      status?: number;
+      code?: string;
+    }> = [];
     const authBlockedProviders = new Set<AIProviderType>();
     const executionPromise = (async (): Promise<AIResponseDto> => {
       for (const candidate of candidates) {
@@ -175,20 +222,51 @@ export class AIOrchestratorService {
         if (cooldown.seconds > 0) {
           const isQuotaCooldown = cooldown.status === 429;
           const cooldownCode = isQuotaCooldown
-            ? 'AI_PROVIDER_COOLDOWN'
-            : 'AI_PROVIDER_UNAVAILABLE_COOLDOWN';
+            ? "AI_PROVIDER_COOLDOWN"
+            : "AI_PROVIDER_UNAVAILABLE_COOLDOWN";
           const cooldownErr = Object.assign(
-            new Error(`${pType}/${model} ${isQuotaCooldown ? 'quota' : 'availability'} cooldown is active (${cooldown.seconds}s remaining)`),
-            { status: cooldown.status, providerRequestSent: false, code: cooldownCode },
+            new Error(
+              `${pType}/${model} ${isQuotaCooldown ? "quota" : "availability"} cooldown is active (${cooldown.seconds}s remaining)`,
+            ),
+            {
+              status: cooldown.status,
+              providerRequestSent: false,
+              code: cooldownCode,
+            },
           );
           lastError = cooldownErr;
-          attemptedCandidates.push({ provider: pType, model, outcome: "skipped", reason: `${cooldown.seconds}s remaining`, status: cooldown.status, code: cooldownCode });
-          this.logger.warn(`AI fallback skipped ${pType}/${model} because its ${isQuotaCooldown ? 'quota' : 'availability'} cooldown is active (${cooldown.seconds}s remaining).`);
+          attemptedCandidates.push({
+            provider: pType,
+            model,
+            outcome: "skipped",
+            reason: `${cooldown.seconds}s remaining`,
+            status: cooldown.status,
+            code: cooldownCode,
+          });
+          this.logger.warn(
+            `AI fallback skipped ${pType}/${model} because its ${isQuotaCooldown ? "quota" : "availability"} cooldown is active (${cooldown.seconds}s remaining).`,
+          );
           continue;
         }
         try {
-          await this.budgetManager.reserveRequest(options.userId);
           const provider = this.providerFactory.getProvider(pType);
+          if (
+            pType !== primaryProviderType &&
+            provider.isConfigured?.() === false
+          ) {
+              attemptedCandidates.push({
+                provider: pType,
+                model,
+                outcome: "skipped",
+                reason: "provider is not configured",
+                code: "AI_PROVIDER_NOT_CONFIGURED",
+              });
+              this.logger.warn(
+                `AI fallback skipped ${pType}/${model} because the provider is not configured.`,
+              );
+              continue;
+          }
+          await this.budgetManager.reserveRequest(options.userId);
           response = await this.executeWithRetry(provider, {
             model,
             systemPrompt: rendered.systemPrompt,
@@ -199,7 +277,11 @@ export class AIOrchestratorService {
             jsonSchema: options.jsonSchema,
             timeoutMs: userConfig.timeoutMs,
           });
-          attemptedCandidates.push({ provider: pType, model, outcome: "tried" });
+          attemptedCandidates.push({
+            provider: pType,
+            model,
+            outcome: "tried",
+          });
           break; // Success!
         } catch (err: unknown) {
           lastError = err instanceof Error ? err : new Error(String(err));
@@ -207,10 +289,18 @@ export class AIOrchestratorService {
           const status = errorRecord?.status as number | undefined;
           const requestWasSent = errorRecord?.providerRequestSent !== false;
           const code = errorRecord?.code as string | undefined;
-          attemptedCandidates.push({ provider: pType, model, outcome: "tried", status, code, reason: lastError.message });
+          attemptedCandidates.push({
+            provider: pType,
+            model,
+            outcome: "tried",
+            status,
+            code,
+            reason: lastError.message,
+          });
 
           if (status === 429 || (status != null && status >= 500)) {
-            const providerRetryAfterMs = errorRecord?.retryAfterMs as number | undefined;
+            const providerRetryAfterMs = errorRecord?.retryAfterMs as
+              number | undefined;
             const retryAfterMs = this.isGeminiDailyQuotaError(
               pType,
               status,
@@ -218,12 +308,7 @@ export class AIOrchestratorService {
             )
               ? Math.max(60_000, this.nextPacificMidnight() - Date.now())
               : providerRetryAfterMs;
-            await this.openModelCooldown(
-              pType,
-              model,
-              retryAfterMs,
-              status,
-            );
+            await this.openModelCooldown(pType, model, retryAfterMs, status);
           }
 
           if (requestWasSent) {
@@ -249,44 +334,78 @@ export class AIOrchestratorService {
           // models on that provider, but continue the independent fallback
           // chain instead of aborting every remaining candidate.
           if (status === 401 || status === 403) {
-            this.logger.error(`Non-retryable auth error (${status}) from provider ${pType}: ${lastError.message}`);
+            this.logger.error(
+              `Non-retryable auth error (${status}) from provider ${pType}: ${lastError.message}`,
+            );
             authBlockedProviders.add(pType);
             continue;
           }
           if (code === "AI_REQUEST_BUDGET_EXCEEDED") break;
 
-          this.logger.warn(`${pType}/${model} failed: ${lastError.message}. Attempting fallback...`);
+          this.logger.warn(
+            `${pType}/${model} failed: ${lastError.message}. Attempting fallback...`,
+          );
         }
       }
 
       if (!response) {
         const lastErrRecord = lastError as Record<string, unknown> | null;
         const triedQuotaFailures = attemptedCandidates.filter(
-          (candidate) => candidate.outcome === "tried" && (candidate.status === 429 || candidate.code === "AI_PROVIDER_COOLDOWN"),
+          (candidate) =>
+            candidate.outcome === "tried" &&
+            (candidate.status === 429 ||
+              candidate.code === "AI_PROVIDER_COOLDOWN"),
         );
         const skippedCooldowns = attemptedCandidates.filter(
-          (candidate) => candidate.outcome === "skipped" && candidate.status === 429,
+          (candidate) =>
+            candidate.outcome === "skipped" && candidate.status === 429,
         );
-        const isQuotaExceeded = lastErrRecord?.status === 429 || lastErrRecord?.code === 'AI_PROVIDER_COOLDOWN' || triedQuotaFailures.length > 0 || skippedCooldowns.length > 0;
+        const isQuotaExceeded =
+          lastErrRecord?.status === 429 ||
+          lastErrRecord?.code === "AI_PROVIDER_COOLDOWN" ||
+          triedQuotaFailures.length > 0 ||
+          skippedCooldowns.length > 0;
         if (isQuotaExceeded) {
-          const candidateSummary = attemptedCandidates.length > 0
-            ? attemptedCandidates.map((candidate) => `${candidate.provider}/${candidate.model}:${candidate.outcome}${candidate.status ? `:${candidate.status}` : ""}`).join("; ")
-            : "none";
+          const candidateSummary =
+            attemptedCandidates.length > 0
+              ? attemptedCandidates
+                  .map(
+                    (candidate) =>
+                      `${candidate.provider}/${candidate.model}:${candidate.outcome}${candidate.status ? `:${candidate.status}` : ""}`,
+                  )
+                  .join("; ")
+              : "none";
 
-          if (lastErrRecord?.code === 'AI_PROVIDER_COOLDOWN' || skippedCooldowns.length > 0 && triedQuotaFailures.length === 0) {
-            this.logger.error(`AI quota cooldown prevented the request for all remaining candidates. Tried/fallback chain: ${candidateSummary}`);
-            throw lastError ?? new Error(`AI Request failed: quota cooldown is active`);
+          if (
+            lastErrRecord?.code === "AI_PROVIDER_COOLDOWN" ||
+            (skippedCooldowns.length > 0 && triedQuotaFailures.length === 0)
+          ) {
+            this.logger.error(
+              `AI quota cooldown prevented the request for all remaining candidates. Tried/fallback chain: ${candidateSummary}`,
+            );
+            throw (
+              lastError ??
+              new Error(`AI Request failed: quota cooldown is active`)
+            );
           }
 
-          this.logger.error(`All candidate AI models hit HTTP 429 quota limits or active cooldowns. Tried/fallback chain: ${candidateSummary}`);
+          this.logger.error(
+            `All candidate AI models hit HTTP 429 quota limits or active cooldowns. Tried/fallback chain: ${candidateSummary}`,
+          );
           const quotaErr = new Error(
             `AI Request failed: all candidate models exhausted by quota/cooldown. Tried/fallback chain: ${candidateSummary}`,
           );
-          Object.assign(quotaErr, { status: 429, code: 'ALL_MODELS_QUOTA_EXCEEDED', providerRequestSent: false });
+          Object.assign(quotaErr, {
+            status: 429,
+            code: "ALL_MODELS_QUOTA_EXCEEDED",
+            providerRequestSent: false,
+          });
           throw quotaErr;
         }
         const unavailableCandidates = attemptedCandidates.filter(
-          (candidate) => (candidate.status != null && candidate.status >= 500) || candidate.code === 'AI_PROVIDER_UNAVAILABLE_COOLDOWN',
+          (candidate) =>
+            (candidate.status != null && candidate.status >= 500) ||
+            candidate.code === "AI_PROVIDER_UNAVAILABLE_COOLDOWN",
         );
         if (unavailableCandidates.length > 0) {
           const unavailableErr = new Error(
@@ -294,12 +413,14 @@ export class AIOrchestratorService {
           );
           Object.assign(unavailableErr, {
             status: 503,
-            code: 'ALL_MODELS_UNAVAILABLE',
+            code: "ALL_MODELS_UNAVAILABLE",
             providerRequestSent: false,
           });
           throw unavailableErr;
         }
-        throw new Error(`AI Request failed: ${lastError?.message || "All providers unavailable"}`);
+        throw new Error(
+          `AI Request failed: ${lastError?.message || "All providers unavailable"}`,
+        );
       }
 
       await this.setCachedResponse(promptCacheKey, {
@@ -356,14 +477,20 @@ export class AIOrchestratorService {
     } finally {
       this.inFlightPromptCache.delete(promptCacheKey);
     }
-
   }
 
-  public async *stream(options: AIExecuteOptions): AsyncIterable<LLMStreamChunk> {
-    const userConfig = await this.configService.getOrCreateConfig(options.userId);
-    const primaryProviderType = options.provider || userConfig.preferredProvider;
+  public async *stream(
+    options: AIExecuteOptions,
+  ): AsyncIterable<LLMStreamChunk> {
+    const userConfig = await this.configService.getOrCreateConfig(
+      options.userId,
+    );
+    const primaryProviderType =
+      options.provider || userConfig.preferredProvider;
     const fallbackTypes = userConfig.fallbackEnabled
-      ? (userConfig.fallbackProviders as AIProviderType[]).filter((f) => f !== primaryProviderType)
+      ? (userConfig.fallbackProviders as AIProviderType[]).filter(
+          (f) => f !== primaryProviderType,
+        )
       : [];
     const providerTypes = [primaryProviderType, ...fallbackTypes];
 
@@ -425,13 +552,17 @@ export class AIOrchestratorService {
       responseFormat: params.responseFormat,
       temperature: params.temperature,
       maxTokens: params.maxTokens,
-      jsonSchema: params.jsonSchema ? JSON.stringify(params.jsonSchema) : undefined,
+      jsonSchema: params.jsonSchema
+        ? JSON.stringify(params.jsonSchema)
+        : undefined,
     });
 
     return createHash("sha256").update(payload).digest("hex");
   }
 
-  private async getCachedResponse(cacheKey: string): Promise<AIResponseDto | null> {
+  private async getCachedResponse(
+    cacheKey: string,
+  ): Promise<AIResponseDto | null> {
     const now = Date.now();
     const inMemoryEntry = this.inMemoryPromptCache.get(cacheKey);
     if (inMemoryEntry && inMemoryEntry.expiresAt > now) {
@@ -452,7 +583,10 @@ export class AIOrchestratorService {
         return null;
       }
 
-      const parsed = JSON.parse(cachedPayload) as { response: AIResponseDto; expiresAt: number };
+      const parsed = JSON.parse(cachedPayload) as {
+        response: AIResponseDto;
+        expiresAt: number;
+      };
       if (parsed.expiresAt <= now) {
         await this.redisService.delete(cacheKey);
         return null;
@@ -460,19 +594,26 @@ export class AIOrchestratorService {
 
       return parsed.response;
     } catch (error) {
-      this.logger.warn(`Unable to read cached AI response for ${cacheKey}: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(
+        `Unable to read cached AI response for ${cacheKey}: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return null;
     }
   }
 
-  private async setCachedResponse(cacheKey: string, response: AIResponseDto): Promise<void> {
+  private async setCachedResponse(
+    cacheKey: string,
+    response: AIResponseDto,
+  ): Promise<void> {
     const expiresAt = Date.now() + this.promptCacheTtlSeconds * 1000;
     if (this.inMemoryPromptCache.size >= this.maxInMemoryPromptCacheEntries) {
       const now = Date.now();
       for (const [key, entry] of this.inMemoryPromptCache) {
         if (entry.expiresAt <= now) this.inMemoryPromptCache.delete(key);
       }
-      while (this.inMemoryPromptCache.size >= this.maxInMemoryPromptCacheEntries) {
+      while (
+        this.inMemoryPromptCache.size >= this.maxInMemoryPromptCacheEntries
+      ) {
         const oldestKey = this.inMemoryPromptCache.keys().next().value;
         if (!oldestKey) break;
         this.inMemoryPromptCache.delete(oldestKey);
@@ -485,9 +626,15 @@ export class AIOrchestratorService {
     }
 
     try {
-      await this.redisService.setWithTtl(cacheKey, JSON.stringify({ response, expiresAt }), this.promptCacheTtlSeconds);
+      await this.redisService.setWithTtl(
+        cacheKey,
+        JSON.stringify({ response, expiresAt }),
+        this.promptCacheTtlSeconds,
+      );
     } catch (error) {
-      this.logger.warn(`Unable to write cached AI response for ${cacheKey}: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(
+        `Unable to write cached AI response for ${cacheKey}: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -495,6 +642,7 @@ export class AIOrchestratorService {
     primaryProvider: AIProviderType,
     primaryModel: string,
     fallbackProviders: AIProviderType[],
+    discoveredGeminiModels?: string[],
   ): Array<{ provider: AIProviderType; model: string }> {
     const seen = new Set<string>();
     const candidates: Array<{ provider: AIProviderType; model: string }> = [];
@@ -505,19 +653,23 @@ export class AIOrchestratorService {
       candidates.push({ provider, model });
     };
 
-    const normalizedPrimaryModel = primaryModel || this.defaultModelsByProvider[primaryProvider];
+    const normalizedPrimaryModel =
+      primaryModel || this.defaultModelsByProvider[primaryProvider];
     push(primaryProvider, normalizedPrimaryModel);
 
     // Provider quota is commonly shared by sibling models. Prefer an
     // independent provider before spending requests on alternate models.
     for (const provider of fallbackProviders) {
       if (provider === primaryProvider) continue;
-      const fallbackModel = this.defaultModelsByProvider[provider] || normalizedPrimaryModel;
+      const fallbackModel =
+        this.defaultModelsByProvider[provider] || normalizedPrimaryModel;
       push(provider, fallbackModel);
     }
 
     if (primaryProvider === "GEMINI") {
-      for (const model of this.geminiFallbackModels) {
+      const fallbackModels =
+        discoveredGeminiModels ?? this.geminiFallbackModels;
+      for (const model of fallbackModels) {
         if (model !== normalizedPrimaryModel) push(primaryProvider, model);
       }
     }
@@ -561,10 +713,12 @@ export class AIOrchestratorService {
     }
     if (!this.redisService) return { seconds: 0, status: 0 };
     try {
-      const raw = await this.redisService.get(this.modelCooldownKey(provider, model));
+      const raw = await this.redisService.get(
+        this.modelCooldownKey(provider, model),
+      );
       if (!raw) return { seconds: 0, status: 0 };
-      const parsed = raw.startsWith('{')
-        ? JSON.parse(raw) as { until?: number; status?: number }
+      const parsed = raw.startsWith("{")
+        ? (JSON.parse(raw) as { until?: number; status?: number })
         : { until: Number(raw), status: 429 };
       const until = Number(parsed.until);
       return Number.isFinite(until) && until > Date.now()
@@ -586,9 +740,12 @@ export class AIOrchestratorService {
   ): Promise<void> {
     // Default cooldown is 5 minutes (300s) for rate limit recovery,
     // allowing automatic resumption on subsequent scheduler cycles.
-    const cooldownMs = retryAfterMs && retryAfterMs > 0
-      ? retryAfterMs
-      : status === 429 ? 300_000 : 30_000;
+    const cooldownMs =
+      retryAfterMs && retryAfterMs > 0
+        ? retryAfterMs
+        : status === 429
+          ? 300_000
+          : 30_000;
     const resetAt = Date.now() + cooldownMs;
     const key = `${provider}:${model}`;
     this.inMemoryModelCooldowns.set(key, { until: resetAt, status });
@@ -621,12 +778,16 @@ export class AIOrchestratorService {
       second: "2-digit",
       hourCycle: "h23",
     }).formatToParts(now);
-    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-    const nextDay = new Date(Date.UTC(
-      Number(values.year),
-      Number(values.month) - 1,
-      Number(values.day) + 1,
-    ));
+    const values = Object.fromEntries(
+      parts.map((part) => [part.type, part.value]),
+    );
+    const nextDay = new Date(
+      Date.UTC(
+        Number(values.year),
+        Number(values.month) - 1,
+        Number(values.day) + 1,
+      ),
+    );
     const localMidnightAsUtc = Date.UTC(
       nextDay.getUTCFullYear(),
       nextDay.getUTCMonth(),
@@ -642,7 +803,9 @@ export class AIOrchestratorService {
       second: "2-digit",
       hourCycle: "h23",
     }).formatToParts(new Date(localMidnightAsUtc));
-    const probe = Object.fromEntries(probeParts.map((part) => [part.type, part.value]));
+    const probe = Object.fromEntries(
+      probeParts.map((part) => [part.type, part.value]),
+    );
     const represented = Date.UTC(
       Number(probe.year),
       Number(probe.month) - 1,
@@ -657,7 +820,7 @@ export class AIOrchestratorService {
   private async executeWithRetry(
     provider: LLMProvider,
     options: LLMRequestOptions,
-    maxRetries = 1
+    maxRetries = 1,
   ): Promise<LLMResponse> {
     let attempt = 0;
     let delay = 500;
@@ -667,14 +830,22 @@ export class AIOrchestratorService {
         return await provider.chat(options);
       } catch (err: unknown) {
         attempt++;
-        const status = (err as Record<string, unknown>)?.status as number | undefined;
+        const status = (err as Record<string, unknown>)?.status as
+          number | undefined;
 
         // Never retry 400, 401, 403
-        if (status === 400 || status === 401 || status === 403 || attempt > maxRetries) {
+        if (
+          status === 400 ||
+          status === 401 ||
+          status === 403 ||
+          attempt > maxRetries
+        ) {
           throw err;
         }
 
-        this.logger.warn(`Retrying AI call (attempt ${attempt}/${maxRetries}) after ${delay}ms...`);
+        this.logger.warn(
+          `Retrying AI call (attempt ${attempt}/${maxRetries}) after ${delay}ms...`,
+        );
         await new Promise((res) => setTimeout(res, delay));
         delay *= 2;
       }
