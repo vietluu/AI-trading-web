@@ -38,11 +38,11 @@
     "class-validator": "^0.14.2",
     "fast-xml-parser": "^5.10.1",
     "ioredis": "^5.6.1",
-    "nodemailer": "^9.1.0",
+    "nodemailer": "^10.0.13",
     "prisma": "^6.12.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
-    "socket.io": "^4.7.5",
+    "socket.io": "^4.8.4",
     "ws": "^8.18.0",
     "zod": "^3.25.76"
   },
