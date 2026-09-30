@@ -127,7 +127,7 @@ describe('SelfLearningService.evaluateShadowSignals promotion state machine inte
       setup: 'BREAKOUT',
       executionPolicyVersion: 'v1',
       configurationHash: 'cfg-1',
-    } as never);
+    });
 
     expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
