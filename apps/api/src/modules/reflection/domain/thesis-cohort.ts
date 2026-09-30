@@ -2,6 +2,7 @@ import type { TradeLifecycleOutcome } from '../../research/domain/trade-lifecycl
 
 export interface ThesisCohortKeyParams {
   symbol: string;
+  provider?: string;
   timeframe: string;
   regime: string;
   direction: string;
@@ -217,6 +218,8 @@ export interface ProfitAuthorityResult {
     allPositive: boolean;
   };
   reason: string;
+  probabilityAuthority: 'EXACT_LIFECYCLE' | 'UNAVAILABLE';
+  empiricalWinProbability: number | null;
 }
 
 export interface EvaluateProfitAuthorityOptions {
@@ -298,6 +301,12 @@ export function evaluateProfitAuthority(
     largestWinnerConcentration: Number(largestWinnerConcentration.toFixed(4)),
     maxDrawdown: Number(maxDrawdown.toFixed(4)),
     sequentialWindows: { first, second, allPositive },
+    probabilityAuthority: metrics.sampleSize >= fullSizeMinimumSamples
+      ? 'EXACT_LIFECYCLE' as const
+      : 'UNAVAILABLE' as const,
+    empiricalWinProbability: metrics.sampleSize >= fullSizeMinimumSamples
+      ? metrics.winRate
+      : null,
   };
 
   if (metrics.sampleSize >= suppressionMinimumSamples && metrics.meanNetR < 0) {
@@ -369,13 +378,14 @@ export function selectExactCohortOutcomes(
   return deduplicateLifecycleOutcomes(outcomes).filter((outcome) => {
     if (outcome.status !== 'FINALIZED' || typeof outcome.netR !== 'number') return false;
     const symbolMatch = outcome.symbol === params.symbol;
+    const providerMatch = !params.provider || outcome.provider === params.provider;
     const timeframeMatch = outcome.timeframe === params.timeframe;
     const regimeMatch = outcome.regime === params.regime;
     const directionMatch = outcome.direction === params.direction;
     const setupMatch = outcome.setup === params.setup;
     const policyMatch = matchesPolicyVersion(outcome, params.executionPolicyVersion);
     const configHashMatch = !params.configurationHash || outcome.configurationHash === params.configurationHash;
-    return symbolMatch && timeframeMatch && regimeMatch && directionMatch && setupMatch && policyMatch && configHashMatch;
+    return symbolMatch && providerMatch && timeframeMatch && regimeMatch && directionMatch && setupMatch && policyMatch && configHashMatch;
   });
 }
 

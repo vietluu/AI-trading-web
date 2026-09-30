@@ -75,6 +75,16 @@ export const EMPTY_SHADOW_PERFORMANCE: ShadowPerformance = {
   sharpeRatio: 0,
 };
 
+export interface RecentThesisLossSummary {
+  direction: 'LONG' | 'SHORT';
+  setup?: string;
+  regime?: string;
+  netR: number;
+  exitReason?: string;
+  entryPrice: number;
+  exitPrice: number | null;
+}
+
 interface AgentAnalysisSnapshot {
   dataQuality?: string;
   trend?: { direction?: string };
@@ -1474,6 +1484,33 @@ export class SelfLearningService {
    * Returns sizing authority from the exact, finalized lifecycle cohort only.
    * Broader evidence is intentionally excluded from this decision contract.
    */
+  async recentLossesForThesis(
+    params: Pick<ThesisCohortKeyParams, 'symbol' | 'timeframe'>,
+    options: { asOf: Date; take?: number },
+  ): Promise<RecentThesisLossSummary[]> {
+    const take = Math.min(5, Math.max(1, Math.trunc(options.take ?? 5)));
+    const rows = await this.prisma.tradeLifecycleOutcome.findMany({
+      where: {
+        status: 'FINALIZED',
+        symbol: params.symbol,
+        timeframe: params.timeframe,
+        netR: { lt: 0 },
+        closedAt: { lte: options.asOf },
+      },
+      orderBy: { closedAt: 'desc' },
+      take,
+    });
+    return rows.map((row) => ({
+      direction: row.direction as 'LONG' | 'SHORT',
+      ...(row.setup ? { setup: row.setup } : {}),
+      ...(row.regime ? { regime: row.regime } : {}),
+      netR: Number(row.netR),
+      ...(row.exitReason ? { exitReason: row.exitReason } : {}),
+      entryPrice: Number(row.averageEntryPrice),
+      exitPrice: row.averageExitPrice == null ? null : Number(row.averageExitPrice),
+    }));
+  }
+
   async evaluateProfitAuthorityForThesis(
     cohortKey: string | ThesisCohortKeyParams,
     options?: EvaluateCohortOptions,
@@ -1484,6 +1521,7 @@ export class SelfLearningService {
         status: 'FINALIZED',
         netR: { not: null },
         ...(params.symbol ? { symbol: params.symbol } : {}),
+        ...(params.provider ? { provider: params.provider } : {}),
         ...(params.timeframe ? { timeframe: params.timeframe } : {}),
         ...(params.regime ? { regime: params.regime } : {}),
         ...(params.direction ? { direction: params.direction } : {}),

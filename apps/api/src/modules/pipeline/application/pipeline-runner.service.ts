@@ -85,6 +85,7 @@ import {
 import { evaluateExecutionReadiness } from "../domain/execution-readiness";
 import { buildEvaluationKey } from "../domain/evaluation-identity";
 import type { NewsProbeAuthorityInput } from "../../agents/domain/news-probe-authority";
+import { selectTradeThesisCandidate } from "../../agents/domain/thesis-candidate-selector";
 
 class PipelineCancelledError extends Error {}
 class PipelineExecutionLockBusyError extends Error {}
@@ -303,6 +304,7 @@ export class PipelineRunnerService {
     const runId = String(job.runId);
     let evaluatedGateRecords: GateDecisionRecord[] | undefined;
     let evaluatedResult: Record<string, unknown> | undefined;
+    let thesisAttribution: Record<string, unknown> | undefined;
     let riskStageReached = false;
     let executionStageReached = false;
     let riskAssessment:
@@ -717,7 +719,15 @@ export class PipelineRunnerService {
       let proactiveThesis: TradeThesis | undefined;
       let proactive: ProactiveExecutionContext | undefined;
       let lifecycleAuthority:
-        | Pick<ProfitAuthorityResult, "action" | "sizeFactor" | "reason">
+        | Pick<
+            ProfitAuthorityResult,
+            | "action"
+            | "sizeFactor"
+            | "reason"
+            | "sampleSize"
+            | "probabilityAuthority"
+            | "empiricalWinProbability"
+          >
         | undefined;
       let criticSizeFactor = 1;
 
@@ -792,17 +802,6 @@ export class PipelineRunnerService {
           promptVersion: 1,
         };
         const research = await this.tradeResearcher.research(snapshot, context);
-        const persistedThesis = await this.proactiveLifecycle.persistThesis({
-          userId: job.userId,
-          opportunityId,
-          snapshotId: opportunitySnapshotId,
-          thesis: research.preferred,
-          snapshot,
-          configurationHash: context.configHash,
-          modelProvider: context.provider,
-          model: context.model,
-          promptVersion: context.promptVersion,
-        });
         const features = anticipatoryDecisionContext(snapshot);
         const baseline = await this.decision.decideForUser(
           { symbol, fusionOutput, ...analyses },
@@ -835,24 +834,116 @@ export class PipelineRunnerService {
           );
           await this.finalizeEarlyTerminalRun(
             runId,
-            { status: "SKIPPED", decision: "WAIT", skippedReason: reason },
+            {
+              status: "SKIPPED",
+              decision: "WAIT",
+              skippedReason: reason,
+              result: {
+                thesisAttribution: {
+                  researchPreferredDirection: research.preferred.direction,
+                  baselineDirection: "WAIT",
+                  directionAgreement: false,
+                  candidateCount: 1 + research.alternatives.length,
+                  selectionReason: reason,
+                },
+              },
+            },
             reason,
             completedAt,
           );
           return { outcome: "SKIPPED", reason };
         }
+        const selection = selectTradeThesisCandidate({
+          preferred: research.preferred,
+          alternatives: research.alternatives,
+          baselineDirection: baseline.decision,
+          snapshot,
+          now: new Date(),
+        });
+        thesisAttribution = {
+          researchPreferredDirection: selection.researchPreferredDirection,
+          selectedDirection: selection.selected?.direction ?? null,
+          baselineDirection: selection.baselineDirection,
+          directionAgreement: selection.directionAgreement,
+          candidateCount: selection.candidateCount,
+          selectedCandidateIndex: selection.selectedCandidateIndex ?? null,
+          selectionReason: selection.reason,
+          entrySource:
+            selection.selected?.decisionSource === "AI_WITH_RULES_FALLBACK"
+              ? "RULES_FALLBACK"
+              : "AI_THESIS",
+          probabilityAuthority: "UNAVAILABLE",
+          probabilitySampleSize: 0,
+          empiricalWinProbability: null,
+          criticRecentLossCount: 0,
+        };
+        if (!selection.selected) {
+          const completedAt = new Date();
+          await this.finishStep(
+            runId,
+            "decision",
+            { baseline, selection },
+            completedAt,
+          );
+          await this.finalizeEarlyTerminalRun(
+            runId,
+            {
+              status: "SKIPPED",
+              decision: "WAIT",
+              skippedReason: selection.reason,
+              result: { thesisAttribution } as Prisma.InputJsonValue,
+            },
+            selection.reason,
+            completedAt,
+          );
+          return { outcome: "SKIPPED", reason: selection.reason };
+        }
+        const selectedThesis = selection.selected;
+        const persistedThesis = await this.proactiveLifecycle.persistThesis({
+          userId: job.userId,
+          opportunityId,
+          snapshotId: opportunitySnapshotId,
+          thesis: selectedThesis,
+          snapshot,
+          configurationHash: context.configHash,
+          modelProvider: context.provider,
+          model: context.model,
+          promptVersion: context.promptVersion,
+        });
+        let recentLosses: Awaited<
+          ReturnType<SelfLearningService["recentLossesForThesis"]>
+        > = [];
+        if (this.selfLearning) {
+          try {
+            recentLosses = await this.selfLearning.recentLossesForThesis(
+              { symbol, timeframe: String(interval) },
+              { asOf: new Date(snapshot.sourceDataCutoff), take: 5 },
+            );
+          } catch (error) {
+            this.logger.warn({
+              event: "proactive_recent_losses_unavailable",
+              runId,
+              symbol,
+              message: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+        thesisAttribution.criticRecentLossCount = recentLosses.length;
         const review = ThesisReviewSchema.parse(
           await this.critic.reflect(
             {
               snapshot,
-              thesis: research.preferred,
+              thesis: selectedThesis,
               scenarios: baseline.scenarios,
               cohortEvidence: baseline.confidenceCalibration,
+              recentLosses: recentLosses.map((loss) =>
+                JSON.stringify(loss),
+              ),
             },
             job.userId,
           ),
         );
-        proactiveThesis = applyThesisReview(research.preferred, review);
+        proactiveThesis = applyThesisReview(selectedThesis, review);
         const validation = validateTradeThesis(
           {
             ...proactiveThesis,
@@ -926,19 +1017,29 @@ export class PipelineRunnerService {
           ? await this.selfLearning.evaluateProfitAuthorityForThesis(
               {
                 symbol,
+                provider: String(job.provider),
                 timeframe: String(interval),
                 regime: proactiveThesis.regime,
                 direction: proactiveThesis.direction,
                 setup: proactiveThesis.setup,
                 executionPolicyVersion: `v${snapshot.calculationVersion}`,
+                configurationHash: context.configHash,
               },
               { asOf: new Date(snapshot.sourceDataCutoff) },
             )
           : {
               action: "PROBE_ONLY",
               sizeFactor: 0.15,
+              sampleSize: 0,
+              probabilityAuthority: "UNAVAILABLE",
+              empiricalWinProbability: null,
               reason: "LIFECYCLE_AUTHORITY_UNAVAILABLE",
             };
+        thesisAttribution.probabilityAuthority =
+          lifecycleAuthority.probabilityAuthority;
+        thesisAttribution.probabilitySampleSize = lifecycleAuthority.sampleSize;
+        thesisAttribution.empiricalWinProbability =
+          lifecycleAuthority.empiricalWinProbability;
         proactive = {
           thesisId: persistedThesis.thesisId,
           opportunityId,
@@ -948,7 +1049,10 @@ export class PipelineRunnerService {
           sizeFactor: lifecycleAuthority.sizeFactor,
         };
         const netR = calculateThesisNetR(proactiveThesis, snapshot) ?? 0;
-        const probability = baseline.expectedWinProbability;
+        const probability = lifecycleAuthority.empiricalWinProbability;
+        const hasExactProbability =
+          lifecycleAuthority.probabilityAuthority === "EXACT_LIFECYCLE" &&
+          probability !== null;
         const type = proactiveThesis.regime.includes("RANGING")
           ? ("RANGING" as const)
           : proactiveThesis.regime.includes("VOLATIL")
@@ -965,9 +1069,13 @@ export class PipelineRunnerService {
           expectedReward: netR,
           expectedLoss: 1,
           executionCost: 0,
-          expectedValue: probability * netR - (1 - probability),
-          profitFactorEstimate:
-            (probability * netR) / Math.max(0.01, 1 - probability),
+          expectedWinProbability: hasExactProbability ? probability : 0.5,
+          expectedValue: hasExactProbability
+            ? probability * netR - (1 - probability)
+            : 0,
+          profitFactorEstimate: hasExactProbability
+            ? (probability * netR) / Math.max(0.01, 1 - probability)
+            : 1,
           anticipatorySignals: features.signals,
           reasoning: proactiveThesis.setup,
         };
@@ -1412,6 +1520,7 @@ export class PipelineRunnerService {
       evaluatedGateRecords = [...candidateGates];
       evaluatedResult = {
         ...output,
+        ...(thesisAttribution ? { thesisAttribution } : {}),
         decision: actionable ? output.decision : "WAIT",
         candidateDecision,
         selectedStrategyKey: strategyKey,
