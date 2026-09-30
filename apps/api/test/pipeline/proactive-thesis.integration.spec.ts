@@ -117,6 +117,25 @@ const makeFusionResult = () => ({
 
 const makeSnapshot = () => createBaseSnapshot();
 
+const createValidShortThesis = () => ({
+  ...createValidLongThesis(),
+  direction: "SHORT" as const,
+  entryZone: { lower: 108000, upper: 108500 },
+  trigger: [
+    {
+      type: "PRICE_BELOW" as const,
+      price: 108250,
+      description: "Break below the range boundary",
+    },
+  ],
+  invalidation: {
+    price: 108700,
+    reason: "Range resistance reclaim invalidates the short",
+  },
+  stopLoss: 109000,
+  targets: [{ price: 106000, fraction: 1 }],
+});
+
 const makeApprovedRiskAssessment = () => ({
   outcome: "RISK_APPROVED" as const,
   price: PRICE,
@@ -222,8 +241,12 @@ describe("Proactive Thesis Pipeline Integration", () => {
       evaluateProfitAuthorityForThesis: vi.fn().mockResolvedValue({
         action: "FULL_SIZE",
         sizeFactor: 1,
+        sampleSize: 30,
+        probabilityAuthority: "EXACT_LIFECYCLE",
+        empiricalWinProbability: 0.6,
         reason: "stable exact lifecycle",
       }),
+      recentLossesForThesis: vi.fn().mockResolvedValue([]),
     };
 
     const fusionResult = makeFusionResult();
@@ -453,7 +476,129 @@ describe("Proactive Thesis Pipeline Integration", () => {
     expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
   });
 
-  it("persists researcher evidence before a baseline WAIT and never creates execution authority", async () => {
+  it("blocks an AI and baseline direction conflict before critic, risk, or execution", async () => {
+    mockTradeResearcher.research = vi.fn().mockResolvedValue({
+      preferred: createValidShortThesis(),
+      alternatives: [],
+      researchRunId: "thesis-short",
+      contextSnapshotId: "context-short",
+    });
+
+    await expect(pipelineRunner.run(makeJob())).resolves.toEqual({
+      outcome: "SKIPPED",
+      reason: "AI_BASELINE_DIRECTION_CONFLICT",
+    });
+    expect(mockCritic.reflect).not.toHaveBeenCalled();
+    expect(mockLiveTrading.assessPipelineDecision).not.toHaveBeenCalled();
+    expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
+    const terminal = mockRunUpdates.mock.calls.at(-1)?.[1] as {
+      result?: Record<string, unknown>;
+    };
+    expect(terminal.result).toMatchObject({
+      thesisAttribution: {
+        researchPreferredDirection: "SHORT",
+        baselineDirection: "LONG",
+        directionAgreement: false,
+        candidateCount: 1,
+        selectionReason: "AI_BASELINE_DIRECTION_CONFLICT",
+      },
+    });
+  });
+
+  it("selects an aligned alternative and gives the critic bounded recent losses", async () => {
+    const aligned = {
+      ...createValidLongThesis(),
+      targets: [{ price: 113000, fraction: 1 }],
+      expectedNetR: 4,
+    };
+    mockTradeResearcher.research = vi.fn().mockResolvedValue({
+      preferred: createValidShortThesis(),
+      alternatives: [aligned],
+      researchRunId: "thesis-candidates",
+      contextSnapshotId: "context-candidates",
+    });
+    vi.mocked(mockSelfLearning.recentLossesForThesis!).mockResolvedValue([
+      {
+        direction: "LONG",
+        setup: "RANGE_REVERSAL",
+        regime: "RANGING",
+        netR: -1,
+        exitReason: "STOP_LOSS",
+        entryPrice: 108200,
+        exitPrice: 107400,
+      },
+    ]);
+
+    await pipelineRunner.run(makeJob());
+
+    expect(persistedTheses[0]).toMatchObject({ thesis: aligned });
+    expect(mockCritic.reflect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        thesis: aligned,
+        recentLosses: [expect.stringContaining("STOP_LOSS")],
+      }),
+      "user-1",
+    );
+  });
+
+  it("continues deterministic review with empty loss context when history lookup fails", async () => {
+    vi.mocked(mockSelfLearning.recentLossesForThesis!).mockRejectedValue(
+      new Error("history unavailable"),
+    );
+
+    await expect(pipelineRunner.run(makeJob())).resolves.toMatchObject({
+      outcome: "ORDER_SUBMITTED",
+    });
+    expect(mockCritic.reflect).toHaveBeenCalledWith(
+      expect.objectContaining({ recentLosses: [] }),
+      "user-1",
+    );
+  });
+
+  it("never borrows baseline probability for immature AI-thesis economics", async () => {
+    mockDecision.decideForUser.mockResolvedValue({
+      ...makeFusionResult().fusionOutput,
+      expectedWinProbability: 0.91,
+    });
+    vi.mocked(mockSelfLearning.evaluateProfitAuthorityForThesis!).mockResolvedValue({
+      action: "PROBE_ONLY",
+      sizeFactor: 0.15,
+      sampleSize: 12,
+      probabilityAuthority: "UNAVAILABLE",
+      empiricalWinProbability: null,
+      reason: "immature exact lifecycle",
+    } as never);
+
+    await pipelineRunner.run(makeJob());
+
+    const assessment = vi.mocked(mockLiveTrading.assessPipelineDecision!).mock.calls[0]?.[0];
+    expect(assessment?.decision).toMatchObject({
+      expectedWinProbability: 0.5,
+      expectedValue: 0,
+      profitFactorEstimate: 1,
+    });
+  });
+
+  it("prices an AI thesis only from mature exact lifecycle probability", async () => {
+    vi.mocked(mockSelfLearning.evaluateProfitAuthorityForThesis!).mockResolvedValue({
+      action: "FULL_SIZE",
+      sizeFactor: 1,
+      sampleSize: 30,
+      probabilityAuthority: "EXACT_LIFECYCLE",
+      empiricalWinProbability: 0.6,
+      reason: "mature exact lifecycle",
+    } as never);
+
+    await pipelineRunner.run(makeJob());
+
+    const assessment = vi.mocked(mockLiveTrading.assessPipelineDecision!).mock.calls[0]?.[0];
+    expect(assessment?.decision.expectedWinProbability).toBe(0.6);
+    expect(assessment?.decision.expectedReward).toBeCloseTo(3.1686, 4);
+    expect(assessment?.decision.expectedValue).toBeCloseTo(1.5011, 4);
+    expect(assessment?.decision.profitFactorEstimate).toBeCloseTo(4.7528, 4);
+  });
+
+  it("retains researcher audit evidence without persisting execution authority after a baseline WAIT", async () => {
     mockDecision.decideForUser.mockResolvedValue({
       ...makeFusionResult().fusionOutput,
       decision: "WAIT",
@@ -464,10 +609,8 @@ describe("Proactive Thesis Pipeline Integration", () => {
       outcome: "SKIPPED",
       reason: "BASELINE_DECISION_WAIT",
     });
-    expect(persistedTheses).toHaveLength(1);
-    expect(persistedTheses[0]).toMatchObject({
-      opportunityId: "opportunity-1",
-    });
+    expect(mockTradeResearcher.research).toHaveBeenCalledOnce();
+    expect(persistedTheses).toHaveLength(0);
     expect(persistedReviews).toHaveLength(0);
     expect(persistedPlans).toHaveLength(0);
     expect(mockLiveTrading.assessPipelineDecision).not.toHaveBeenCalled();
