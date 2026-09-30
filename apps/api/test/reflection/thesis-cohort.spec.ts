@@ -81,11 +81,15 @@ describe('Thesis Cohort Calibration & AI Lift Domain', () => {
       action: 'PROBE_ONLY',
       sampleSize: 29,
       sizeFactor: 0.15,
+      probabilityAuthority: 'UNAVAILABLE',
+      empiricalWinProbability: null,
     });
     expect(evaluateProfitAuthority(stablePositive)).toMatchObject({
       action: 'FULL_SIZE',
       sampleSize: 30,
       profitFactor: 2,
+      probabilityAuthority: 'EXACT_LIFECYCLE',
+      empiricalWinProbability: 20 / 30,
       sequentialWindows: { allPositive: true },
     });
     expect(evaluateProfitAuthority(matureNegative)).toMatchObject({
@@ -95,6 +99,8 @@ describe('Thesis Cohort Calibration & AI Lift Domain', () => {
     expect(evaluateProfitAuthority(concentrated)).toMatchObject({
       action: 'PROBE_ONLY',
       sampleSize: 30,
+      probabilityAuthority: 'EXACT_LIFECYCLE',
+      empiricalWinProbability: 16 / 30,
     });
     expect(evaluateProfitAuthority(concentrated).largestWinnerConcentration).toBeGreaterThan(0.35);
   });

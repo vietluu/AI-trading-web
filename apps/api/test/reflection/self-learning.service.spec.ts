@@ -112,6 +112,75 @@ describe('SelfLearningService.evaluateShadowSignals promotion state machine inte
     expect(authority).toMatchObject({ action: 'SUPPRESSED', sampleSize: 20 });
   });
 
+  it('partitions exact authority by provider and configuration hash', async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const service = new SelfLearningService({
+      tradeLifecycleOutcome: { findMany },
+    } as never, {} as never);
+
+    await service.evaluateProfitAuthorityForThesis({
+      symbol: 'BTC-USDT',
+      provider: 'BINANCE_FUTURES',
+      timeframe: '15m',
+      regime: 'TRENDING_UP',
+      direction: 'LONG',
+      setup: 'BREAKOUT',
+      executionPolicyVersion: 'v1',
+      configurationHash: 'cfg-1',
+    } as never);
+
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        symbol: 'BTC-USDT',
+        provider: 'BINANCE_FUTURES',
+        configurationHash: 'cfg-1',
+      }) as unknown,
+    }));
+  });
+
+  it('loads only bounded historical losses available at the thesis cutoff', async () => {
+    const asOf = new Date('2026-09-20T12:00:00.000Z');
+    const rows = [
+      {
+        ...lifecycleRow('loss-1', -1.25, 1),
+        exitReason: 'STOP_LOSS',
+        metadata: { secret: 'must not leak' },
+      },
+    ];
+    const findMany = vi.fn().mockResolvedValue(rows);
+    const service = new SelfLearningService({
+      tradeLifecycleOutcome: { findMany },
+    } as never, {} as never);
+
+    const losses = await service.recentLossesForThesis(
+      { symbol: 'BTC-USDT', timeframe: '15m' },
+      { asOf, take: 99 },
+    );
+
+    expect(findMany).toHaveBeenCalledWith({
+      where: {
+        status: 'FINALIZED',
+        symbol: 'BTC-USDT',
+        timeframe: '15m',
+        netR: { lt: 0 },
+        closedAt: { lte: asOf },
+      },
+      orderBy: { closedAt: 'desc' },
+      take: 5,
+    });
+    expect(losses).toEqual([
+      {
+        direction: 'LONG',
+        setup: 'BREAKOUT',
+        regime: 'TRENDING_UP',
+        netR: -1.25,
+        exitReason: 'STOP_LOSS',
+        entryPrice: 100,
+        exitPrice: 87.5,
+      },
+    ]);
+  });
+
   it('promotes SHADOW candidate to DEMO_CANARY when promotion transition is allowed', async () => {
     let storedConfig: Record<string, unknown> = {
       userId,
