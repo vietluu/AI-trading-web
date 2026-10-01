@@ -998,7 +998,12 @@ export class PipelineRunnerService {
           );
           await this.finalizeEarlyTerminalRun(
             runId,
-            { status: "SKIPPED", decision: "WAIT", skippedReason: reason },
+            {
+              status: "SKIPPED",
+              decision: "WAIT",
+              skippedReason: reason,
+              result: { thesisAttribution } as Prisma.InputJsonValue,
+            },
             reason,
             completedAt,
           );
@@ -1044,10 +1049,10 @@ export class PipelineRunnerService {
               reason: "LIFECYCLE_AUTHORITY_UNAVAILABLE",
             };
         thesisAttribution.probabilityAuthority =
-          lifecycleAuthority.probabilityAuthority;
-        thesisAttribution.probabilitySampleSize = lifecycleAuthority.sampleSize;
+          lifecycleAuthority.probabilityAuthority ?? "UNAVAILABLE";
+        thesisAttribution.probabilitySampleSize = lifecycleAuthority.sampleSize ?? 0;
         thesisAttribution.empiricalWinProbability =
-          lifecycleAuthority.empiricalWinProbability;
+          lifecycleAuthority.empiricalWinProbability ?? null;
         proactive = {
           thesisId: persistedThesis.thesisId,
           opportunityId,
@@ -1077,13 +1082,21 @@ export class PipelineRunnerService {
           expectedReward: netR,
           expectedLoss: 1,
           executionCost: 0,
-          expectedWinProbability: hasExactProbability ? probability : 0.5,
+          expectedWinProbability: hasExactProbability ? probability : 0,
           expectedValue: hasExactProbability
             ? probability * netR - (1 - probability)
             : 0,
           profitFactorEstimate: hasExactProbability
             ? (probability * netR) / Math.max(0.01, 1 - probability)
             : 1,
+          economicsAuthority: {
+            probabilityAuthority:
+              lifecycleAuthority.probabilityAuthority ?? "UNAVAILABLE",
+            lifecycleAction: lifecycleAuthority.action,
+            sampleSize: lifecycleAuthority.sampleSize ?? 0,
+            empiricalWinProbability:
+              lifecycleAuthority.empiricalWinProbability ?? null,
+          },
           anticipatorySignals: features.signals,
           reasoning: proactiveThesis.setup,
         };
