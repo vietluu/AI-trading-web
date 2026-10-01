@@ -916,7 +916,15 @@ export class PipelineRunnerService {
         if (this.selfLearning) {
           try {
             recentLosses = await this.selfLearning.recentLossesForThesis(
-              { symbol, timeframe: String(interval) },
+              {
+                symbol,
+                provider: String(job.provider),
+                timeframe: String(interval),
+                regime: selectedThesis.regime,
+                direction: selectedThesis.direction,
+                setup: selectedThesis.setup,
+                configurationHash: context.configHash,
+              },
               { asOf: new Date(snapshot.sourceDataCutoff), take: 5 },
             );
           } catch (error) {
