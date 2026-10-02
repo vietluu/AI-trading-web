@@ -45,7 +45,9 @@ export class GeminiProvider implements LLMProvider {
   }
 
   public isConfigured(): boolean {
-    return Boolean(this.getApiKey());
+    return Boolean(
+      this.getApiKey() || process.env.MOCK_AI_RESPONSES === "true",
+    );
   }
 
   public async chat(options: LLMRequestOptions): Promise<LLMResponse> {

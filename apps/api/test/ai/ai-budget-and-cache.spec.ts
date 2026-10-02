@@ -83,4 +83,17 @@ describe("AI Budget Manager & Spend Caps ($10/day, $100/month)", () => {
     expect(result.status).toBe("EMERGENCY_STOP");
     expect(result.reason).toContain("Emergency stop triggered");
   });
+
+  it("releases a reserved request after a provider attempt fails", async () => {
+    await budgetManager.releaseRequest("user-1");
+
+    expect(prismaMock.aIUsage.updateMany).toHaveBeenCalledWith({
+      where: {
+        userId: "user-1",
+        date: new Date().toISOString().slice(0, 10),
+        requestCount: { gt: 0 },
+      },
+      data: { requestCount: { decrement: 1 } },
+    });
+  });
 });
