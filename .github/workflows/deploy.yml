@@ -107,12 +107,14 @@ jobs:
           DEPLOY_SHA: ${{ github.sha }}
           API_IMAGE: ghcr.io/vietluu/ai-trading-web-api:${{ github.sha }}
           WEB_IMAGE: ghcr.io/vietluu/ai-trading-web-web:${{ github.sha }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         with:
           host: ${{ steps.validate_secrets.outputs.vm_ip }}
           username: ${{ steps.validate_secrets.outputs.vm_username }}
           key_path: ${{ steps.validate_secrets.outputs.ssh_key_path }}
           port: 22
-          envs: GH_TOKEN,GH_ACTOR,DEPLOY_SHA,API_IMAGE,WEB_IMAGE
+          envs: GH_TOKEN,GH_ACTOR,DEPLOY_SHA,API_IMAGE,WEB_IMAGE,GOOGLE_API_KEY,GEMINI_API_KEY
           script: |
             set -euo pipefail
 
@@ -122,6 +124,10 @@ jobs:
             fi
             echo "Deploying in: $DEPLOY_DIR"
             cd "$DEPLOY_DIR"
+
+            # Empty GitHub secrets must not override keys already stored in the VM .env file.
+            [ -n "${GOOGLE_API_KEY:-}" ] || unset GOOGLE_API_KEY
+            [ -n "${GEMINI_API_KEY:-}" ] || unset GEMINI_API_KEY
 
             git fetch https://x-access-token:${GH_TOKEN}@github.com/vietluu/AI-trading-web.git main
             git reset --hard FETCH_HEAD

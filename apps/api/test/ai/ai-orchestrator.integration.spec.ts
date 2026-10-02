@@ -32,6 +32,8 @@ describe("AI Orchestrator & Fallback Integration", () => {
   let orchestrator: AIOrchestratorService;
   let mockConfigService: AIConfigService;
   let mockBudgetManager: BudgetManagerService;
+  let reserveRequest: ReturnType<typeof vi.fn>;
+  let releaseRequest: ReturnType<typeof vi.fn>;
   let mockHistoryService: AIHistoryService;
   let mockRedisService: RedisService;
 
@@ -62,10 +64,13 @@ describe("AI Orchestrator & Fallback Integration", () => {
         }),
     } as unknown as AIConfigService;
 
+    reserveRequest = vi.fn().mockResolvedValue(undefined);
+    releaseRequest = vi.fn().mockResolvedValue(undefined);
     mockBudgetManager = {
       checkBudget: () => Promise.resolve({ allowed: true, status: "OK" }),
-      reserveRequest: () => Promise.resolve(),
-      recordUsage: () => Promise.resolve(),
+      reserveRequest,
+      releaseRequest,
+      recordUsage: vi.fn().mockResolvedValue(undefined),
     } as unknown as BudgetManagerService;
 
     mockHistoryService = {
@@ -164,6 +169,52 @@ describe("AI Orchestrator & Fallback Integration", () => {
     expect(res.text).toBeDefined();
     expect(res.provider).toBe("OPENAI");
     expect(res.usage.totalTokens).toBeGreaterThan(0);
+  });
+
+  it("uses configured Gemini when the persisted primary provider has no key", async () => {
+    vi.stubEnv("MOCK_AI_RESPONSES", "false");
+    vi.stubEnv("OPENAI_API_KEY", "");
+    vi.stubEnv("ANTHROPIC_API_KEY", "");
+    const geminiChat = vi.spyOn(geminiProvider, "chat").mockResolvedValue({
+      text: "gemini analysis",
+      json: null,
+      finishReason: "stop",
+      usage: {
+        promptTokens: 10,
+        completionTokens: 5,
+        totalTokens: 15,
+        estimatedCost: 0,
+      },
+      latencyMs: 1,
+      provider: "GEMINI",
+      model: "gemini-3.1-flash-lite",
+    });
+    const openAIChat = vi.spyOn(openAIProvider, "chat");
+
+    const response = await orchestrator.execute({
+      userId: "user-123",
+      userPrompt: "Route to the configured provider",
+    });
+
+    expect(response.provider).toBe("GEMINI");
+    expect(openAIChat).not.toHaveBeenCalled();
+    expect(geminiChat).toHaveBeenCalledOnce();
+  });
+
+  it("does not count a failed provider attempt against the request budget", async () => {
+    openAIProvider.chat = vi.fn().mockRejectedValue(
+      Object.assign(new Error("OpenAI unavailable"), { status: 503 }),
+    );
+
+    const response = await orchestrator.execute({
+      userId: "user-123",
+      userPrompt: "Fallback without charging the failed attempt",
+      provider: "OPENAI",
+    });
+
+    expect(response.provider).toBe("ANTHROPIC");
+    expect(reserveRequest).toHaveBeenCalledTimes(2);
+    expect(releaseRequest).toHaveBeenCalledTimes(1);
   });
 
   it("should fallback to Anthropic if primary OpenAI provider throws a retryable error", async () => {
@@ -301,9 +352,7 @@ describe("AI Orchestrator & Fallback Integration", () => {
     const anthropicChat = vi.fn();
     const geminiChat = vi.fn((options: { model: string }) => {
       if (options.model === "gemini-primary") {
-        return Promise.reject(
-          Object.assign(new Error("Primary unavailable"), { status: 503 }),
-        );
+        return Promise.reject(new Error("Primary model unavailable"));
       }
       return Promise.resolve({
         text: "gemini fallback",
@@ -324,6 +373,20 @@ describe("AI Orchestrator & Fallback Integration", () => {
       GEMINI: {
         providerType: "GEMINI",
         chat: geminiChat,
+        isConfigured: vi.fn().mockReturnValue(true),
+        listModels: vi.fn().mockResolvedValue([
+          {
+            name: "gemini-current-flash",
+            provider: "GEMINI",
+            contextWindow: 1_000_000,
+            maxOutputTokens: 8_192,
+            inputCostPer1k: 0,
+            outputCostPer1k: 0,
+            supportsStreaming: true,
+            supportsJson: true,
+            supportsTools: true,
+          },
+        ]),
         health: vi.fn().mockResolvedValue({ status: "HEALTHY" }),
       },
       ANTHROPIC: {
@@ -335,6 +398,7 @@ describe("AI Orchestrator & Fallback Integration", () => {
     } as const;
     const providerFactory = {
       getProvider: (provider: keyof typeof providers) => providers[provider],
+      getAllProviders: () => Object.values(providers),
     } as unknown as LLMProviderFactory;
     const baseConfig = await mockConfigService.getOrCreateConfig("user-123");
     const geminiOnlyRuntime = new AIOrchestratorService(

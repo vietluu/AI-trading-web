@@ -347,6 +347,7 @@ const environmentSchema = z
     OPENAI_API_KEY: z.string().optional(),
     ANTHROPIC_API_KEY: z.string().optional(),
     GOOGLE_API_KEY: z.string().optional(),
+    GEMINI_API_KEY: z.string().optional(),
     OLLAMA_BASE_URL: z.string().url().default("http://localhost:11434"),
     DEFAULT_PROVIDER: z
       .enum(["OPENAI", "ANTHROPIC", "GEMINI", "OLLAMA"])

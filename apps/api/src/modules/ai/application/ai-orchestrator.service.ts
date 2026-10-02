@@ -172,6 +172,9 @@ export class AIOrchestratorService {
     let discoveredGeminiModels: string[] | undefined;
     if (
       primaryProviderType === "GEMINI" &&
+      this.isProviderUsable(
+        this.providerFactory.getProvider(primaryProviderType),
+      ) &&
       process.env.MOCK_AI_RESPONSES !== "true"
     ) {
       try {
@@ -185,10 +188,19 @@ export class AIOrchestratorService {
       }
     }
 
+    const primaryProvider = this.providerFactory.getProvider(
+      primaryProviderType,
+    );
+    const effectiveFallbackTypes = this.isProviderUsable(primaryProvider)
+      ? fallbackTypes
+      : [
+          ...fallbackTypes,
+          ...this.configuredProviderTypes(primaryProviderType),
+        ];
     const candidates = this.buildCandidates(
       primaryProviderType,
       modelName,
-      fallbackTypes,
+      effectiveFallbackTypes,
       discoveredGeminiModels,
     );
 
@@ -207,6 +219,7 @@ export class AIOrchestratorService {
     const executionPromise = (async (): Promise<AIResponseDto> => {
       for (const candidate of candidates) {
         const { provider: pType, model } = candidate;
+        let requestReserved = false;
         if (authBlockedProviders.has(pType)) {
           attemptedCandidates.push({
             provider: pType,
@@ -250,23 +263,28 @@ export class AIOrchestratorService {
         }
         try {
           const provider = this.providerFactory.getProvider(pType);
-          if (
-            pType !== primaryProviderType &&
-            provider.isConfigured?.() === false
-          ) {
-              attemptedCandidates.push({
-                provider: pType,
-                model,
-                outcome: "skipped",
-                reason: "provider is not configured",
+          if (!this.isProviderUsable(provider)) {
+            lastError = Object.assign(
+              new Error(`${pType} provider is not configured`),
+              {
                 code: "AI_PROVIDER_NOT_CONFIGURED",
-              });
-              this.logger.warn(
-                `AI fallback skipped ${pType}/${model} because the provider is not configured.`,
-              );
-              continue;
+                providerRequestSent: false,
+              },
+            );
+            attemptedCandidates.push({
+              provider: pType,
+              model,
+              outcome: "skipped",
+              reason: "provider is not configured",
+              code: "AI_PROVIDER_NOT_CONFIGURED",
+            });
+            this.logger.warn(
+              `AI fallback skipped ${pType}/${model} because the provider is not configured.`,
+            );
+            continue;
           }
           await this.budgetManager.reserveRequest(options.userId);
+          requestReserved = true;
           response = await this.executeWithRetry(provider, {
             model,
             systemPrompt: rendered.systemPrompt,
@@ -284,6 +302,15 @@ export class AIOrchestratorService {
           });
           break; // Success!
         } catch (err: unknown) {
+          if (requestReserved) {
+            try {
+              await this.budgetManager.releaseRequest(options.userId);
+            } catch (releaseError) {
+              this.logger.error(
+                `Unable to release failed AI request reservation for ${pType}/${model}: ${releaseError instanceof Error ? releaseError.message : String(releaseError)}`,
+              );
+            }
+          }
           lastError = err instanceof Error ? err : new Error(String(err));
           const errorRecord = err as Record<string, unknown>;
           const status = errorRecord?.status as number | undefined;
@@ -492,12 +519,29 @@ export class AIOrchestratorService {
           (f) => f !== primaryProviderType,
         )
       : [];
-    const providerTypes = [primaryProviderType, ...fallbackTypes];
+    const primaryProvider = this.providerFactory.getProvider(
+      primaryProviderType,
+    );
+    const providerTypes = [
+      primaryProviderType,
+      ...fallbackTypes,
+      ...(this.isProviderUsable(primaryProvider)
+        ? []
+        : this.configuredProviderTypes(primaryProviderType)),
+    ].filter(
+      (provider, index, providers) => providers.indexOf(provider) === index,
+    );
 
     for (const pType of providerTypes) {
       let hasYielded = false;
       try {
         const provider = this.providerFactory.getProvider(pType);
+        if (!this.isProviderUsable(provider)) {
+          this.logger.warn(
+            `AI stream skipped ${pType} because the provider is not configured.`,
+          );
+          continue;
+        }
         const reqOptions: LLMRequestOptions = {
           model: options.model || userConfig.preferredModel,
           systemPrompt: options.systemPrompt,
@@ -668,13 +712,32 @@ export class AIOrchestratorService {
 
     if (primaryProvider === "GEMINI") {
       const fallbackModels =
-        discoveredGeminiModels ?? this.geminiFallbackModels;
+        discoveredGeminiModels && discoveredGeminiModels.length > 0
+          ? discoveredGeminiModels
+          : this.geminiFallbackModels;
       for (const model of fallbackModels) {
         if (model !== normalizedPrimaryModel) push(primaryProvider, model);
       }
     }
 
     return candidates;
+  }
+
+  private isProviderUsable(provider: LLMProvider): boolean {
+    return provider.isConfigured?.() !== false;
+  }
+
+  private configuredProviderTypes(
+    excludedProvider: AIProviderType,
+  ): AIProviderType[] {
+    return this.providerFactory
+      .getAllProviders()
+      .filter(
+        (provider) =>
+          provider.providerType !== excludedProvider &&
+          this.isProviderUsable(provider),
+      )
+      .map((provider) => provider.providerType);
   }
 
   private isGeminiDailyQuotaError(

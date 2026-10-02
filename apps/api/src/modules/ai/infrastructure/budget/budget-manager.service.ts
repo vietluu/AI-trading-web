@@ -172,6 +172,21 @@ export class BudgetManagerService {
     }
   }
 
+  /** Rolls back a reservation when no provider response was produced. */
+  public async releaseRequest(userId?: string): Promise<void> {
+    const targetUserId = userId || 'system';
+    const date = new Date().toISOString().slice(0, 10);
+
+    await this.prisma.aIUsage.updateMany({
+      where: {
+        userId: targetUserId,
+        date,
+        requestCount: { gt: 0 },
+      },
+      data: { requestCount: { decrement: 1 } },
+    });
+  }
+
   public async recordUsage(params: {
     userId?: string;
     promptTokens: number;
