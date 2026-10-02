@@ -273,6 +273,75 @@ describe('DecisionService', () => {
     expect(output.profitFactorEstimate).toBe(1);
   });
 
+  it('does not replace exact lifecycle economics with broader calibration', async () => {
+    const service = new DecisionService({} as never);
+    const base = {
+      ...service.decide(decisionInput()),
+      expectedWinProbability: 0.6,
+      expectedValue: 0.8,
+      profitFactorEstimate: 3,
+      economicsAuthority: {
+        probabilityAuthority: 'EXACT_LIFECYCLE' as const,
+        lifecycleAction: 'FULL_SIZE' as const,
+        sampleSize: 30,
+        empiricalWinProbability: 0.6,
+      },
+    };
+    const calibrationService = service as unknown as {
+      confidenceCalibration: (...args: unknown[]) => Promise<unknown>;
+    };
+    vi.spyOn(calibrationService, 'confidenceCalibration').mockResolvedValue({
+      status: 'CALIBRATED', rawScore: base.confidence,
+      empiricalProbability: 0.8, sampleSize: 200, bucketSampleSize: 100,
+      brierScore: 0.2, scope: 'EXACT', fallbackUsed: false,
+      hardGateEligible: true,
+    });
+
+    const output = await service.calibrateForExecution(base, 'user-1', {
+      symbol: 'BTC-USDT', strategyKey: 'ai-core', provider: 'OKX_FUTURES', timeframe: '15m',
+    });
+
+    expect(output.expectedWinProbability).toBe(0.6);
+    expect(output.expectedValue).toBe(0.8);
+    expect(output.profitFactorEstimate).toBe(3);
+    expect(output.economicsAuthority).toEqual(base.economicsAuthority);
+  });
+
+  it('does not invent probability for an unavailable proactive cohort', async () => {
+    const service = new DecisionService({} as never);
+    const base = {
+      ...service.decide(decisionInput()),
+      expectedWinProbability: 0,
+      expectedValue: 0,
+      profitFactorEstimate: 1,
+      economicsAuthority: {
+        probabilityAuthority: 'UNAVAILABLE' as const,
+        lifecycleAction: 'PROBE_ONLY' as const,
+        sampleSize: 12,
+        empiricalWinProbability: null,
+      },
+    };
+    const calibrationService = service as unknown as {
+      confidenceCalibration: (...args: unknown[]) => Promise<unknown>;
+    };
+    vi.spyOn(calibrationService, 'confidenceCalibration').mockResolvedValue({
+      status: 'CALIBRATED', rawScore: base.confidence,
+      empiricalProbability: 0.8, sampleSize: 200, bucketSampleSize: 100,
+      brierScore: 0.2, scope: 'EXACT', fallbackUsed: false,
+      hardGateEligible: true,
+    });
+
+    const output = await service.calibrateForExecution(base, 'user-1', {
+      symbol: 'BTC-USDT', strategyKey: 'ai-core', provider: 'OKX_FUTURES', timeframe: '15m',
+    });
+
+    expect(output.expectedWinProbability).toBe(0);
+    expect(output.expectedValue).toBe(0);
+    expect(output.profitFactorEstimate).toBe(1);
+    expect(output.economicsAuthority?.empiricalWinProbability).toBeNull();
+    expect(output.executionEvidence?.estimatedWinProbability).toBeUndefined();
+  });
+
   it('preserves a strong directional fallback candidate as a bounded probe', async () => {
     const service = new DecisionService({} as never);
     const base = {

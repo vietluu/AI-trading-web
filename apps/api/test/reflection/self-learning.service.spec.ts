@@ -153,7 +153,15 @@ describe('SelfLearningService.evaluateShadowSignals promotion state machine inte
     } as never, {} as never);
 
     const losses = await service.recentLossesForThesis(
-      { symbol: 'BTC-USDT', timeframe: '15m' },
+      {
+        symbol: 'BTC-USDT',
+        provider: 'BINANCE_FUTURES',
+        timeframe: '15m',
+        regime: 'TRENDING_UP',
+        direction: 'LONG',
+        setup: 'BREAKOUT',
+        configurationHash: 'cfg-1',
+      },
       { asOf, take: 99 },
     );
 
@@ -161,7 +169,12 @@ describe('SelfLearningService.evaluateShadowSignals promotion state machine inte
       where: {
         status: 'FINALIZED',
         symbol: 'BTC-USDT',
+        provider: 'BINANCE_FUTURES',
         timeframe: '15m',
+        regime: 'TRENDING_UP',
+        direction: 'LONG',
+        setup: 'BREAKOUT',
+        configurationHash: 'cfg-1',
         netR: { lt: 0 },
         closedAt: { lte: asOf },
       },

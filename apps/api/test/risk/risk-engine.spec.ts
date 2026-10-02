@@ -790,4 +790,35 @@ describe("DecisionRiskPolicyService executionEvidence EV gate", () => {
     expect(result.actionable).toBe(true);
     expect(result.evEvaluationPath).toBeUndefined();
   });
+
+  it("does not treat unavailable probe probability as negative empirical edge", () => {
+    const result = service.evaluate(decision({
+      expectedValue: 0,
+      economicsAuthority: {
+        probabilityAuthority: "UNAVAILABLE",
+        lifecycleAction: "PROBE_ONLY",
+        sampleSize: 12,
+        empiricalWinProbability: null,
+      },
+    }), { symbol: "BTC-USDT", timeframe: "15m" });
+
+    expect(result).toMatchObject({ actionable: true, decision: "LONG" });
+  });
+
+  it("blocks a lifecycle-suppressed decision before execution", () => {
+    const result = service.evaluate(decision({
+      economicsAuthority: {
+        probabilityAuthority: "EXACT_LIFECYCLE",
+        lifecycleAction: "SUPPRESSED",
+        sampleSize: 30,
+        empiricalWinProbability: 0.3,
+      },
+    }), { symbol: "BTC-USDT", timeframe: "15m" });
+
+    expect(result).toMatchObject({
+      actionable: false,
+      decision: "WAIT",
+      reason: "EXACT_LIFECYCLE_SUPPRESSED",
+    });
+  });
 });

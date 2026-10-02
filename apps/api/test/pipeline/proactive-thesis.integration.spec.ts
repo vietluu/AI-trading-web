@@ -13,6 +13,8 @@ import type { ChainOfThoughtReflectionService } from "../../src/modules/agents/a
 import type { AnticipatorySnapshotService } from "../../src/modules/agents/application/services/anticipatory-snapshot.service";
 import type { QuantExecutionPolicyService } from "../../src/modules/pipeline/application/quant-execution-policy.service";
 import type { SelfLearningService } from "../../src/modules/reflection/application/self-learning.service";
+import { DecisionRiskPolicyService } from "../../src/modules/risk/application/decision-risk-policy.service";
+import { DecisionJudgeService } from "../../src/modules/pipeline/application/decision-judge.service";
 
 import type { FusionService } from "../../src/modules/agents/application/services/fusion.service";
 import type { DecisionService } from "../../src/modules/agents/application/services/decision.service";
@@ -546,9 +548,7 @@ describe("Proactive Thesis Pipeline Integration", () => {
       new Error("history unavailable"),
     );
 
-    await expect(pipelineRunner.run(makeJob())).resolves.toMatchObject({
-      outcome: "ORDER_SUBMITTED",
-    });
+    await pipelineRunner.run(makeJob());
     expect(mockCritic.reflect).toHaveBeenCalledWith(
       expect.objectContaining({ recentLosses: [] }),
       "user-1",
@@ -573,9 +573,90 @@ describe("Proactive Thesis Pipeline Integration", () => {
 
     const assessment = vi.mocked(mockLiveTrading.assessPipelineDecision!).mock.calls[0]?.[0];
     expect(assessment?.decision).toMatchObject({
-      expectedWinProbability: 0.5,
+      expectedWinProbability: 0,
       expectedValue: 0,
       profitFactorEstimate: 1,
+      economicsAuthority: {
+        probabilityAuthority: "UNAVAILABLE",
+        lifecycleAction: "PROBE_ONLY",
+        sampleSize: 12,
+        empiricalWinProbability: null,
+      },
+    });
+  });
+
+  it("allows a valid immature exact cohort through real gates as a bounded probe", async () => {
+    vi.mocked(mockSelfLearning.evaluateProfitAuthorityForThesis!).mockResolvedValue({
+      action: "PROBE_ONLY",
+      sizeFactor: 0.15,
+      sampleSize: 12,
+      probabilityAuthority: "UNAVAILABLE",
+      empiricalWinProbability: null,
+      reason: "immature exact lifecycle",
+    } as never);
+    const generatedAt = new Date(cutoff).toISOString();
+    const fusion = makeFusionResult();
+    const completeAnalyses = {
+      ...fusion.analyses,
+      market: {
+        ...fusion.analyses.market,
+        dataQuality: "GOOD",
+        generatedAt,
+        trend: { direction: "UP" },
+        liquidity: { spread: "0.01%" },
+      },
+      technical: {
+        ...fusion.analyses.technical,
+        dataQuality: "GOOD",
+        generatedAt,
+        trend: { direction: "UP" },
+      },
+      news: { ...fusion.analyses.news, dataQuality: "GOOD", generatedAt },
+      sentiment: { dataQuality: "GOOD", generatedAt },
+      macro: { dataQuality: "GOOD", generatedAt, summary: "neutral", riskFactors: [] },
+      onchain: { dataQuality: "GOOD", generatedAt },
+    };
+    mockFusion.runDetailed.mockResolvedValue({
+      ...fusion,
+      analyses: completeAnalyses,
+    });
+    (pipelineRunner as unknown as { riskPolicy: DecisionRiskPolicyService }).riskPolicy =
+      new DecisionRiskPolicyService();
+    (pipelineRunner as unknown as { judge: DecisionJudgeService }).judge =
+      new DecisionJudgeService();
+
+    await expect(pipelineRunner.run(makeJob())).resolves.toMatchObject({
+      outcome: "ORDER_SUBMITTED",
+    });
+
+    const assessment = vi.mocked(mockLiveTrading.assessPipelineDecision!).mock.calls[0]?.[0];
+    expect(assessment?.tradePlanContext?.proactive?.sizeFactor).toBeLessThanOrEqual(0.15);
+    expect(mockLiveTrading.executePipeline).toHaveBeenCalledOnce();
+  });
+
+  it("persists thesis attribution when the critic cancels execution", async () => {
+    vi.mocked(mockCritic.reflect!).mockResolvedValue({
+      action: "CANCEL",
+      reasonCodes: ["RECENT_EXACT_COHORT_FAILURE"],
+      evidenceRefs: [],
+      rationale: "Exact recent evidence invalidates the setup",
+    });
+
+    await expect(pipelineRunner.run(makeJob())).resolves.toMatchObject({
+      outcome: "SKIPPED",
+    });
+
+    const terminal = mockRunUpdates.mock.calls.at(-1)?.[1] as {
+      result?: Record<string, unknown>;
+    };
+    expect(terminal.result).toMatchObject({
+      thesisAttribution: {
+        researchPreferredDirection: "LONG",
+        selectedDirection: "LONG",
+        baselineDirection: "LONG",
+        directionAgreement: true,
+        selectionReason: "ALIGNED_CANDIDATE_SELECTED",
+      },
     });
   });
 

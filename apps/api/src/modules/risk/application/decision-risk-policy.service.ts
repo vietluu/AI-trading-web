@@ -10,6 +10,7 @@ export type DecisionRiskPolicyReason =
   | 'OPPORTUNITY_BELOW_THRESHOLD'
   | 'RISK_SCORE_TOO_HIGH'
   | 'EXTREME_VOLATILITY'
+  | 'EXACT_LIFECYCLE_SUPPRESSED'
   | 'SYMBOL_REQUIRED'
   | 'DECISION_IS_WAIT';
 
@@ -21,12 +22,18 @@ export interface DecisionRiskPolicyResult {
 }
 
 export class DecisionRiskPolicyService {
-  evaluate(output: Pick<DecisionOutput, 'decision' | 'confidence' | 'dataQuality' | 'coreDataQuality' | 'directionalAgreement' | 'evidenceCoverage' | 'conflictLevel' | 'opportunityScore' | 'expectedValue' | 'adaptiveThreshold' | 'riskScore' | 'volatilityAdjustment' | 'agreementScore' | 'regime' | 'executionEvidence'>, context?: AdaptivePolicyContext): DecisionRiskPolicyResult {
+  evaluate(output: Pick<DecisionOutput, 'decision' | 'confidence' | 'dataQuality' | 'coreDataQuality' | 'directionalAgreement' | 'evidenceCoverage' | 'conflictLevel' | 'opportunityScore' | 'expectedValue' | 'adaptiveThreshold' | 'riskScore' | 'volatilityAdjustment' | 'agreementScore' | 'regime' | 'executionEvidence' | 'economicsAuthority'>, context?: AdaptivePolicyContext): DecisionRiskPolicyResult {
     if (!context?.symbol) return { actionable: false, decision: 'WAIT', reason: 'SYMBOL_REQUIRED' };
     const policy = adaptiveTradingPolicy({ ...context, symbol: context.symbol, regime: output.regime?.type ?? context.regime ?? 'RANGING' });
     if (output.decision === 'WAIT') {
       return { actionable: false, decision: 'WAIT', reason: 'DECISION_IS_WAIT' };
     }
+    if (output.economicsAuthority?.lifecycleAction === 'SUPPRESSED') {
+      return { actionable: false, decision: 'WAIT', reason: 'EXACT_LIFECYCLE_SUPPRESSED' };
+    }
+    const unavailableProbe =
+      output.economicsAuthority?.probabilityAuthority === 'UNAVAILABLE' &&
+      output.economicsAuthority.lifecycleAction === 'PROBE_ONLY';
     if (output.dataQuality === 'INSUFFICIENT') {
       return { actionable: false, decision: 'WAIT', reason: 'DATA_QUALITY_INSUFFICIENT' };
     }
@@ -46,7 +53,7 @@ export class DecisionRiskPolicyService {
       (
         output.confidence < output.adaptiveThreshold + (shortTermTrade ? 2 : 5) ||
         directionalAgreement < 65 ||
-        output.expectedValue <= policy.minExpectedValue + 0.05
+        (!unavailableProbe && output.expectedValue <= policy.minExpectedValue + 0.05)
       )
     ) {
       return { actionable: false, decision: 'WAIT', reason: 'PARTIAL_DATA_CONVICTION_TOO_LOW' };
@@ -74,7 +81,7 @@ export class DecisionRiskPolicyService {
         : undefined;
     const provenance = evEvaluationPath ? { evEvaluationPath } : {};
 
-    if (evValue <= policy.minExpectedValue) {
+    if (!unavailableProbe && evValue <= policy.minExpectedValue) {
       return { actionable: false, decision: 'WAIT', reason: 'EXPECTED_VALUE_NEGATIVE', ...provenance };
     }
     if (output.opportunityScore < thresholdFloor) {

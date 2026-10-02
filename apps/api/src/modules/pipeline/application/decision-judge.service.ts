@@ -52,6 +52,11 @@ export class DecisionJudgeService {
       riskRewardRatio,
       directionalAgreement: decision.directionalAgreement ?? decision.agreementScore,
     });
+    const unavailableProbe =
+      decision.economicsAuthority?.probabilityAuthority === 'UNAVAILABLE' &&
+      decision.economicsAuthority.lifecycleAction === 'PROBE_ONLY';
+    const lifecycleSuppressed =
+      decision.economicsAuthority?.lifecycleAction === 'SUPPRESSED';
     const configured = Object.entries(analyses).filter(([name, analysis]) =>
       (name !== 'onchain' || !(
           'signals' in analysis &&
@@ -90,8 +95,12 @@ export class DecisionJudgeService {
       newCohort: context.mode !== undefined && decision.confidenceCalibration?.status !== 'CALIBRATED',
       coreDataStale: staleCoreAnalysis || !coreTechnicalEvidence,
       unsafeGeometry: decision.decision !== 'WAIT' && (
-        decision.expectedValue <= policy.minExpectedValue ||
-        decision.profitFactorEstimate < policy.minProfitFactor ||
+        (!unavailableProbe && (
+          decision.expectedValue <= policy.minExpectedValue ||
+          decision.profitFactorEstimate < policy.minProfitFactor
+        )) ||
+        (decision.economicsAuthority !== undefined &&
+          (!(decision.expectedReward > 0) || !(decision.expectedLoss > 0))) ||
         (spreadBps !== undefined && spreadBps > policy.maxSpreadBps)
       )
     });
@@ -99,6 +108,7 @@ export class DecisionJudgeService {
     if (gateResult.severity === 'BLOCK') {
       reasons.push(...gateResult.reasons);
     }
+    if (lifecycleSuppressed) reasons.push('EXACT_LIFECYCLE_SUPPRESSED');
 
     
     const targetDirection = decision.decision === 'LONG' ? 'UP' : decision.decision === 'SHORT' ? 'DOWN' : undefined;
@@ -128,8 +138,8 @@ export class DecisionJudgeService {
       }
     }
 
-    if (decision.decision !== 'WAIT' && decision.expectedValue <= policy.minExpectedValue) reasons.push('EXPECTED_VALUE_TOO_LOW');
-    if (decision.decision !== 'WAIT' && decision.profitFactorEstimate < policy.minProfitFactor) reasons.push('PROFIT_FACTOR_TOO_LOW');
+    if (!unavailableProbe && decision.decision !== 'WAIT' && decision.expectedValue <= policy.minExpectedValue) reasons.push('EXPECTED_VALUE_TOO_LOW');
+    if (!unavailableProbe && decision.decision !== 'WAIT' && decision.profitFactorEstimate < policy.minProfitFactor) reasons.push('PROFIT_FACTOR_TOO_LOW');
     if (decision.riskScore >= policy.maxRiskScore) reasons.push('DECISION_RISK_TOO_HIGH');
     if (spreadBps !== undefined && spreadBps > policy.maxSpreadBps) reasons.push('SPREAD_TOO_WIDE');
 

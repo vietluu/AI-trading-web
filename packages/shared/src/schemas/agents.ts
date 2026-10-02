@@ -695,6 +695,12 @@ export const DecisionOutputSchema = z
     expectedLoss: z.number().min(0),
     expectedValue: z.number(),
     profitFactorEstimate: z.number().min(0),
+    economicsAuthority: z.object({
+      probabilityAuthority: z.enum(['EXACT_LIFECYCLE', 'UNAVAILABLE']),
+      lifecycleAction: z.enum(['FULL_SIZE', 'PROBE_ONLY', 'SUPPRESSED']),
+      sampleSize: z.number().int().nonnegative(),
+      empiricalWinProbability: z.number().min(0).max(1).nullable(),
+    }).strict().optional(),
     riskScore: z.number().min(0).max(100),
     adaptiveThreshold: z.number().min(0).max(100),
     calibrationAdjustment: z.number(),
@@ -734,7 +740,19 @@ export const DecisionOutputSchema = z
     }).optional(),
     generatedAt: z.string().datetime(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    if (
+      value.economicsAuthority?.probabilityAuthority === 'UNAVAILABLE' &&
+      value.economicsAuthority.empiricalWinProbability !== null
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['economicsAuthority', 'empiricalWinProbability'],
+        message: 'Unavailable probability authority requires a null probability',
+      });
+    }
+  });
 export type DecisionOutput = z.infer<typeof DecisionOutputSchema>;
 export const DecisionOutputProSchema = DecisionOutputSchema;
 export type DecisionOutputPro = DecisionOutput;

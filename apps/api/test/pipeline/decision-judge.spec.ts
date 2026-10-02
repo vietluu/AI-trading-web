@@ -37,6 +37,46 @@ describe('DecisionJudgeService', () => {
     expect(result.reasons).toContain('EXPECTED_VALUE_TOO_LOW');
   });
 
+  it('allows unavailable lifecycle economics only as a bounded probe', () => {
+    const generatedAt = new Date().toISOString();
+    const good = { dataQuality: 'GOOD', generatedAt };
+    const result = judge.evaluate({
+      decision: 'LONG', dataQuality: 'GOOD', conflictLevel: 'LOW', confidence: 84,
+      expectedReward: 2, expectedLoss: 1, expectedValue: 0,
+      profitFactorEstimate: 1, riskScore: 30,
+      economicsAuthority: {
+        probabilityAuthority: 'UNAVAILABLE', lifecycleAction: 'PROBE_ONLY',
+        sampleSize: 12, empiricalWinProbability: null,
+      },
+    } as never, {
+      market: good, technical: good, news: good, sentiment: good, macro: good, onchain: good,
+    } as never, { symbol: 'BTC-USDT', mode: 'DEMO' });
+
+    expect(result.approved).toBe(true);
+    expect(result.reasons).not.toContain('EXPECTED_VALUE_TOO_LOW');
+    expect(result.reasons).not.toContain('PROFIT_FACTOR_TOO_LOW');
+    expect(result.reasons).not.toContain('UNSAFE_GEOMETRY');
+  });
+
+  it('blocks lifecycle-suppressed economics even when ordinary metrics pass', () => {
+    const generatedAt = new Date().toISOString();
+    const good = { dataQuality: 'GOOD', generatedAt };
+    const result = judge.evaluate({
+      decision: 'LONG', dataQuality: 'GOOD', conflictLevel: 'LOW', confidence: 84,
+      expectedReward: 2, expectedLoss: 1, expectedValue: 0.8,
+      profitFactorEstimate: 2, riskScore: 30,
+      economicsAuthority: {
+        probabilityAuthority: 'EXACT_LIFECYCLE', lifecycleAction: 'SUPPRESSED',
+        sampleSize: 30, empiricalWinProbability: 0.3,
+      },
+    } as never, {
+      market: good, technical: good, news: good, sentiment: good, macro: good, onchain: good,
+    } as never, { symbol: 'BTC-USDT', mode: 'DEMO' });
+
+    expect(result.approved).toBe(false);
+    expect(result.reasons).toContain('EXACT_LIFECYCLE_SUPPRESSED');
+  });
+
   it('does not deadlock a cold-start signal when empirical calibration is not ready', () => {
     const generatedAt = new Date().toISOString();
     const good = { dataQuality: 'GOOD', generatedAt };
@@ -692,4 +732,3 @@ describe('execution context setup enforcement', () => {
     expect(review.verdict).toBe('APPROVE');
   });
 });
-

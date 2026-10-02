@@ -369,16 +369,20 @@ export class DecisionService {
       confidenceCalibration,
       decision,
     );
-    const empiricalProbability = calibrationAuthority.empiricalProbability;
-    const expectedWinProbability = this.clamp(
-      empiricalProbability ?? 0.5,
-      0,
-      1,
-    );
+    const thesisEconomicsAuthority = decision.economicsAuthority;
+    const empiricalProbability = thesisEconomicsAuthority
+      ? (thesisEconomicsAuthority.empiricalWinProbability ?? undefined)
+      : calibrationAuthority.empiricalProbability;
+    const expectedWinProbability = thesisEconomicsAuthority
+      ? decision.expectedWinProbability
+      : this.clamp(empiricalProbability ?? 0.5, 0, 1);
     const preserveSynthesizedEconomics =
+      thesisEconomicsAuthority !== undefined ||
       calibrationAuthority.preserveSynthesizedEconomics;
     const hasEmpiricalEdge = empiricalProbability !== undefined;
-    const expectedValueRaw = hasEmpiricalEdge
+    const expectedValueRaw = thesisEconomicsAuthority
+      ? decision.expectedValue
+      : hasEmpiricalEdge
           ? this.clamp(
               expectedWinProbability * decision.expectedReward -
                 (1 - expectedWinProbability) * decision.expectedLoss -
@@ -388,7 +392,9 @@ export class DecisionService {
             )
           : (preserveSynthesizedEconomics ? decision.expectedValue : 0);
           
-    const isHardGateEligible = calibrationAuthority.authority === 'EXACT_BLOCK';
+    const isHardGateEligible =
+      thesisEconomicsAuthority === undefined &&
+      calibrationAuthority.authority === 'EXACT_BLOCK';
     const calibrationBlockingReasons: string[] = [];
     let finalConfidence = decision.confidence;
     if (isHardGateEligible && empiricalProbability !== undefined && empiricalProbability < 0.35) {
@@ -411,13 +417,26 @@ export class DecisionService {
 
     const executionEvidence = buildExecutionEvidenceScore({
       signalStrength: decision.confidence,
-      confidenceCalibration: isHardGateEligible ? confidenceCalibration : null,
+      confidenceCalibration:
+        thesisEconomicsAuthority?.probabilityAuthority === 'EXACT_LIFECYCLE'
+          ? {
+              status: 'CALIBRATED',
+              empiricalProbability:
+                thesisEconomicsAuthority.empiricalWinProbability,
+              brierScore: null,
+              hardGateEligible: true,
+            }
+          : isHardGateEligible
+            ? confidenceCalibration
+            : null,
       expectedReward: decision.expectedReward,
       expectedLoss: decision.expectedLoss,
       executionCost: decision.executionCost,
     });
 
-    const forceBoundedProbe = calibrationAuthority.forceProbe || (
+    const forceBoundedProbe =
+      thesisEconomicsAuthority?.lifecycleAction === 'PROBE_ONLY' ||
+      calibrationAuthority.forceProbe || (
       decision.overrides.includes('NEWS_PROBE_AUTHORIZED') &&
       calibrationAuthority.authority !== 'EXACT_BLOCK'
     );
@@ -440,7 +459,9 @@ export class DecisionService {
       expectedWinProbability: Number(expectedWinProbability.toFixed(3)),
       expectedValue: finalExpectedValue,
       profitFactorEstimate: Number(
-        (hasEmpiricalEdge
+        (thesisEconomicsAuthority
+          ? decision.profitFactorEstimate
+          : hasEmpiricalEdge
           ? this.clamp(
               (expectedWinProbability * decision.expectedReward) /
                 Math.max(

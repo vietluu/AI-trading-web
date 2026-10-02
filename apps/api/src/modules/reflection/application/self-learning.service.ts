@@ -1485,7 +1485,16 @@ export class SelfLearningService {
    * Broader evidence is intentionally excluded from this decision contract.
    */
   async recentLossesForThesis(
-    params: Pick<ThesisCohortKeyParams, 'symbol' | 'timeframe'>,
+    params: Pick<
+      ThesisCohortKeyParams,
+      | 'symbol'
+      | 'provider'
+      | 'timeframe'
+      | 'regime'
+      | 'direction'
+      | 'setup'
+      | 'configurationHash'
+    >,
     options: { asOf: Date; take?: number },
   ): Promise<RecentThesisLossSummary[]> {
     const take = Math.min(5, Math.max(1, Math.trunc(options.take ?? 5)));
@@ -1493,7 +1502,14 @@ export class SelfLearningService {
       where: {
         status: 'FINALIZED',
         symbol: params.symbol,
+        ...(params.provider ? { provider: params.provider } : {}),
         timeframe: params.timeframe,
+        ...(params.regime ? { regime: params.regime } : {}),
+        ...(params.direction ? { direction: params.direction } : {}),
+        ...(params.setup ? { setup: params.setup } : {}),
+        ...(params.configurationHash
+          ? { configurationHash: params.configurationHash }
+          : {}),
         netR: { lt: 0 },
         closedAt: { lte: options.asOf },
       },
