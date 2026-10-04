@@ -7,6 +7,10 @@ export interface HighImportanceNewsEvent {
   importanceScore: number;
   symbols: string[];
   publishedAt: string;
+  topics?: string[];
+  sourceId?: string;
+  canonicalUrl?: string;
+  reliabilityScore?: number;
 }
 
 export interface MacroReleaseEvent {
@@ -52,4 +56,3 @@ export class ExternalDataEventBus {
     return () => this.emitter.off("macro-release", listener);
   }
 }
-

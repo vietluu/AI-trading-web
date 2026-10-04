@@ -150,8 +150,10 @@ export class ModelRegistryService {
       supportsVision: true,
       supportsStreaming: true,
       supportsJSON: true,
-      inputCostPer1k: 0,
-      outputCostPer1k: 0,
+      // Standard paid-tier text estimate, USD (not the customer's invoice).
+      // https://ai.google.dev/gemini-api/docs/pricing — verified 2026-10-04.
+      inputCostPer1k: 0.00025,
+      outputCostPer1k: 0.0015,
     });
 
     this.registerModel({

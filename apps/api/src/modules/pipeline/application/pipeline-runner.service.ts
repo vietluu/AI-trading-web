@@ -32,6 +32,7 @@ import { DecisionRiskPolicyService } from "../../risk/application/decision-risk-
 import { PipelineAnalyticsService } from "./pipeline-analytics.service";
 import { resolvePipelineDefinition } from "../domain/pipeline.definition";
 import type { PipelineJob } from "../infrastructure/pipeline-queue.service";
+import { PipelineConfigService } from './pipeline-config.service';
 import { LiveTradingService } from "../../live-trading/application/live-trading.service";
 import {
   analysisParams,
@@ -253,11 +254,28 @@ export class PipelineRunnerService {
     @Inject(AnticipatorySnapshotService)
     private readonly anticipatorySnapshot?: AnticipatorySnapshotService,
     @Optional() private readonly selfLearning?: SelfLearningService,
+    @Optional() private readonly pipelineConfig?: PipelineConfigService,
   ) {}
 
   async run(
     job: PipelineJob,
   ): Promise<{ outcome: string; reason?: string } | undefined> {
+    if (job.pipelineId === 'proactive-thesis' && job.useStoredContext) {
+      // Stored fusion is not a persisted proactive decision snapshot. Until
+      // that exact snapshot can be restored, never acquire current evidence
+      // or place a new order under the identity of a historical replay.
+      const reason = 'PROACTIVE_STORED_REPLAY_REQUIRES_PINNED_SNAPSHOT';
+      await this.finalizeEarlyTerminalRun(job.runId, {
+        status: 'SKIPPED', decision: 'WAIT', skippedReason: reason,
+      }, reason, new Date());
+      return { outcome: 'SKIPPED', reason };
+    }
+    if (job.trigger === 'SCHEDULE' && this.pipelineConfig?.eventDrivenOnly) {
+      await this.finalizeEarlyTerminalRun(job.runId, {
+        status: 'SKIPPED', decision: 'WAIT', skippedReason: 'SCHEDULED_AI_DISABLED',
+      }, 'SCHEDULED_AI_DISABLED', new Date());
+      return { outcome: 'SKIPPED', reason: 'SCHEDULED_AI_DISABLED' };
+    }
     if (job.pipelineId === "proactive-thesis") {
       const claim = await this.repository.claimProactiveThesisExecution(
         String(job.runId),
@@ -321,6 +339,7 @@ export class PipelineRunnerService {
     });
     try {
       await this.assertNotCancelled(runId);
+      this.assertEventFresh(job);
       const requestedStrategyKeys = Array.isArray(job.params?.strategyIds)
         ? job.params.strategyIds.filter(
             (item): item is string => typeof item === "string",
@@ -581,6 +600,7 @@ export class PipelineRunnerService {
       }
 
       const signalFilter = this.signalFilter.evaluate({
+        materialEvent: job.trigger === 'EVENT' && typeof job.params.systemEventId === 'string',
         price: lastPrice,
         symbol,
         provider: job.provider,
@@ -690,6 +710,8 @@ export class PipelineRunnerService {
         });
         const result = await this.withTimeout(
           this.fusion.runDetailed({
+            sharedEventId: job.trigger === 'EVENT' && typeof job.params.systemEventId === 'string'
+              ? job.params.systemEventId : undefined,
             input: pipelineInput,
             userId: job.userId,
             invocationSource: this.source(job.trigger),
@@ -715,6 +737,7 @@ export class PipelineRunnerService {
       }
       await this.assertNotCancelled(runId);
       await this.startStep(runId, "decision");
+      this.assertEventFresh(job);
       let synthesizedOutput: DecisionOutput;
       let proactiveThesis: TradeThesis | undefined;
       let proactive: ProactiveExecutionContext | undefined;
@@ -752,7 +775,8 @@ export class PipelineRunnerService {
         if (
           !opportunityId ||
           !opportunitySnapshotId ||
-          Number.isNaN(opportunityCutoff.getTime())
+          Number.isNaN(opportunityCutoff.getTime()) ||
+          opportunityCutoff.getTime() > Date.now()
         ) {
           const completedAt = new Date();
           await this.finalizeEarlyTerminalRun(
@@ -776,12 +800,17 @@ export class PipelineRunnerService {
             job.provider as ExchangeProvider,
             symbol,
           );
+        // The opportunity retains its original closed-candle cutoff in params.
+        // This is a new decision observation, made AFTER acquiring a live quote.
+        // Backdating that quote to the opportunity makes every execution field
+        // unavailable (EXECUTION_CONTEXT_AFTER_CUTOFF) by construction.
+        const decisionCutoff = new Date();
         const snapshot = await this.anticipatorySnapshot.build({
           userId: job.userId,
           symbol,
           provider: job.provider as ExchangeProvider,
           timeframe: String(interval) as ExchangeInterval,
-          sourceDataCutoff: opportunityCutoff,
+          sourceDataCutoff: decisionCutoff,
           execution: executionEvidence,
         });
         const context: TradeResearcherContext = {
@@ -1829,6 +1858,7 @@ export class PipelineRunnerService {
           }
           if (!executionGateReason) {
             const assess = async () => {
+              this.assertEventFresh(job);
               riskStageReached = true;
               riskAssessment = undefined;
               executionStageReached = false;
@@ -1964,6 +1994,7 @@ export class PipelineRunnerService {
             };
 
             const execute = async () => {
+              this.assertEventFresh(job);
               if (riskAssessment?.outcome === "RISK_APPROVED") {
                 executionStageReached = true;
                 liveExecution = undefined;
@@ -2352,6 +2383,14 @@ export class PipelineRunnerService {
           ? AgentInvocationSource.REPLAY
           : AgentInvocationSource.INTERNAL_SERVICE;
   }
+  private assertEventFresh(job: PipelineJob) {
+    if (job.trigger !== 'EVENT' || !job.params.systemEventId) return;
+    const expiresAt = Date.parse(String(job.params.systemEventExpiresAt));
+    if (!Number.isFinite(expiresAt) || Date.now() >= expiresAt) {
+      throw new Error('SYSTEM_EVENT_EXPIRED');
+    }
+  }
+
   private async assertNotCancelled(runId: string) {
     if (await this.cancellation.isCancelled(runId))
       throw new PipelineCancelledError("Pipeline cancelled");

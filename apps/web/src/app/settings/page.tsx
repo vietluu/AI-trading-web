@@ -104,9 +104,6 @@ export default function SettingsPage(): React.JSX.Element {
         preferredExchange: form.get("preferredExchange"),
         preferredSymbols: selectedSymbols,
         preferredTimeframes: selectedTimeframes.length > 0 ? selectedTimeframes : ["15m"],
-        aiDailyBudget: form.get("aiDailyBudget")
-          ? Number(form.get("aiDailyBudget"))
-          : undefined,
         defaultLeverage: form.get("defaultLeverage")
           ? Number(form.get("defaultLeverage"))
           : undefined,
@@ -204,15 +201,6 @@ export default function SettingsPage(): React.JSX.Element {
             type="number"
           />
 
-          {/* AI Daily Budget */}
-          <Field
-            defaultValue={settingsQuery.data.aiDailyBudget}
-            label={t.settings.aiDailyBudget}
-            min="0"
-            name="aiDailyBudget"
-            step="0.01"
-            type="number"
-          />
 
           {/* Preferred Timeframes Multi-Select Chips */}
           <div className="space-y-2 md:col-span-2">
@@ -341,4 +329,3 @@ export default function SettingsPage(): React.JSX.Element {
     </section>
   );
 }
-

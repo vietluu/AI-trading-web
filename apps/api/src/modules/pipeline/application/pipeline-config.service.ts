@@ -5,6 +5,7 @@ import { FULL_ANALYSIS_DECISION } from "../domain/pipeline.definition";
 @Injectable()
 export class PipelineConfigService {
   constructor(private readonly config: ConfigService) {}
+  get eventDrivenOnly() { return true; }
   get enabled() {
     return this.config.get<boolean>("PIPELINE_ENABLED", true);
   }

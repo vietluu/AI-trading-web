@@ -55,22 +55,6 @@ export class AIOrchestratorService {
     string,
     Promise<AIResponseDto>
   >();
-  private readonly geminiFallbackModels = [
-    "gemini-3.5-flash-lite",
-    "gemini-3.1-flash-lite",
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-3-flash",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-  ];
-  private readonly defaultModelsByProvider: Record<AIProviderType, string> = {
-    OPENAI: "gpt-5-mini",
-    ANTHROPIC: "claude-3-5-sonnet-20241022",
-    GEMINI: "gemini-3.1-flash-lite",
-    OLLAMA: "llama3",
-  };
   private readonly inMemoryModelCooldowns = new Map<
     string,
     { until: number; status: number }
@@ -120,12 +104,10 @@ export class AIOrchestratorService {
         });
 
     // 4. Provider resolution & fallback chain
-    const primaryProviderType =
-      options.provider || userConfig.preferredProvider;
-    const modelName = options.model || userConfig.preferredModel;
-    const fallbackTypes = userConfig.fallbackEnabled
-      ? (userConfig.fallbackProviders as AIProviderType[])
-      : [];
+    // Platform policy: caller overrides, persisted preferences and discovery
+    // must never expand the approved text-model allowlist.
+    const primaryProviderType: AIProviderType = 'GEMINI';
+    const modelName = 'gemini-3.1-flash-lite';
 
     const promptCacheKey = this.buildPromptCacheKey({
       userId: options.userId,
@@ -169,40 +151,13 @@ export class AIOrchestratorService {
       );
     }
 
-    let discoveredGeminiModels: string[] | undefined;
-    if (
-      primaryProviderType === "GEMINI" &&
-      this.isProviderUsable(
-        this.providerFactory.getProvider(primaryProviderType),
-      ) &&
-      process.env.MOCK_AI_RESPONSES !== "true"
-    ) {
-      try {
-        discoveredGeminiModels = (
-          await this.providerFactory.getProvider("GEMINI").listModels()
-        ).map((model) => model.name);
-      } catch (error) {
-        this.logger.warn(
-          `Unable to load current Gemini models: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    }
-
     const primaryProvider = this.providerFactory.getProvider(
       primaryProviderType,
     );
-    const effectiveFallbackTypes = this.isProviderUsable(primaryProvider)
-      ? fallbackTypes
-      : [
-          ...fallbackTypes,
-          ...this.configuredProviderTypes(primaryProviderType),
-        ];
-    const candidates = this.buildCandidates(
-      primaryProviderType,
-      modelName,
-      effectiveFallbackTypes,
-      discoveredGeminiModels,
-    );
+    if (!this.isProviderUsable(primaryProvider)) {
+      throw new Error('AI_PROVIDER_NOT_CONFIGURED: platform Gemini credential is required');
+    }
+    const candidates = this.buildCandidates();
 
     let lastError: Error | null = null;
     let response: LLMResponse | null = null;
@@ -512,25 +467,7 @@ export class AIOrchestratorService {
     const userConfig = await this.configService.getOrCreateConfig(
       options.userId,
     );
-    const primaryProviderType =
-      options.provider || userConfig.preferredProvider;
-    const fallbackTypes = userConfig.fallbackEnabled
-      ? (userConfig.fallbackProviders as AIProviderType[]).filter(
-          (f) => f !== primaryProviderType,
-        )
-      : [];
-    const primaryProvider = this.providerFactory.getProvider(
-      primaryProviderType,
-    );
-    const providerTypes = [
-      primaryProviderType,
-      ...fallbackTypes,
-      ...(this.isProviderUsable(primaryProvider)
-        ? []
-        : this.configuredProviderTypes(primaryProviderType)),
-    ].filter(
-      (provider, index, providers) => providers.indexOf(provider) === index,
-    );
+    const providerTypes: AIProviderType[] = ['GEMINI'];
 
     for (const pType of providerTypes) {
       let hasYielded = false;
@@ -543,7 +480,7 @@ export class AIOrchestratorService {
           continue;
         }
         const reqOptions: LLMRequestOptions = {
-          model: options.model || userConfig.preferredModel,
+          model: 'gemini-3.1-flash-lite',
           systemPrompt: options.systemPrompt,
           userPrompt: options.userPrompt || "",
           temperature: options.temperature ?? userConfig.temperature,
@@ -683,61 +620,14 @@ export class AIOrchestratorService {
   }
 
   private buildCandidates(
-    primaryProvider: AIProviderType,
-    primaryModel: string,
-    fallbackProviders: AIProviderType[],
-    discoveredGeminiModels?: string[],
   ): Array<{ provider: AIProviderType; model: string }> {
-    const seen = new Set<string>();
-    const candidates: Array<{ provider: AIProviderType; model: string }> = [];
-    const push = (provider: AIProviderType, model: string) => {
-      const key = `${provider}:${model}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      candidates.push({ provider, model });
-    };
-
-    const normalizedPrimaryModel =
-      primaryModel || this.defaultModelsByProvider[primaryProvider];
-    push(primaryProvider, normalizedPrimaryModel);
-
-    // Provider quota is commonly shared by sibling models. Prefer an
-    // independent provider before spending requests on alternate models.
-    for (const provider of fallbackProviders) {
-      if (provider === primaryProvider) continue;
-      const fallbackModel =
-        this.defaultModelsByProvider[provider] || normalizedPrimaryModel;
-      push(provider, fallbackModel);
-    }
-
-    if (primaryProvider === "GEMINI") {
-      const fallbackModels =
-        discoveredGeminiModels && discoveredGeminiModels.length > 0
-          ? discoveredGeminiModels
-          : this.geminiFallbackModels;
-      for (const model of fallbackModels) {
-        if (model !== normalizedPrimaryModel) push(primaryProvider, model);
-      }
-    }
-
-    return candidates;
+    return this.isProviderUsable(this.providerFactory.getProvider('GEMINI'))
+      ? [{ provider: 'GEMINI', model: 'gemini-3.1-flash-lite' }]
+      : [];
   }
 
   private isProviderUsable(provider: LLMProvider): boolean {
     return provider.isConfigured?.() !== false;
-  }
-
-  private configuredProviderTypes(
-    excludedProvider: AIProviderType,
-  ): AIProviderType[] {
-    return this.providerFactory
-      .getAllProviders()
-      .filter(
-        (provider) =>
-          provider.providerType !== excludedProvider &&
-          this.isProviderUsable(provider),
-      )
-      .map((provider) => provider.providerType);
   }
 
   private isGeminiDailyQuotaError(

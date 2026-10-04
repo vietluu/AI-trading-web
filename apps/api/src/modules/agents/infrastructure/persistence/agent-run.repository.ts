@@ -190,6 +190,36 @@ export class AgentRunRepository {
     });
   }
 
+  public async transitionRun(data: {
+    runId: string;
+    fromState: AgentRunState;
+    toState: AgentRunState;
+    reason: string;
+    actor: string;
+    correlationId?: string;
+  }): Promise<AgentRun> {
+    return this.databaseService.$transaction(async (transaction) => {
+      const updated = await transaction.agentRun.updateMany({
+        where: { id: data.runId, status: data.fromState },
+        data: { status: data.toState },
+      });
+      if (updated.count !== 1) {
+        throw new Error(`AGENT_RUN_STATE_CONFLICT:${data.runId}:${data.fromState}`);
+      }
+      await transaction.agentRunTransition.create({
+        data: {
+          runId: data.runId,
+          fromState: data.fromState,
+          toState: data.toState,
+          reason: data.reason,
+          actor: data.actor,
+          correlationId: data.correlationId,
+        },
+      });
+      return transaction.agentRun.findUniqueOrThrow({ where: { id: data.runId } });
+    });
+  }
+
   public async getTransitions(runId: string): Promise<AgentRunTransition[]> {
     return this.databaseService.agentRunTransition.findMany({
       where: { runId },

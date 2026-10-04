@@ -36,6 +36,7 @@ import { AgentToolResolverService } from './application/services/agent-tool-reso
 import { AgentContextBuilderService } from './application/context/agent-context-builder.service';
 import { AgentPolicyEngine } from './application/policies/agent-policy.engine';
 import { FusionService } from './application/services/fusion.service';
+import { SharedResearchService } from './application/services/shared-research.service';
 import { DecisionService } from './application/services/decision.service';
 import { UnifiedAnalystService } from './application/services/unified-analyst.service';
 import { ChainOfThoughtReflectionService } from './application/services/chain-of-thought-reflection.service';
@@ -69,6 +70,7 @@ import { DecisionController } from './presentation/controllers/decision.controll
   ],
   controllers: [AgentsController, AgentRunsController, AgentSseController, DecisionController],
   providers: [
+    SharedResearchService,
     // Registry
     AgentRegistryService,
 

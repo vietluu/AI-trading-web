@@ -58,6 +58,19 @@ function scannerSnapshot(now: Date, price = "101") {
 }
 
 describe("MarketEventScannerService", () => {
+  it('never triggers realtime analysis from a stale ticker even with a breakout candle', async () => {
+    const now = new Date();
+    const { indicator, activeCandle } = scannerSnapshot(now);
+    const scanner = new MarketEventScannerService({
+      getTicker: async () => ({ timestamp: new Date(now.getTime() - 15_000), lastPrice: '101' }),
+      getCandle: async () => activeCandle,
+    } as never, { getIndicatorSnapshot: async () => indicator,
+      getHistoricalCandles: async () => [] } as never, redisMock() as never);
+    const input = { userId: 'platform', provider: 'OKX_FUTURES' as never, symbol: 'BTC-USDT',
+      strategyIds: [], scanIntervalSeconds: 3, now };
+    expect((await scanner.scan(input)).triggered).toBe(false);
+    expect((await scanner.scan(input)).triggered).toBe(false);
+  });
   const input = {
     userId: "user-1",
     provider: "OKX_FUTURES",

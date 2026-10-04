@@ -98,7 +98,7 @@ describe('TradeResearcherService', () => {
       },
       text: '',
       finishReason: 'stop',
-      usage: { promptTokens: 10, completionTokens: 10, totalTokens: 20, estimatedCost: 0 },
+      usage: { promptTokens: 10, completionTokens: 10, totalTokens: 20, estimatedCost: 0.000018 },
       latencyMs: 100,
       provider: 'OPENAI',
       model: 'gpt-4o',
@@ -116,6 +116,7 @@ describe('TradeResearcherService', () => {
         inputHash: 'hash',
         contextSnapshotId: 'context-snapshot-id',
         promptVersion: 1,
+        estimatedCost: 0.000018,
         provider: 'OPENAI',
         model: 'gpt-4o',
       }

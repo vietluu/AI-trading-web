@@ -8,6 +8,7 @@ import {
   Post,
   Query,
   UseGuards,
+  Optional,
 } from "@nestjs/common";
 import {
   PipelineReplayRequestSchema,
@@ -21,6 +22,7 @@ import { PipelineService } from "../application/pipeline.service";
 import { PipelineRepository } from "../infrastructure/pipeline.repository";
 import { PipelineCancellationService } from "../infrastructure/pipeline-cancellation.service";
 import { PipelineSchedulerService } from "../application/pipeline-scheduler.service";
+import { EventSubscribersService } from '../application/event-subscribers.service';
 
 @Controller()
 @UseGuards(SessionGuard)
@@ -30,6 +32,7 @@ export class PipelineController {
     private readonly repository: PipelineRepository,
     private readonly cancellation: PipelineCancellationService,
     private readonly scheduler: PipelineSchedulerService,
+    @Optional() private readonly subscribers?: EventSubscribersService,
   ) {}
 
   @Post("pipeline/run")
@@ -69,6 +72,12 @@ export class PipelineController {
   @Get("pipeline/schedules")
   schedules(@CurrentUser() user: { id: string }) {
     return this.scheduler.list(user.id);
+  }
+  @Get('pipeline/subscriptions')
+  async subscriptions(@CurrentUser() user: { id: string }) {
+    const scope = await this.subscribers?.list() ?? [];
+    return scope.filter((item) => item.userId === user.id)
+      .map(({ symbol, provider, strategyIds }) => ({ symbol, provider, strategyIds }));
   }
   @Post("pipeline/schedules")
   createSchedule(@CurrentUser() user: { id: string }, @Body() body: unknown) {

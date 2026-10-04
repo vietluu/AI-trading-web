@@ -18,12 +18,15 @@ import { randomUUID } from "node:crypto";
 import { AgentInvocationSource, AgentType } from "../../domain/enums";
 import { canonicalSymbol } from "../../../../exchange/infrastructure/exchange-symbol";
 import { AgentExecutionService } from "./agent-execution.service";
+import { SharedResearchService } from './shared-research.service';
+import { AIConfigService } from '../../../ai/infrastructure/config/ai-config.service';
 import type { buildPinnedCoreAnalysis } from '../../../pipeline/domain/pinned-core-analysis';
 
 type AnalysisName = keyof FusionInput;
 type AnalysisBias = "BULLISH" | "BEARISH" | "NEUTRAL";
 
 export interface RunFusionOptions {
+  sharedEventId?: string;
   input: FusionRunInput;
   userId?: string;
   sessionId?: string;
@@ -76,6 +79,8 @@ export class FusionService {
     private readonly agentExecutionService: AgentExecutionService,
     @Optional() private readonly redis?: RedisService,
     @Optional() @Inject(PrismaService) private readonly prisma?: PrismaService,
+    @Optional() private readonly sharedResearch?: SharedResearchService,
+    @Optional() private readonly aiConfig?: AIConfigService,
   ) {}
 
   private analysisCacheKey(
@@ -217,6 +222,19 @@ export class FusionService {
     options: RunFusionOptions,
   ): Promise<FusionAnalysisResult> {
     const input = FusionRunInputSchema.parse(options.input);
+    if (options.sharedEventId) {
+      if (!this.sharedResearch || !this.aiConfig) throw new Error('SHARED_RESEARCH_UNAVAILABLE');
+      return this.sharedResearch.getOrCompute({
+        event: options.sharedEventId, input,
+        sourceCutoff: options.coreSnapshot?.sourceCutoff ?? null,
+      }, async () => this.runDetailed({
+        input,
+        userId: await this.aiConfig!.getSystemUserId(),
+        invocationSource: AgentInvocationSource.FUTURE_EVENT_DRIVEN,
+        correlationId: `research:${options.sharedEventId}:${input.provider}:${input.symbol}:${input.interval}:${options.coreSnapshot?.sourceCutoff ?? ''}`,
+        coreSnapshot: options.coreSnapshot,
+      }));
+    }
     const correlationId = options.correlationId ?? randomUUID();
     const assetSymbol = deriveAssetSymbol(input.symbol);
     const common = {

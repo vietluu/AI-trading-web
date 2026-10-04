@@ -6,7 +6,6 @@ import {
   Sliders,
   Landmark,
   Database,
-  Bot,
   KeyRound,
   User,
   ShieldCheck,
@@ -22,7 +21,6 @@ export function AccountNav(): React.JSX.Element {
     { label: t.accountNav.general, href: ROUTES.settings, icon: Sliders },
     { label: t.accountNav.exchanges, href: ROUTES.settingsExchanges, icon: Landmark },
     { label: t.accountNav.dataSources, href: ROUTES.dataSource, icon: Database },
-    { label: t.accountNav.aiProviders, href: ROUTES.settingsAi, icon: Bot },
     { label: t.accountNav.apiKeys, href: ROUTES.apiKeys, icon: KeyRound },
     { label: t.accountNav.profile, href: ROUTES.profile, icon: User },
     { label: t.accountNav.security, href: ROUTES.security, icon: ShieldCheck },
@@ -61,4 +59,3 @@ export function AccountNav(): React.JSX.Element {
     </nav>
   );
 }
-

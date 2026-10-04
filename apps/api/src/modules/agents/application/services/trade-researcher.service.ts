@@ -131,6 +131,7 @@ export class TradeResearcherService {
       provider: response?.provider ?? context.provider ?? 'UNKNOWN', model: response?.model ?? context.model ?? 'UNKNOWN',
       startedAt, completedAt: new Date(), durationMs: Date.now() - startedAt.getTime(),
       inputTokens: response?.usage?.promptTokens ?? 0, outputTokens: response?.usage?.completionTokens ?? 0,
+      estimatedCost: response?.usage?.estimatedCost ?? 0,
       status: failure ? 'FAILED' : 'COMPLETED', ...(failure ? { failureCode: 'RULES_FALLBACK', safeFailureMessage: failure.slice(0, 1000) } : {}),
     } });
     return { ...result, researchRunId: row.id, contextSnapshotId: storedSnapshot.id };

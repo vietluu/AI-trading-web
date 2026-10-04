@@ -65,7 +65,7 @@ export class PipelineService {
     const delivery = this.trigger(
       input.userId,
       request,
-      'SCHEDULE',
+      'EVENT',
       {
         scheduleId: input.scheduleId,
         bypassCooldown: true,
@@ -97,8 +97,9 @@ export class PipelineService {
     }
   }
 
-  async trigger(userId: string, raw: unknown, trigger: PipelineTrigger = 'MANUAL', options: { replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; useStoredContext?: boolean; maxRunsPerHour?: number; bypassCooldown?: boolean; proactiveThesisKey?: string } = {}) {
+  async trigger(userId: string, raw: unknown, trigger: PipelineTrigger = 'MANUAL', options: { eventRunId?: string; replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; useStoredContext?: boolean; maxRunsPerHour?: number; bypassCooldown?: boolean; proactiveThesisKey?: string } = {}) {
     if (!this.config.enabled) throw new ConflictException('Pipeline automation is disabled');
+    if (trigger === 'SCHEDULE' && this.config.eventDrivenOnly) throw new ConflictException('SCHEDULED_AI_DISABLED');
     const input = PipelineRunRequestSchema.parse(raw);
     const definition = resolvePipelineDefinition(input.pipelineId);
     if (!definition?.enabled) throw new NotFoundException('Pipeline definition not found or disabled');
@@ -227,9 +228,9 @@ export class PipelineService {
         symbol,
         provider: input.provider,
         params: input.params,
-        trigger: 'SCHEDULE',
+        trigger: 'EVENT',
         createdAt: new Date().toISOString(),
-      }, 'SCHEDULE');
+      }, 'EVENT');
       return { status: 'SCHEDULED' as const, runId };
     });
   }
@@ -248,11 +249,21 @@ export class PipelineService {
     definition: NonNullable<ReturnType<typeof resolvePipelineDefinition>>,
     symbol: PipelineSymbol,
     trigger: PipelineTrigger,
-    options: { replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; useStoredContext?: boolean; maxRunsPerHour?: number; bypassCooldown?: boolean; proactiveThesisKey?: string },
+    options: { eventRunId?: string; replayOfRunId?: string; scheduleId?: string; storedContext?: unknown; useStoredContext?: boolean; maxRunsPerHour?: number; bypassCooldown?: boolean; proactiveThesisKey?: string },
     provider: ExchangeProvider,
     enqueue: (run: Awaited<ReturnType<PipelineRepository['createRun']>> & { symbol: PipelineSymbol }) => Promise<unknown>,
   ) {
-    const id = randomUUID(); const now = new Date(); const traceId = randomUUID(); const correlationId = randomUUID();
+    const id = options.eventRunId ?? randomUUID(); const now = new Date(); const traceId = randomUUID(); const correlationId = randomUUID();
+    if (options.eventRunId) {
+      const existing = await this.repository.findRun(id, userId);
+      if (existing) {
+        if (existing.status === 'QUEUED') {
+          await this.repository.createSteps(id, definition.steps);
+          await enqueue({ ...existing, symbol });
+        }
+        return existing;
+      }
+    }
     const rawLimit = options.maxRunsPerHour ?? this.config.maxRunsPerHour;
     const hourlyLimit = Math.min(rawLimit, this.config.maxRunsPerHour);
     let skippedReason: ReturnType<typeof pipelineSkipReason>;

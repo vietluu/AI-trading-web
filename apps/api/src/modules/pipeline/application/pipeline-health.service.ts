@@ -1,4 +1,7 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
+import { InjectQueue } from '@nestjs/bullmq';
+import type { Queue } from 'bullmq';
+import { SHARED_EVENT_QUEUE } from './event-pipeline.service';
 import { PrismaService } from "../../../database/prisma.service";
 import { PipelineQueueService } from "../infrastructure/pipeline-queue.service";
 import { PipelineSchedulerService } from "./pipeline-scheduler.service";
@@ -11,8 +14,12 @@ export class PipelineHealthService {
     private readonly queue: PipelineQueueService,
     private readonly scheduler: PipelineSchedulerService,
     private readonly config: PipelineConfigService,
+    @Optional() @InjectQueue(SHARED_EVENT_QUEUE) private readonly eventQueue?: Queue,
   ) {}
   async health() {
+    const eventCounts = await this.eventQueue?.getJobCounts('waiting', 'active', 'delayed', 'failed');
+    const eventPaused = await this.eventQueue?.isPaused() ?? false;
+    const eventDepth = (eventCounts?.waiting ?? 0) + (eventCounts?.active ?? 0) + (eventCounts?.delayed ?? 0);
     const [recent, staleRunningRuns, staleQueuedRuns] = await Promise.all([
       this.prisma.pipelineRun.findMany({
         select: { status: true, completedAt: true },
@@ -41,11 +48,12 @@ export class PipelineHealthService {
     }
     return {
       status:
-        failureStreak >= 3 || staleRunningRuns > 0 || staleQueuedRuns > 0
+        failureStreak >= 3 || staleRunningRuns > 0 || staleQueuedRuns > 0 || eventPaused || (eventCounts?.failed ?? 0) > 0
           ? "DEGRADED"
           : "HEALTHY",
       scheduler: this.scheduler.status(),
-      queueDepth: await this.queue.depth(),
+      queueDepth: await this.queue.depth() + eventDepth,
+      ...(eventCounts ? { eventQueue: { ...eventCounts, paused: eventPaused } } : {}),
       queuePaused: await this.queue.isPaused(),
       worker: {
         healthy: staleRunningRuns === 0 && staleQueuedRuns === 0,

@@ -37,16 +37,12 @@ export class AgentCancellationHandlerService {
 
     AgentStateMachine.transition(runId, fromState, toState, reason || 'User requested cancellation', 'AgentCancellationHandlerService');
 
-    await this.agentRunRepository.addTransition({
+    await this.agentRunRepository.transitionRun({
       runId,
       fromState: fromState,
       toState: toState,
       reason: reason || 'User requested cancellation',
       actor: 'AgentCancellationHandlerService',
-    });
-
-    await this.agentRunRepository.updateRun(runId, {
-      status: toState,
     });
 
     this.logger.log({ event: 'agent_run_cancellation_requested', runId, userId, reason });

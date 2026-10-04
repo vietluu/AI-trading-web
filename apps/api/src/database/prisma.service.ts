@@ -12,8 +12,18 @@ export class PrismaService
   implements OnModuleInit, OnModuleDestroy
 {
   constructor(configService: ConfigService) {
+    const databaseUrl = new URL(configService.getOrThrow<string>('DATABASE_URL'));
+    if (!databaseUrl.searchParams.has('connection_limit')) {
+      const poolSize = Number(configService.get<string>('DATABASE_POOL_SIZE') ?? 10);
+      if (!Number.isInteger(poolSize) || poolSize < 1 || poolSize > 20) {
+        throw new Error('DATABASE_POOL_SIZE must be an integer from 1 to 20 per process');
+      }
+      databaseUrl.searchParams.set('connection_limit', String(poolSize));
+    }
+    // Keep waits bounded; increasing timeout only hides saturation.
+    if (!databaseUrl.searchParams.has('pool_timeout')) databaseUrl.searchParams.set('pool_timeout', '10');
     super({
-      datasourceUrl: configService.getOrThrow<string>("DATABASE_URL"),
+      datasourceUrl: databaseUrl.toString(),
       log: [
         { emit: "stdout", level: "warn" },
         { emit: "stdout", level: "error" },

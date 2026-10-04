@@ -788,13 +788,12 @@ export class AgentRunnerService {
     reason: string,
   ): Promise<AgentRun> {
     AgentStateMachine.transition(runId, from, to, reason, "AgentRunnerService");
-    await this.agentRunRepository.addTransition({
+    return this.agentRunRepository.transitionRun({
       runId,
       fromState: from,
       toState: to,
       reason,
       actor: "AgentRunnerService",
     });
-    return this.agentRunRepository.updateRun(runId, { status: to });
   }
 }

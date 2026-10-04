@@ -21,6 +21,8 @@ import { MarketEventScannerService } from "./market-event-scanner.service";
 import { PortfolioService } from "../../portfolio/application/portfolio.service";
 import { OpportunityWatcherService } from "./opportunity-watcher.service";
 import { ExchangeInterval } from "../../../exchange/domain/exchange.types";
+import { MarketRedisCacheService } from '../../../market-data/infrastructure/redis/market-redis-cache.service';
+import { EventPipelineService } from './event-pipeline.service';
 
 type ProactiveThesisScheduleInput = {
   userId: string;
@@ -53,6 +55,8 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
     @Optional() private readonly eventScanner?: MarketEventScannerService,
     @Optional() private readonly portfolio?: PortfolioService,
     @Optional() private readonly opportunityWatcher?: OpportunityWatcherService,
+    @Optional() private readonly marketCache?: MarketRedisCacheService,
+    @Optional() private readonly events?: EventPipelineService,
   ) {}
   onModuleInit() {
     if (process.env.CLI_DISABLE_SCHEDULERS === 'true') return;
@@ -75,10 +79,11 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
       }).finally(() => {
         if (!this.destroyed && this.config.enabled) this.scheduleNextTick();
       });
-    }, 5_000);
+    }, this.config.eventDrivenOnly ? 300_000 : 5_000);
   }
 
   async create(userId: string, raw: unknown) {
+    if (this.config.eventDrivenOnly) throw new ConflictException('Scheduled AI is disabled; select symbols and active strategies for event monitoring');
     const input = PipelineScheduleInputSchema.parse(raw);
     if (input.cron) validateCron(input.cron);
     try {
@@ -132,6 +137,7 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
     });
   }
   async setEnabled(userId: string, id: string, enabled: boolean) {
+    if (enabled && this.config.eventDrivenOnly) throw new ConflictException('Scheduled AI is disabled');
     const schedule = await this.prisma.pipelineSchedule.findFirst({
       where: { id, userId },
     });
@@ -153,6 +159,7 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
       enabled: this.config.enabled,
       running: this.running,
       lastTickAt: this.lastTickAt,
+      mode: this.config.eventDrivenOnly ? 'EVENT_DRIVEN' : 'SCHEDULED',
     };
   }
 
@@ -251,6 +258,15 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
     this.running = true;
     this.lastTickAt = now;
     try {
+      if (this.config.eventDrivenOnly) {
+        await this.events?.recoverRecentNews();
+        for (const provider of Object.values(PrismaExchangeProvider)) {
+          const status = await this.marketCache?.getStreamStatus(provider as ExchangeProvider);
+          this.logger.log({ event: 'pipeline_heartbeat', provider,
+            stream: status ?? 'UNAVAILABLE', checkedAt: now.toISOString() });
+        }
+        return;
+      }
       const schedules = await this.prisma.pipelineSchedule.findMany({
         where: { enabled: true },
       });
