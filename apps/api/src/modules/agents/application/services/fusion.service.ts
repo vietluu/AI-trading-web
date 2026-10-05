@@ -231,7 +231,7 @@ export class FusionService {
         input,
         userId: await this.aiConfig!.getSystemUserId(),
         invocationSource: AgentInvocationSource.FUTURE_EVENT_DRIVEN,
-        correlationId: `research:${options.sharedEventId}:${input.provider}:${input.symbol}:${input.interval}:${options.coreSnapshot?.sourceCutoff ?? ''}`,
+        correlationId: `research:${options.sharedEventId}:${input.provider}:${input.symbol}:${input.interval}:${String(options.coreSnapshot?.sourceCutoff ?? '')}`,
         coreSnapshot: options.coreSnapshot,
       }));
     }

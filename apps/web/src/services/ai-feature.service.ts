@@ -698,6 +698,16 @@ export async function getPipelineHealth() {
   return apiRequest<PipelineHealth>(API_ENDPOINTS.pipeline.health);
 }
 
+export interface PipelineSubscription {
+  symbol: string;
+  provider: string;
+  strategyIds: string[];
+}
+
+export async function getPipelineSubscriptions() {
+  return apiRequest<PipelineSubscription[]>(API_ENDPOINTS.pipeline.subscriptions);
+}
+
 export async function getPipelineSchedules() {
   return apiRequest<PipelineSchedule[]>(API_ENDPOINTS.pipeline.schedules);
 }

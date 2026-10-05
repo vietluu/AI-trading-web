@@ -56,6 +56,7 @@ export const QUERY_KEYS = {
     pipelineRuns: () => ["pipeline-runs"],
     pipelineRunDetail: (id: string) => ["pipeline-run", id],
     pipelineHealth: () => ["pipeline-health"],
+    pipelineSubscriptions: () => ["pipeline-subscriptions"],
     pipelineSchedules: () => ["pipeline-schedules"],
     settings: ["settings"],
     exchangeConnections: ["exchange-connections"],

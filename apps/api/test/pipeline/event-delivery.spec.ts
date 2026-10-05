@@ -20,7 +20,7 @@ describe('event-only operation', () => {
 
   it('recovers a run persisted before queue failure without creating a second run', async () => {
     const run = { id: '11111111-1111-4111-8111-111111111111', status: 'QUEUED' };
-    const repository = { findRun: vi.fn(async () => run), createSteps: vi.fn(), createRun: vi.fn() };
+    const repository = { findRun: vi.fn(() => Promise.resolve(run)), createSteps: vi.fn(), createRun: vi.fn() };
     const queue = { enqueue: vi.fn() };
     const service = new PipelineService(repository as never, queue as never, { enabled: true } as never);
     const request = { pipelineId: 'FULL_ANALYSIS_DECISION', symbol: 'BTC-USDT', provider: 'OKX_FUTURES', params: {} };

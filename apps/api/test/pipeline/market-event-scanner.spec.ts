@@ -62,10 +62,10 @@ describe("MarketEventScannerService", () => {
     const now = new Date();
     const { indicator, activeCandle } = scannerSnapshot(now);
     const scanner = new MarketEventScannerService({
-      getTicker: async () => ({ timestamp: new Date(now.getTime() - 15_000), lastPrice: '101' }),
-      getCandle: async () => activeCandle,
-    } as never, { getIndicatorSnapshot: async () => indicator,
-      getHistoricalCandles: async () => [] } as never, redisMock() as never);
+      getTicker: () => Promise.resolve({ timestamp: new Date(now.getTime() - 15_000), lastPrice: '101' }),
+      getCandle: () => Promise.resolve(activeCandle),
+    } as never, { getIndicatorSnapshot: () => Promise.resolve(indicator),
+      getHistoricalCandles: () => Promise.resolve([]) } as never, redisMock() as never);
     const input = { userId: 'platform', provider: 'OKX_FUTURES' as never, symbol: 'BTC-USDT',
       strategyIds: [], scanIntervalSeconds: 3, now };
     expect((await scanner.scan(input)).triggered).toBe(false);

@@ -33,7 +33,7 @@ describe("AIConfigService", () => {
   it('ignores legacy user provider choices and denies user updates', async () => {
     const update = vi.fn();
     const service = new AIConfigService({ aIConfiguration: {
-      findUnique: async () => ({ ...existingConfig, preferredProvider: 'ANTHROPIC', fallbackEnabled: true }), update,
+      findUnique: () => Promise.resolve({ ...existingConfig, preferredProvider: 'ANTHROPIC', fallbackEnabled: true }), update,
     } } as never, { get: vi.fn() } as never);
     expect(await service.getOrCreateConfig('user-1')).toMatchObject({
       preferredProvider: 'GEMINI', fallbackEnabled: false, fallbackProviders: [],

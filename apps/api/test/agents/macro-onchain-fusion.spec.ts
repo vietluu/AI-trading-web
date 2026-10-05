@@ -25,7 +25,7 @@ describe('shared event research context', () => {
       identities.push(identity); return load();
     } };
     const fusion = new FusionService({ executeSync } as never, undefined, undefined,
-      shared as never, { getSystemUserId: async () => 'system-research' } as never);
+      shared as never, { getSystemUserId: () => Promise.resolve('system-research') } as never);
     const input = { symbol: 'BTC-USDT', provider: 'OKX_FUTURES' as const, interval: '15m' as const,
       lookbackCandles: 150, lookbackHours: 6, maxItems: 20 };
     for (const userId of ['private-user-a', 'private-user-b']) {
@@ -35,7 +35,7 @@ describe('shared event research context', () => {
     expect(identities[0]).toEqual(identities[1]);
     expect(JSON.stringify(identities)).not.toContain('private');
     expect(executeSync).toHaveBeenCalled();
-    for (const [options] of executeSync.mock.calls) {
+    for (const [options] of executeSync.mock.calls as Array<[{ userId?: string; sessionId?: string }]>) {
       expect(options.userId).toBe('system-research');
       expect(options.sessionId).toBeUndefined();
     }

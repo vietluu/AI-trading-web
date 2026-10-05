@@ -1,20 +1,14 @@
 "use client";
 
 import Link from 'next/link';
-import { usePipelineDashboard } from '@/hooks/ai/useAiFeature';
-import { useQuery } from '@tanstack/react-query';
-import { apiRequest } from '@/lib/api-client';
+import { usePipelineDashboard, usePipelineSubscriptions } from '@/hooks/ai/useAiFeature';
 import { useTranslation } from '@/lib/i18n/i18n-context';
 
 export default function PipelinePage() {
   const { language } = useTranslation();
   const vi = language === 'vi';
   const health = usePipelineDashboard();
-  const scope = useQuery({
-    queryKey: ['pipeline-subscriptions'],
-    queryFn: () => apiRequest<Array<{ symbol: string; provider: string; strategyIds: string[] }>>('/pipeline/subscriptions'),
-    refetchInterval: 30_000,
-  });
+  const scope = usePipelineSubscriptions();
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">

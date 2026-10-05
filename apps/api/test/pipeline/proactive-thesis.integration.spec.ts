@@ -417,17 +417,18 @@ describe("Proactive Thesis Pipeline Integration", () => {
   it('builds a new decision snapshot after quote acquisition, preserving the opportunity cutoff', async () => {
     const eventCutoff = new Date(cutoff);
     const quoteTime = new Date(eventCutoff.getTime() + 20_000);
-    vi.mocked(mockLiveTrading.proactiveExecutionEvidence!).mockImplementation(async () => {
+    vi.mocked(mockLiveTrading.proactiveExecutionEvidence!).mockImplementation(() => {
       vi.setSystemTime(quoteTime);
-      return { timestamp: quoteTime, currentPrice: PRICE, spread: 1, estimatedRoundTripCost: 10,
-        tickSize: 0.1, lotSize: 0.001, currentExposure: 0, freshnessThresholdMs: 60_000 };
+      return Promise.resolve({ timestamp: quoteTime, currentPrice: PRICE, spread: 1, estimatedRoundTripCost: 10,
+        tickSize: 0.1, lotSize: 0.001, currentExposure: 0, freshnessThresholdMs: 60_000 });
     });
     const job = makeJob();
     await pipelineRunner.run(job);
-    expect(mockSnapshotService.build).toHaveBeenCalledWith(expect.objectContaining({
+    const snapshotBuild = vi.mocked(mockSnapshotService.build!);
+    expect(snapshotBuild.mock.calls.at(-1)?.[0]).toMatchObject({
       sourceDataCutoff: quoteTime,
-      execution: expect.objectContaining({ timestamp: quoteTime }),
-    }));
+      execution: { timestamp: quoteTime },
+    });
     expect(job.params?.sourceDataCutoff).toBe(cutoff);
   });
 
