@@ -105,16 +105,13 @@ export class AgentExecutionService {
       parentRunId: options.parentRunId,
       replayOfRunId: options.replayOfRunId,
     });
-    await this.agentRunRepository.addTransition({
+    run = await this.agentRunRepository.transitionRun({
       runId: run.id,
       fromState: AgentRunState.CREATED,
       toState: AgentRunState.QUEUED,
       reason: 'Agent run enqueued for asynchronous execution',
       actor: 'AgentExecutionService',
       correlationId,
-    });
-    run = await this.agentRunRepository.updateRun(run.id, {
-      status: AgentRunState.QUEUED,
     });
 
     await this.agentRunProducer.enqueue({

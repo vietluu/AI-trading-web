@@ -55,7 +55,7 @@ describe("News and Sentiment Agent runner integration", () => {
     async ({ definition, schema, output }) => {
       let run = {
         id: "00000000-0000-4000-8000-000000000021",
-        status: AgentRunState.CREATED,
+        status: AgentRunState.CREATED as AgentRunState,
         traceId: "trace-news-sentiment",
         output: null as unknown,
         toolCallCount: 0,
@@ -68,6 +68,8 @@ describe("News and Sentiment Agent runner integration", () => {
           .mockImplementation((_id: string, update: Record<string, unknown>) =>
             Promise.resolve((run = { ...run, ...update })),
           ),
+        transitionRun: vi.fn().mockImplementation(({ toState }: { toState: AgentRunState }) =>
+          Promise.resolve((run = { ...run, status: toState }))),
         addTransition: vi.fn().mockResolvedValue({}),
         saveOutput: vi.fn().mockResolvedValue({}),
       };

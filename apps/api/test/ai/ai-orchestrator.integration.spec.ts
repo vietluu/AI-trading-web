@@ -120,7 +120,7 @@ describe("AI Orchestrator & Fallback Integration", () => {
     );
   });
 
-  it("tries an independent fallback provider before alternate Gemini models", () => {
+  it("does not admit independent fallback providers into the platform allowlist", () => {
     const candidates = (
       orchestrator as unknown as {
         buildCandidates: (
@@ -133,11 +133,10 @@ describe("AI Orchestrator & Fallback Integration", () => {
 
     expect(candidates.slice(0, 2)).toEqual([
       { provider: "GEMINI", model: "gemini-3.1-flash-lite" },
-      { provider: "OPENAI", model: "gpt-5-mini" },
     ]);
   });
 
-  it("uses discovered Gemini models instead of the stale registry fallback list", () => {
+  it("does not admit discovered models into the platform allowlist", () => {
     const candidates = (
       orchestrator as unknown as {
         buildCandidates: (
@@ -155,8 +154,7 @@ describe("AI Orchestrator & Fallback Integration", () => {
     );
 
     expect(candidates).toEqual([
-      { provider: "GEMINI", model: "gemini-primary" },
-      { provider: "GEMINI", model: "gemini-current-flash" },
+      { provider: "GEMINI", model: "gemini-3.1-flash-lite" },
     ]);
   });
 
@@ -167,7 +165,7 @@ describe("AI Orchestrator & Fallback Integration", () => {
     });
 
     expect(res.text).toBeDefined();
-    expect(res.provider).toBe("OPENAI");
+    expect(res.provider).toBe("GEMINI");
     expect(res.usage.totalTokens).toBeGreaterThan(0);
   });
 
@@ -202,22 +200,20 @@ describe("AI Orchestrator & Fallback Integration", () => {
   });
 
   it("does not count a failed provider attempt against the request budget", async () => {
-    openAIProvider.chat = vi.fn().mockRejectedValue(
-      Object.assign(new Error("OpenAI unavailable"), { status: 503 }),
+    geminiProvider.chat = vi.fn().mockRejectedValue(
+      Object.assign(new Error("Gemini unavailable"), { status: 503 }),
     );
 
-    const response = await orchestrator.execute({
+    await expect(orchestrator.execute({
       userId: "user-123",
       userPrompt: "Fallback without charging the failed attempt",
       provider: "OPENAI",
-    });
-
-    expect(response.provider).toBe("ANTHROPIC");
-    expect(reserveRequest).toHaveBeenCalledTimes(2);
+    })).rejects.toThrow();
+    expect(reserveRequest).toHaveBeenCalledTimes(1);
     expect(releaseRequest).toHaveBeenCalledTimes(1);
   });
 
-  it("should fallback to Anthropic if primary OpenAI provider throws a retryable error", async () => {
+  it("routes legacy OpenAI preferences to approved Gemini without calling OpenAI", async () => {
     openAIProvider.chat = () => {
       const err = new Error("Rate limit exceeded 429");
       Object.assign(err, { status: 429 });
@@ -230,10 +226,10 @@ describe("AI Orchestrator & Fallback Integration", () => {
       provider: "OPENAI",
     });
 
-    expect(res.provider).toBe("ANTHROPIC");
+    expect(res.provider).toBe("GEMINI");
   });
 
-  it("should use provider-specific default models when building the fallback chain", () => {
+  it("keeps only the platform model despite legacy fallback preferences", () => {
     const buildCandidates = (
       orchestrator as unknown as {
         buildCandidates: (
@@ -251,13 +247,11 @@ describe("AI Orchestrator & Fallback Integration", () => {
     expect(
       candidates.map((candidate) => `${candidate.provider}:${candidate.model}`),
     ).toEqual([
-      "OPENAI:gpt-5-mini",
-      "ANTHROPIC:claude-3-5-sonnet-20241022",
       "GEMINI:gemini-3.1-flash-lite",
     ]);
   });
 
-  it("should skip an auth-broken provider and continue the fallback chain", async () => {
+  it("does not select legacy auth-broken providers", async () => {
     openAIProvider.chat = () => {
       const err = new Error("Invalid API key (401)");
       Object.assign(err, { status: 401 });
@@ -270,10 +264,10 @@ describe("AI Orchestrator & Fallback Integration", () => {
       provider: "OPENAI",
     });
 
-    expect(response.provider).toBe("ANTHROPIC");
+    expect(response.provider).toBe("GEMINI");
   });
 
-  it("continues to later Gemini models when the second provider has invalid auth", async () => {
+  it("ignores legacy primary models and unapproved fallback credentials", async () => {
     const calls: string[] = [];
     const provider = (providerType: "GEMINI" | "OPENAI") =>
       ({
@@ -337,14 +331,11 @@ describe("AI Orchestrator & Fallback Integration", () => {
     });
 
     expect(calls.slice(0, 4)).toEqual([
-      "GEMINI:gemini-primary",
-      "GEMINI:gemini-primary",
-      "OPENAI:gpt-5-mini",
-      "GEMINI:gemini-3.5-flash-lite",
+      "GEMINI:gemini-3.1-flash-lite",
     ]);
     expect(response).toMatchObject({
       provider: "GEMINI",
-      model: "gemini-3.5-flash-lite",
+      model: "gemini-3.1-flash-lite",
     });
   });
 

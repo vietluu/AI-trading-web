@@ -70,6 +70,7 @@ export const API_ENDPOINTS = {
   },
   pipeline: {
     health: "/system/pipeline/health",
+    subscriptions: "/pipeline/subscriptions",
     schedules: "/pipeline/schedules",
     byId: (id: string) => `/pipeline/schedules/${id}`,
     run: "/pipeline/run",

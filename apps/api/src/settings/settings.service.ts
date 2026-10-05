@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { ForbiddenException, Injectable } from "@nestjs/common";
 import type { UserSetting } from "@prisma/client";
 
 import { AuditService } from "../audit/audit.service";
@@ -25,6 +25,9 @@ export class SettingsService {
     dto: UpdateSettingsDto,
     context: RequestMetadata,
   ) {
+    if (dto.aiDailyBudget !== undefined) {
+      throw new ForbiddenException('AI budget is managed by the platform');
+    }
     await this.repository.getOrCreate(userId);
     const normalizedDto = {
       ...dto,
@@ -40,21 +43,6 @@ export class SettingsService {
         : {}),
     };
     const setting = await this.repository.update(userId, normalizedDto);
-
-    if (dto.aiDailyBudget !== undefined && !isNaN(Number(dto.aiDailyBudget))) {
-      const budgetVal = Number(dto.aiDailyBudget);
-      await this.prisma.aIConfiguration.upsert({
-        where: { userId },
-        create: { userId, dailyBudget: budgetVal },
-        update: { dailyBudget: budgetVal },
-      }).catch(() => null);
-
-      await this.prisma.aIConfiguration.upsert({
-        where: { userId: "system" },
-        create: { userId: "system", dailyBudget: budgetVal },
-        update: { dailyBudget: budgetVal },
-      }).catch(() => null);
-    }
 
     await this.audit.record("SETTINGS_UPDATE", userId, context, {
       fields: Object.keys(dto),

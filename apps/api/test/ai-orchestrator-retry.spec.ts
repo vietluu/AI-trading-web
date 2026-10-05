@@ -260,7 +260,7 @@ describe("AIOrchestratorService - Retry & Stream Fallback", () => {
       expect(chunks[1]?.isComplete).toBe(true);
     });
 
-    it("should fallback to secondary provider when primary provider stream fails", async () => {
+    it("fails closed instead of streaming from an unapproved fallback provider", async () => {
       const primaryStreamMock = vi.fn().mockImplementation(async function* () {
         await Promise.resolve();
         throw new Error("Primary stream connection failed");
@@ -279,17 +279,12 @@ describe("AIOrchestratorService - Retry & Stream Fallback", () => {
         fallbackProviders: ["ANTHROPIC"],
       });
 
-      const chunks: LLMStreamChunk[] = [];
-      for await (const chunk of orchestrator.stream({
-        userId: "user-123",
-        userPrompt: "Stream test with fallback",
-      })) {
-        chunks.push(chunk);
-      }
-
-      expect(chunks.length).toBe(1);
-      expect(chunks[0]?.deltaToken).toBe("fallback chunk");
-      expect(chunks[0]?.isComplete).toBe(true);
+      await expect((async () => {
+        for await (const chunk of orchestrator.stream({ userId: 'user-123', userPrompt: 'Stream test with fallback' })) {
+          void chunk;
+        }
+      })()).rejects.toThrow('All providers failed');
+      expect(fallbackStreamMock).not.toHaveBeenCalled();
     });
 
     it("should throw when all providers fail for stream request", async () => {

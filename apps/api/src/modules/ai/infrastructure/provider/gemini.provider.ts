@@ -104,6 +104,9 @@ export class GeminiProvider implements LLMProvider {
     if (options.responseFormat === "json" || options.jsonSchema) {
       (reqBody.generationConfig as Record<string, unknown>).responseMimeType =
         "application/json";
+      if (options.jsonSchema) {
+        (reqBody.generationConfig as Record<string, unknown>).responseJsonSchema = options.jsonSchema;
+      }
     }
 
     const controller = new AbortController();
@@ -154,6 +157,7 @@ export class GeminiProvider implements LLMProvider {
         usageMetadata?: {
           promptTokenCount: number;
           candidatesTokenCount: number;
+          thoughtsTokenCount?: number;
           totalTokenCount: number;
         };
       };
@@ -162,17 +166,18 @@ export class GeminiProvider implements LLMProvider {
         data.candidates[0]?.content?.parts.map((p) => p.text).join("") || "";
       const latencyMs = Date.now() - startTime;
       const promptTokens =
-        data.usageMetadata?.promptTokenCount ||
+        data.usageMetadata?.promptTokenCount ??
         Math.ceil(options.userPrompt.length / 4);
       const completionTokens =
-        data.usageMetadata?.candidatesTokenCount || Math.ceil(text.length / 4);
+        (data.usageMetadata?.candidatesTokenCount ?? Math.ceil(text.length / 4)) +
+        (data.usageMetadata?.thoughtsTokenCount ?? 0);
       const totalTokens = promptTokens + completionTokens;
 
       const modelInfo = this.modelRegistry.getModel(model);
-      const estimatedCost = modelInfo
+      const estimatedCost = Number((modelInfo
         ? (promptTokens / 1000) * modelInfo.inputCostPer1k +
           (completionTokens / 1000) * modelInfo.outputCostPer1k
-        : 0;
+        : (promptTokens / 1000) * 0.00125 + (completionTokens / 1000) * 0.005).toFixed(6));
 
       let json: Record<string, unknown> | null = null;
       if (options.responseFormat === "json" || options.jsonSchema) {

@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { ForbiddenException, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../../../../database/prisma.service";
 import { AIConfigDto, UpdateAIConfigDto } from "@platform/shared";
@@ -6,6 +6,36 @@ import { AIConfiguration, AIProviderType } from "@prisma/client";
 
 @Injectable()
 export class AIConfigService {
+  private systemIdentity?: Promise<string>;
+
+  public getSystemUserId(): Promise<string> {
+    if (!this.systemIdentity) {
+      const id = '00000000-0000-4000-8000-000000000001';
+      this.systemIdentity = this.prisma.user.upsert({
+        where: { id },
+        create: {
+          id, email: 'research@platform.invalid', username: '__platform_research__',
+          passwordHash: '!DISABLED_SYSTEM_ACCOUNT!', lockedUntil: new Date('9999-01-01'),
+        },
+        update: {},
+      }).then(() => id).catch((error) => {
+        this.systemIdentity = undefined;
+        throw error;
+      });
+    }
+    return this.systemIdentity;
+  }
+
+  private platformDefaults() {
+    return {
+      preferredProvider: 'GEMINI' as AIProviderType,
+      preferredModel: 'gemini-3.1-flash-lite',
+      temperature: this.config.get<number>('DEFAULT_TEMPERATURE') ?? 0.7,
+      maxTokens: this.config.get<number>('DEFAULT_MAX_TOKENS') ?? 2048,
+      timeoutMs: this.config.get<number>('DEFAULT_TIMEOUT') ?? 30000,
+      fallbackEnabled: false, fallbackProviders: [] as string[],
+    };
+  }
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
@@ -17,67 +47,30 @@ export class AIConfigService {
     });
 
     if (existing) {
-      return existing;
+      return { ...existing, ...this.platformDefaults() };
     }
 
-    return this.prisma.aIConfiguration.create({
-      data: {
+    return this.prisma.aIConfiguration.upsert({
+      where: { userId },
+      update: {},
+      create: {
         userId,
-        preferredProvider:
-          this.config.get<AIProviderType>("DEFAULT_PROVIDER") ?? "GEMINI",
-        preferredModel:
-          this.config.get<string>("DEFAULT_MODEL") ?? "gemini-3.1-flash-lite",
-        temperature: 0.7,
-        maxTokens: 2048,
-        timeoutMs: 30000,
         dailyBudget: 10.0,
         monthlyBudget: 100.0,
         tokenBudget: 0,
         requestBudget: 5000,
-        fallbackEnabled: false,
-        fallbackProviders: [],
+        ...this.platformDefaults(),
       },
     });
   }
 
-  public async updateConfig(
-    userId: string,
-    dto: UpdateAIConfigDto,
+  public updateConfig(
+    _userId: string,
+    _dto: UpdateAIConfigDto,
   ): Promise<AIConfiguration> {
-    await this.getOrCreateConfig(userId);
-
-    const updateData = {
-      preferredProvider: dto.preferredProvider,
-      preferredModel: dto.preferredModel,
-      temperature: dto.temperature,
-      maxTokens: dto.maxTokens,
-      timeoutMs: dto.timeoutMs,
-      dailyBudget: dto.dailyBudget !== undefined ? dto.dailyBudget : undefined,
-      monthlyBudget:
-        dto.monthlyBudget !== undefined ? dto.monthlyBudget : undefined,
-      tokenBudget: dto.tokenBudget,
-      requestBudget: dto.requestBudget,
-      fallbackEnabled: dto.fallbackEnabled,
-      fallbackProviders: dto.fallbackProviders,
-    };
-
-    const updated = await this.prisma.aIConfiguration.update({
-      where: { userId },
-      data: updateData,
-    });
-
-    // Synchronize settings with background system user so pipeline uses Settings UI in real-time
-    if (userId !== "system") {
-      await this.prisma.aIConfiguration
-        .upsert({
-          where: { userId: "system" },
-          create: { userId: "system", ...updateData },
-          update: updateData,
-        })
-        .catch(() => null);
-    }
-
-    return updated;
+    void _userId;
+    void _dto;
+    return Promise.reject(new ForbiddenException('AI configuration is managed by the platform'));
   }
 
   public toSharedDto(config: AIConfiguration): AIConfigDto {

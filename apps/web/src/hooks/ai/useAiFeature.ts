@@ -30,6 +30,7 @@ import {
   getPerformanceRecords,
   getRecoveryCohortComparison,
   getPipelineHealth,
+  getPipelineSubscriptions,
   getPipelineRunDetail,
   getPipelineRuns,
   getPipelineSchedules,
@@ -322,6 +323,14 @@ export function usePipelineDashboard() {
   return useQuery<Awaited<ReturnType<typeof getPipelineHealth>>>({
     queryKey: queryKeys.ai.pipelineHealth(),
     queryFn: getPipelineHealth,
+  });
+}
+
+export function usePipelineSubscriptions() {
+  return useQuery<Awaited<ReturnType<typeof getPipelineSubscriptions>>>({
+    queryKey: queryKeys.ai.pipelineSubscriptions(),
+    queryFn: getPipelineSubscriptions,
+    refetchInterval: 30_000,
   });
 }
 

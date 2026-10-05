@@ -32,6 +32,7 @@ import { AIHistoryService } from "../../infrastructure/history/ai-history.servic
 import { ModelRegistryService } from "../../infrastructure/registry/model-registry.service";
 import { BudgetManagerService } from "../../infrastructure/budget/budget-manager.service";
 import { PrismaService } from "../../../../database/prisma.service";
+import { PlatformAIGuard } from './platform-ai.guard';
 
 @ApiTags("AI Infrastructure")
 @Controller("ai")
@@ -48,6 +49,7 @@ export class AIController {
   ) {}
 
   @Get("providers")
+  @UseGuards(PlatformAIGuard)
   @ApiOperation({ summary: "Get AI Providers and their health status" })
   @ApiResponse({ status: 200, description: "List of providers and health status" })
   public async getProviders(): Promise<AIProviderHealth[]> {
@@ -55,6 +57,7 @@ export class AIController {
   }
 
   @Get("models")
+  @UseGuards(PlatformAIGuard)
   @ApiOperation({ summary: "Get all registered AI Models" })
   @ApiResponse({ status: 200, description: "List of AI Models" })
   public getModels(): Promise<AIModel[]> {
@@ -74,6 +77,7 @@ export class AIController {
   }
 
   @Get("config")
+  @UseGuards(PlatformAIGuard)
   @ApiOperation({ summary: "Get AI configuration for the current user" })
   @ApiResponse({ status: 200, description: "User AI Configuration" })
   public async getConfig(@CurrentUser() user: User): Promise<AIConfigDto> {
@@ -82,6 +86,7 @@ export class AIController {
   }
 
   @Put("config")
+  @UseGuards(PlatformAIGuard)
   @ApiOperation({ summary: "Update AI configuration for the current user" })
   @ApiResponse({ status: 200, description: "Updated AI Configuration" })
   public async updateConfig(
@@ -93,6 +98,7 @@ export class AIController {
   }
 
   @Get("test")
+  @UseGuards(PlatformAIGuard)
   @ApiOperation({ summary: "Diagnostic check for AI test endpoint" })
   @ApiResponse({ status: 200, description: "AI Test Status" })
   public testAIGet(): { status: string; message: string } {
@@ -103,6 +109,7 @@ export class AIController {
   }
 
   @Post("test")
+  @UseGuards(PlatformAIGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Test AI execution prompt and structured response" })
   @ApiResponse({ status: 200, description: "AI Response" })

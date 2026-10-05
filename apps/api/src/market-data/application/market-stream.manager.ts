@@ -1,4 +1,6 @@
-import { Injectable, Logger, type OnModuleInit, type OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, Optional, type OnModuleInit, type OnModuleDestroy } from '@nestjs/common';
+import { PrismaService } from '../../database/prisma.service';
+import { canonicalSymbol } from '../../exchange/infrastructure/exchange-symbol';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'node:crypto';
 import { MarketDataConfigService } from './market-data-config.service';
@@ -25,6 +27,8 @@ export class MarketStreamManager implements OnModuleInit, OnModuleDestroy {
   private streamActive = false;
   private readonly leaseSeconds: number;
   private readonly leadershipCheckMs: number;
+  private readonly subscribedSymbols = new Map<ExchangeProvider, Set<string>>();
+  private refreshingSubscriptions = false;
 
   constructor(
     private readonly marketConfig: MarketDataConfigService,
@@ -34,6 +38,7 @@ export class MarketStreamManager implements OnModuleInit, OnModuleDestroy {
     private readonly cache: MarketRedisCacheService,
     private readonly taskLock: DistributedTaskLockService,
     config: ConfigService,
+    @Optional() private readonly prisma?: PrismaService,
   ) {
     this.leaseSeconds = config.get<number>('MARKET_STREAM_LEADER_LEASE_SECONDS', 30);
     this.leadershipCheckMs = Math.max(1_000, Math.floor(this.leaseSeconds * 1_000 / 3));
@@ -117,6 +122,7 @@ export class MarketStreamManager implements OnModuleInit, OnModuleDestroy {
     for (const [provider, adapter] of this.adapters.entries()) {
       try {
         await this.ensureLeaseOwnership();
+        this.subscribedSymbols.set(provider, new Set(config.symbols));
         // Forward events to event bus
         this.unsubscribers.push(
           adapter.onEvent((event) => {
@@ -187,10 +193,14 @@ export class MarketStreamManager implements OnModuleInit, OnModuleDestroy {
       }
     }
 
+    await this.refreshSelectedSymbols();
     this.statusRefreshTimer = setInterval(() => {
       for (const [provider, adapter] of this.adapters) {
         void this.cache.setStreamStatus(provider, adapter.getStatus());
       }
+      void this.refreshSelectedSymbols().catch((error) => this.logger.error({
+        event: 'selected_symbol_subscription_failed', message: String(error),
+      }));
     }, 15_000);
     this.statusRefreshTimer.unref();
   }
@@ -203,6 +213,37 @@ export class MarketStreamManager implements OnModuleInit, OnModuleDestroy {
     )) {
       throw new MarketStreamLeadershipLostError('Market stream leader lease expired during startup');
     }
+  }
+
+  private async refreshSelectedSymbols(): Promise<void> {
+    if (!this.prisma || !this.leaderToken || this.refreshingSubscriptions) return;
+    this.refreshingSubscriptions = true;
+    try {
+      const users = await this.prisma.user.findMany({
+        where: { portfolioStrategies: { some: { status: 'ACTIVE' } },
+          exchangeConnections: { some: { isEnabled: true, isVerified: true } } },
+        select: { setting: { select: { preferredSymbols: true } },
+          portfolioStrategies: { where: { status: 'ACTIVE' }, select: { symbols: true } } },
+      });
+      const symbols = [...new Set(users.flatMap((user) => user.setting?.preferredSymbols.length
+        ? user.setting.preferredSymbols : user.portfolioStrategies.flatMap((s) => s.symbols))
+        .map(canonicalSymbol))];
+      const config = this.marketConfig.getConfig();
+      for (const [provider, adapter] of this.adapters) {
+        await this.ensureLeaseOwnership();
+        const subscribed = this.subscribedSymbols.get(provider) ?? new Set<string>();
+        const added = symbols.filter((symbol) => !subscribed.has(symbol));
+        if (!added.length) continue;
+        if (config.ticker.enabled) await adapter.subscribeTicker(added);
+        if (config.trades.enabled) await adapter.subscribeTrades(added);
+        if (config.candles.enabled) await adapter.subscribeCandles(added.flatMap((symbol) =>
+          config.intervals.map((interval) => ({ symbol, interval }))));
+        if (config.orderBook.enabled) await adapter.subscribeOrderBook(added.map((symbol) =>
+          ({ symbol, depth: config.orderBook.depth })));
+        added.forEach((symbol) => subscribed.add(symbol));
+        this.subscribedSymbols.set(provider, subscribed);
+      }
+    } finally { this.refreshingSubscriptions = false; }
   }
 
   private async stopStreaming(): Promise<void> {
@@ -227,5 +268,6 @@ export class MarketStreamManager implements OnModuleInit, OnModuleDestroy {
       });
     }
     this.adapters.clear();
+    this.subscribedSymbols.clear();
   }
 }

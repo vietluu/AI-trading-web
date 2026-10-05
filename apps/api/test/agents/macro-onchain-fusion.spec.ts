@@ -17,6 +17,31 @@ import {
 } from "../../src/modules/agents/domain/enums";
 import { PromptRegistry } from "../../src/modules/ai/infrastructure/prompt/prompt-registry";
 
+describe('shared event research context', () => {
+  it('uses system identity and excludes subscriber/session identity from the shared key', async () => {
+    const identities: unknown[] = [];
+    const executeSync = vi.fn().mockRejectedValue(new Error('Fixture has no external tools'));
+    const shared = { getOrCompute: async (identity: unknown, load: () => Promise<unknown>) => {
+      identities.push(identity); return load();
+    } };
+    const fusion = new FusionService({ executeSync } as never, undefined, undefined,
+      shared as never, { getSystemUserId: () => Promise.resolve('system-research') } as never);
+    const input = { symbol: 'BTC-USDT', provider: 'OKX_FUTURES' as const, interval: '15m' as const,
+      lookbackCandles: 150, lookbackHours: 6, maxItems: 20 };
+    for (const userId of ['private-user-a', 'private-user-b']) {
+      await fusion.runDetailed({ input, userId, sessionId: `private-session-${userId}`,
+        sharedEventId: 'public-event', invocationSource: AgentInvocationSource.FUTURE_EVENT_DRIVEN });
+    }
+    expect(identities[0]).toEqual(identities[1]);
+    expect(JSON.stringify(identities)).not.toContain('private');
+    expect(executeSync).toHaveBeenCalled();
+    for (const [options] of executeSync.mock.calls as Array<[{ userId?: string; sessionId?: string }]>) {
+      expect(options.userId).toBe('system-research');
+      expect(options.sessionId).toBeUndefined();
+    }
+  });
+});
+
 function analysisFixture(): FusionInput {
   const generatedAt = new Date().toISOString();
   return {

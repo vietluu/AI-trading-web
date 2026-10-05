@@ -35,7 +35,7 @@ describe('Technical Analyst Agent runner integration', () => {
     };
     let run = {
       id: '00000000-0000-4000-8000-000000000011',
-      status: AgentRunState.CREATED,
+      status: AgentRunState.CREATED as AgentRunState,
       traceId: 'trace-technical',
       output: null,
       toolCallCount: 0,
@@ -48,6 +48,8 @@ describe('Technical Analyst Agent runner integration', () => {
         .mockImplementation((_id: string, update: Record<string, unknown>) =>
           Promise.resolve((run = { ...run, ...update })),
         ),
+      transitionRun: vi.fn().mockImplementation(({ toState }: { toState: AgentRunState }) =>
+        Promise.resolve((run = { ...run, status: toState }))),
       addTransition: vi.fn().mockResolvedValue({}),
       saveOutput: vi.fn().mockResolvedValue({}),
     };

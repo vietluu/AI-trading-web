@@ -103,8 +103,7 @@ Your output must EXACTLY MATCH this JSON schema format:
 }
 `;
 
-export const TRADE_THESIS_JSON_SCHEMA = {
-  $schema: "http://json-schema.org/draft-07/schema#",
+const TRADE_THESIS_SCHEMA_BASE = {
   type: "object",
   properties: {
     preferred: {
@@ -196,4 +195,16 @@ export const TRADE_THESIS_JSON_SCHEMA = {
     }
   },
   required: ["preferred", "alternatives"]
+};
+
+export const TRADE_THESIS_JSON_SCHEMA = {
+  ...TRADE_THESIS_SCHEMA_BASE,
+  properties: {
+    ...TRADE_THESIS_SCHEMA_BASE.properties,
+    alternatives: {
+      type: 'array',
+      maxItems: 2,
+      items: TRADE_THESIS_SCHEMA_BASE.properties.preferred,
+    },
+  },
 };

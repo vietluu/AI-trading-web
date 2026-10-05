@@ -94,18 +94,19 @@ export class MarketEventScannerService {
     symbol: string;
     strategyIds: string[];
     now?: Date;
+    scanIntervalSeconds?: number;
   }): Promise<MarketEventScanResult> {
     const now = input.now ?? new Date();
     const keyScope = `${input.userId}:${input.provider}:${input.symbol}`;
     const scanAcquired = await this.redis.setNx(
       `pipeline:event-scan:slot:${keyScope}`,
       now.toISOString(),
-      SCAN_INTERVAL_SECONDS,
+      input.scanIntervalSeconds ?? SCAN_INTERVAL_SECONDS,
     );
     if (!scanAcquired) return { triggered: false, reason: "SCAN_THROTTLED" };
 
     const snapshot = await this.snapshot(input.provider, input.symbol);
-    const evidence = this.evaluate(snapshot, now);
+    const evidence = this.evaluate(snapshot, now, input.scanIntervalSeconds !== undefined);
     if (!evidence) {
       return {
         triggered: false,
@@ -172,6 +173,12 @@ export class MarketEventScannerService {
     };
   }
 
+  async releaseEvent(input: { userId: string; provider: ExchangeProvider; symbol: string }) {
+    const scope = `${input.userId}:${input.provider}:${input.symbol}`;
+    await this.redis.delete(`pipeline:event-scan:last:${scope}`);
+    await this.redis.delete(`pipeline:event-scan:cooldown:${scope}`);
+  }
+
   private async snapshot(
     provider: ExchangeProvider,
     symbol: string,
@@ -190,7 +197,7 @@ export class MarketEventScannerService {
     return { ticker, activeCandle, indicator, closedCandles };
   }
 
-  private evaluate(snapshot: ScannerSnapshot, now: Date): Omit<MarketEventEvidence, "confirmationCount"> | undefined {
+  private evaluate(snapshot: ScannerSnapshot, now: Date, requireFreshTicker = false): Omit<MarketEventEvidence, "confirmationCount"> | undefined {
     const { indicator } = snapshot;
     if (!indicator || now.getTime() - indicator.candleCloseTime.getTime() > 10 * 60_000)
       return undefined;
@@ -202,7 +209,9 @@ export class MarketEventScannerService {
       : snapshot.ticker?.timestamp
         ? new Date(snapshot.ticker.timestamp).getTime()
         : NaN;
-    const tickerFresh = Number.isFinite(tickerTime) && now.getTime() - tickerTime <= 90_000;
+    const tickerAge = now.getTime() - tickerTime;
+    const tickerFresh = Number.isFinite(tickerTime) && tickerAge >= -5_000 && tickerAge <= (requireFreshTicker ? 10_000 : 90_000);
+    if (requireFreshTicker && !tickerFresh) return undefined;
     const price = this.number(
       tickerFresh
         ? snapshot.ticker?.markPrice ?? snapshot.ticker?.lastPrice

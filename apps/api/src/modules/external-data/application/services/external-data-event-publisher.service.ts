@@ -60,6 +60,10 @@ export class ExternalDataEventPublisher {
         importanceScore: assessment.score,
         symbols,
         publishedAt: article.publishedAt.toISOString(),
+        topics,
+        sourceId: article.sourceId,
+        canonicalUrl: article.canonicalUrl,
+        reliabilityScore: article.reliabilityScore,
       });
     }
 

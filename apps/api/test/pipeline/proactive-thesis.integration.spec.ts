@@ -404,6 +404,34 @@ describe("Proactive Thesis Pipeline Integration", () => {
 
   // ── Scenario 1: Squeeze probe — full happy path ────────────────────────────
 
+  it('fails closed for stored-context proactive replay instead of mixing in current quotes', async () => {
+    const job = { ...makeJob(), trigger: 'REPLAY' as const, useStoredContext: true };
+    const result = await pipelineRunner.run(job);
+    expect(result).toEqual({ outcome: 'SKIPPED', reason: 'PROACTIVE_STORED_REPLAY_REQUIRES_PINNED_SNAPSHOT' });
+    expect(mockLiveTrading.proactiveExecutionEvidence).not.toHaveBeenCalled();
+    expect(mockSnapshotService.build).not.toHaveBeenCalled();
+    expect(mockTradeResearcher.research).not.toHaveBeenCalled();
+    expect(mockLiveTrading.executePipeline).not.toHaveBeenCalled();
+  });
+
+  it('builds a new decision snapshot after quote acquisition, preserving the opportunity cutoff', async () => {
+    const eventCutoff = new Date(cutoff);
+    const quoteTime = new Date(eventCutoff.getTime() + 20_000);
+    vi.mocked(mockLiveTrading.proactiveExecutionEvidence!).mockImplementation(() => {
+      vi.setSystemTime(quoteTime);
+      return Promise.resolve({ timestamp: quoteTime, currentPrice: PRICE, spread: 1, estimatedRoundTripCost: 10,
+        tickSize: 0.1, lotSize: 0.001, currentExposure: 0, freshnessThresholdMs: 60_000 });
+    });
+    const job = makeJob();
+    await pipelineRunner.run(job);
+    const snapshotBuild = vi.mocked(mockSnapshotService.build!);
+    expect(snapshotBuild.mock.calls.at(-1)?.[0]).toMatchObject({
+      sourceDataCutoff: quoteTime,
+      execution: { timestamp: quoteTime },
+    });
+    expect(job.params?.sourceDataCutoff).toBe(cutoff);
+  });
+
   it("marks a claimed proactive execution terminal when the execution lock is busy", async () => {
     mockExecutionLock.mockResolvedValue(false);
     await expect(pipelineRunner.run(makeJob())).rejects.toThrow(

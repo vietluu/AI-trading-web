@@ -2,6 +2,8 @@ import { Injectable } from "@nestjs/common";
 import { adaptiveTradingPolicy } from "../domain/adaptive-trading-policy";
 
 export interface SignalFilterInput {
+  /** A validated public event may start research before slow indicators react. */
+  materialEvent?: boolean;
   rsi?: number;
   atr?: number;
   volumeChangePercent?: number;
@@ -101,6 +103,10 @@ export class SignalFilterService {
       return { allowed: false, reason: "WIDE_SPREAD", preliminaryRegime };
     }
 
+    if (input.materialEvent && hasAnyIndicatorData) {
+      return { allowed: true, preliminaryRegime };
+    }
+
     if (
       hasAnyIndicatorData &&
       ((hasRsiNeutralZone && isLowAtr && lowVolume) ||
@@ -144,4 +150,3 @@ export class SignalFilterService {
     return { allowed: true, preliminaryRegime };
   }
 }
-

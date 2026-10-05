@@ -75,7 +75,10 @@ const input = {
   userId: 'user-1',
   request: {
     pipelineId: 'proactive-thesis', symbol: 'BTC-USDT', provider: 'BINANCE_FUTURES',
-    params: { opportunityId: 'opp-1', snapshotId: 'snapshot-1', sourceDataCutoff: '2026-09-21T00:00:00.000Z' },
+    params: {
+      opportunityId: 'opp-1', snapshotId: 'snapshot-1', sourceDataCutoff: '2026-09-21T00:00:00.000Z',
+      systemEventId: 'news-1', systemEventExpiresAt: '2026-09-21T00:05:00.000Z',
+    },
   },
 };
 
@@ -126,7 +129,7 @@ function fixture() {
   const repository = new PipelineRepository(prisma as never);
   const queue = { enqueue: vi.fn(async (_job?: PipelineJob) => undefined) };
   const service = () => new PipelineService(repository, queue as never, {
-    enabled: true, maxRunsPerHour: 120, cooldownMs: 60_000,
+    enabled: true, eventDrivenOnly: true, maxRunsPerHour: 120, cooldownMs: 60_000,
   } as never);
   const cancellation = { isCancelled: vi.fn(async () => false) };
   const runner = () => new PipelineRunnerService(
@@ -160,6 +163,20 @@ describe('durable proactive delivery ownership', () => {
     expect((await f.service().scheduleProactiveThesis(input)).status).toBe('SCHEDULED');
     expect(f.rows.size).toBe(1);
     expect(f.queue.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('redelivers an accepted event run as EVENT with its original freshness evidence', async () => {
+    const f = fixture();
+    f.queue.enqueue.mockRejectedValueOnce(new Error('queue unavailable'));
+    await expect(f.service().scheduleProactiveThesis(input)).rejects.toThrow('queue unavailable');
+
+    expect((await f.service().scheduleProactiveThesis(input)).status).toBe('SCHEDULED');
+
+    const retry = (f.queue.enqueue.mock.calls as unknown as Array<[PipelineJob]>)[1]![0];
+    expect(retry.trigger).toBe('EVENT');
+    expect(retry.params).toMatchObject({
+      systemEventId: 'news-1', systemEventExpiresAt: '2026-09-21T00:05:00.000Z',
+    });
   });
 
   it.each(['steps', 'enqueue'])('renews ownership while %s takes longer than the lease', async (stage) => {

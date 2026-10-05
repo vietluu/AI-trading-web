@@ -19,7 +19,7 @@ async function runNews(articles: Record<string, unknown>[], mode = "llm-json") {
   vi.stubEnv("NODE_ENV", "production");
   vi.stubEnv("USE_DETERMINISTIC_ANALYSTS", mode === "deterministic" ? "true" : "false");
   let run = {
-    id: "00000000-0000-4000-8000-000000000021", status: AgentRunState.CREATED,
+    id: "00000000-0000-4000-8000-000000000021", status: AgentRunState.CREATED as AgentRunState,
     traceId: "trace-news", output: null as unknown, toolCallCount: 0, toolRoundCount: 0,
   };
   // Persist in memory; keep runner transitions, schema validation and evidence handling real.
@@ -27,6 +27,8 @@ async function runNews(articles: Record<string, unknown>[], mode = "llm-json") {
     createRun: vi.fn().mockResolvedValue(run),
     updateRun: vi.fn().mockImplementation((_id: string, update: Record<string, unknown>) =>
       Promise.resolve((run = { ...run, ...update }))),
+    transitionRun: vi.fn().mockImplementation(({ toState }: { toState: AgentRunState }) =>
+      Promise.resolve((run = { ...run, status: toState }))),
     addTransition: vi.fn().mockResolvedValue({}), saveOutput: vi.fn().mockResolvedValue({}),
   };
   const modelOutput = {

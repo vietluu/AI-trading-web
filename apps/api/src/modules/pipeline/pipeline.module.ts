@@ -38,10 +38,11 @@ import { RedisModule } from "../../redis/redis.module";
 import { SettingsModule } from "../../settings/settings.module";
 import { PortfolioModule } from "../portfolio/portfolio.module";
 import { ExternalDataModule } from "../external-data/external-data.module";
-import { HighImportanceNewsTriggerService } from "./application/high-importance-news-trigger.service";
-import { MacroEventTriggerService } from "./application/macro-event-trigger.service";
 import { OpportunityWatcherService } from "./application/opportunity-watcher.service";
 import { ReflectionModule } from '../reflection/reflection.module';
+import { EventSubscribersService } from './application/event-subscribers.service';
+import { EventPipelineService, SHARED_EVENT_QUEUE } from './application/event-pipeline.service';
+import { SharedEventProcessor } from './infrastructure/shared-event.processor';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { ReflectionModule } from '../reflection/reflection.module';
     ExternalDataModule,
     ReflectionModule,
     BullModule.registerQueue(
+      { name: SHARED_EVENT_QUEUE },
       { name: PIPELINE_RUN_QUEUE_NAME },
       { name: PIPELINE_RETRY_QUEUE_NAME },
       { name: PIPELINE_DEAD_LETTER_QUEUE_NAME },
@@ -65,6 +67,9 @@ import { ReflectionModule } from '../reflection/reflection.module';
   ],
   controllers: [PipelineController, PipelineSystemController],
   providers: [
+    EventSubscribersService,
+    EventPipelineService,
+    SharedEventProcessor,
     PipelineConfigService,
     SignalFilterService,
     PipelineAlertService,
@@ -84,8 +89,6 @@ import { ReflectionModule } from '../reflection/reflection.module';
     PipelineQueueService,
     PipelineCancellationService,
     PipelineProcessor,
-    HighImportanceNewsTriggerService,
-    MacroEventTriggerService,
     ConfluenceCollectorService,
     ConfluenceTimeoutProcessor,
   ],
