@@ -805,7 +805,7 @@ export class PipelineRunnerService {
         // Backdating that quote to the opportunity makes every execution field
         // unavailable (EXECUTION_CONTEXT_AFTER_CUTOFF) by construction.
         const decisionCutoff = new Date();
-        const snapshot = await this.anticipatorySnapshot.build({
+        const researchSnapshot = await this.anticipatorySnapshot.build({
           userId: job.userId,
           symbol,
           provider: job.provider as ExchangeProvider,
@@ -820,8 +820,8 @@ export class PipelineRunnerService {
               JSON.stringify({
                 params: job.params,
                 mode: proactiveMode,
-                schemaVersion: snapshot.schemaVersion,
-                calculationVersion: snapshot.calculationVersion,
+                schemaVersion: researchSnapshot.schemaVersion,
+                calculationVersion: researchSnapshot.calculationVersion,
                 researcherPrompt: 1,
                 criticPrompt: 1,
               }),
@@ -830,7 +830,23 @@ export class PipelineRunnerService {
           parentSnapshotId: runId,
           promptVersion: 1,
         };
-        const research = await this.tradeResearcher.research(snapshot, context);
+        const research = await this.tradeResearcher.research(researchSnapshot, context);
+        this.assertEventFresh(job);
+        const refreshedExecutionEvidence =
+          await this.liveTrading.proactiveExecutionEvidence(
+            job.userId,
+            job.provider as ExchangeProvider,
+            symbol,
+          );
+        const refreshedDecisionCutoff = new Date();
+        const snapshot = await this.anticipatorySnapshot.build({
+          userId: job.userId,
+          symbol,
+          provider: job.provider as ExchangeProvider,
+          timeframe: String(interval) as ExchangeInterval,
+          sourceDataCutoff: refreshedDecisionCutoff,
+          execution: refreshedExecutionEvidence,
+        });
         const features = anticipatoryDecisionContext(snapshot);
         const baseline = await this.decision.decideForUser(
           { symbol, fusionOutput, ...analyses },

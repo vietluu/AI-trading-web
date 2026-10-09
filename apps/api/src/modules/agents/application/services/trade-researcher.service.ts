@@ -91,14 +91,20 @@ export class TradeResearcherService {
         : [];
 
       // Validate references and basics
-      const validation = validateTradeThesis(preferred, snapshot, { now: new Date() });
+      const validation = validateTradeThesis(preferred, snapshot, {
+        now: new Date(),
+        requireFreshExecution: false,
+      });
       if (!validation.valid) {
         throw new Error(
           `AI thesis failed validation: ${validation.reasons.join(', ')}`,
         );
       }
       for (const alt of alternatives) {
-        const altValidation = validateTradeThesis(alt, snapshot, { now: new Date() });
+        const altValidation = validateTradeThesis(alt, snapshot, {
+          now: new Date(),
+          requireFreshExecution: false,
+        });
         if (!altValidation.valid) {
           throw new Error(`AI alternative thesis failed validation: ${altValidation.reasons.join(', ')}`);
         }
@@ -218,7 +224,10 @@ export class TradeResearcherService {
       expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 4).toISOString(), // 4h
     };
 
-    const validation = validateTradeThesis(preferred, snapshot, { now: new Date() });
+    const validation = validateTradeThesis(preferred, snapshot, {
+      now: new Date(),
+      requireFreshExecution: false,
+    });
     if (!validation.valid) {
       // Fallback geometry was invalid, force WAIT
       preferred.direction = 'WAIT';

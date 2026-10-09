@@ -363,6 +363,14 @@ describe('review safety regressions', () => {
     snapshot[field].freshness = 'STALE';
     expect(validateTradeThesis(createValidLongThesis(), snapshot, { now: cutoff }).valid).toBe(false);
   });
+  it('can defer execution freshness during research while keeping final validation strict', () => {
+    const snapshot = createBaseSnapshot();
+    snapshot.execution.freshness = 'STALE';
+    expect(validateTradeThesis(createValidLongThesis(), snapshot, {
+      now: cutoff, requireFreshExecution: false,
+    }).valid).toBe(true);
+    expect(validateTradeThesis(createValidLongThesis(), snapshot, { now: cutoff }).valid).toBe(false);
+  });
   it('rejects an ineligible snapshot', () => {
     const snapshot = createBaseSnapshot();
     snapshot.eligibility.status = 'INELIGIBLE';

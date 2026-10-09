@@ -12,6 +12,8 @@ import { ExecutableThesisSchema, resolveSnapshotPath, TradeThesisSchema } from '
 export interface TradeThesisValidatorOptions {
   now?: Date | string | number;
   minNetR?: number;
+  /** Research may outlive a quote; the execution gate must leave this enabled. */
+  requireFreshExecution?: boolean;
 }
 
 const DEFAULT_MIN_NET_R = 1.0;
@@ -147,11 +149,20 @@ export function validateTradeThesis(
   if (!Number.isFinite(evaluationTimeMs) || !Number.isFinite(cutoffMs) || cutoffMs > evaluationTimeMs) {
     return { valid: false, status: 'INVALID', reasonCodes: ['THESIS_STALE'], reasons: ['INVALID_EVALUATION_TIME'] };
   }
+  const freshnessFields: Array<{
+    coverage: string;
+    freshness: string;
+    sourceTimestamp?: string;
+    freshnessThresholdMs?: number;
+  }> = [snapshot.structure, snapshot.volatility, snapshot.momentum, snapshot.participation];
+  if (options?.requireFreshExecution !== false) freshnessFields.push(snapshot.execution);
   if (isActionable && (snapshot.eligibility.status !== 'ELIGIBLE' ||
-    [snapshot.structure, snapshot.volatility, snapshot.momentum, snapshot.participation, snapshot.execution].some((field) =>
+    freshnessFields.some((field) =>
       field.coverage !== 'AVAILABLE' || field.freshness !== 'FRESH' ||
+      typeof field.sourceTimestamp !== 'string' ||
       !Number.isFinite(Date.parse(field.sourceTimestamp)) ||
       Date.parse(field.sourceTimestamp) > cutoffMs ||
+      typeof field.freshnessThresholdMs !== 'number' ||
       evaluationTimeMs - Date.parse(field.sourceTimestamp) > field.freshnessThresholdMs))) {
     reasonCodes.push('THESIS_STALE');
     reasons.push('Core snapshot evidence is unavailable, ineligible or stale at evaluation time');
