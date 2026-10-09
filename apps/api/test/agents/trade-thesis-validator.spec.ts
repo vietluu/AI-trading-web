@@ -371,6 +371,18 @@ describe('review safety regressions', () => {
     }).valid).toBe(true);
     expect(validateTradeThesis(createValidLongThesis(), snapshot, { now: cutoff }).valid).toBe(false);
   });
+  it('reports computed net R when geometry is below policy despite a higher declared value', () => {
+    const result = validateTradeThesis({
+      ...createValidLongThesis(),
+      expectedNetR: 2,
+      targets: [{ price: 108_600, fraction: 1 }],
+    }, createBaseSnapshot(), { now: cutoff });
+
+    expect(result.valid).toBe(false);
+    expect(result.reasons).toContain(
+      'Net R is below policy threshold (declared=2, computed=0.0874, minimum=1)',
+    );
+  });
   it('rejects an ineligible snapshot', () => {
     const snapshot = createBaseSnapshot();
     snapshot.eligibility.status = 'INELIGIBLE';

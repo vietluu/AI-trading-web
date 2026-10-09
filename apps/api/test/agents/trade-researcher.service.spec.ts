@@ -111,6 +111,13 @@ describe('TradeResearcherService', () => {
     expect(result.alternatives[0]?.direction).toBe('SHORT');
     expect(result.alternatives[1]?.direction).toBe('WAIT');
     expect(result.preferred.decisionSource).toBe('AI');
+    const prompt = JSON.parse(String(aiOrchestratorService.execute.mock.calls[0]?.[0].userPrompt)) as {
+      allowedEvidenceRefs?: Array<{ snapshotField: string }>;
+    };
+    expect(prompt.allowedEvidenceRefs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ snapshotField: 'structure.liquiditySweep' }),
+      expect.objectContaining({ snapshotField: 'execution' }),
+    ]));
     expect(prismaService.agentRun.create.mock.calls[0]?.[0]).toMatchObject({
       data: {
         inputHash: 'hash',
@@ -121,6 +128,16 @@ describe('TradeResearcherService', () => {
         model: 'gpt-4o',
       }
     });
+  });
+
+  it('forwards the event-aware research timeout to the AI orchestrator', async () => {
+    aiOrchestratorService.execute.mockRejectedValue(new Error('timeout'));
+
+    await service.research(mockSnapshot, { ...mockContext, timeoutMs: 45_000 });
+
+    expect(aiOrchestratorService.execute).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: 45_000 }),
+    );
   });
 
   it('should fall back to rules and label AI_WITH_RULES_FALLBACK on AI timeout', async () => {

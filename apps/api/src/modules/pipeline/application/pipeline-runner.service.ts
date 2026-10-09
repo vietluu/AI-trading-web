@@ -829,6 +829,7 @@ export class PipelineRunnerService {
             .digest("hex"),
           parentSnapshotId: runId,
           promptVersion: 1,
+          timeoutMs: this.eventResearchTimeoutMs(job),
         };
         const research = await this.tradeResearcher.research(researchSnapshot, context);
         this.assertEventFresh(job);
@@ -2405,6 +2406,17 @@ export class PipelineRunnerService {
     if (!Number.isFinite(expiresAt) || Date.now() >= expiresAt) {
       throw new Error('SYSTEM_EVENT_EXPIRED');
     }
+  }
+
+  private eventResearchTimeoutMs(job: PipelineJob): number | undefined {
+    if (job.trigger !== 'EVENT' || !job.params.systemEventId) return undefined;
+    const expiresAt = Date.parse(String(job.params.systemEventExpiresAt));
+    if (!Number.isFinite(expiresAt)) return 1_000;
+    // The orchestrator can make two attempts with a 500ms backoff. Reserve
+    // enough of the event lifetime for critic review, risk and submission.
+    const remainingMs = expiresAt - Date.now();
+    const perAttemptMs = Math.floor((remainingMs - 20_500) / 2);
+    return Math.max(1_000, Math.min(45_000, perAttemptMs));
   }
 
   private async assertNotCancelled(runId: string) {

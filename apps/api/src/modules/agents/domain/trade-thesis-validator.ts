@@ -316,7 +316,7 @@ export function validateTradeThesis(
     if (thesis.expectedNetR === null || thesis.expectedNetR < minNetR || computedNetR === null || computedNetR < minNetR) {
       reasonCodes.push('NET_R_TOO_LOW');
       reasons.push(
-        `Expected net R (${thesis.expectedNetR ?? 'null'}) is below policy threshold (${minNetR})`,
+        `Net R is below policy threshold (declared=${thesis.expectedNetR ?? 'null'}, computed=${computedNetR?.toFixed(4) ?? 'null'}, minimum=${minNetR})`,
       );
     }
   }

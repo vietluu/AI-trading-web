@@ -465,6 +465,25 @@ describe("Proactive Thesis Pipeline Integration", () => {
     });
   });
 
+  it('caps AI research to leave time for review and execution before a market event expires', async () => {
+    const job = {
+      ...makeJob(),
+      trigger: 'EVENT' as const,
+      params: {
+        ...makeJob().params,
+        systemEventId: 'market-1',
+        systemEventExpiresAt: new Date(new Date(cutoff).getTime() + 120_000).toISOString(),
+      },
+    };
+
+    await pipelineRunner.run(job);
+
+    expect(mockTradeResearcher.research).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ timeoutMs: 45_000 }),
+    );
+  });
+
   it("marks a claimed proactive execution terminal when the execution lock is busy", async () => {
     mockExecutionLock.mockResolvedValue(false);
     await expect(pipelineRunner.run(makeJob())).rejects.toThrow(
