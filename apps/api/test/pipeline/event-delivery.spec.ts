@@ -43,6 +43,33 @@ describe('event-only operation', () => {
     await expect(scheduler.create('user', {})).rejects.toThrow('Scheduled AI is disabled');
   });
 
+  it('does not start a five-minute pipeline timer in event-only mode', async () => {
+    vi.useFakeTimers();
+    try {
+      const recoverRecentNews = vi.fn().mockResolvedValue(undefined);
+      const scheduler = new PipelineSchedulerService(
+        {} as never,
+        {} as never,
+        { enabled: true, eventDrivenOnly: true } as never,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { recoverRecentNews } as never,
+      );
+
+      scheduler.onModuleInit();
+      await vi.advanceTimersByTimeAsync(300_000);
+
+      expect(recoverRecentNews).not.toHaveBeenCalled();
+      expect(scheduler.status().lastTickAt).toBeUndefined();
+      scheduler.onModuleDestroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('lets a confirmed event start research before slow indicators react, retaining data and spread gates', () => {
     const filter = new SignalFilterService();
     const quiet = { symbol: 'BTC-USDT', price: 100_000, rsi: 50, atr: 0.01,
