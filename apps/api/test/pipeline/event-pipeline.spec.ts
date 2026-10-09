@@ -66,6 +66,33 @@ describe('event pipeline', () => {
     });
   });
 
+  it('keeps market-event observation on the triggering 5m candle', async () => {
+    const cutoff = new Date('2026-10-05T10:54:59.999Z');
+    const observe = vi.fn().mockResolvedValue({
+      opportunityId: 'opportunity-1', snapshotId: 'snapshot-1', state: 'WATCHING',
+      duplicate: false, reasonCode: 'SETUP_DETECTED',
+    });
+    const scheduleProactiveThesis = vi.fn().mockResolvedValue({ status: 'SCHEDULED', runId: 'run' });
+    const service = new EventPipelineService({} as never, {} as never, {} as never,
+      { reserveAnchor: vi.fn() } as never,
+      { list: () => Promise.resolve([{ userId: 'u1', symbol: 'BTC-USDT', provider: 'OKX_FUTURES', strategyIds: ['trend'] }]) } as never,
+      { scheduleProactiveThesis } as never, { enabled: true } as never, {} as never,
+      { observe } as never);
+
+    await service.dispatch({
+      id: 'market-1', kind: 'MARKET', occurredAt: new Date().toISOString(),
+      symbols: ['BTC-USDT'], provider: 'OKX_FUTURES',
+      evidence: { eventScan: { indicatorCloseTime: cutoff.toISOString() } },
+    });
+
+    expect(observe).toHaveBeenCalledWith(expect.objectContaining({
+      timeframe: '5m', sourceDataCutoff: cutoff,
+    }));
+    expect(scheduleProactiveThesis.mock.calls[0]?.[0]).toMatchObject({
+      request: { params: { interval: '5m' } },
+    });
+  });
+
   it('does not queue a thesis when observation finishes after the event expires', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-10-05T10:00:00.000Z'));

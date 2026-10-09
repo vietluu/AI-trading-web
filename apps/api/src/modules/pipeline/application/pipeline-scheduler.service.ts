@@ -60,7 +60,7 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
   ) {}
   onModuleInit() {
     if (process.env.CLI_DISABLE_SCHEDULERS === 'true') return;
-    if (this.config.enabled) this.scheduleNextTick();
+    if (this.config.enabled && !this.config.eventDrivenOnly) this.scheduleNextTick();
   }
   onModuleDestroy() {
     this.destroyed = true;
@@ -71,7 +71,7 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
   }
 
   private scheduleNextTick() {
-    if (this.destroyed || !this.config.enabled) return;
+    if (this.destroyed || !this.config.enabled || this.config.eventDrivenOnly) return;
     this.timer = setTimeout(() => {
       this.timer = undefined;
       void this.tick().catch((error) => {
@@ -79,7 +79,7 @@ export class PipelineSchedulerService implements OnModuleInit, OnModuleDestroy {
       }).finally(() => {
         if (!this.destroyed && this.config.enabled) this.scheduleNextTick();
       });
-    }, this.config.eventDrivenOnly ? 300_000 : 5_000);
+    }, 5_000);
   }
 
   async create(userId: string, raw: unknown) {

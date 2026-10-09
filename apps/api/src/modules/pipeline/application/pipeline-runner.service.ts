@@ -805,7 +805,7 @@ export class PipelineRunnerService {
         // Backdating that quote to the opportunity makes every execution field
         // unavailable (EXECUTION_CONTEXT_AFTER_CUTOFF) by construction.
         const decisionCutoff = new Date();
-        const snapshot = await this.anticipatorySnapshot.build({
+        const researchSnapshot = await this.anticipatorySnapshot.build({
           userId: job.userId,
           symbol,
           provider: job.provider as ExchangeProvider,
@@ -820,8 +820,8 @@ export class PipelineRunnerService {
               JSON.stringify({
                 params: job.params,
                 mode: proactiveMode,
-                schemaVersion: snapshot.schemaVersion,
-                calculationVersion: snapshot.calculationVersion,
+                schemaVersion: researchSnapshot.schemaVersion,
+                calculationVersion: researchSnapshot.calculationVersion,
                 researcherPrompt: 1,
                 criticPrompt: 1,
               }),
@@ -829,8 +829,25 @@ export class PipelineRunnerService {
             .digest("hex"),
           parentSnapshotId: runId,
           promptVersion: 1,
+          timeoutMs: this.eventResearchTimeoutMs(job),
         };
-        const research = await this.tradeResearcher.research(snapshot, context);
+        const research = await this.tradeResearcher.research(researchSnapshot, context);
+        this.assertEventFresh(job);
+        const refreshedExecutionEvidence =
+          await this.liveTrading.proactiveExecutionEvidence(
+            job.userId,
+            job.provider as ExchangeProvider,
+            symbol,
+          );
+        const refreshedDecisionCutoff = new Date();
+        const snapshot = await this.anticipatorySnapshot.build({
+          userId: job.userId,
+          symbol,
+          provider: job.provider as ExchangeProvider,
+          timeframe: String(interval) as ExchangeInterval,
+          sourceDataCutoff: refreshedDecisionCutoff,
+          execution: refreshedExecutionEvidence,
+        });
         const features = anticipatoryDecisionContext(snapshot);
         const baseline = await this.decision.decideForUser(
           { symbol, fusionOutput, ...analyses },
@@ -2389,6 +2406,17 @@ export class PipelineRunnerService {
     if (!Number.isFinite(expiresAt) || Date.now() >= expiresAt) {
       throw new Error('SYSTEM_EVENT_EXPIRED');
     }
+  }
+
+  private eventResearchTimeoutMs(job: PipelineJob): number | undefined {
+    if (job.trigger !== 'EVENT' || !job.params.systemEventId) return undefined;
+    const expiresAt = Date.parse(String(job.params.systemEventExpiresAt));
+    if (!Number.isFinite(expiresAt)) return 1_000;
+    // The orchestrator can make two attempts with a 500ms backoff. Reserve
+    // enough of the event lifetime for critic review, risk and submission.
+    const remainingMs = expiresAt - Date.now();
+    const perAttemptMs = Math.floor((remainingMs - 20_500) / 2);
+    return Math.max(1_000, Math.min(45_000, perAttemptMs));
   }
 
   private async assertNotCancelled(runId: string) {
