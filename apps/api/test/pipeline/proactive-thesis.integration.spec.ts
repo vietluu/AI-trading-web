@@ -432,6 +432,58 @@ describe("Proactive Thesis Pipeline Integration", () => {
     expect(job.params?.sourceDataCutoff).toBe(cutoff);
   });
 
+  it('refreshes execution evidence after slow AI research before selecting a thesis', async () => {
+    const firstQuoteTime = new Date(new Date(cutoff).getTime() + 20_000);
+    const refreshedQuoteTime = new Date(new Date(cutoff).getTime() + 100_000);
+    vi.mocked(mockLiveTrading.proactiveExecutionEvidence!)
+      .mockImplementationOnce(() => {
+        vi.setSystemTime(firstQuoteTime);
+        return Promise.resolve({ timestamp: firstQuoteTime, currentPrice: PRICE, spread: 1,
+          estimatedRoundTripCost: 10, tickSize: 0.1, lotSize: 0.001,
+          currentExposure: 0, freshnessThresholdMs: 60_000 });
+      })
+      .mockImplementationOnce(() => Promise.resolve({
+        timestamp: refreshedQuoteTime, currentPrice: PRICE, spread: 1,
+        estimatedRoundTripCost: 10, tickSize: 0.1, lotSize: 0.001,
+        currentExposure: 0, freshnessThresholdMs: 60_000,
+      }));
+    vi.mocked(mockTradeResearcher.research!).mockImplementationOnce(() => {
+      vi.setSystemTime(refreshedQuoteTime);
+      return Promise.resolve({
+        preferred: { ...createValidLongThesis(), targets: [{ price: 112000, fraction: 1 }] },
+        alternatives: [], researchRunId: 'thesis-1', contextSnapshotId: 'context-1',
+      });
+    });
+
+    await pipelineRunner.run(makeJob());
+
+    expect(mockLiveTrading.proactiveExecutionEvidence).toHaveBeenCalledTimes(2);
+    expect(mockSnapshotService.build).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(mockSnapshotService.build!).mock.calls.at(-1)?.[0]).toMatchObject({
+      sourceDataCutoff: refreshedQuoteTime,
+      execution: { timestamp: refreshedQuoteTime },
+    });
+  });
+
+  it('caps AI research to leave time for review and execution before a market event expires', async () => {
+    const job = {
+      ...makeJob(),
+      trigger: 'EVENT' as const,
+      params: {
+        ...makeJob().params,
+        systemEventId: 'market-1',
+        systemEventExpiresAt: new Date(new Date(cutoff).getTime() + 120_000).toISOString(),
+      },
+    };
+
+    await pipelineRunner.run(job);
+
+    expect(mockTradeResearcher.research).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ timeoutMs: 45_000 }),
+    );
+  });
+
   it("marks a claimed proactive execution terminal when the execution lock is busy", async () => {
     mockExecutionLock.mockResolvedValue(false);
     await expect(pipelineRunner.run(makeJob())).rejects.toThrow(
@@ -457,7 +509,7 @@ describe("Proactive Thesis Pipeline Integration", () => {
     await pipelineRunner.run(makeJob());
 
     // All three proactive-AI services must be invoked
-    expect(mockSnapshotService.build).toHaveBeenCalledOnce();
+    expect(mockSnapshotService.build).toHaveBeenCalledTimes(2);
     expect(mockTradeResearcher.research).toHaveBeenCalledOnce();
     expect(mockCritic.reflect).toHaveBeenCalledOnce();
 

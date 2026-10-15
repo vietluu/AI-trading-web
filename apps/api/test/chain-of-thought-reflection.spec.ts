@@ -94,6 +94,19 @@ describe('ChainOfThoughtReflectionService as Critic', () => {
     expect(args.userPrompt).toContain('59000');
   });
 
+  it('passes the configured critic timeout to the AI request', async () => {
+    const service = makeService();
+    mockOrchestrator.execute.mockResolvedValueOnce(aiResponse(JSON.stringify({
+      action: 'APPROVE', reasonCodes: [], evidenceRefs: [], rationale: 'Looks good',
+    })));
+
+    await service.reflect({ snapshot: mockSnapshot, thesis: mockThesis });
+
+    expect(mockOrchestrator.execute).toHaveBeenLastCalledWith(
+      expect.objectContaining({ timeoutMs: 8000 }),
+    );
+  });
+
   it('parses contrary opinion without reversing direction', async () => {
     const service = makeService();
     mockOrchestrator.execute.mockResolvedValueOnce(aiResponse(JSON.stringify({

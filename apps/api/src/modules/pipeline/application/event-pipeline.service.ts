@@ -147,11 +147,14 @@ export class EventPipelineService implements OnModuleInit, OnModuleDestroy {
       const sourceDataCutoff = await this.resolveSourceDataCutoff(event, subscriber);
       if (!sourceDataCutoff) continue;
       const provider = subscriber.provider as unknown as ExchangeProvider;
+      const timeframe = event.kind === 'MARKET'
+        ? ExchangeInterval.FIVE_MINUTES
+        : ExchangeInterval.FIFTEEN_MINUTES;
       const observation = await this.opportunityWatcher.observe({
         userId: subscriber.userId,
         provider,
         symbol: subscriber.symbol,
-        timeframe: ExchangeInterval.FIFTEEN_MINUTES,
+        timeframe,
         sourceDataCutoff,
       });
       if (observation.state !== 'WATCHING' || !observation.opportunityId) continue;
@@ -165,7 +168,7 @@ export class EventPipelineService implements OnModuleInit, OnModuleDestroy {
           symbol: subscriber.symbol,
           provider: subscriber.provider,
           params: {
-            interval: ExchangeInterval.FIFTEEN_MINUTES,
+            interval: timeframe,
             strategyIds: subscriber.strategyIds,
             opportunityId: observation.opportunityId,
             snapshotId: observation.snapshotId,

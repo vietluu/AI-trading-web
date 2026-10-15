@@ -37,11 +37,7 @@ export class ChainOfThoughtReflectionService {
         ? providerStr
         : undefined;
 
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-      try {
-        const response = await this.aiOrchestrator.execute({
+      const response = await this.aiOrchestrator.execute({
           userId: userId ?? 'system-reflection',
           systemPrompt: this.systemPrompt(),
           userPrompt: prompt,
@@ -73,15 +69,12 @@ export class ChainOfThoughtReflectionService {
           },
           temperature: 0.2,
           maxTokens: 800,
+          timeoutMs,
           correlationId: `reflection-${input.snapshot.symbol}-${Date.now()}`,
         });
 
-        clearTimeout(timer);
-        const rawText = response.text || (response.json ? JSON.stringify(response.json) : '');
-        return this.parseResponse(rawText);
-      } finally {
-        clearTimeout(timer);
-      }
+      const rawText = response.text || (response.json ? JSON.stringify(response.json) : '');
+      return this.parseResponse(rawText);
     } catch (error) {
       this.logger.warn({
         event: 'reflection_failed',

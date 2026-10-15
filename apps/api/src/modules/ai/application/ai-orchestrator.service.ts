@@ -37,6 +37,7 @@ export interface AIExecuteOptions {
   contextSources?: ContextSourceData;
   temperature?: number;
   maxTokens?: number;
+  timeoutMs?: number;
   responseFormat?: "text" | "json";
   jsonSchema?: Record<string, unknown>;
   tools?: string[];
@@ -248,7 +249,7 @@ export class AIOrchestratorService {
             maxTokens: options.maxTokens ?? userConfig.maxTokens,
             responseFormat: options.responseFormat,
             jsonSchema: options.jsonSchema,
-            timeoutMs: userConfig.timeoutMs,
+            timeoutMs: options.timeoutMs ?? userConfig.timeoutMs,
           });
           attemptedCandidates.push({
             provider: pType,

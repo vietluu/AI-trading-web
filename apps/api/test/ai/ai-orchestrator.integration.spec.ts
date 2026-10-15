@@ -169,6 +169,20 @@ describe("AI Orchestrator & Fallback Integration", () => {
     expect(res.usage.totalTokens).toBeGreaterThan(0);
   });
 
+  it("forwards a caller deadline to the selected provider", async () => {
+    const chat = vi.spyOn(geminiProvider, "chat");
+
+    await orchestrator.execute({
+      userId: "user-123",
+      userPrompt: "deadline propagation",
+      timeoutMs: 8000,
+    });
+
+    expect(chat).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: 8000 }),
+    );
+  });
+
   it("uses configured Gemini when the persisted primary provider has no key", async () => {
     vi.stubEnv("MOCK_AI_RESPONSES", "false");
     vi.stubEnv("OPENAI_API_KEY", "");
